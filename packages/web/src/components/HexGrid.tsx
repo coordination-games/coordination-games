@@ -109,9 +109,13 @@ export default function HexGrid({
     return indexMap;
   }, [tiles]);
 
-  // Build vision heat map: for each hex, count how many units from each team can see it
-  // Each unit adds one "layer" of team color — overlapping vision stacks naturally
-  const visionHeatMap = useMemo(() => {
+  // Flat-top hex neighbor offsets: N, NE, SE, S, SW, NW
+  const HEX_NEIGHBORS: [number, number][] = [
+    [0, -1], [+1, -1], [+1, 0], [0, +1], [-1, +1], [-1, 0],
+  ];
+
+  // Build vision data: which hexes each team can see + boundary detection
+  const visionData = useMemo(() => {
     // Collect all visible units
     const units: { q: number; r: number; team: string; unitClass: string }[] = [];
     for (const t of tiles) {
@@ -123,12 +127,13 @@ export default function HexGrid({
       }
     }
 
-    // For each hex, count how many units of each team can see it
-    const heatMap = new Map<string, { A: number; B: number }>();
+    // Sets of hex keys visible to each team
+    const seenA = new Set<string>();
+    const seenB = new Set<string>();
 
     for (const u of units) {
       const vision = CLASS_VISION[u.unitClass] ?? 3;
-      const team = u.team as 'A' | 'B';
+      const seen = u.team === 'A' ? seenA : seenB;
 
       for (let dq = -vision; dq <= vision; dq++) {
         for (
@@ -140,16 +145,36 @@ export default function HexGrid({
           const tr = u.r + dr;
           const dist = hexDistance(u.q, u.r, tq, tr);
           if (dist > vision) continue;
-
-          const key = hexKey(tq, tr);
-          const existing = heatMap.get(key) ?? { A: 0, B: 0 };
-          existing[team]++;
-          heatMap.set(key, existing);
+          seen.add(hexKey(tq, tr));
         }
       }
     }
 
-    return heatMap;
+    // For each hex, determine if it's on the boundary of a team's vision
+    // (inside vision but has at least one neighbor NOT in that team's vision)
+    const boundaryA = new Set<string>();
+    const boundaryB = new Set<string>();
+
+    for (const key of seenA) {
+      const [q, r] = key.split(',').map(Number);
+      for (const [dq, dr] of HEX_NEIGHBORS) {
+        if (!seenA.has(hexKey(q + dq, r + dr))) {
+          boundaryA.add(key);
+          break;
+        }
+      }
+    }
+    for (const key of seenB) {
+      const [q, r] = key.split(',').map(Number);
+      for (const [dq, dr] of HEX_NEIGHBORS) {
+        if (!seenB.has(hexKey(q + dq, r + dr))) {
+          boundaryB.add(key);
+          break;
+        }
+      }
+    }
+
+    return { seenA, seenB, boundaryA, boundaryB };
   }, [tiles]);
 
   // Generate all hex positions in the map
@@ -351,38 +376,83 @@ export default function HexGrid({
               />
             )}
 
-            {/* Vision range hex overlay — flat team-colored tint, stacks on overlap */}
+            {/* Vision brightening — white overlay on hexes within any unit's vision */}
+            {isVisible && (visionData.seenA.has(key) || visionData.seenB.has(key)) && (
+              <polygon
+                points={vertices}
+                fill="white"
+                opacity={0.08}
+                style={{ pointerEvents: 'none' }}
+              />
+            )}
+
+            {/* Vision boundary — outer edges only, per-edge basis */}
             {isVisible && (() => {
-              const heat = visionHeatMap.get(key);
-              if (!heat) return null;
-              const overlays: React.ReactNode[] = [];
+              const inA = visionData.seenA.has(key);
+              const inB = visionData.seenB.has(key);
+              if (!inA && !inB) return null;
 
-              // One overlay per unit that can see this hex — stacks naturally
-              const PER_UNIT_OPACITY = 0.08;
-              for (let i = 0; i < heat.A; i++) {
-                overlays.push(
-                  <polygon
-                    key={`vision-A-${i}`}
-                    points={vertices}
-                    fill="#3b82f6"
-                    opacity={PER_UNIT_OPACITY}
-                    style={{ pointerEvents: 'none' }}
-                  />
-                );
-              }
-              for (let i = 0; i < heat.B; i++) {
-                overlays.push(
-                  <polygon
-                    key={`vision-B-${i}`}
-                    points={vertices}
-                    fill="#ef4444"
-                    opacity={PER_UNIT_OPACITY}
-                    style={{ pointerEvents: 'none' }}
-                  />
-                );
+              // Edge-to-neighbor mapping for flat-top hex:
+              // Edge i connects vertex i to vertex (i+1)%6
+              // Edge 0 (SE side) → neighbor (+1, 0)
+              // Edge 1 (S side)  → neighbor (0, +1)
+              // Edge 2 (SW side) → neighbor (-1, +1)
+              // Edge 3 (NW side) → neighbor (-1, 0)
+              // Edge 4 (N side)  → neighbor (0, -1)
+              // Edge 5 (NE side) → neighbor (+1, -1)
+              const EDGE_NEIGHBORS: [number, number][] = [
+                [+1, 0], [0, +1], [-1, +1], [-1, 0], [0, -1], [+1, -1],
+              ];
+
+              const edges: React.ReactNode[] = [];
+              for (let i = 0; i < 6; i++) {
+                const [dq, dr] = EDGE_NEIGHBORS[i];
+                const neighborKey = hexKey(q + dq, r + dr);
+
+                const angle1 = (Math.PI / 3) * i;
+                const angle2 = (Math.PI / 3) * ((i + 1) % 6);
+                const x1 = cx + HEX_SIZE * Math.cos(angle1);
+                const y1 = cy + HEX_SIZE * Math.sin(angle1);
+                const x2 = cx + HEX_SIZE * Math.cos(angle2);
+                const y2 = cy + HEX_SIZE * Math.sin(angle2);
+
+                // Is this edge on Team A's outer boundary?
+                const edgeA = inA && !visionData.seenA.has(neighborKey);
+                // Is this edge on Team B's outer boundary?
+                const edgeB = inB && !visionData.seenB.has(neighborKey);
+
+                if (edgeA && edgeB) {
+                  // Both boundaries share this exact edge — dashed alternating
+                  edges.push(
+                    <line key={`ea-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke="#3b82f6" strokeWidth={2.5}
+                      strokeDasharray="4 4" strokeDashoffset={0}
+                      strokeLinecap="round"
+                      style={{ pointerEvents: 'none' }} />,
+                    <line key={`eb-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke="#ef4444" strokeWidth={2.5}
+                      strokeDasharray="4 4" strokeDashoffset={4}
+                      strokeLinecap="round"
+                      style={{ pointerEvents: 'none' }} />,
+                  );
+                } else if (edgeA) {
+                  edges.push(
+                    <line key={`ea-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke="#3b82f6" strokeWidth={2.5}
+                      strokeLinecap="round"
+                      style={{ pointerEvents: 'none' }} />
+                  );
+                } else if (edgeB) {
+                  edges.push(
+                    <line key={`eb-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
+                      stroke="#ef4444" strokeWidth={2.5}
+                      strokeLinecap="round"
+                      style={{ pointerEvents: 'none' }} />
+                  );
+                }
               }
 
-              return overlays.length > 0 ? overlays : null;
+              return edges.length > 0 ? edges : null;
             })()}
 
             {/* Base team color tint overlay */}
