@@ -49,11 +49,6 @@ const CLASS_VISION: Record<string, number> = {
   mage: 3,
 };
 
-const CLASS_DASH: Record<string, string> = {
-  rogue: '4 3',   // dashed — fast, darting
-  knight: 'none',  // solid — sturdy
-  mage: '2 2',    // dotted — mystical
-};
 
 /** Simple seeded hash from q,r to pick a grass variant consistently */
 function grassVariant(q: number, r: number): string {
@@ -112,6 +107,49 @@ export default function HexGrid({
       }
     }
     return indexMap;
+  }, [tiles]);
+
+  // Build vision heat map: for each hex, count how many units from each team can see it
+  // Each unit adds one "layer" of team color — overlapping vision stacks naturally
+  const visionHeatMap = useMemo(() => {
+    // Collect all visible units
+    const units: { q: number; r: number; team: string; unitClass: string }[] = [];
+    for (const t of tiles) {
+      const allUnits = (t as any).units ?? (t.unit ? [t.unit] : []);
+      for (const u of allUnits) {
+        if (u.id) {
+          units.push({ q: t.q, r: t.r, team: u.team ?? 'A', unitClass: u.unitClass ?? 'rogue' });
+        }
+      }
+    }
+
+    // For each hex, count how many units of each team can see it
+    const heatMap = new Map<string, { A: number; B: number }>();
+
+    for (const u of units) {
+      const vision = CLASS_VISION[u.unitClass] ?? 3;
+      const team = u.team as 'A' | 'B';
+
+      for (let dq = -vision; dq <= vision; dq++) {
+        for (
+          let dr = Math.max(-vision, -dq - vision);
+          dr <= Math.min(vision, -dq + vision);
+          dr++
+        ) {
+          const tq = u.q + dq;
+          const tr = u.r + dr;
+          const dist = hexDistance(u.q, u.r, tq, tr);
+          if (dist > vision) continue;
+
+          const key = hexKey(tq, tr);
+          const existing = heatMap.get(key) ?? { A: 0, B: 0 };
+          existing[team]++;
+          heatMap.set(key, existing);
+        }
+      }
+    }
+
+    return heatMap;
   }, [tiles]);
 
   // Generate all hex positions in the map
@@ -313,48 +351,38 @@ export default function HexGrid({
               />
             )}
 
-            {/* Vision radius ring — rendered per unit */}
-            {showUnit && !isFog && (() => {
-              const allUnits = (tile as any)?.units ?? (unit ? [unit] : []);
-              return allUnits.map((u: any) => {
-                const vision = CLASS_VISION[u.unitClass] ?? 3;
-                // Vision radius in pixels: each hex step is roughly HEX_SIZE * sqrt(3) apart
-                const visionPx = vision * HEX_SIZE * SQRT3;
-                const teamColor = u.team === 'A' ? '59, 130, 246' : '239, 68, 68'; // blue / red RGB
-                const gradientId = `vision-${u.id}`;
-                const dashStyle = CLASS_DASH[u.unitClass] ?? 'none';
-                return (
-                  <g key={`vision-${u.id}`}>
-                    <defs>
-                      <radialGradient id={gradientId}>
-                        <stop offset="0%" stopColor={`rgba(${teamColor}, 0.18)`} />
-                        <stop offset="50%" stopColor={`rgba(${teamColor}, 0.10)`} />
-                        <stop offset="85%" stopColor={`rgba(${teamColor}, 0.04)`} />
-                        <stop offset="100%" stopColor={`rgba(${teamColor}, 0)`} />
-                      </radialGradient>
-                    </defs>
-                    {/* Gradient fill */}
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={visionPx}
-                      fill={`url(#${gradientId})`}
-                      style={{ pointerEvents: 'none' }}
-                    />
-                    {/* Edge ring with class-specific dash style */}
-                    <circle
-                      cx={cx}
-                      cy={cy}
-                      r={visionPx}
-                      fill="none"
-                      stroke={`rgba(${teamColor}, 0.4)`}
-                      strokeWidth={2}
-                      strokeDasharray={dashStyle}
-                      style={{ pointerEvents: 'none' }}
-                    />
-                  </g>
+            {/* Vision range hex overlay — flat team-colored tint, stacks on overlap */}
+            {isVisible && (() => {
+              const heat = visionHeatMap.get(key);
+              if (!heat) return null;
+              const overlays: React.ReactNode[] = [];
+
+              // One overlay per unit that can see this hex — stacks naturally
+              const PER_UNIT_OPACITY = 0.08;
+              for (let i = 0; i < heat.A; i++) {
+                overlays.push(
+                  <polygon
+                    key={`vision-A-${i}`}
+                    points={vertices}
+                    fill="#3b82f6"
+                    opacity={PER_UNIT_OPACITY}
+                    style={{ pointerEvents: 'none' }}
+                  />
                 );
-              });
+              }
+              for (let i = 0; i < heat.B; i++) {
+                overlays.push(
+                  <polygon
+                    key={`vision-B-${i}`}
+                    points={vertices}
+                    fill="#ef4444"
+                    opacity={PER_UNIT_OPACITY}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                );
+              }
+
+              return overlays.length > 0 ? overlays : null;
             })()}
 
             {/* Base team color tint overlay */}
