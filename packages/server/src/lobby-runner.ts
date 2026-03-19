@@ -1,7 +1,7 @@
 /**
  * Lobby runner: orchestrates a lobby with Claude Agent SDK bots.
- * Creates a LobbyManager, spawns bots, handles team formation,
- * pre-game class selection, and game creation.
+ * Creates a LobbyManager, waits for agents to join (bots or external),
+ * handles team formation, pre-game class selection, and game creation.
  */
 
 import {
@@ -21,7 +21,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export type LobbyRunnerPhase =
-  | 'forming'    // bots negotiating teams
+  | 'forming'    // waiting for agents to join / negotiate teams
   | 'pre_game'   // bots picking classes
   | 'starting'   // game being created
   | 'game'       // game is running
@@ -39,6 +39,7 @@ export interface LobbyRunnerState {
   } | null;
   gameId: string | null;
   error: string | null;
+  teamSize: number;
 }
 
 export interface LobbyRunnerCallbacks {
@@ -116,27 +117,25 @@ export class LobbyRunner {
   private gameId: string | null = null;
   private error: string | null = null;
   private abortController: AbortController;
-  private botCount: number;
   private teamSize: number;
-  /** Number of player slots reserved for external MCP agents (rest are bots) */
-  private externalSlotCount: number;
   /** Session IDs for persistent bot conversations (lobby phase) */
   private lobbySessionIds: Map<string, string> = new Map();
   /** Session IDs for persistent bot conversations (pre-game phase) */
   private preGameSessionIds: Map<string, string> = new Map();
+  /** Tracks which agent IDs are bots (vs external agents) */
+  private botIds: Set<string> = new Set();
+  /** Counter for unique bot names */
+  private botIndex: number = 0;
 
   constructor(
     teamSize: number = 2,
     timeoutMs: number = 120000,
     callbacks: LobbyRunnerCallbacks,
-    externalSlotCount: number = 0,
   ) {
     this.lobby = new LobbyManager(undefined, teamSize);
     this.callbacks = callbacks;
     this.timeoutMs = timeoutMs;
     this.teamSize = teamSize;
-    this.externalSlotCount = Math.min(externalSlotCount, teamSize * 2);
-    this.botCount = teamSize * 2 - this.externalSlotCount; // fill remaining slots with bots
     this.abortController = new AbortController();
   }
 
@@ -178,6 +177,7 @@ export class LobbyRunner {
       preGame,
       gameId: this.gameId,
       error: this.error,
+      teamSize: this.teamSize,
     };
   }
 
@@ -186,31 +186,72 @@ export class LobbyRunner {
   }
 
   /**
-   * Run the full lobby lifecycle: forming -> pre_game -> game creation
+   * Add a bot to the lobby. Creates a bot with a fun name and random ELO,
+   * adds it to the lobby, and starts running its lobby behavior in the background.
+   * Returns the bot's agent ID and handle.
+   */
+  addBot(): { agentId: string; handle: string } {
+    const handle = BOT_NAMES[this.botIndex % BOT_NAMES.length];
+    const id = `agent_${this.botIndex + 1}`;
+    this.botIndex++;
+
+    const agent: LobbyAgent = {
+      id,
+      handle,
+      elo: 1000 + Math.floor(Math.random() * 200),
+    };
+    this.lobby.addAgent(agent);
+    this.botIds.add(id);
+    this.emitState();
+
+    // Start running this bot's lobby behavior in the background (3-4 rounds)
+    if (this.phase === 'forming') {
+      this.runBotLobbyBehavior(id).catch((err) => {
+        console.error(`Bot ${id} lobby behavior error:`, err.message ?? err);
+      });
+    }
+
+    return { agentId: id, handle };
+  }
+
+  /**
+   * Run lobby behavior for a single bot in the background (3-4 rounds).
+   */
+  private async runBotLobbyBehavior(botId: string): Promise<void> {
+    const maxRounds = 4;
+    for (let round = 0; round < maxRounds; round++) {
+      if (this.abortController.signal.aborted) return;
+      if (this.phase !== 'forming') return;
+
+      // Skip if bot is already on a full team
+      const teamId = this.lobby.agentTeam.get(botId);
+      if (teamId) {
+        const team = this.lobby.teams.get(teamId);
+        if (team && team.members.length >= this.teamSize) return;
+      }
+
+      await this.runLobbyBot(botId, round + 1).catch((err) => {
+        if (err.name !== 'AbortError') {
+          console.error(`Lobby bot ${botId} round ${round + 1} error:`, err.message ?? err);
+        }
+      });
+      this.emitState();
+    }
+  }
+
+  /**
+   * Run the full lobby lifecycle: wait for agents -> pre_game -> game creation
    */
   async run(): Promise<void> {
     try {
-      // 1. Add bots to lobby
-      const botIds: string[] = [];
-      for (let i = 0; i < this.botCount; i++) {
-        const id = `agent_${i + 1}`;
-        const handle = BOT_NAMES[i % BOT_NAMES.length];
-        const agent: LobbyAgent = {
-          id,
-          handle,
-          elo: 1000 + Math.floor(Math.random() * 200),
-        };
-        this.lobby.addAgent(agent);
-        botIds.push(id);
-      }
       this.emitState();
 
-      // 2. Run lobby formation phase with bots
-      await this.runFormingPhase(botIds);
+      // 1. Wait for 2 full teams to form
+      await this.waitForTeams();
 
       if (this.abortController.signal.aborted) return;
 
-      // 3. Check if we have enough teams, auto-merge if needed
+      // 2. Check if we have enough teams, auto-merge if needed
       const fullTeams = this.getFullTeams();
       if (fullTeams.length < 2) {
         console.log('Not enough teams formed naturally, auto-merging...');
@@ -218,7 +259,7 @@ export class LobbyRunner {
         this.emitState();
       }
 
-      // 4. Pick the first 2 full teams and start pre-game
+      // 3. Pick the first 2 full teams and start pre-game
       const finalTeams = this.getFullTeams();
       if (finalTeams.length < 2) {
         this.phase = 'failed';
@@ -234,12 +275,13 @@ export class LobbyRunner {
       this.phase = 'pre_game';
       this.emitState();
 
-      // 5. Run pre-game class selection with bots
-      await this.runPreGamePhase([...teamA, ...teamB]);
+      // 4. Run pre-game class selection (only for bots)
+      const botPlayerIds = [...teamA, ...teamB].filter((id) => this.botIds.has(id));
+      await this.runPreGamePhase(botPlayerIds);
 
       if (this.abortController.signal.aborted) return;
 
-      // 6. Create the game
+      // 5. Create the game
       this.phase = 'starting';
       this.emitState();
 
@@ -288,53 +330,48 @@ export class LobbyRunner {
   }
 
   // ---------------------------------------------------------------------------
-  // Forming phase: bots negotiate and form teams
+  // Wait for teams: poll every 2 seconds until 2 full teams exist or timeout
   // ---------------------------------------------------------------------------
 
-  private async runFormingPhase(botIds: string[]): Promise<void> {
-    // Give bots more rounds to negotiate — fun to watch!
-    const maxRounds = 6;
-    const roundTimeMs = Math.min(this.timeoutMs / maxRounds, 30000);
+  private async waitForTeams(): Promise<void> {
+    const startTime = Date.now();
 
-    for (let round = 0; round < maxRounds; round++) {
-      if (this.abortController.signal.aborted) return;
-
-      // Check if we already have 2 full teams
+    while (!this.abortController.signal.aborted) {
+      // Check if we have 2 full teams
       if (this.getFullTeams().length >= 2) {
-        console.log(`2 full teams formed in round ${round + 1}`);
+        console.log('2 full teams formed!');
         return;
       }
 
-      // Run all bots in parallel for this round
-      const roundAbort = new AbortController();
-      const roundTimeout = setTimeout(() => roundAbort.abort(), roundTimeMs);
+      // Check if enough agents to auto-merge into 2 teams
+      const totalAgents = this.lobby.agents.size;
+      if (totalAgents >= this.teamSize * 2) {
+        // We have enough agents — check if teams can be auto-merged
+        // Give them a bit more time to negotiate naturally if under 30s
+        const elapsed = Date.now() - startTime;
+        if (elapsed > 30000 || this.getFullTeams().length >= 2) {
+          return;
+        }
+      }
 
-      // Only run bots that aren't on a full team yet
-      const activeBots = botIds.filter((id) => {
-        const teamId = this.lobby.agentTeam.get(id);
-        if (!teamId) return true;
-        const team = this.lobby.teams.get(teamId);
-        return !team || team.members.length < this.teamSize;
-      });
+      // Check timeout
+      if (Date.now() - startTime > this.timeoutMs) {
+        console.log('Lobby timeout reached');
+        return;
+      }
 
-      const promises = activeBots.map((botId) =>
-        this.runLobbyBot(botId, round + 1, roundAbort).catch((err) => {
-          if (err.name !== 'AbortError') {
-            console.error(`Lobby bot ${botId} error:`, err.message ?? err);
-          }
-        }),
-      );
-
-      await Promise.all(promises);
-      clearTimeout(roundTimeout);
-      this.emitState();
+      // Wait 2 seconds
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Single bot lobby round
+  // ---------------------------------------------------------------------------
 
   private async runLobbyBot(
     botId: string,
     round: number,
-    roundAbort: AbortController,
   ): Promise<void> {
     const lobby = this.lobby;
     const self = this;
@@ -401,10 +438,7 @@ export class LobbyRunner {
     const prompt = `Round ${round}. You are ${handle} (${botId}). Check the lobby state, chat with others, and try to form a team of ${this.teamSize}. Be social and decisive!`;
 
     const localAbort = new AbortController();
-    // Abort if either the round or the runner is aborted
-    const onRoundAbort = () => localAbort.abort();
     const onRunnerAbort = () => localAbort.abort();
-    roundAbort.signal.addEventListener('abort', onRoundAbort);
     this.abortController.signal.addEventListener('abort', onRunnerAbort);
 
     const timeout = setTimeout(() => localAbort.abort(), 20000);
@@ -444,7 +478,6 @@ export class LobbyRunner {
       this.lobbySessionIds.delete(botId);
     } finally {
       clearTimeout(timeout);
-      roundAbort.signal.removeEventListener('abort', onRoundAbort);
       this.abortController.signal.removeEventListener('abort', onRunnerAbort);
     }
   }
@@ -453,14 +486,22 @@ export class LobbyRunner {
   // Pre-game phase: bots pick classes
   // ---------------------------------------------------------------------------
 
-  private async runPreGamePhase(playerIds: string[]): Promise<void> {
+  private async runPreGamePhase(botPlayerIds: string[]): Promise<void> {
+    if (botPlayerIds.length === 0) {
+      // No bots — just wait a bit for external agents to pick, then assign defaults
+      await new Promise((resolve) => setTimeout(resolve, 30000));
+      this.assignDefaultClasses();
+      this.emitState();
+      return;
+    }
+
     const preGameTimeout = setTimeout(() => {
       // Time's up — assign defaults
     }, 45000);
 
     // Round 1: Discuss — bots check team state and chat about strategy
     console.log('[PreGame] Round 1: Discussion');
-    const discussPromises = playerIds.map((id) =>
+    const discussPromises = botPlayerIds.map((id) =>
       this.runPreGameBot(id, 'discuss').catch((err) => {
         if (err.name !== 'AbortError') {
           console.error(`Pre-game discuss bot ${id} error:`, err.message ?? err);
@@ -471,7 +512,7 @@ export class LobbyRunner {
 
     // Round 2: Pick — bots read chat, then choose their class
     console.log('[PreGame] Round 2: Class selection');
-    const pickPromises = playerIds.map((id) =>
+    const pickPromises = botPlayerIds.map((id) =>
       this.runPreGameBot(id, 'pick').catch((err) => {
         if (err.name !== 'AbortError') {
           console.error(`Pre-game pick bot ${id} error:`, err.message ?? err);
@@ -483,6 +524,11 @@ export class LobbyRunner {
     clearTimeout(preGameTimeout);
 
     // Assign default classes to anyone who didn't pick
+    this.assignDefaultClasses();
+    this.emitState();
+  }
+
+  private assignDefaultClasses(): void {
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
     let idx = 0;
     for (const [, player] of this.lobby.preGamePlayers) {
@@ -491,8 +537,6 @@ export class LobbyRunner {
         idx++;
       }
     }
-
-    this.emitState();
   }
 
   private async runPreGameBot(botId: string, mode: 'discuss' | 'pick' = 'pick'): Promise<void> {

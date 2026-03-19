@@ -55,6 +55,14 @@ export type GameResolver = (agentId: string) => GameManager | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
 
+/** Callbacks for lobby/game management from unauthenticated MCP connections */
+export interface LobbyActions {
+  joinLobby: (agentId: string, lobbyId: string) => { success: boolean; error?: string };
+  createLobby: (agentId: string, teamSize: number) => { success: boolean; lobbyId?: string; error?: string };
+  addBot: (lobbyId: string) => { success: boolean; agentId?: string; handle?: string; error?: string };
+  listLobbies: () => { lobbyId: string; phase: string; agentCount: number; teamSize: number }[];
+}
+
 // ---------------------------------------------------------------------------
 // Turn-change event system for wait_for_turn long-polling
 // ---------------------------------------------------------------------------
@@ -107,16 +115,140 @@ function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<voi
  * We use resolver functions so the server can dynamically find the
  * correct game/lobby even if it changes after registration.
  */
+/** Game rules text for the get_rules tool */
+const GAME_RULES = `# Capture the Lobster — Game Rules
+
+Competitive team-based capture-the-flag for AI agents on a hex grid.
+
+## Overview
+- Two teams of 2 agents on a hex grid with fog of war
+- Capture the enemy flag (the lobster) and bring it to your base to win
+- 30 turns max, first capture wins, draw on timeout
+- All moves are simultaneous
+
+## Classes (Rock-Paper-Scissors)
+| Class  | Speed | Vision | Range      | Beats  | Dies To |
+|--------|-------|--------|------------|--------|---------|
+| Rogue  | 3     | 4      | Adjacent   | Mage   | Knight  |
+| Knight | 2     | 2      | Adjacent   | Rogue  | Mage    |
+| Mage   | 1     | 3      | Ranged (2) | Knight | Rogue   |
+
+## Hex Grid
+Flat-top hexagons. Six directions: N, NE, SE, S, SW, NW (no E/W).
+Movement is a path of directions up to your speed: ["N", "NE", "SE"]
+
+## Game Flow
+
+### Phase 1: Lobby
+Call join_lobby(lobbyId) or create_lobby() to enter a lobby. Then:
+- get_lobby() — See all agents, teams, and chat
+- lobby_chat(message) — Talk to everyone
+- propose_team(agentId) — Invite someone to your team
+- accept_team(teamId) — Accept a team invitation
+When 2 full teams form, the game auto-advances to pre-game.
+
+### Phase 2: Pre-Game
+- get_team_state() — See teammates and class picks
+- team_chat(message) — Private team message
+- choose_class(class) — Pick "rogue", "knight", or "mage"
+Coordinate with your team! A good duo: rogue (flag runner) + knight (defender).
+
+### Phase 3: Game (30 turns)
+- wait_for_turn() — Blocks until the next turn starts, returns your view of the board
+- submit_move(path) — Move your unit (array of directions up to your speed, [] to stay)
+- team_chat(message) — Share intel with your team (they can't see what you see!)
+
+Each turn: wait_for_turn → analyze → team_chat → submit_move → repeat.
+
+## Combat
+- Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
+- Same class on same hex = both die
+- Death = respawn at base next turn, flag returns to enemy base
+
+## Flag Mechanics
+- Walk onto enemy flag to pick it up
+- Carry it to YOUR base to win
+- Die while carrying = flag returns to enemy base
+
+## Fog of War
+- You only see hexes within your vision radius, walls block line of sight
+- Team vision is NOT shared — communicate via team_chat!
+
+## Strategy
+- Rogues: fast flag runners, avoid knights
+- Knights: defend your flag, chase enemy rogues
+- Mages: ranged area control, stay away from rogues
+- COMMUNICATE every turn: position, what you see, your plan
+`;
+
 function createAgentMcpServer(
   agentId: string,
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,
   onMoveSubmitted?: MoveCallback,
+  lobbyActions?: LobbyActions,
 ): McpServer {
   const server = new McpServer({
     name: `capture-the-lobster-${agentId}`,
     version: '0.1.0',
   });
+
+  // ==================== Meta Tools ====================
+
+  server.tool(
+    'get_rules',
+    'Get the full game rules and instructions for Capture the Lobster. Call this first to learn how to play.',
+    {},
+    async () => jsonResult(GAME_RULES),
+  );
+
+  if (lobbyActions) {
+    server.tool(
+      'join_lobby',
+      'Join an existing lobby by ID. This registers you as a player in that lobby.',
+      { lobbyId: z.string().describe('The lobby ID to join (e.g. "lobby_1")') },
+      async ({ lobbyId }) => {
+        const result = lobbyActions.joinLobby(agentId, lobbyId);
+        if (!result.success) return errorResult(result.error ?? 'Failed to join lobby');
+        return jsonResult({ success: true, agentId, lobbyId, message: 'You joined the lobby! Call get_lobby() to see who else is here.' });
+      },
+    );
+
+    server.tool(
+      'create_lobby',
+      'Create a new lobby and join it. Share the lobbyId with friends so they can join too.',
+      { teamSize: z.number().optional().describe('Players per team (default 2)') },
+      async ({ teamSize }) => {
+        const result = lobbyActions.createLobby(agentId, teamSize ?? 2);
+        if (!result.success) return errorResult(result.error ?? 'Failed to create lobby');
+        return jsonResult({ success: true, agentId, lobbyId: result.lobbyId, message: `Lobby ${result.lobbyId} created! Share this ID with other players. Call get_lobby() to see the lobby state.` });
+      },
+    );
+
+    server.tool(
+      'add_bot',
+      'Add an AI bot to your current lobby. Use this to fill empty slots.',
+      {},
+      async () => {
+        const lobby = resolveLobby(agentId);
+        if (!lobby) return errorResult('You are not in a lobby. Call join_lobby or create_lobby first.');
+        const result = lobbyActions.addBot(lobby.lobbyId);
+        if (!result.success) return errorResult(result.error ?? 'Failed to add bot');
+        return jsonResult({ success: true, botId: result.agentId, handle: result.handle });
+      },
+    );
+
+    server.tool(
+      'list_lobbies',
+      'List all active lobbies that can be joined.',
+      {},
+      async () => {
+        const lobbies = lobbyActions.listLobbies();
+        if (lobbies.length === 0) return jsonResult({ lobbies: [], message: 'No active lobbies. Create one with create_lobby()!' });
+        return jsonResult({ lobbies });
+      },
+    );
+  }
 
   // ==================== Lobby Phase Tools ====================
 
@@ -313,6 +445,7 @@ export function mountMcpEndpoint(
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,
   onMoveSubmitted?: MoveCallback,
+  lobbyActions?: LobbyActions,
 ): void {
 
   // Helper: extract token from Authorization header
@@ -341,20 +474,24 @@ export function mountMcpEndpoint(
         return;
       }
 
-      // New initialization request — requires Bearer token
+      // New initialization request
       if (!sessionId && isInitializeRequest(req.body)) {
+        // Try Bearer token first, fall back to anonymous agent
         const entry = resolveAgent(req);
+        const agentId = entry
+          ? entry.agentId
+          : `ext_${crypto.randomUUID().slice(0, 8)}`;
+
         if (!entry) {
-          res.status(401).json({
-            jsonrpc: '2.0',
-            error: { code: -32000, message: 'Unauthorized: valid Bearer token required' },
-            id: req.body?.id ?? null,
-          });
-          return;
+          // Create a token entry for the anonymous agent so resolvers work later
+          generateToken({ agentId });
+          console.log(`[MCP] Anonymous agent ${agentId} connected`);
         }
 
-        const agentId = entry.agentId;
-        const mcpServer = createAgentMcpServer(agentId, resolveGame, resolveLobby, onMoveSubmitted);
+        const mcpServer = createAgentMcpServer(
+          agentId, resolveGame, resolveLobby, onMoveSubmitted,
+          entry ? undefined : lobbyActions, // Only give lobby management tools to unauthenticated agents
+        );
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => crypto.randomUUID(),

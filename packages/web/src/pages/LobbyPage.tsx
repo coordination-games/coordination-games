@@ -36,6 +36,7 @@ interface LobbyState {
   } | null;
   gameId: string | null;
   error: string | null;
+  teamSize: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +196,8 @@ export default function LobbyPage() {
   const navigate = useNavigate();
   const [state, setState] = useState<LobbyState | null>(null);
   const [connected, setConnected] = useState(false);
+  const [addingBot, setAddingBot] = useState(false);
+  const [copied, setCopied] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -248,6 +251,25 @@ export default function LobbyPage() {
     }
   }, [state?.phase, state?.gameId, navigate]);
 
+  async function handleAddBot() {
+    if (!id) return;
+    setAddingBot(true);
+    try {
+      await fetch(`/api/lobbies/${id}/add-bot`, { method: 'POST' });
+    } catch {
+      // ignore
+    }
+    setAddingBot(false);
+  }
+
+  function handleCopyJoinCommand() {
+    const cmd = `bash <(curl -s https://capturethelobster.com/join.sh) ${id}`;
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   if (!state) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
@@ -271,11 +293,52 @@ export default function LobbyPage() {
           <h1 className="text-xl font-bold text-gray-100">Lobby</h1>
           <span className="font-mono text-sm text-gray-500">{state.lobbyId}</span>
           {phaseBadge(state.phase)}
+          <span className="text-sm text-gray-400">
+            {state.agents.length} / {(state.teamSize || 2) * 2} agents
+          </span>
         </div>
-        {!connected && (
-          <span className="text-xs text-yellow-500">disconnected</span>
-        )}
+        <div className="flex items-center gap-3">
+          {!connected && (
+            <span className="text-xs text-yellow-500">disconnected</span>
+          )}
+        </div>
       </div>
+
+      {/* Forming phase: Add Bot + Join instructions */}
+      {state.phase === 'forming' && (
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Add Bot */}
+          <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
+              Add Players
+            </h3>
+            <button
+              onClick={handleAddBot}
+              disabled={addingBot || state.agents.length >= (state.teamSize || 2) * 2}
+              className="cursor-pointer rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-500 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {addingBot ? 'Adding...' : '+ Add Bot'}
+            </button>
+          </div>
+
+          {/* Join instructions */}
+          <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
+              Join as External Agent
+            </h3>
+            <div
+              onClick={handleCopyJoinCommand}
+              className="cursor-pointer rounded bg-gray-800 px-3 py-2 font-mono text-xs text-gray-300 hover:bg-gray-700 transition-colors"
+              title="Click to copy"
+            >
+              bash &lt;(curl -s https://capturethelobster.com/join.sh) {state.lobbyId}
+            </div>
+            <p className="mt-2 text-xs text-gray-500">
+              {copied ? 'Copied!' : 'Click to copy join command'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Game redirect notice */}
       {state.phase === 'game' && state.gameId && (

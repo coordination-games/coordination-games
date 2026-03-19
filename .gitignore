@@ -5,3 +5,4 @@ dist/
 .env
 .DS_Store
 packages/server/types-node-22.19.15.tgz
+HEARTBEAT.md

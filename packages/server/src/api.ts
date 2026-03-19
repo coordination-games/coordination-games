@@ -343,6 +343,88 @@ export class GameServer {
       (gameId: string, agentId: string) => {
         this.onMoveSubmitted(gameId, agentId);
       },
+      // Lobby actions for unauthenticated MCP agents
+      {
+        joinLobby: (agentId: string, lobbyId: string) => {
+          const lobbyRoom = this.lobbies.get(lobbyId);
+          if (!lobbyRoom) return { success: false, error: 'Lobby not found' };
+          if (!lobbyRoom.lobbyManager) return { success: false, error: 'Lobby not initialized' };
+
+          // Check if already in this lobby
+          if (this.agentToLobby.get(agentId) === lobbyId) {
+            return { success: true }; // idempotent
+          }
+
+          // Track the slot
+          lobbyRoom.externalSlots.set(agentId, {
+            token: '',
+            agentId,
+            connected: true,
+          });
+
+          // Map agent -> lobby for MCP resolver
+          this.agentToLobby.set(agentId, lobbyId);
+
+          // Add agent to the lobby manager
+          lobbyRoom.lobbyManager.addAgent({
+            id: agentId,
+            handle: `Agent-${agentId.slice(4)}`,
+            elo: 1000,
+          });
+
+          console.log(`[MCP] Agent ${agentId} joined lobby ${lobbyId}`);
+          return { success: true };
+        },
+
+        createLobby: (agentId: string, teamSize: number) => {
+          if (this.activeGameCount() >= this.maxConcurrentGames) {
+            return { success: false, error: 'Server busy — a lobby or game is already running. Wait for it to finish.' };
+          }
+          const { lobbyId } = this.createLobbyGame(teamSize);
+
+          // Auto-join the creator
+          const lobbyRoom = this.lobbies.get(lobbyId);
+          if (lobbyRoom?.lobbyManager) {
+            lobbyRoom.externalSlots.set(agentId, {
+              token: '',
+              agentId,
+              connected: true,
+            });
+            this.agentToLobby.set(agentId, lobbyId);
+            lobbyRoom.lobbyManager.addAgent({
+              id: agentId,
+              handle: `Agent-${agentId.slice(4)}`,
+              elo: 1000,
+            });
+          }
+
+          console.log(`[MCP] Agent ${agentId} created and joined lobby ${lobbyId}`);
+          return { success: true, lobbyId };
+        },
+
+        addBot: (lobbyId: string) => {
+          const lobbyRoom = this.lobbies.get(lobbyId);
+          if (!lobbyRoom) return { success: false, error: 'Lobby not found' };
+          const result = lobbyRoom.runner.addBot();
+          return { success: true, agentId: result.agentId, handle: result.handle };
+        },
+
+        listLobbies: () => {
+          const result: { lobbyId: string; phase: string; agentCount: number; teamSize: number }[] = [];
+          for (const [lobbyId, room] of this.lobbies) {
+            const state = room.state ?? room.runner.getState();
+            if (state.phase === 'forming' || state.phase === 'pre_game') {
+              result.push({
+                lobbyId,
+                phase: state.phase,
+                agentCount: state.agents.length,
+                teamSize: (state as any).teamSize ?? 2,
+              });
+            }
+          }
+          return result;
+        },
+      },
     );
   }
 
@@ -404,10 +486,10 @@ export class GameServer {
       });
     });
 
-    // Start a lobby game with Claude bots (no external slots)
+    // Start a lobby game (empty, no bots auto-spawned)
     router.post('/lobbies/start', (req, res) => {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
-        return res.status(429).json({ error: 'Game limit reached. Wait for the current game to finish.' });
+        return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
       const teamSize = (req.body?.teamSize as number) || 2;
       const timeoutMs = (req.body?.timeoutMs as number) || 120000;
@@ -415,16 +497,28 @@ export class GameServer {
       res.status(201).json({ lobbyId });
     });
 
-    // Create a lobby with external slots
+    // Create a lobby (empty waiting room)
     router.post('/lobbies/create', (req, res) => {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
-        return res.status(429).json({ error: 'Game limit reached. Wait for the current game to finish.' });
+        return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
       const teamSize = (req.body?.teamSize as number) || 2;
-      const externalSlots = (req.body?.externalSlots as number) || 1;
       const timeoutMs = (req.body?.timeoutMs as number) || 120000;
-      const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs, externalSlots);
-      res.status(201).json({ lobbyId, externalSlots });
+      const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
+      res.status(201).json({ lobbyId, teamSize });
+    });
+
+    // Add a bot to a lobby
+    router.post('/lobbies/:id/add-bot', (req, res) => {
+      const lobbyRoom = this.lobbies.get(req.params.id);
+      if (!lobbyRoom) {
+        return res.status(404).json({ error: 'Lobby not found' });
+      }
+      if (lobbyRoom.state?.phase && lobbyRoom.state.phase !== 'forming') {
+        return res.status(400).json({ error: 'Lobby is no longer in forming phase' });
+      }
+      const { agentId, handle } = lobbyRoom.runner.addBot();
+      res.status(201).json({ agentId, handle });
     });
 
     // Register an external agent for a lobby
@@ -534,7 +628,7 @@ export class GameServer {
     // Create a bot game
     router.post('/games/start', (req, res) => {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
-        return res.status(429).json({ error: 'Game limit reached. Wait for the current game to finish.' });
+        return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
       const teamSize = (req.body?.teamSize as number) || 4;
       const { gameId } = this.createBotGame(teamSize);
@@ -944,7 +1038,6 @@ export class GameServer {
   createLobbyGame(
     teamSize: number = 2,
     timeoutMs: number = 120000,
-    externalSlotCount: number = 0,
   ): { lobbyId: string } {
     const runner = new LobbyRunner(teamSize, timeoutMs, {
       onStateChange: (state) => {
@@ -957,7 +1050,7 @@ export class GameServer {
       onGameCreated: (gameId, teamPlayers, handles) => {
         this.createGameFromLobby(gameId, teamPlayers, handles);
       },
-    }, externalSlotCount);
+    });
 
     const lobbyId = runner.lobby.lobbyId;
     const lobbyRoom: LobbyRoom = {
