@@ -379,6 +379,7 @@ export class LobbyManager {
     teamId: string;
     members: PreGamePlayer[];
     timeRemainingSeconds: number;
+    chat: LobbyMessage[];
   } | null {
     const player = this.preGamePlayers.get(agentId);
     if (!player) return null;
@@ -396,6 +397,7 @@ export class LobbyManager {
       teamId: team,
       members,
       timeRemainingSeconds: Math.round(remaining),
+      chat: this.preGameChat[team],
     };
   }
 
