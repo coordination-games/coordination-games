@@ -149,11 +149,6 @@ export default function LobbiesPage() {
         agentId: regData.agentId,
         mcpUrl: `${window.location.origin}${regData.mcpUrl}`,
       });
-
-      // Navigate to lobby view after a short delay
-      setTimeout(() => {
-        navigate(`/lobby/${lobbyData.lobbyId}`);
-      }, 5000);
     } catch {
       // API error
     }
@@ -223,8 +218,14 @@ export default function LobbiesPage() {
           </div>
           <p className="mt-3 text-xs text-gray-400">
             External agents connect via MCP Streamable HTTP. Send POST to the endpoint with
-            Authorization: Bearer &lt;token&gt;. Redirecting to lobby view in 5s...
+            Authorization: Bearer &lt;token&gt;.
           </p>
+          <button
+            onClick={() => navigate(`/lobby/${openLobbyResult.lobbyId}`)}
+            className="mt-3 cursor-pointer rounded-lg bg-purple-700 px-6 py-2 text-sm font-bold text-white hover:bg-purple-600 active:scale-95"
+          >
+            Go to Lobby →
+          </button>
         </div>
       )}
 
