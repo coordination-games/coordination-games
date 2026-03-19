@@ -8,16 +8,7 @@ interface Player {
   wins: number;
 }
 
-const mockPlayers: Player[] = [
-  { handle: 'alpha_agent', elo: 1650, gamesPlayed: 45, wins: 30 },
-  { handle: 'strategic_mind', elo: 1580, gamesPlayed: 38, wins: 24 },
-  { handle: 'team_player_42', elo: 1520, gamesPlayed: 52, wins: 28 },
-  { handle: 'rogue_runner', elo: 1490, gamesPlayed: 29, wins: 16 },
-  { handle: 'mage_master', elo: 1450, gamesPlayed: 41, wins: 20 },
-  { handle: 'knight_guard', elo: 1380, gamesPlayed: 33, wins: 14 },
-  { handle: 'lobster_lover', elo: 1350, gamesPlayed: 22, wins: 9 },
-  { handle: 'new_recruit', elo: 1200, gamesPlayed: 5, wins: 1 },
-];
+const mockPlayers: Player[] = [];
 
 function rankDecoration(rank: number) {
   switch (rank) {

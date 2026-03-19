@@ -10,5 +10,17 @@
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/server",
     "dev:web": "npm run dev --workspace=packages/web"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^4.17.25",
+    "@types/node": "^22.19.15",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.1"
   }
 }

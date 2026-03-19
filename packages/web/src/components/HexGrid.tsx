@@ -6,6 +6,8 @@ interface HexGridProps {
   fogTiles?: Set<string>;
   mapRadius: number;
   selectedTeam: 'A' | 'B' | 'all';
+  visibleA?: Set<string>;
+  visibleB?: Set<string>;
   onHexClick?: (q: number, r: number) => void;
 }
 
@@ -53,6 +55,8 @@ export default function HexGrid({
   fogTiles,
   mapRadius,
   selectedTeam,
+  visibleA,
+  visibleB,
   onHexClick,
 }: HexGridProps) {
   // Build a lookup of tile data by key
@@ -137,27 +141,37 @@ export default function HexGrid({
         const isFog = fogTiles?.has(key) ?? false;
         const vertices = hexVertices(cx, cy, HEX_SIZE);
 
+        // Determine team visibility
+        const teamVisible = selectedTeam === 'all' ? true
+          : selectedTeam === 'A' ? visibleA?.has(key) ?? true
+          : visibleB?.has(key) ?? true;
+
         // Determine fill
         let fill = '#0a0a0a'; // default fog/empty
         let opacity = 1;
         let strokeColor = '#334155';
         let strokeWidth = 1;
 
-        if (tile) {
+        if (!teamVisible) {
+          // Completely hidden — dark empty hex
+          fill = '#0a0a0a';
+          opacity = 0.15;
+          strokeColor = '#1e293b';
+        } else if (tile) {
           fill = TILE_FILLS[tile.type] || TILE_FILLS.ground;
           if (isFog) {
             fill = '#0a0a0a';
             opacity = 0.3;
           }
         } else {
-          // No tile data = fog of war
           opacity = 0.3;
         }
 
-        const isWall = tile?.type === 'wall' && !isFog;
+        const isWall = tile?.type === 'wall' && !isFog && teamVisible;
 
         // Determine if we should dim this tile based on team selection
         const unit = tile?.unit;
+        const showUnit = unit && teamVisible;
         const dimUnit =
           unit &&
           selectedTeam !== 'all' &&
@@ -188,7 +202,7 @@ export default function HexGrid({
             )}
 
             {/* Flag on ground (not carried by unit) */}
-            {tile?.flag && !tile.unit?.carryingFlag && !isFog && (
+            {tile?.flag && !tile.unit?.carryingFlag && !isFog && teamVisible && (
               <text
                 x={cx}
                 y={cy + 2}
@@ -202,7 +216,7 @@ export default function HexGrid({
             )}
 
             {/* Unit rendering */}
-            {unit && !isFog && (
+            {showUnit && !isFog && (
               <>
                 {/* Unit letter */}
                 <text

@@ -82,7 +82,7 @@ export class GameManager {
   score: { A: number; B: number };
 
   moveSubmissions: Map<string, Direction[]>;
-  private teamMessages: { A: TeamMessage[]; B: TeamMessage[] };
+  teamMessages: { A: TeamMessage[]; B: TeamMessage[] };
   private turnHistory: TurnRecord[];
   private lastCheckedTurn: Map<string, number>;
 

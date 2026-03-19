@@ -4,6 +4,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
+
 import {
   GameManager,
   GamePhase,
@@ -18,8 +19,12 @@ import {
   generateMap,
   TileType,
   GameMap,
+  getUnitVision,
+  hexToString,
+  CLASS_VISION,
 } from '@lobster/engine';
 import { EloTracker } from './elo.js';
+import { runAllBotsTurn } from './claude-bot.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +64,8 @@ export interface SpectatorState {
   flagB: { status: 'at_base' | 'carried'; carrier?: string };
   score: { A: number; B: number };
   mapRadius: number;
+  visibleA: string[];  // hex keys visible to team A
+  visibleB: string[];  // hex keys visible to team B
 }
 
 export interface GameRoom {
@@ -68,7 +75,10 @@ export interface GameRoom {
   spectatorDelay: number;           // turns of delay (default 5)
   turnTimer: ReturnType<typeof setInterval> | null;
   botHandles: string[];             // handles of bot players in this room
+  botMeta: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   finished: boolean;
+  useClaudeBots: boolean;
+  turnInProgress: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +141,29 @@ function buildSpectatorState(game: GameManager): SpectatorState {
     return { status: 'at_base' };
   }
 
+  // Compute per-team fog of war
+  const walls = new Set<string>();
+  const allHexKeys = new Set<string>();
+  for (const [key, tileType] of map.tiles) {
+    allHexKeys.add(key);
+    if (tileType === 'wall') walls.add(key);
+  }
+
+  const visibleA = new Set<string>();
+  const visibleB = new Set<string>();
+  for (const u of units) {
+    if (!u.alive) continue;
+    const unitVision = getUnitVision(
+      { id: u.id, position: u.position, unitClass: u.unitClass, team: u.team, alive: u.alive } as any,
+      walls,
+      allHexKeys,
+    );
+    const targetSet = u.team === 'A' ? visibleA : visibleB;
+    for (const hex of unitVision) {
+      targetSet.add(hex);
+    }
+  }
+
   return {
     turn,
     maxTurns: config.turnLimit,
@@ -145,12 +178,14 @@ function buildSpectatorState(game: GameManager): SpectatorState {
       carryingFlag: u.carryingFlag,
     })),
     kills,
-    chatA: [], // spectators get empty chat by default (privacy)
-    chatB: [],
+    chatA: game.teamMessages.A,
+    chatB: game.teamMessages.B,
     flagA: flagStatus(flags.A),
     flagB: flagStatus(flags.B),
     score: { A: score.A, B: score.B },
     mapRadius: map.radius,
+    visibleA: [...visibleA],
+    visibleB: [...visibleB],
   };
 }
 
@@ -173,10 +208,11 @@ function getDelayedState(room: GameRoom): SpectatorState | null {
 // ---------------------------------------------------------------------------
 
 export class GameServer {
-  private app: express.Application;
+  private app: any;
   private server: http.Server;
   private wss: WebSocketServer;
   readonly elo: EloTracker;
+  private useClaudeBots: boolean = false;
 
   readonly games: Map<string, GameRoom> = new Map();
 
@@ -192,6 +228,12 @@ export class GameServer {
     this.server = http.createServer(this.app);
     this.wss = new WebSocketServer({ noServer: true });
     this.elo = new EloTracker();
+
+    // Enable Claude Agent SDK bots (uses local credentials from ~/.claude)
+    this.useClaudeBots = process.env.USE_CLAUDE_BOTS !== 'false';
+    console.log(this.useClaudeBots
+      ? 'Claude Agent SDK bots enabled (haiku) — using local credentials'
+      : 'Claude bots disabled — using heuristic bots');
 
     this.setupRoutes();
     this.setupWebSocket();
@@ -278,6 +320,13 @@ export class GameServer {
     });
 
     this.app.use('/api', router);
+
+    // SPA catch-all: serve index.html for any non-API route
+    const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
+    const indexPath = path.resolve(__dirname2, '../../web/dist/index.html');
+    this.app.get('*', (_req: any, res: any) => {
+      res.sendFile(indexPath);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -365,7 +414,7 @@ export class GameServer {
       });
     }
 
-    const gameMap = generateMap({ radius: 8 });
+    const gameMap = generateMap({ radius: 5 });
     const game = new GameManager(gameId, gameMap, players);
 
     // Take initial snapshot
@@ -375,20 +424,25 @@ export class GameServer {
       game,
       spectators: new Set(),
       stateHistory: [initialState],
-      spectatorDelay: 5,
+      spectatorDelay: 0,  // No delay for beta testing
       turnTimer: null,
       botHandles,
+      botMeta: players,
       finished: false,
+      useClaudeBots: this.useClaudeBots,
+      turnInProgress: false,
     };
 
     this.games.set(gameId, room);
 
     // Start the auto-play turn loop
+    // Claude bots need more time per turn (API calls), heuristic bots are instant
+    const turnInterval = room.useClaudeBots ? 8000 : 2000;
     room.turnTimer = setInterval(() => {
       this.runTurnLoop(gameId).catch((err) => {
         console.error(`Turn loop error for ${gameId}:`, err);
       });
-    }, 2000);
+    }, turnInterval);
 
     return { gameId, game };
   }
@@ -399,7 +453,8 @@ export class GameServer {
 
   async runTurnLoop(gameId: string): Promise<void> {
     const room = this.games.get(gameId);
-    if (!room || room.finished) return;
+    if (!room || room.finished || room.turnInProgress) return;
+    room.turnInProgress = true;
 
     const { game, botHandles } = room;
 
@@ -408,6 +463,7 @@ export class GameServer {
       if (room.turnTimer) clearInterval(room.turnTimer);
       room.turnTimer = null;
       room.finished = true;
+      room.turnInProgress = false;
 
       // Final broadcast with no delay so spectators see the result
       const finalState = buildSpectatorState(game);
@@ -421,14 +477,17 @@ export class GameServer {
       return;
     }
 
-    // Submit random valid moves for all alive bots
-    for (const botId of botHandles) {
-      const unit = game.units.find((u) => u.id === botId);
-      if (!unit || !unit.alive) continue;
-
-      // Pick a random direction path (1 step to keep it simple)
-      const randomDir = ALL_DIRECTIONS[Math.floor(Math.random() * ALL_DIRECTIONS.length)];
-      game.submitMove(botId, [randomDir]);
+    if (room.useClaudeBots) {
+      // Claude Agent SDK bots — each bot runs haiku with game MCP tools
+      await runAllBotsTurn(game, room.botMeta, game.turn);
+    } else {
+      // Fallback: random bot moves
+      for (const botId of botHandles) {
+        const unit = game.units.find((u) => u.id === botId);
+        if (!unit || !unit.alive) continue;
+        const randomDir = ALL_DIRECTIONS[Math.floor(Math.random() * ALL_DIRECTIONS.length)];
+        game.submitMove(botId, [randomDir]);
+      }
     }
 
     // Resolve the turn
@@ -440,6 +499,7 @@ export class GameServer {
 
     // Broadcast delayed state to spectators
     this.broadcastState(room);
+    room.turnInProgress = false;
   }
 
   // ---------------------------------------------------------------------------

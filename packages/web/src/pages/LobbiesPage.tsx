@@ -12,11 +12,7 @@ interface Game {
   teamsB: number;
 }
 
-const mockGames: Game[] = [
-  { id: 'game-1', turn: 12, maxTurns: 30, phase: 'in_progress', teamsA: 4, teamsB: 4 },
-  { id: 'game-2', turn: 30, maxTurns: 30, phase: 'finished', winner: 'A', teamsA: 4, teamsB: 4 },
-  { id: 'game-3', turn: 5, maxTurns: 30, phase: 'in_progress', teamsA: 4, teamsB: 4 },
-];
+const mockGames: Game[] = [];
 
 function phaseBadge(phase: string) {
   switch (phase) {
@@ -54,9 +50,20 @@ export default function LobbiesPage() {
     async function load() {
       try {
         const data = await fetchGames();
-        if (!cancelled) setGames(data as Game[]);
+        if (!cancelled) {
+          const mapped = (data as any[]).map((g: any) => ({
+            id: g.id,
+            turn: g.turn ?? 0,
+            maxTurns: 30,
+            phase: g.phase ?? 'in_progress',
+            winner: g.winner,
+            teamsA: Array.isArray(g.teams?.A) ? g.teams.A.length : (g.teamsA ?? 0),
+            teamsB: Array.isArray(g.teams?.B) ? g.teams.B.length : (g.teamsB ?? 0),
+          }));
+          setGames(mapped);
+        }
       } catch {
-        // API not available yet — keep mock data
+        // API not available yet
       }
     }
 
@@ -74,7 +81,7 @@ export default function LobbiesPage() {
       const res = await fetch('/api/games/start', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
-        navigate(`/game/${data.id}`);
+        navigate(`/game/${data.gameId}`);
         return;
       }
     } catch {

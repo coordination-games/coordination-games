@@ -1,151 +1,89 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import HexGrid from '../components/HexGrid';
 import type {
   SpectatorGameState,
-  VisibleTile,
   KillEvent,
   ChatMessage,
 } from '../types';
 
 // ---------------------------------------------------------------------------
-// Mock data
+// Map server state → frontend types
 // ---------------------------------------------------------------------------
 
-function generateMockState(): SpectatorGameState {
-  const mapRadius = 6;
-  const tiles: VisibleTile[] = [];
+function mapServerState(raw: any): SpectatorGameState | null {
+  if (!raw) return null;
+  // The WS sends { type: 'state_update' | 'game_over', data: {...} }
+  const data = raw.data ?? raw;
 
-  // Generate full hex grid
-  for (let dq = -mapRadius; dq <= mapRadius; dq++) {
-    for (
-      let dr = Math.max(-mapRadius, -dq - mapRadius);
-      dr <= Math.min(mapRadius, -dq + mapRadius);
-      dr++
-    ) {
-      let type: VisibleTile['type'] = 'ground';
+  if (!data.tiles || !Array.isArray(data.tiles)) return null;
 
-      // Bases
-      if (dq === -5 && dr === 2) type = 'base_a';
-      if (dq === -5 && dr === 3) type = 'base_a';
-      if (dq === -4 && dr === 2) type = 'base_a';
-      if (dq === 5 && dr === -2) type = 'base_b';
-      if (dq === 5 && dr === -3) type = 'base_b';
-      if (dq === 4 && dr === -2) type = 'base_b';
+  // Map tiles: server sends type as TileType ('ground'|'wall'|'base_a'|'base_b')
+  const tiles = data.tiles.map((t: any) => ({
+    q: t.q,
+    r: t.r,
+    type: t.type,
+    unit: t.unit
+      ? {
+          id: t.unit.id,
+          team: t.unit.team,
+          unitClass: t.unit.unitClass,
+          carryingFlag: t.unit.carryingFlag || false,
+        }
+      : undefined,
+    flag: t.flag,
+  }));
 
-      // Walls — a cluster in the middle and some scattered
-      const wallPositions = [
-        '0,0', '1,0', '-1,1', '0,-1',
-        '2,-3', '3,-3',
-        '-2,4', '-3,4',
-        '1,2', '1,3',
-        '-1,-2', '-2,-1',
-      ];
-      if (wallPositions.includes(`${dq},${dr}`)) type = 'wall';
-
-      const tile: VisibleTile = { q: dq, r: dr, type };
-      tiles.push(tile);
-    }
+  // Map kills: server sends { killerId, victimId, reason }
+  // We need to enrich with class/team info from units
+  const unitMap = new Map<string, any>();
+  for (const u of data.units ?? []) {
+    unitMap.set(u.id, u);
   }
 
-  // Place units
-  const unitPlacements: {
-    q: number;
-    r: number;
-    team: 'A' | 'B';
-    unitClass: 'rogue' | 'knight' | 'mage';
-    carryingFlag?: boolean;
-    id: string;
-  }[] = [
-    { q: -4, r: 3, team: 'A', unitClass: 'rogue', id: 'a1' },
-    { q: -3, r: 2, team: 'A', unitClass: 'knight', id: 'a2' },
-    { q: -2, r: 0, team: 'A', unitClass: 'mage', id: 'a3' },
-    { q: 2, r: -1, team: 'A', unitClass: 'rogue', id: 'a4', carryingFlag: true },
-    { q: 4, r: -3, team: 'B', unitClass: 'rogue', id: 'b1' },
-    { q: 3, r: -2, team: 'B', unitClass: 'knight', id: 'b2' },
-    { q: 2, r: 0, team: 'B', unitClass: 'mage', id: 'b3' },
-    { q: -1, r: 2, team: 'B', unitClass: 'knight', id: 'b4' },
-  ];
+  const kills: KillEvent[] = (data.kills ?? []).map((k: any) => {
+    const killer = unitMap.get(k.killerId);
+    const victim = unitMap.get(k.victimId);
+    return {
+      killerId: k.killerId,
+      killerClass: killer?.unitClass ?? 'unknown',
+      killerTeam: killer?.team ?? 'A',
+      victimId: k.victimId,
+      victimClass: victim?.unitClass ?? 'unknown',
+      victimTeam: victim?.team ?? 'B',
+      reason: k.reason,
+      turn: data.turn,
+    };
+  });
 
-  for (const u of unitPlacements) {
-    const tile = tiles.find((t) => t.q === u.q && t.r === u.r);
-    if (tile) {
-      tile.unit = {
-        id: u.id,
-        team: u.team,
-        unitClass: u.unitClass,
-        carryingFlag: u.carryingFlag,
-      };
-    }
-  }
+  // Flag status
+  const flagA = data.flagA ?? { status: 'at_base' };
+  const flagB = data.flagB ?? { status: 'at_base' };
 
-  // Place flags
-  // Flag A is being carried by a4 (already shown via carryingFlag)
-  // Flag B sits at its base
-  const flagBTile = tiles.find((t) => t.q === 5 && t.r === -2);
-  if (flagBTile) flagBTile.flag = { team: 'B' };
-
-  // Flag A's home position (currently carried, so show flag icon at base dimmed — or not at all)
-  // We won't place it on the map since it's carried.
-
-  const kills: KillEvent[] = [
-    {
-      killerId: 'a1',
-      killerClass: 'rogue',
-      killerTeam: 'A',
-      victimId: 'b5',
-      victimClass: 'mage',
-      victimTeam: 'B',
-      reason: 'rogue beats mage in melee',
-      turn: 3,
-    },
-    {
-      killerId: 'b2',
-      killerClass: 'knight',
-      killerTeam: 'B',
-      victimId: 'a5',
-      victimClass: 'rogue',
-      victimTeam: 'A',
-      reason: 'knight beats rogue in melee',
-      turn: 4,
-    },
-    {
-      killerId: 'a3',
-      killerClass: 'mage',
-      killerTeam: 'A',
-      victimId: 'b6',
-      victimClass: 'knight',
-      victimTeam: 'B',
-      reason: 'mage ranged kill on knight at distance 2',
-      turn: 5,
-    },
-  ];
-
-  const chatA: ChatMessage[] = [
-    { from: 'agent_a1', message: 'Pushing NE with flag', turn: 4 },
-    { from: 'agent_a3', message: 'Covering mid, watch the knight', turn: 5 },
-    { from: 'agent_a2', message: 'Moving to intercept', turn: 5 },
-  ];
-
-  const chatB: ChatMessage[] = [
-    { from: 'agent_b2', message: 'They have our flag, chase!', turn: 4 },
-    { from: 'agent_b3', message: 'Hold NE corridor', turn: 5 },
-    { from: 'agent_b4', message: 'Flanking from south', turn: 5 },
-  ];
+  const flagAStatus =
+    flagA.status === 'carried' && flagA.carrier
+      ? `Carried by ${flagA.carrier}`
+      : 'At Base';
+  const flagBStatus =
+    flagB.status === 'carried' && flagB.carrier
+      ? `Carried by ${flagB.carrier}`
+      : 'At Base';
 
   return {
-    turn: 5,
-    maxTurns: 30,
-    phase: 'in_progress',
-    timeRemaining: 18,
+    turn: data.turn ?? 0,
+    maxTurns: data.maxTurns ?? 30,
+    phase: data.phase ?? 'in_progress',
+    timeRemaining: 30,
     tiles,
     kills,
-    chatA,
-    chatB,
-    flagA: { status: 'Carried by A rogue' },
-    flagB: { status: 'At Base' },
-    winner: null,
-    mapRadius,
+    chatA: data.chatA ?? [],
+    chatB: data.chatB ?? [],
+    flagA: { status: flagAStatus },
+    flagB: { status: flagBStatus },
+    winner: data.winner ?? null,
+    mapRadius: data.mapRadius ?? 8,
+    visibleA: new Set(data.visibleA ?? []),
+    visibleB: new Set(data.visibleB ?? []),
   };
 }
 
@@ -215,15 +153,83 @@ function ChatLog({
 export default function GamePage() {
   const { id } = useParams<{ id: string }>();
   const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>('all');
+  const [gameState, setGameState] = useState<SpectatorGameState | null>(null);
+  const [allKills, setAllKills] = useState<KillEvent[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // Use mock data for now; will be replaced with useGameSocket(id)
-  const gameState = useMemo(() => generateMockState(), []);
+  // Fetch initial state via REST, then connect WebSocket for live updates
+  useEffect(() => {
+    if (!id) return;
+
+    // Fetch initial state
+    fetch(`/api/games/${id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        const mapped = mapServerState(data);
+        if (mapped) {
+          setGameState(mapped);
+          if (mapped.kills.length > 0) {
+            setAllKills(mapped.kills);
+          }
+        }
+      })
+      .catch(() => {});
+
+    // Connect WebSocket
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/game/${id}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      setConnected(true);
+      setError(null);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const raw = JSON.parse(event.data);
+        const mapped = mapServerState(raw);
+        if (mapped) {
+          setGameState(mapped);
+          if (mapped.kills.length > 0) {
+            setAllKills((prev) => [...prev, ...mapped.kills]);
+          }
+        }
+      } catch {
+        console.warn('Failed to parse WS message');
+      }
+    };
+
+    ws.onerror = () => setError('WebSocket error');
+    ws.onclose = () => setConnected(false);
+
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [id]);
 
   const teamButtons: { label: string; value: 'A' | 'B' | 'all' }[] = [
     { label: 'All', value: 'all' },
     { label: 'Team A', value: 'A' },
     { label: 'Team B', value: 'B' },
   ];
+
+  if (!gameState) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <div className="text-center">
+          <div className="text-4xl mb-4">🦞</div>
+          <p className="text-gray-400">
+            {error ? error : connected ? 'Waiting for game data...' : `Connecting to game ${id}...`}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const chatMessages =
     selectedTeam === 'A'
@@ -244,14 +250,14 @@ export default function GamePage() {
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-400">
             Game{' '}
-            <span className="font-mono text-emerald-400">{id ?? 'demo'}</span>
+            <span className="font-mono text-emerald-400">{id}</span>
           </span>
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
-          <span className="text-sm text-gray-400">
-            <span className="tabular-nums">{gameState.timeRemaining}s</span>
-          </span>
+          {!connected && (
+            <span className="text-xs text-yellow-500">disconnected</span>
+          )}
           {gameState.phase === 'finished' && (
             <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-800 text-emerald-200">
               FINISHED
@@ -288,6 +294,8 @@ export default function GamePage() {
             tiles={gameState.tiles}
             mapRadius={gameState.mapRadius}
             selectedTeam={selectedTeam}
+            visibleA={gameState.visibleA}
+            visibleB={gameState.visibleB}
           />
         </div>
 
@@ -299,7 +307,7 @@ export default function GamePage() {
               Kill Feed
             </h3>
             <div className="overflow-y-auto flex-1 scrollbar-thin">
-              <KillFeed kills={gameState.kills} />
+              <KillFeed kills={allKills} />
             </div>
           </div>
 
