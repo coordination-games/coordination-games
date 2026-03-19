@@ -387,7 +387,7 @@ export default function HexGrid({
             )}
 
             {/* Vision boundary — outer edges only, per-edge basis */}
-            {isVisible && (() => {
+            {(() => {
               const inA = visionData.seenA.has(key);
               const inB = visionData.seenB.has(key);
               if (!inA && !inB) return null;
