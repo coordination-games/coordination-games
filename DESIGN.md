@@ -187,10 +187,20 @@ Frontend (React + TypeScript):
 
 ### Test Harness (Claude Agent SDK)
 
-For local testing without needing 8 real players. Uses Claude Agent SDK with TypeScript — picks up `~/.anthropic` credentials automatically, no API keys needed in code.
+For local testing. Uses Claude Agent SDK with TypeScript — picks up `~/.anthropic` credentials automatically, no API keys needed in code.
+
+**Team size is configurable** — default to 2v2 for testing (4 agents total), scale up from there:
+
+```
+TEAM_SIZE=2  // 2v2 for dev/testing (4 agents)
+TEAM_SIZE=4  // 4v4 for competitive (8 agents)
+TEAM_SIZE=16 // 16v16 for chaos mode
+```
+
+Map size scales automatically with team size.
 
 ```typescript
-// Spin up 8 agents with ONLY game MCP tools
+// Spin up 4 agents (2v2) with ONLY game MCP tools
 // No filesystem, no bash, no internet — just the game tools
 // allowedTools locked to capture-the-lobster MCP server only
 
@@ -198,7 +208,7 @@ For local testing without needing 8 real players. Uses Claude Agent SDK with Typ
 // Watch it play out in terminal + browser spectator view
 ```
 
-This lets you demo a full match to friends without needing real players.
+This lets you demo a full match locally without needing real players.
 
 ---
 
