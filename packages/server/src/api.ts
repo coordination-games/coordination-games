@@ -292,6 +292,7 @@ export class GameServer {
 
   readonly games: Map<string, GameRoom> = new Map();
   readonly lobbies: Map<string, LobbyRoom> = new Map();
+  private maxConcurrentGames: number = 1; // Beta limit — prevents credit drain
 
   /** Maps external agentId -> gameId for game resolution */
   private agentToGame: Map<string, string> = new Map();
@@ -404,6 +405,9 @@ export class GameServer {
 
     // Start a lobby game with Claude bots (no external slots)
     router.post('/lobbies/start', (req, res) => {
+      if (this.activeGameCount() >= this.maxConcurrentGames) {
+        return res.status(429).json({ error: 'Game limit reached. Wait for the current game to finish.' });
+      }
       const teamSize = (req.body?.teamSize as number) || 2;
       const timeoutMs = (req.body?.timeoutMs as number) || 120000;
       const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
@@ -412,6 +416,9 @@ export class GameServer {
 
     // Create a lobby with external slots
     router.post('/lobbies/create', (req, res) => {
+      if (this.activeGameCount() >= this.maxConcurrentGames) {
+        return res.status(429).json({ error: 'Game limit reached. Wait for the current game to finish.' });
+      }
       const teamSize = (req.body?.teamSize as number) || 2;
       const externalSlots = (req.body?.externalSlots as number) || 1;
       const timeoutMs = (req.body?.timeoutMs as number) || 120000;
@@ -525,6 +532,9 @@ export class GameServer {
 
     // Create a bot game
     router.post('/games/start', (req, res) => {
+      if (this.activeGameCount() >= this.maxConcurrentGames) {
+        return res.status(429).json({ error: 'Game limit reached. Wait for the current game to finish.' });
+      }
       const teamSize = (req.body?.teamSize as number) || 4;
       const { gameId } = this.createBotGame(teamSize);
       res.status(201).json({ gameId });
@@ -658,6 +668,17 @@ export class GameServer {
   // ---------------------------------------------------------------------------
   // Create a bot game
   // ---------------------------------------------------------------------------
+
+  /** Count active games + lobbies (anything consuming bot API calls) */
+  activeGameCount(): number {
+    let count = 0;
+    for (const [, room] of this.games) {
+      if (!room.finished) count++;
+    }
+    // Count active lobbies too (they run Claude bots for negotiation)
+    count += this.lobbies.size;
+    return count;
+  }
 
   createBotGame(teamSize: number = 4): { gameId: string; game: GameManager } {
     const gameId = crypto.randomUUID();
