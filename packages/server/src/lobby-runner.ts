@@ -440,17 +440,30 @@ export class LobbyRunner {
   private async runPreGamePhase(playerIds: string[]): Promise<void> {
     const preGameTimeout = setTimeout(() => {
       // Time's up — assign defaults
-    }, 30000);
+    }, 45000);
 
-    const promises = playerIds.map((id) =>
-      this.runPreGameBot(id).catch((err) => {
+    // Round 1: Discuss — bots check team state and chat about strategy
+    console.log('[PreGame] Round 1: Discussion');
+    const discussPromises = playerIds.map((id) =>
+      this.runPreGameBot(id, 'discuss').catch((err) => {
         if (err.name !== 'AbortError') {
-          console.error(`Pre-game bot ${id} error:`, err.message ?? err);
+          console.error(`Pre-game discuss bot ${id} error:`, err.message ?? err);
         }
       }),
     );
+    await Promise.all(discussPromises);
 
-    await Promise.all(promises);
+    // Round 2: Pick — bots read chat, then choose their class
+    console.log('[PreGame] Round 2: Class selection');
+    const pickPromises = playerIds.map((id) =>
+      this.runPreGameBot(id, 'pick').catch((err) => {
+        if (err.name !== 'AbortError') {
+          console.error(`Pre-game pick bot ${id} error:`, err.message ?? err);
+        }
+      }),
+    );
+    await Promise.all(pickPromises);
+
     clearTimeout(preGameTimeout);
 
     // Assign default classes to anyone who didn't pick
@@ -466,7 +479,7 @@ export class LobbyRunner {
     this.emitState();
   }
 
-  private async runPreGameBot(botId: string): Promise<void> {
+  private async runPreGameBot(botId: string, mode: 'discuss' | 'pick' = 'pick'): Promise<void> {
     const lobby = this.lobby;
     const self = this;
     const agent = lobby.agents.get(botId);
@@ -513,7 +526,9 @@ export class LobbyRunner {
     });
 
     const serverName = `pregame-${botId}`;
-    const prompt = `Pre-game class selection. You are ${handle} (${botId}) on Team ${team}. Check your team state, discuss with teammates, and pick your class. You have 30 seconds!`;
+    const prompt = mode === 'discuss'
+      ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Check your team state with get_team_state, then use team_chat to discuss strategy and class composition with your teammates. DON'T pick your class yet — just discuss who should play what role. A good team needs a mix of classes!`
+      : `Time to pick! You are ${handle} (${botId}) on Team ${team}. Check what your teammates said with get_team_state, read the team chat, then choose_class based on what the team agreed. If no agreement, pick what the team is missing.`;
 
     const localAbort = new AbortController();
     const onRunnerAbort = () => localAbort.abort();
