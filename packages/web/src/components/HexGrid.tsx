@@ -43,11 +43,6 @@ const CLASS_LETTERS: Record<string, string> = {
   mage: 'M',
 };
 
-const CLASS_VISION: Record<string, number> = {
-  rogue: 4,
-  knight: 2,
-  mage: 3,
-};
 
 
 /** Simple seeded hash from q,r to pick a grass variant consistently */
@@ -109,73 +104,10 @@ export default function HexGrid({
     return indexMap;
   }, [tiles]);
 
-  // Flat-top hex neighbor offsets: N, NE, SE, S, SW, NW
-  const HEX_NEIGHBORS: [number, number][] = [
-    [0, -1], [+1, -1], [+1, 0], [0, +1], [-1, +1], [-1, 0],
-  ];
-
-  // Build vision data: which hexes each team can see + boundary detection
-  const visionData = useMemo(() => {
-    // Collect all visible units
-    const units: { q: number; r: number; team: string; unitClass: string }[] = [];
-    for (const t of tiles) {
-      const allUnits = (t as any).units ?? (t.unit ? [t.unit] : []);
-      for (const u of allUnits) {
-        if (u.id) {
-          units.push({ q: t.q, r: t.r, team: u.team ?? 'A', unitClass: u.unitClass ?? 'rogue' });
-        }
-      }
-    }
-
-    // Sets of hex keys visible to each team
-    const seenA = new Set<string>();
-    const seenB = new Set<string>();
-
-    for (const u of units) {
-      const vision = CLASS_VISION[u.unitClass] ?? 3;
-      const seen = u.team === 'A' ? seenA : seenB;
-
-      for (let dq = -vision; dq <= vision; dq++) {
-        for (
-          let dr = Math.max(-vision, -dq - vision);
-          dr <= Math.min(vision, -dq + vision);
-          dr++
-        ) {
-          const tq = u.q + dq;
-          const tr = u.r + dr;
-          const dist = hexDistance(u.q, u.r, tq, tr);
-          if (dist > vision) continue;
-          seen.add(hexKey(tq, tr));
-        }
-      }
-    }
-
-    // For each hex, determine if it's on the boundary of a team's vision
-    // (inside vision but has at least one neighbor NOT in that team's vision)
-    const boundaryA = new Set<string>();
-    const boundaryB = new Set<string>();
-
-    for (const key of seenA) {
-      const [q, r] = key.split(',').map(Number);
-      for (const [dq, dr] of HEX_NEIGHBORS) {
-        if (!seenA.has(hexKey(q + dq, r + dr))) {
-          boundaryA.add(key);
-          break;
-        }
-      }
-    }
-    for (const key of seenB) {
-      const [q, r] = key.split(',').map(Number);
-      for (const [dq, dr] of HEX_NEIGHBORS) {
-        if (!seenB.has(hexKey(q + dq, r + dr))) {
-          boundaryB.add(key);
-          break;
-        }
-      }
-    }
-
-    return { seenA, seenB, boundaryA, boundaryB };
-  }, [tiles]);
+  // Use server-computed visibility sets (includes wall-blocking LoS)
+  // These are passed as props from the game page
+  const seenA = visibleA ?? new Set<string>();
+  const seenB = visibleB ?? new Set<string>();
 
   // Generate all hex positions in the map
   const allHexes = useMemo(() => {
@@ -377,7 +309,7 @@ export default function HexGrid({
             )}
 
             {/* Vision brightening — white overlay on hexes within any unit's vision */}
-            {isVisible && (visionData.seenA.has(key) || visionData.seenB.has(key)) && (
+            {isVisible && (seenA.has(key) || seenB.has(key)) && (
               <polygon
                 points={vertices}
                 fill="white"
@@ -388,8 +320,8 @@ export default function HexGrid({
 
             {/* Vision boundary — outer edges only, per-edge basis */}
             {(() => {
-              const inA = visionData.seenA.has(key);
-              const inB = visionData.seenB.has(key);
+              const inA = seenA.has(key);
+              const inB = seenB.has(key);
               if (!inA && !inB) return null;
 
               // Edge-to-neighbor mapping for flat-top hex:
@@ -417,21 +349,21 @@ export default function HexGrid({
                 const y2 = cy + HEX_SIZE * Math.sin(angle2);
 
                 // Is this edge on Team A's outer boundary?
-                const edgeA = inA && !visionData.seenA.has(neighborKey);
+                const edgeA = inA && !seenA.has(neighborKey);
                 // Is this edge on Team B's outer boundary?
-                const edgeB = inB && !visionData.seenB.has(neighborKey);
+                const edgeB = inB && !seenB.has(neighborKey);
 
                 if (edgeA && edgeB) {
                   // Both boundaries share this exact edge — dashed alternating
                   edges.push(
                     <line key={`ea-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
                       stroke="#3b82f6" strokeWidth={2.5}
-                      strokeDasharray="4 4" strokeDashoffset={0}
+                      strokeDasharray="6 6" strokeDashoffset={0}
                       strokeLinecap="round"
                       style={{ pointerEvents: 'none' }} />,
                     <line key={`eb-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
                       stroke="#ef4444" strokeWidth={2.5}
-                      strokeDasharray="4 4" strokeDashoffset={4}
+                      strokeDasharray="6 6" strokeDashoffset={6}
                       strokeLinecap="round"
                       style={{ pointerEvents: 'none' }} />,
                   );
