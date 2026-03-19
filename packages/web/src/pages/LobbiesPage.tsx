@@ -42,6 +42,7 @@ function phaseBadge(phase: string) {
 export default function LobbiesPage() {
   const [games, setGames] = useState<Game[]>(mockGames);
   const [starting, setStarting] = useState(false);
+  const [startingLobby, setStartingLobby] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -90,19 +91,45 @@ export default function LobbiesPage() {
     setStarting(false);
   }
 
+  async function handleStartLobby() {
+    setStartingLobby(true);
+    try {
+      const res = await fetch('/api/lobbies/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teamSize: 2 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        navigate(`/lobby/${data.lobbyId}`);
+        return;
+      }
+    } catch {
+      // API not available
+    }
+    setStartingLobby(false);
+  }
+
   const activeGames = games.filter((g) => g.phase !== 'finished');
   const finishedGames = games.filter((g) => g.phase === 'finished');
 
   return (
     <div className="space-y-10">
-      {/* Start Game */}
-      <div className="flex justify-center">
+      {/* Start Game Buttons */}
+      <div className="flex justify-center gap-4">
+        <button
+          onClick={handleStartLobby}
+          disabled={startingLobby}
+          className="cursor-pointer rounded-xl bg-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/40 transition-all hover:bg-emerald-500 hover:shadow-emerald-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {startingLobby ? 'Starting Lobby...' : '\u{1F99E} Start Lobby Game'}
+        </button>
         <button
           onClick={handleStartGame}
           disabled={starting}
-          className="cursor-pointer rounded-xl bg-emerald-600 px-10 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-900/40 transition-all hover:bg-emerald-500 hover:shadow-emerald-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-4 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 transition-all hover:bg-gray-600 hover:shadow-gray-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {starting ? 'Starting...' : '\u{1F99E} Start a Game'}
+          {starting ? 'Starting...' : 'Quick Game'}
         </button>
       </div>
 

@@ -27,3 +27,7 @@ export async function fetchLeaderboard(): Promise<any[]> {
 export async function fetchReplay(id: string): Promise<any> {
   return request<any>(`/replays/${id}`);
 }
+
+export async function fetchLobby(id: string): Promise<any> {
+  return request<any>(`/lobbies/${id}`);
+}

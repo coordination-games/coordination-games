@@ -6,6 +6,7 @@ import LobbiesPage from './pages/LobbiesPage';
 import GamePage from './pages/GamePage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import ReplayPage from './pages/ReplayPage';
+import LobbyPage from './pages/LobbyPage';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -14,6 +15,7 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: <Navigate to="/lobbies" replace /> },
       { path: '/lobbies', element: <LobbiesPage /> },
+      { path: '/lobby/:id', element: <LobbyPage /> },
       { path: '/game/:id', element: <GamePage /> },
       { path: '/leaderboard', element: <LeaderboardPage /> },
       { path: '/replay/:id', element: <ReplayPage /> },

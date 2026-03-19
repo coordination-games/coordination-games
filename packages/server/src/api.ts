@@ -25,6 +25,7 @@ import {
 } from '@lobster/engine';
 import { EloTracker } from './elo.js';
 import { runAllBotsTurn } from './claude-bot.js';
+import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,6 +205,16 @@ function getDelayedState(room: GameRoom): SpectatorState | null {
 }
 
 // ---------------------------------------------------------------------------
+// Lobby room for spectators
+// ---------------------------------------------------------------------------
+
+export interface LobbyRoom {
+  runner: LobbyRunner;
+  spectators: Set<WebSocket>;
+  state: LobbyRunnerState | null;
+}
+
+// ---------------------------------------------------------------------------
 // GameServer
 // ---------------------------------------------------------------------------
 
@@ -215,6 +226,7 @@ export class GameServer {
   private useClaudeBots: boolean = false;
 
   readonly games: Map<string, GameRoom> = new Map();
+  readonly lobbies: Map<string, LobbyRoom> = new Map();
 
   constructor(port?: number) {
     this.app = express();
@@ -246,9 +258,35 @@ export class GameServer {
   private setupRoutes(): void {
     const router = express.Router();
 
-    // List active lobbies (stub — lobby system not yet implemented)
+    // List active lobbies
     router.get('/lobbies', (_req, res) => {
-      res.json([]);
+      const list = Array.from(this.lobbies.entries()).map(([id, room]) => ({
+        lobbyId: id,
+        phase: room.state?.phase ?? 'forming',
+        agents: room.state?.agents ?? [],
+        teams: room.state?.teams ?? {},
+        chat: room.state?.chat ?? [],
+        preGame: room.state?.preGame ?? null,
+        gameId: room.state?.gameId ?? null,
+        spectators: room.spectators.size,
+      }));
+      res.json(list);
+    });
+
+    // Get lobby state
+    router.get('/lobbies/:id', (req, res) => {
+      const room = this.lobbies.get(req.params.id);
+      if (!room) return res.status(404).json({ error: 'Lobby not found' });
+      if (!room.state) return res.json({ phase: 'forming' });
+      res.json(room.state);
+    });
+
+    // Start a lobby game with Claude bots
+    router.post('/lobbies/start', (req, res) => {
+      const teamSize = (req.body?.teamSize as number) || 2;
+      const timeoutMs = (req.body?.timeoutMs as number) || 120000;
+      const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
+      res.status(201).json({ lobbyId });
     });
 
     // List active games
@@ -336,37 +374,67 @@ export class GameServer {
   private setupWebSocket(): void {
     this.server.on('upgrade', (request, socket, head) => {
       const url = new URL(request.url ?? '', `http://${request.headers.host}`);
-      const match = url.pathname.match(/^\/ws\/game\/(.+)$/);
 
-      if (!match) {
-        socket.destroy();
-        return;
-      }
-
-      const gameId = match[1];
-      const room = this.games.get(gameId);
-      if (!room) {
-        socket.destroy();
-        return;
-      }
-
-      this.wss.handleUpgrade(request, socket, head, (ws) => {
-        room.spectators.add(ws);
-
-        // Send current (delayed) state
-        const state = getDelayedState(room);
-        if (state) {
-          ws.send(JSON.stringify({ type: 'state_update', data: state }));
+      // Game WebSocket: /ws/game/:id
+      const gameMatch = url.pathname.match(/^\/ws\/game\/(.+)$/);
+      if (gameMatch) {
+        const gameId = gameMatch[1];
+        const room = this.games.get(gameId);
+        if (!room) {
+          socket.destroy();
+          return;
         }
 
-        ws.on('close', () => {
-          room.spectators.delete(ws);
-        });
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          room.spectators.add(ws);
 
-        ws.on('error', () => {
-          room.spectators.delete(ws);
+          // Send current (delayed) state
+          const state = getDelayedState(room);
+          if (state) {
+            ws.send(JSON.stringify({ type: 'state_update', data: state }));
+          }
+
+          ws.on('close', () => {
+            room.spectators.delete(ws);
+          });
+
+          ws.on('error', () => {
+            room.spectators.delete(ws);
+          });
         });
-      });
+        return;
+      }
+
+      // Lobby WebSocket: /ws/lobby/:id
+      const lobbyMatch = url.pathname.match(/^\/ws\/lobby\/(.+)$/);
+      if (lobbyMatch) {
+        const lobbyId = lobbyMatch[1];
+        const lobbyRoom = this.lobbies.get(lobbyId);
+        if (!lobbyRoom) {
+          socket.destroy();
+          return;
+        }
+
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          lobbyRoom.spectators.add(ws);
+
+          // Send current state
+          if (lobbyRoom.state) {
+            ws.send(JSON.stringify({ type: 'lobby_update', data: lobbyRoom.state }));
+          }
+
+          ws.on('close', () => {
+            lobbyRoom.spectators.delete(ws);
+          });
+
+          ws.on('error', () => {
+            lobbyRoom.spectators.delete(ws);
+          });
+        });
+        return;
+      }
+
+      socket.destroy();
     });
   }
 
@@ -503,6 +571,99 @@ export class GameServer {
   }
 
   // ---------------------------------------------------------------------------
+  // Broadcast lobby state to spectators
+  // ---------------------------------------------------------------------------
+
+  private broadcastLobbyState(lobbyRoom: LobbyRoom): void {
+    if (!lobbyRoom.state) return;
+    const msg = JSON.stringify({ type: 'lobby_update', data: lobbyRoom.state });
+    for (const ws of lobbyRoom.spectators) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(msg);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Create a lobby game with Claude bots
+  // ---------------------------------------------------------------------------
+
+  createLobbyGame(
+    teamSize: number = 2,
+    timeoutMs: number = 120000,
+  ): { lobbyId: string } {
+    const runner = new LobbyRunner(teamSize, timeoutMs, {
+      onStateChange: (state) => {
+        const lobbyRoom = this.lobbies.get(state.lobbyId);
+        if (lobbyRoom) {
+          lobbyRoom.state = state;
+          this.broadcastLobbyState(lobbyRoom);
+        }
+      },
+      onGameCreated: (gameId, teamPlayers) => {
+        this.createGameFromLobby(gameId, teamPlayers);
+      },
+    });
+
+    const lobbyId = runner.lobby.lobbyId;
+    const lobbyRoom: LobbyRoom = {
+      runner,
+      spectators: new Set(),
+      state: null,
+    };
+    this.lobbies.set(lobbyId, lobbyRoom);
+
+    // Start the lobby runner (async, runs in background)
+    runner.run().catch((err) => {
+      console.error(`Lobby ${lobbyId} runner error:`, err);
+    });
+
+    return { lobbyId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Create a game room from a completed lobby
+  // ---------------------------------------------------------------------------
+
+  private createGameFromLobby(
+    gameId: string,
+    teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
+  ): void {
+    const players = teamPlayers;
+    const botHandles = players.map((p) => p.id);
+
+    const gameMap = generateMap({ radius: 5 });
+    const game = new GameManager(gameId, gameMap, players);
+
+    const initialState = buildSpectatorState(game);
+
+    const room: GameRoom = {
+      game,
+      spectators: new Set(),
+      stateHistory: [initialState],
+      spectatorDelay: 0,
+      turnTimer: null,
+      botHandles,
+      botMeta: players,
+      finished: false,
+      useClaudeBots: this.useClaudeBots,
+      turnInProgress: false,
+    };
+
+    this.games.set(gameId, room);
+
+    // Start the turn loop
+    const turnInterval = room.useClaudeBots ? 8000 : 2000;
+    room.turnTimer = setInterval(() => {
+      this.runTurnLoop(gameId).catch((err) => {
+        console.error(`Turn loop error for ${gameId}:`, err);
+      });
+    }, turnInterval);
+
+    console.log(`Game ${gameId} created from lobby with ${players.length} players`);
+  }
+
+  // ---------------------------------------------------------------------------
   // Listen
   // ---------------------------------------------------------------------------
 
@@ -522,6 +683,10 @@ export class GameServer {
     for (const [, room] of this.games) {
       if (room.turnTimer) clearInterval(room.turnTimer);
       for (const ws of room.spectators) ws.close();
+    }
+    for (const [, lobbyRoom] of this.lobbies) {
+      lobbyRoom.runner.abort();
+      for (const ws of lobbyRoom.spectators) ws.close();
     }
     this.wss.close();
     this.server.close();
