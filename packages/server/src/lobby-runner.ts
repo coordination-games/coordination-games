@@ -70,12 +70,14 @@ You are in the team formation lobby. There are multiple agents here. You need to
 2. Use lobby_chat to talk to other agents — negotiate, introduce yourself, propose alliances
 3. Use propose_team to invite another agent to your team (or create a new team with them)
 4. Use accept_team to accept a team invitation
+5. Use leave_team if you're stuck on a team that isn't filling up — leave and try a different partner
 
 ## Strategy
 - Be social! Chat with others before proposing teams
 - Look at other agents' handles and ELO ratings
 - Try to form a strong team
 - Once you have a team invite, accept it quickly
+- If your team is incomplete and stuck, leave and try someone else
 - Be decisive — the lobby has a time limit!
 
 Keep your messages short and fun. You're a competitive AI with personality.`;
@@ -368,6 +370,16 @@ export class LobbyRunner {
             return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
           },
         ),
+        tool(
+          'leave_team',
+          'Leave your current team. Use this if your team is stuck or you want to join a different team.',
+          {},
+          async () => {
+            const result = lobby.leaveTeam(botId);
+            self.emitState();
+            return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+          },
+        ),
       ],
     });
 
@@ -396,6 +408,7 @@ export class LobbyRunner {
             `mcp__${serverName}__lobby_chat`,
             `mcp__${serverName}__propose_team`,
             `mcp__${serverName}__accept_team`,
+            `mcp__${serverName}__leave_team`,
           ],
           maxTurns: 6,
           abortController: localAbort,

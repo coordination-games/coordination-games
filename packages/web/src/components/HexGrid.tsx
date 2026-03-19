@@ -215,39 +215,68 @@ export default function HexGrid({
               </text>
             )}
 
-            {/* Unit rendering */}
-            {showUnit && !isFog && (
-              <>
-                {/* Unit letter */}
-                <text
-                  x={cx}
-                  y={unit.carryingFlag ? cy + 5 : cy + 2}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fontSize={HEX_SIZE * 0.7}
-                  fontWeight="bold"
-                  fill={unit.team === 'A' ? '#60a5fa' : '#f87171'}
-                  opacity={dimUnit ? 0.3 : 1}
-                  style={{ pointerEvents: 'none' }}
-                >
-                  {CLASS_LETTERS[unit.unitClass]}
-                </text>
-
-                {/* Small lobster above unit if carrying flag */}
-                {unit.carryingFlag && (
-                  <text
-                    x={cx}
-                    y={cy - HEX_SIZE * 0.3}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    fontSize={HEX_SIZE * 0.45}
-                    style={{ pointerEvents: 'none' }}
-                  >
-                    🦞
-                  </text>
-                )}
-              </>
-            )}
+            {/* Unit rendering — support multiple units on one hex */}
+            {showUnit && !isFog && (() => {
+              const allUnits = (tile as any)?.units ?? (unit ? [unit] : []);
+              if (allUnits.length === 0) return null;
+              if (allUnits.length === 1) {
+                const u = allUnits[0];
+                const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
+                return (
+                  <>
+                    <text
+                      x={cx}
+                      y={u.carryingFlag ? cy + 5 : cy + 2}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={HEX_SIZE * 0.7}
+                      fontWeight="bold"
+                      fill={u.team === 'A' ? '#60a5fa' : '#f87171'}
+                      opacity={dim ? 0.3 : 1}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {CLASS_LETTERS[u.unitClass]}
+                    </text>
+                    {u.carryingFlag && (
+                      <text
+                        x={cx} y={cy - HEX_SIZE * 0.3}
+                        textAnchor="middle" dominantBaseline="central"
+                        fontSize={HEX_SIZE * 0.45} style={{ pointerEvents: 'none' }}
+                      >🦞</text>
+                    )}
+                  </>
+                );
+              }
+              // Multiple units — offset them
+              return allUnits.map((u: any, i: number) => {
+                const offsetX = i === 0 ? -HEX_SIZE * 0.25 : HEX_SIZE * 0.25;
+                const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
+                return (
+                  <g key={u.id}>
+                    <text
+                      x={cx + offsetX}
+                      y={u.carryingFlag ? cy + 5 : cy + 2}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fontSize={HEX_SIZE * 0.55}
+                      fontWeight="bold"
+                      fill={u.team === 'A' ? '#60a5fa' : '#f87171'}
+                      opacity={dim ? 0.3 : 1}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {CLASS_LETTERS[u.unitClass]}
+                    </text>
+                    {u.carryingFlag && (
+                      <text
+                        x={cx + offsetX} y={cy - HEX_SIZE * 0.3}
+                        textAnchor="middle" dominantBaseline="central"
+                        fontSize={HEX_SIZE * 0.35} style={{ pointerEvents: 'none' }}
+                      >🦞</text>
+                    )}
+                  </g>
+                );
+              });
+            })()}
           </g>
         );
       })}

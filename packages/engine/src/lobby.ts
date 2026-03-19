@@ -100,6 +100,23 @@ export class LobbyManager {
     }
   }
 
+  leaveTeam(agentId: string): { success: boolean; error?: string } {
+    const teamId = this.agentTeam.get(agentId);
+    if (!teamId) {
+      return { success: false, error: 'not on a team' };
+    }
+    const team = this.teams.get(teamId);
+    if (team) {
+      team.members = team.members.filter((id) => id !== agentId);
+      team.invites.delete(agentId);
+      if (team.members.length === 0) {
+        this.teams.delete(teamId);
+      }
+    }
+    this.agentTeam.delete(agentId);
+    return { success: true };
+  }
+
   // --- Team Formation ---
 
   private nextTeamId = 0;

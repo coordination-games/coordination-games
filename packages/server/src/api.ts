@@ -24,7 +24,7 @@ import {
   CLASS_VISION,
 } from '@lobster/engine';
 import { EloTracker } from './elo.js';
-import { runAllBotsTurn } from './claude-bot.js';
+import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,13 @@ export interface SpectatorTile {
     carryingFlag?: boolean;
     alive: boolean;
   };
+  units?: {
+    id: string;
+    team: 'A' | 'B';
+    unitClass: UnitClass;
+    carryingFlag?: boolean;
+    alive: boolean;
+  }[];
   flag?: { team: 'A' | 'B' };
 }
 
@@ -77,6 +84,7 @@ export interface GameRoom {
   turnTimer: ReturnType<typeof setInterval> | null;
   botHandles: string[];             // handles of bot players in this room
   botMeta: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
+  botSessions: BotSession[];
   finished: boolean;
   useClaudeBots: boolean;
   turnInProgress: boolean;
@@ -91,10 +99,13 @@ function buildSpectatorState(game: GameManager): SpectatorState {
 
   // Build full tile array (no fog — spectators see everything)
   const tiles: SpectatorTile[] = [];
-  const unitsByHex = new Map<string, GameUnit>();
+  const unitsByHex = new Map<string, GameUnit[]>();
   for (const u of units) {
     if (u.alive) {
-      unitsByHex.set(`${u.position.q},${u.position.r}`, u);
+      const key = `${u.position.q},${u.position.r}`;
+      const list = unitsByHex.get(key) ?? [];
+      list.push(u);
+      unitsByHex.set(key, list);
     }
   }
 
@@ -110,15 +121,27 @@ function buildSpectatorState(game: GameManager): SpectatorState {
     const r = Number(rStr);
     const tile: SpectatorTile = { q, r, type: tileType };
 
-    const unitHere = unitsByHex.get(key);
-    if (unitHere) {
+    const unitsHere = unitsByHex.get(key);
+    if (unitsHere && unitsHere.length > 0) {
+      // Primary unit (first one)
+      const primary = unitsHere[0];
       tile.unit = {
-        id: unitHere.id,
-        team: unitHere.team,
-        unitClass: unitHere.unitClass,
-        carryingFlag: unitHere.carryingFlag || undefined,
-        alive: unitHere.alive,
+        id: primary.id,
+        team: primary.team,
+        unitClass: primary.unitClass,
+        carryingFlag: primary.carryingFlag || undefined,
+        alive: primary.alive,
       };
+      // Additional units on same hex
+      if (unitsHere.length > 1) {
+        tile.units = unitsHere.map((u) => ({
+          id: u.id,
+          team: u.team,
+          unitClass: u.unitClass,
+          carryingFlag: u.carryingFlag || undefined,
+          alive: u.alive,
+        }));
+      }
     }
 
     const flagTeam = flagsByHex.get(key);
@@ -496,6 +519,7 @@ export class GameServer {
       turnTimer: null,
       botHandles,
       botMeta: players,
+      botSessions: createBotSessions(players),
       finished: false,
       useClaudeBots: this.useClaudeBots,
       turnInProgress: false,
@@ -547,7 +571,7 @@ export class GameServer {
 
     if (room.useClaudeBots) {
       // Claude Agent SDK bots — each bot runs haiku with game MCP tools
-      await runAllBotsTurn(game, room.botMeta, game.turn);
+      await runAllBotsTurn(game, room.botSessions, game.turn);
     } else {
       // Fallback: random bot moves
       for (const botId of botHandles) {
@@ -645,6 +669,7 @@ export class GameServer {
       turnTimer: null,
       botHandles,
       botMeta: players,
+      botSessions: createBotSessions(players),
       finished: false,
       useClaudeBots: this.useClaudeBots,
       turnInProgress: false,

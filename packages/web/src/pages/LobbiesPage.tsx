@@ -76,10 +76,14 @@ export default function LobbiesPage() {
     };
   }, []);
 
-  async function handleStartGame() {
+  async function handleStartGame(teamSize: number) {
     setStarting(true);
     try {
-      const res = await fetch('/api/games/start', { method: 'POST' });
+      const res = await fetch('/api/games/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teamSize }),
+      });
       if (res.ok) {
         const data = await res.json();
         navigate(`/game/${data.gameId}`);
@@ -125,11 +129,18 @@ export default function LobbiesPage() {
           {startingLobby ? 'Starting Lobby...' : '\u{1F99E} Start Lobby Game'}
         </button>
         <button
-          onClick={handleStartGame}
+          onClick={() => handleStartGame(2)}
           disabled={starting}
           className="cursor-pointer rounded-xl bg-gray-700 px-8 py-4 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 transition-all hover:bg-gray-600 hover:shadow-gray-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {starting ? 'Starting...' : 'Quick Game'}
+          {starting ? 'Starting...' : 'Quick 2v2'}
+        </button>
+        <button
+          onClick={() => handleStartGame(4)}
+          disabled={starting}
+          className="cursor-pointer rounded-xl bg-gray-700 px-8 py-4 text-lg font-bold text-gray-200 shadow-lg shadow-gray-900/40 transition-all hover:bg-gray-600 hover:shadow-gray-800/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {starting ? 'Starting...' : 'Quick 4v4'}
         </button>
       </div>
 

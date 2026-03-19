@@ -32,6 +32,7 @@ The grid uses flat-top hexagons. Valid directions: N, NE, SE, S, SW, NW (no E/W)
 - Knights guard — chase rogues, protect your flag.
 - Mages control space — ranged kills on knights, stay away from rogues.
 - Coordinate! Tell your team what you see, what you're doing, and what you need.
+- Remember what happened in previous turns! Use that knowledge to adapt.
 
 ## Each Turn
 1. Use get_game_state to see the board from your perspective
@@ -87,31 +88,41 @@ function createGameMcpServer(game: GameManager, agentId: string) {
 }
 
 /**
+ * Persistent bot session — maintains conversation history across turns.
+ */
+export interface BotSession {
+  id: string;
+  unitClass: UnitClass;
+  team: 'A' | 'B';
+  sessionId: string | null;  // Claude session ID for resume
+}
+
+/**
  * Run a single Claude bot's turn using the Claude Agent SDK.
+ * If the bot has a sessionId, resumes the existing conversation.
  */
 export async function runClaudeBotTurn(
   game: GameManager,
-  agentId: string,
-  unitClass: UnitClass,
-  team: 'A' | 'B',
+  bot: BotSession,
   turn: number,
 ): Promise<void> {
-  const mcpServer = createGameMcpServer(game, agentId);
+  const mcpServer = createGameMcpServer(game, bot.id);
+  const serverName = `lobster-${bot.id}`;
 
-  const prompt = `Turn ${turn}. You are ${agentId} (${unitClass}, Team ${team}). Get your game state, chat with your team, and submit your move. Be quick and decisive.`;
+  const prompt = turn === 1
+    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Check the board and make your first move. Communicate with your team!`
+    : `Turn ${turn}. Check the board, coordinate with your team, and submit your move.`;
 
   const abortController = new AbortController();
-  // Timeout after 15 seconds
   const timeout = setTimeout(() => abortController.abort(), 15000);
 
   try {
-    const serverName = `lobster-${agentId}`;
     const q = query({
       prompt,
       options: {
         systemPrompt: SYSTEM_PROMPT,
         model: 'haiku',
-        tools: [],  // No built-in tools
+        tools: [],
         mcpServers: { [serverName]: mcpServer },
         allowedTools: [
           `mcp__${serverName}__get_game_state`,
@@ -120,18 +131,23 @@ export async function runClaudeBotTurn(
         ],
         maxTurns: 5,
         abortController,
-        persistSession: false,
         cwd: '/tmp',
+        // Resume existing session if we have one
+        ...(bot.sessionId ? { resume: bot.sessionId } : { persistSession: true }),
       },
     });
 
-    // Consume the async iterator to let the query run
-    for await (const _message of q) {
-      // Just drain messages — the tool handlers do the work
+    // Drain messages, capture session ID
+    for await (const message of q) {
+      if ('session_id' in message && message.session_id && !bot.sessionId) {
+        bot.sessionId = message.session_id;
+      }
     }
   } catch (err: any) {
     if (err.name !== 'AbortError') {
-      console.error(`Claude bot ${agentId} error:`, err.message ?? err);
+      console.error(`Claude bot ${bot.id} error:`, err.message ?? err);
+      // If session is corrupt, reset it
+      bot.sessionId = null;
     }
   } finally {
     clearTimeout(timeout);
@@ -139,20 +155,34 @@ export async function runClaudeBotTurn(
 }
 
 /**
+ * Create bot sessions for all players.
+ */
+export function createBotSessions(
+  bots: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[],
+): BotSession[] {
+  return bots.map((b) => ({
+    id: b.id,
+    unitClass: b.unitClass,
+    team: b.team,
+    sessionId: null,
+  }));
+}
+
+/**
  * Run all Claude bots for a single turn in parallel.
  */
 export async function runAllBotsTurn(
   game: GameManager,
-  bots: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[],
+  sessions: BotSession[],
   turn: number,
 ): Promise<void> {
-  const aliveBots = bots.filter((bot) => {
+  const aliveSessions = sessions.filter((bot) => {
     const unit = game.units.find((u) => u.id === bot.id);
     return unit && unit.alive;
   });
 
-  const promises = aliveBots.map((bot) =>
-    runClaudeBotTurn(game, bot.id, bot.unitClass, bot.team, turn).catch(
+  const promises = aliveSessions.map((bot) =>
+    runClaudeBotTurn(game, bot, turn).catch(
       (err) => {
         console.error(`Claude bot ${bot.id} error:`, err.message ?? err);
       },
@@ -162,7 +192,7 @@ export async function runAllBotsTurn(
   await Promise.all(promises);
 
   // Submit empty moves for any bots that didn't submit (timeout/error/dead)
-  for (const bot of bots) {
+  for (const bot of sessions) {
     if (!game.moveSubmissions.has(bot.id)) {
       const unit = game.units.find((u) => u.id === bot.id);
       if (unit?.alive) game.submitMove(bot.id, []);
