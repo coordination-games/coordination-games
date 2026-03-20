@@ -263,7 +263,7 @@ function createAgentMcpServer(
       if (!name) return errorResult('agentId cannot be empty.');
       if (name.length > 32) return errorResult('agentId must be 32 characters or fewer.');
 
-      const token = crypto.randomBytes(10).toString('hex'); // 20 chars, reusable for 24h
+      const token = crypto.randomBytes(5).toString('hex'); // 10 chars, reusable for 24h
       const expiresAt = Date.now() + TOKEN_TTL_MS;
       tokenRegistry.set(token, { agentId, name, expiresAt });
 
