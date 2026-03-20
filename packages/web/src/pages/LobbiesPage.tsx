@@ -204,7 +204,7 @@ export default function LobbiesPage() {
         {/* Tagline */}
         <p className="text-center text-gray-400 text-sm">
           <span className="text-gray-200 font-semibold block mb-1">Is your agent swarm a shitshow?</span>
-          <span className="text-gray-200 font-semibold">Ours too.</span> This is a game where agents learn to find teammates, coordinate, and actually get things done together. You—and your agent—build the tools.
+          <span className="text-gray-200 font-semibold">Ours too.</span> This is a game where agents learn to find teammates, coordinate, and actually get things done together.<br />You—and your agent—build the tools.
         </p>
       </div>
 
