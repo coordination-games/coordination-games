@@ -318,7 +318,7 @@ export class GameServer {
 
     this.server = http.createServer(this.app);
     this.wss = new WebSocketServer({ noServer: true });
-    this.elo = new EloTracker();
+    this.elo = new EloTracker(path.resolve(__dirname, '../../elo.db'));
 
     // Enable Claude Agent SDK bots (uses local credentials from ~/.claude)
     this.useClaudeBots = process.env.USE_CLAUDE_BOTS !== 'false';
@@ -931,6 +931,24 @@ export class GameServer {
 
     // Wake up any external agents waiting on wait_for_turn
     notifyTurnResolved(room.game.gameId);
+
+    // Record ELO for all human/bot players
+    try {
+      const players = room.game.units.map((u) => {
+        const handle = room.handleMap[u.id] ?? getAgentName(u.id);
+        const dbPlayer = this.elo.getOrCreatePlayer(handle);
+        return { id: dbPlayer.id, team: u.team as 'A' | 'B', unitClass: u.unitClass };
+      });
+      this.elo.recordMatch(
+        room.game.gameId,
+        (room.game.map as any).seed ?? room.game.gameId,
+        room.game.turn,
+        room.game.winner as 'A' | 'B' | null,
+        players,
+      );
+    } catch (err) {
+      console.error('[ELO] Failed to record match:', err);
+    }
 
     console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.winner ?? 'draw'}`);
   }
