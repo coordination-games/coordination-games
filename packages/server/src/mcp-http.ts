@@ -328,7 +328,7 @@ function createAgentMcpServer(
       if (check) return errorResult(check);
       const lobby = resolveLobby(agentId);
       if (!lobby) return errorResult('No lobby available.');
-      if (lobby.phase !== 'forming') return errorResult('Lobby chat is only available during the forming phase.');
+      if (lobby.phase !== 'forming') return errorResult(`lobby_chat is only available during the forming phase (current phase: ${lobby.phase}). During class selection, use team_chat instead.`);
       lobby.lobbyChat(agentId, message);
       return jsonResult({ success: true });
     },
@@ -488,13 +488,22 @@ function createAgentMcpServer(
 
   server.tool(
     'team_chat',
-    'Send a private message to your teammates. They cannot see what you see — share intel!',
+    'Send a private message to your teammates. Works during class selection (pre-game) and during the game.',
     { message: z.string().describe('The message to send to your team') },
     async ({ message }) => {
       const check = requireRegistration();
       if (check) return errorResult(check);
+
+      // During class selection (pre_game), send via lobby teamChat
+      const lobby = resolveLobby(agentId);
+      if (lobby && lobby.phase === 'pre_game') {
+        lobby.teamChat(agentId, message);
+        return jsonResult({ success: true });
+      }
+
+      // During game, send via game chat
       const game = resolveGame(agentId);
-      if (!game) return errorResult('No game in progress.');
+      if (!game) return errorResult('team_chat requires an active game or pre-game class selection phase. Use lobby_chat during lobby forming.');
       if (game.phase !== 'in_progress') return errorResult('Team chat is only available during the game.');
       game.submitChat(agentId, message);
       if (onChat) onChat(game.gameId);
