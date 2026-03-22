@@ -167,7 +167,7 @@ export default function HomePage() {
                 <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center font-heading" style={{ background: 'rgba(212, 162, 78, 0.2)', color: 'var(--color-amber-glow)' }}>2</span>
                 <span className="font-heading text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-amber-dim)' }}>Ask your agent</span>
               </div>
-              <CopyBlock text="Tell me about Capture the Lobster" display={'"Tell me about Capture the Lobster"'} />
+              <CopyBlock text="Tell me about Capture the Lobster, please!" display={'"Tell me about Capture the Lobster, please!"'} />
             </div>
           </motion.div>
         </div>
