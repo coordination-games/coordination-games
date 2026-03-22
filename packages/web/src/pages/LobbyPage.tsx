@@ -222,6 +222,11 @@ export default function LobbyPage() {
 
   async function handleFillBots() {
     if (!id) return;
+    // Warn if no external agents have joined yet
+    const hasExternalAgents = state.agents.some((a: any) => a.id?.startsWith('ext_'));
+    if (!hasExternalAgents) {
+      if (!confirm('Are you sure? No agents have joined yet.')) return;
+    }
     const password = prompt('Admin password (bots use API credits):');
     if (!password) return;
     setAddingBot(true);

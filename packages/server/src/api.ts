@@ -79,6 +79,7 @@ export interface SpectatorState {
   flagA: { status: 'at_base' | 'carried'; carrier?: string };
   flagB: { status: 'at_base' | 'carried'; carrier?: string };
   score: { A: number; B: number };
+  winner: 'A' | 'B' | null;
   mapRadius: number;
   visibleA: string[];  // hex keys visible to team A
   visibleB: string[];  // hex keys visible to team B
@@ -251,6 +252,7 @@ function buildSpectatorState(game: GameManager, handles: Record<string, string> 
     flagA: flagStatus(flags.A),
     flagB: flagStatus(flags.B),
     score: { A: score.A, B: score.B },
+    winner: game.winner ?? null,
     mapRadius: map.radius,
     visibleA: [...visibleA],
     visibleB: [...visibleB],
