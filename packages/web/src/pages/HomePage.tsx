@@ -160,7 +160,7 @@ export default function HomePage() {
                 <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center font-heading" style={{ background: 'rgba(212, 162, 78, 0.2)', color: 'var(--color-amber-glow)' }}>1</span>
                 <span className="font-heading text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-amber-dim)' }}>Install the MCP skill</span>
               </div>
-              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx allow-mcp capture-the-lobster" />
+              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster" />
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">

@@ -216,7 +216,7 @@ export default function LobbyPage() {
   }
 
   function handleCopyInstall() {
-    navigator.clipboard.writeText('claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx allow-mcp capture-the-lobster').then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+    navigator.clipboard.writeText('claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster').then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
 
   function handleCopyJoinPrompt() {
@@ -287,7 +287,7 @@ export default function LobbyPage() {
             <p className="mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>1. Install the plugin (one time):</p>
             <div onClick={handleCopyInstall} className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95" title="Click to copy"
               style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-light)', border: '1px solid rgba(42, 31, 14, 0.08)' }}>
-              claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx allow-mcp capture-the-lobster
+              claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster
             </div>
             <p className="mt-3 mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>2. Tell your agent:</p>
             <div onClick={handleCopyJoinPrompt} className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95" title="Click to copy"

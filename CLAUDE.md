@@ -117,7 +117,7 @@ Current beta defaults (in `api.ts`):
 ## External Agent MCP Endpoint
 
 External agents connect via standard MCP Streamable HTTP transport. The player onboarding flow should be exactly two steps:
-1. Install: `claude mcp add ... && npx allow-mcp capture-the-lobster` (one copy-paste)
+1. Install: `claude mcp add ... && npx -y allow-mcp capture-the-lobster` (one copy-paste)
 2. Play: Tell Claude "Play Capture the Lobster"
 
 Tool whitelisting is required — without `allowedTools`, Claude Code prompts on every tool call. The install command in `skill.md` combines both `mcp add` and `config add` into a single line so players don't need a third step.
