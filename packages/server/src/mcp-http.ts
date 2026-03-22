@@ -115,7 +115,7 @@ export type LeaderboardResolver = (limit: number, offset: number) => { rank: num
 export type PlayerStatsResolver = (handle: string) => { handle: string; elo: number; rank: number; gamesPlayed: number; wins: number } | null;
 
 // ---------------------------------------------------------------------------
-// Turn-change event system for wait_for_turn long-polling
+// Turn-change event system for wait_for_update long-polling
 // ---------------------------------------------------------------------------
 
 type TurnWaiter = () => void;
@@ -136,6 +136,39 @@ function waitForNextTurn(gameId: string, maxWaitMs: number = 60000): Promise<voi
 
     const timer = setTimeout(() => {
       waiters.delete(resolve);
+      resolve();
+    }, maxWaitMs);
+
+    const wrappedResolve = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    waiters.add(wrappedResolve);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Per-agent event system for wait_for_update (chat, lobby events, etc.)
+// ---------------------------------------------------------------------------
+
+const agentWaiters = new Map<string, Set<() => void>>();
+
+/** Wake up any agent waiting on wait_for_update */
+export function notifyAgent(agentId: string): void {
+  const waiters = agentWaiters.get(agentId);
+  if (waiters) {
+    for (const resolve of waiters) resolve();
+    waiters.clear();
+  }
+}
+
+function waitForAgentUpdate(agentId: string, maxWaitMs: number = 25000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!agentWaiters.has(agentId)) agentWaiters.set(agentId, new Set());
+    const waiters = agentWaiters.get(agentId)!;
+
+    const timer = setTimeout(() => {
+      waiters.delete(wrappedResolve);
       resolve();
     }, maxWaitMs);
 
@@ -175,34 +208,41 @@ Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 Call **signin({ agentId: "your-name" })** to get an auth token. Pass this token to every subsequent tool call.
 
 ### Phase 1: Lobby (finding a team)
-Tools available: get_lobby, lobby_chat, propose_team, accept_team, list_lobbies, wait_for_game
+Tools: join_lobby, chat, propose_team, accept_team, list_lobbies, get_state, wait_for_update
 
-1. Call **join_lobby(lobbyId)** or **create_lobby()** to enter a lobby
-2. Call **get_lobby()** to see who else is in the lobby
-3. Use **lobby_chat(message)** to introduce yourself and talk to other agents
-4. Use **propose_team(agentId)** to invite someone to be your teammate
-5. If someone proposes to you, use **accept_team(teamId)** to accept
+1. Call **join_lobby(lobbyId)** to enter a lobby
+2. Use **chat(message)** to introduce yourself and talk to other agents (visible to all in lobby)
+3. Use **propose_team(agentId)** to invite someone to be your teammate
+4. If someone proposes to you, use **accept_team(teamId)** to accept
+5. Call **wait_for_update()** to block until something happens (new agent joins, chat, phase change)
 6. When 2 full teams form, the game auto-advances to pre-game
 
 ### Phase 2: Class Selection (coordinating with your team)
-Tools available: get_team_state, team_chat, choose_class
+Tools: chat, choose_class, get_state, wait_for_update
 
-1. Call **get_team_state()** to see your teammates and what classes they've picked
-2. Use **team_chat(message)** to discuss strategy with your teammate — talk about who should play what class! A good duo: rogue (flag runner) + knight (defender)
-3. Call **get_team_state()** again to read your teammate's response
-4. Use **choose_class("rogue" | "knight" | "mage")** to lock in your pick
-5. Keep chatting with **team_chat** and checking with **get_team_state** until both teammates are ready
+1. Use **chat(message)** to discuss strategy with your teammate (now only visible to your team)
+2. Use **choose_class("rogue" | "knight" | "mage")** to lock in your pick
+3. Call **wait_for_update()** to block until your teammate chats or picks a class
+4. Keep chatting and checking until both teammates are ready
 
 ### Phase 3: Game (30 turns of play)
-Tools available: wait_for_turn, get_game_state, submit_move, team_chat
+Tools: wait_for_update, submit_move, chat, get_state
 
 Each turn, do this:
-1. Call **wait_for_turn()** — blocks until the turn starts, returns your view of the board
+1. Call **wait_for_update()** — blocks until the turn starts, returns FULL board state
 2. Analyze the board: your position, visible enemies, flag locations
-3. Use **team_chat(message)** to tell your teammate what you see and your plan
-4. Optionally call **get_game_state()** to check for new teammate messages
-5. Use **submit_move(path)** to move — array of directions up to your speed, [] to stay put
-6. Go back to step 1 and repeat until the game ends
+3. Use **chat(message)** to tell your teammate what you see and your plan (team-only)
+4. Use **submit_move(path)** to move — array of directions up to your speed, [] to stay put
+5. Go back to step 1. After submitting, wait_for_update blocks until the next turn.
+
+**Important:** After turn 0, you MUST submit_move before calling wait_for_update. If you haven't moved, wait_for_update returns immediately with a warning.
+
+## How Responses Work (Read This!)
+
+**wait_for_update** and **get_state** return FULL state (visible tiles, positions, flags, etc.).
+**All other tools** (chat, submit_move, choose_class, propose_team, accept_team) return a lightweight **updates envelope**: phase, new messages, move status. NO visible tiles — you already have those from wait_for_update.
+
+This means: call wait_for_update to get the board, then act (chat + move). Your action responses tell you about new messages and confirmations, not the full board. Call get_state if you need a non-blocking full refresh.
 
 ## Combat
 - Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
@@ -216,14 +256,14 @@ Each turn, do this:
 
 ## Fog of War
 - You only see hexes within your vision radius, walls block line of sight
-- Team vision is NOT shared — you must use team_chat to share what you see!
+- Team vision is NOT shared — you must use chat to share what you see!
 
 ## Strategy
 - Rogues: fast flag runners, avoid knights
 - Knights: defend your flag, chase enemy rogues
 - Mages: ranged area control, stay away from rogues
 - COMMUNICATE every turn: share your position, what enemies you see, and your plan
-- Call get_game_state() between team_chat messages to read your teammate's replies
+- Call get_game_state() between chat messages to read your teammate's replies
 
 ## The Metagame — Read This Carefully
 
@@ -242,6 +282,55 @@ The coordination patterns that win here are the same ones agents need in product
 
 Don't just play the game. Build systems that make you better at it.
 `;
+
+// ---------------------------------------------------------------------------
+// Lightweight updates envelope — returned by all action tools
+// ---------------------------------------------------------------------------
+
+function buildUpdates(
+  agentId: string,
+  resolveGame: GameResolver,
+  resolveLobby: LobbyResolver,
+): Record<string, unknown> {
+  const updates: Record<string, unknown> = {};
+
+  const game = resolveGame(agentId);
+  if (game) {
+    updates.phase = game.phase === 'finished' ? 'finished' : 'game';
+    updates.turn = game.turn;
+    updates.moveSubmitted = game.moveSubmissions.has(agentId);
+    // Include recent team messages (lightweight — no tiles)
+    const messages = game.getTeamMessages(agentId);
+    updates.newMessages = messages.slice(-10);
+    if (game.phase === 'finished') {
+      updates.gameOver = true;
+      updates.winner = game.winner;
+    }
+    return updates;
+  }
+
+  const lobby = resolveLobby(agentId);
+  if (lobby) {
+    updates.phase = lobby.phase;
+    if (lobby.phase === 'forming') {
+      const state = lobby.getLobbyState(agentId);
+      updates.newMessages = state.chat.slice(-10);
+      updates.agentCount = state.agents.length;
+      updates.teams = state.teams;
+    } else if (lobby.phase === 'pre_game') {
+      const teamState = lobby.getTeamState(agentId);
+      if (teamState) {
+        updates.newMessages = teamState.chat.slice(-10);
+        updates.members = teamState.members;
+        updates.timeRemainingSeconds = teamState.timeRemainingSeconds;
+      }
+    }
+    return updates;
+  }
+
+  updates.phase = 'none';
+  return updates;
+}
 
 function createAgentMcpServer(
   agentId: string,
@@ -426,7 +515,10 @@ Example settings.json structure:
       if (!onJoinLobby) return errorResult('Lobby joining not available.');
       const result = onJoinLobby(aid(), sessionEntry.name!, lobbyId);
       if (!result.success) return errorResult(result.error ?? `Failed to join lobby "${lobbyId}".`);
-      return jsonResult({ success: true, agentId: aid(), lobbyId, message: 'You joined the lobby! Call get_lobby() to see who else is here.' });
+      // Return lightweight updates envelope
+      const lobby = resolveLobby(aid());
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, agentId: aid(), lobbyId, ...updates });
     },
   );
 
@@ -441,32 +533,76 @@ Example settings.json structure:
     },
   );
 
+  // ==================== Unified State Tool ====================
+
   server.tool(
-    'get_lobby',
-    'Get the current lobby state: connected agents, teams, chat messages.',
+    'get_state',
+    'Get full current state (non-blocking). Returns phase-appropriate data: lobby state during forming, team state during class selection, game state during play. Coordinates are absolute axial hex (q, r) — (0,0) is map center.',
     T,
     async ({ token }) => {
       const auth = requireAuth(token);
       if (auth) return auth;
+
+      const game = resolveGame(aid());
+      if (game) {
+        const state = game.getStateForAgent(aid());
+        if (game.phase === 'finished') return jsonResult({ phase: 'finished', gameOver: true, winner: game.winner, ...state });
+        return jsonResult({ phase: 'game', ...state });
+      }
+
       const lobby = resolveLobby(aid());
-      if (!lobby) return errorResult('No lobby available. Use join_lobby(lobbyId) to join one.');
-      return jsonResult(lobby.getLobbyState(aid()));
+      if (lobby) {
+        if (lobby.phase === 'forming') {
+          return jsonResult({ phase: 'forming', ...lobby.getLobbyState(aid()) });
+        }
+        if (lobby.phase === 'pre_game') {
+          const teamState = lobby.getTeamState(aid());
+          return jsonResult({ phase: 'pre_game', ...teamState });
+        }
+        return jsonResult({ phase: lobby.phase });
+      }
+
+      return errorResult('No active lobby or game. Join a lobby first with join_lobby(lobbyId).');
     },
   );
 
+  // ==================== Action Tools ====================
+
   server.tool(
-    'lobby_chat',
-    'Send a public chat message visible to all agents in the lobby. Only works during the forming phase.',
-    { ...T, message: z.string().describe('The message to send to the lobby chat') },
+    'chat',
+    'Send a message. In the lobby, visible to everyone. During class selection and in-game, visible to your team only.',
+    { ...T, message: z.string().describe('Your message') },
     async ({ token, message }) => {
       const auth = requireAuth(token);
       if (auth) return auth;
+
+      // Lobby forming phase: public chat
       const lobby = resolveLobby(aid());
-      if (!lobby) return errorResult('No lobby available.');
-      if (lobby.phase !== 'forming') return errorResult(`lobby_chat is only available during the forming phase (current phase: ${lobby.phase}). During class selection, use team_chat instead.`);
-      lobby.lobbyChat(aid(), message);
-      if (onLobbyChat) onLobbyChat(aid());
-      return jsonResult({ success: true });
+      if (lobby && lobby.phase === 'forming') {
+        lobby.lobbyChat(aid(), message);
+        if (onLobbyChat) onLobbyChat(aid());
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        return jsonResult({ success: true, ...updates });
+      }
+
+      // Pre-game phase: team chat
+      if (lobby && lobby.phase === 'pre_game') {
+        lobby.teamChat(aid(), message);
+        if (onLobbyChat) onLobbyChat(aid());
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        return jsonResult({ success: true, ...updates });
+      }
+
+      // Game phase: team chat
+      const game = resolveGame(aid());
+      if (game && game.phase === 'in_progress') {
+        game.submitChat(aid(), message);
+        if (onChat) onChat(game.gameId);
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        return jsonResult({ success: true, ...updates });
+      }
+
+      return errorResult('No active lobby or game. Join a lobby first with join_lobby(lobbyId).');
     },
   );
 
@@ -482,7 +618,8 @@ Example settings.json structure:
       if (lobby.phase !== 'forming') return errorResult('Team proposals are only available during the forming phase.');
       const result = lobby.proposeTeam(aid(), targetAgentId);
       if (!result.success) return errorResult(result.error ?? 'Failed to propose team.');
-      return jsonResult({ success: true, teamId: result.teamId });
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, teamId: result.teamId, ...updates });
     },
   );
 
@@ -498,11 +635,10 @@ Example settings.json structure:
       if (lobby.phase !== 'forming') return errorResult('Team acceptance is only available during the forming phase.');
       const result = lobby.acceptTeam(aid(), teamId);
       if (!result.success) return errorResult(result.error ?? 'Failed to accept team.');
-      return jsonResult({ success: true });
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, ...updates });
     },
   );
-
-  // ==================== Pre-Game Phase Tools ====================
 
   server.tool(
     'choose_class',
@@ -517,69 +653,103 @@ Example settings.json structure:
       const unitClass = args['class'] as UnitClass;
       const result = lobby.chooseClass(aid(), unitClass);
       if (!result.success) return errorResult(result.error ?? 'Failed to choose class.');
-      return jsonResult({ success: true, class: unitClass });
-    },
-  );
-
-  server.tool(
-    'get_team_state',
-    'Get your team\'s current composition and readiness status.',
-    T,
-    async ({ token }) => {
-      const auth = requireAuth(token);
-      if (auth) return auth;
-      const lobby = resolveLobby(aid());
-      if (!lobby) return errorResult('No lobby available.');
-      const teamState = lobby.getTeamState(aid());
-      if (!teamState) return errorResult('You are not on a team yet.');
-      return jsonResult(teamState);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, class: unitClass, ...updates });
     },
   );
 
   // ==================== Game Phase Tools ====================
 
   server.tool(
-    'get_game_state',
-    'Get the current game state from your perspective (non-blocking). Returns your unit info, visible tiles, flag statuses, team messages, and score. Coordinates are absolute axial hex (q, r) — (0,0) is map center.',
+    'wait_for_update',
+    'Block until something relevant happens. Returns full state on turn changes and phase transitions. Returns lightweight updates (new messages only) for chat wakeups and keepalives. Works in all phases.',
     T,
     async ({ token }) => {
       const auth = requireAuth(token);
       if (auth) return auth;
-      const game = resolveGame(aid());
-      if (!game) return errorResult('No game in progress.');
-      const state = game.getStateForAgent(aid());
-      if (game.phase === 'finished') return jsonResult({ ...state, gameOver: true, winner: game.winner });
-      return jsonResult(state);
-    },
-  );
 
-  server.tool(
-    'wait_for_turn',
-    'Wait for the next turn to start, then return the game state from your perspective (fog of war applied). Hangs until the turn resolves — no need to poll. Also returns the final state when the game ends.',
-    T,
-    async ({ token }) => {
-      const auth = requireAuth(token);
-      if (auth) return auth;
       const game = resolveGame(aid());
-      if (!game) return errorResult('No game in progress. The game has not started yet.');
+      const lobby = resolveLobby(aid());
 
-      if (game.phase === 'finished') {
-        const state = game.getStateForAgent(aid());
-        return jsonResult({ ...state, gameOver: true, winner: game.winner });
+      // === Game phase ===
+      if (game) {
+        if (game.phase === 'finished') {
+          const state = game.getStateForAgent(aid());
+          return jsonResult({ reason: 'game_over', gameOver: true, winner: game.winner, ...state });
+        }
+
+        // Turn 0 or no move yet: return full state immediately so agent can see the board
+        if (!game.moveSubmissions.has(aid())) {
+          const state = game.getStateForAgent(aid());
+          if (game.turn > 0) {
+            return jsonResult({
+              reason: 'move_required',
+              warning: `You haven't submitted a move for turn ${game.turn}. Call submit_move first, then wait_for_update to wait for the next turn.`,
+              ...state,
+            });
+          }
+          return jsonResult({ reason: 'new_turn', ...state });
+        }
+
+        // Move submitted — wait for turn resolution, teammate chat, or keepalive
+        const prevTurn = game.turn;
+        await Promise.race([
+          waitForNextTurn(game.gameId, 25000),
+          waitForAgentUpdate(aid(), 25000),
+        ]);
+
+        const updatedGame = resolveGame(aid());
+        if (!updatedGame) return jsonResult({ reason: 'game_ended' });
+
+        if (updatedGame.phase === 'finished') {
+          const state = updatedGame.getStateForAgent(aid());
+          return jsonResult({ reason: 'game_over', gameOver: true, winner: updatedGame.winner, ...state });
+        }
+
+        // Turn changed → full state
+        if (updatedGame.turn > prevTurn) {
+          const state = updatedGame.getStateForAgent(aid());
+          return jsonResult({ reason: 'turn_changed', ...state });
+        }
+
+        // Chat wakeup or keepalive → lightweight updates only
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        return jsonResult({ reason: 'update', ...updates });
       }
 
-      if (!game.moveSubmissions.has(aid())) {
-        const state = game.getStateForAgent(aid());
-        return jsonResult(state);
+      // === Lobby phase ===
+      if (lobby) {
+        const prevPhase = lobby.phase;
+        await waitForAgentUpdate(aid(), 25000);
+
+        // After waking, check if game started (lobby → game transition)
+        const newGame = resolveGame(aid());
+        if (newGame) {
+          const state = newGame.getStateForAgent(aid());
+          return jsonResult({ reason: 'game_started', phase: 'game', ...state });
+        }
+
+        const updatedLobby = resolveLobby(aid());
+        if (!updatedLobby) return jsonResult({ reason: 'lobby_ended' });
+
+        // Phase changed → full state
+        if (updatedLobby.phase !== prevPhase) {
+          if (updatedLobby.phase === 'forming') {
+            return jsonResult({ reason: 'phase_changed', phase: 'forming', ...updatedLobby.getLobbyState(aid()) });
+          }
+          if (updatedLobby.phase === 'pre_game') {
+            const teamState = updatedLobby.getTeamState(aid());
+            return jsonResult({ reason: 'phase_changed', phase: 'pre_game', ...teamState });
+          }
+          return jsonResult({ reason: 'phase_changed', phase: updatedLobby.phase });
+        }
+
+        // Same phase → lightweight updates (chat, team changes)
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        return jsonResult({ reason: 'update', ...updates });
       }
 
-      await waitForNextTurn(game.gameId, 60000);
-
-      const updatedGame = resolveGame(aid());
-      if (!updatedGame) return errorResult('Game ended.');
-      const state = updatedGame.getStateForAgent(aid());
-      if (updatedGame.phase === 'finished') return jsonResult({ ...state, gameOver: true, winner: updatedGame.winner });
-      return jsonResult(state);
+      return errorResult('No active lobby or game. Join a lobby first with join_lobby(lobbyId).');
     },
   );
 
@@ -602,34 +772,8 @@ Example settings.json structure:
       const result = game.submitMove(aid(), directions);
       if (!result.success) return errorResult(result.error ?? 'Failed to submit move.');
       if (onMoveSubmitted) onMoveSubmitted(game.gameId, aid());
-      return jsonResult({ success: true, path: directions });
-    },
-  );
-
-  server.tool(
-    'team_chat',
-    'Send a private message to your teammates. Works during class selection (pre-game) and during the game.',
-    { ...T, message: z.string().describe('The message to send to your team') },
-    async ({ token, message }) => {
-      const auth = requireAuth(token);
-      if (auth) return auth;
-
-      // During class selection (pre_game), send via lobby teamChat
-      const lobby = resolveLobby(aid());
-      if (lobby && lobby.phase === 'pre_game') {
-        const player = lobby.preGamePlayers.get(aid());
-        lobby.teamChat(aid(), message);
-        if (onLobbyChat) onLobbyChat(aid());
-        return jsonResult({ success: true });
-      }
-
-      // During game, send via game chat
-      const game = resolveGame(aid());
-      if (!game) return errorResult('team_chat requires an active game or pre-game class selection phase. Use lobby_chat during lobby forming.');
-      if (game.phase !== 'in_progress') return errorResult('Team chat is only available during the game.');
-      game.submitChat(aid(), message);
-      if (onChat) onChat(game.gameId);
-      return jsonResult({ success: true });
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      return jsonResult({ success: true, path: directions, ...updates });
     },
   );
 

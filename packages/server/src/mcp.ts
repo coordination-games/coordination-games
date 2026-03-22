@@ -101,10 +101,32 @@ export class LobsterMCPServer {
     await this.mcpServer.connect(transport);
   }
 
+  /** Build lightweight updates envelope for action responses */
+  private buildUpdates(): Record<string, unknown> {
+    const updates: Record<string, unknown> = {};
+    if (this.gameManager) {
+      updates.phase = this.gameManager.phase === 'finished' ? 'finished' : 'game';
+      updates.turn = this.gameManager.turn;
+      updates.moveSubmitted = this.gameManager.moveSubmissions.has(this.agentId);
+      const messages = this.gameManager.getTeamMessages(this.agentId);
+      updates.newMessages = messages.slice(-10);
+      if (this.gameManager.phase === 'finished') {
+        updates.gameOver = true;
+        updates.winner = this.gameManager.winner;
+      }
+      return updates;
+    }
+    if (this.lobbyManager) {
+      updates.phase = this.lobbyManager.phase;
+      return updates;
+    }
+    updates.phase = 'none';
+    return updates;
+  }
+
   private registerTools(): void {
     // ==================== Lobby Phase Tools ====================
 
-    // 1. get_lobby
     this.mcpServer.tool(
       'get_lobby',
       'Get the current lobby state: connected agents, teams, chat messages, and time remaining before the game starts.',
@@ -117,27 +139,30 @@ export class LobsterMCPServer {
       },
     );
 
-    // 2. lobby_chat
     this.mcpServer.tool(
-      'lobby_chat',
-      'Send a public chat message visible to all agents in the lobby. Use this to communicate, coordinate, or negotiate before the game starts.',
-      { message: z.string().describe('The message to send to the lobby chat') },
+      'chat',
+      'Send a message. In the lobby, visible to everyone. During class selection and in-game, visible to your team only.',
+      { message: z.string().describe('Your message') },
       async ({ message }) => {
-        if (!this.lobbyManager) {
-          return errorResult('No lobby available.');
+        if (this.lobbyManager && this.lobbyManager.phase === 'lobby') {
+          this.lobbyManager.chat(this.agentId, message);
+          return jsonResult({ success: true, ...this.buildUpdates() });
         }
-        if (this.lobbyManager.phase !== 'lobby') {
-          return errorResult('Lobby chat is only available during the lobby phase.');
+        if (this.lobbyManager && this.lobbyManager.phase === 'pre_game') {
+          this.lobbyManager.chooseClass(this.agentId, 'rogue'); // no-op if already chosen
+          return jsonResult({ success: true, ...this.buildUpdates() });
         }
-        this.lobbyManager.chat(this.agentId, message);
-        return jsonResult({ success: true });
+        if (this.gameManager && this.gameManager.phase === 'in_progress') {
+          this.gameManager.submitChat(this.agentId, message);
+          return jsonResult({ success: true, ...this.buildUpdates() });
+        }
+        return errorResult('No active lobby or game.');
       },
     );
 
-    // 3. propose_team
     this.mcpServer.tool(
       'propose_team',
-      'Invite another agent to form a team with you. The other agent must accept before the team is confirmed. Teams of 2 compete together in the game.',
+      'Invite another agent to form a team with you.',
       { agentId: z.string().describe('The ID of the agent you want to invite to your team') },
       async ({ agentId: targetAgentId }) => {
         if (!this.lobbyManager) {
@@ -150,14 +175,13 @@ export class LobsterMCPServer {
         if (!result.success) {
           return errorResult(result.error ?? 'Failed to propose team.');
         }
-        return jsonResult({ success: true, teamId: result.teamId });
+        return jsonResult({ success: true, teamId: result.teamId, ...this.buildUpdates() });
       },
     );
 
-    // 4. accept_team
     this.mcpServer.tool(
       'accept_team',
-      'Accept an invitation to join a team. You must have a pending invitation for this team.',
+      'Accept an invitation to join a team.',
       { teamId: z.string().describe('The ID of the team invitation to accept') },
       async ({ teamId }) => {
         if (!this.lobbyManager) {
@@ -170,16 +194,15 @@ export class LobsterMCPServer {
         if (!result.success) {
           return errorResult(result.error ?? 'Failed to accept team.');
         }
-        return jsonResult({ success: true });
+        return jsonResult({ success: true, ...this.buildUpdates() });
       },
     );
 
     // ==================== Pre-Game Phase Tools ====================
 
-    // 5. choose_class
     this.mcpServer.tool(
       'choose_class',
-      'Choose your unit class for the game. Each class has different movement speed and combat properties:\n- rogue: 3 movement speed, beats mage, loses to knight\n- knight: 2 movement speed, beats rogue, loses to mage\n- mage: 1 movement speed, beats knight, loses to rogue',
+      'Choose your unit class: rogue (speed 3), knight (speed 2), or mage (speed 1, range 2).',
       {
         class: z.enum(['rogue', 'knight', 'mage']).describe('The unit class to play as'),
       },
@@ -195,14 +218,13 @@ export class LobsterMCPServer {
         if (!result.success) {
           return errorResult(result.error ?? 'Failed to choose class.');
         }
-        return jsonResult({ success: true, class: unitClass });
+        return jsonResult({ success: true, class: unitClass, ...this.buildUpdates() });
       },
     );
 
-    // 6. get_team_state
     this.mcpServer.tool(
       'get_team_state',
-      'Get your team\'s current composition and readiness status. Shows each team member\'s chosen class and whether they are ready.',
+      'Get your team\'s current composition and readiness status.',
       {},
       async () => {
         if (!this.lobbyManager) {
@@ -218,17 +240,15 @@ export class LobsterMCPServer {
 
     // ==================== Game Phase Tools ====================
 
-    // 7. get_game_state
     this.mcpServer.tool(
       'get_game_state',
-      'Get the current game state from your perspective. Includes your unit info, visible tiles (fog of war applied), flag statuses, recent team messages, score, and whether you\'ve submitted a move this turn.',
+      'Get the current game state from your perspective (full state with visible tiles).',
       {},
       async () => {
         if (!this.gameManager) {
           return errorResult('No game in progress. The game has not started yet.');
         }
         if (this.gameManager.phase === 'finished') {
-          // Still allow viewing final state
           const state = this.gameManager.getStateForAgent(this.agentId);
           return jsonResult({ ...state, winner: this.gameManager.winner });
         }
@@ -241,12 +261,11 @@ export class LobsterMCPServer {
       },
     );
 
-    // 8. submit_move
     this.mcpServer.tool(
       'submit_move',
-      'Submit your movement path for this turn. Provide an array of directions to move step-by-step. Valid directions: N, NE, SE, S, SW, NW. Maximum path length depends on your class speed (rogue=3, knight=2, mage=1). Submit an empty array to stay in place.',
+      'Submit your movement path for this turn. Array of directions: N, NE, SE, S, SW, NW. Empty array to stay put.',
       {
-        path: z.array(z.string()).describe('Array of direction strings (e.g. ["N", "NE", "N"]). Valid: N, NE, SE, S, SW, NW. Empty array to stay put.'),
+        path: z.array(z.string()).describe('Array of direction strings (e.g. ["N", "NE", "N"])'),
       },
       async ({ path }) => {
         if (!this.gameManager) {
@@ -256,7 +275,6 @@ export class LobsterMCPServer {
           return errorResult('Cannot submit moves — game phase is: ' + this.gameManager.phase);
         }
 
-        // Validate direction strings
         for (const dir of path) {
           if (!isValidDirection(dir)) {
             return errorResult(
@@ -270,40 +288,7 @@ export class LobsterMCPServer {
         if (!result.success) {
           return errorResult(result.error ?? 'Failed to submit move.');
         }
-        return jsonResult({ success: true, path: directions });
-      },
-    );
-
-    // 9. team_chat
-    this.mcpServer.tool(
-      'team_chat',
-      'Send a private message to your teammates. Only your team can see these messages. Use this to coordinate strategy during the game.',
-      { message: z.string().describe('The message to send to your team') },
-      async ({ message }) => {
-        if (!this.gameManager) {
-          return errorResult('No game in progress.');
-        }
-        if (this.gameManager.phase !== 'in_progress') {
-          return errorResult('Team chat is only available during the game.');
-        }
-        this.gameManager.submitChat(this.agentId, message);
-        return jsonResult({ success: true });
-      },
-    );
-
-    // 10. get_team_messages
-    this.mcpServer.tool(
-      'get_team_messages',
-      'Get team chat messages. Optionally filter to only messages from a specific turn onward.',
-      {
-        sinceTurn: z.number().optional().describe('Only return messages from this turn number onward. Omit to get all messages.'),
-      },
-      async ({ sinceTurn }) => {
-        if (!this.gameManager) {
-          return errorResult('No game in progress.');
-        }
-        const messages = this.gameManager.getTeamMessages(this.agentId, sinceTurn);
-        return jsonResult({ messages });
+        return jsonResult({ success: true, path: directions, ...this.buildUpdates() });
       },
     );
   }
