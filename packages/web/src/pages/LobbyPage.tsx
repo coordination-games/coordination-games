@@ -63,17 +63,19 @@ function PreGamePanel({ preGame, agents }: { preGame: NonNullable<LobbyState['pr
           );
         })}
         {chat.length > 0 && (
-          <div className="mt-2 rounded p-2 max-h-32 overflow-y-auto" style={{ background: 'rgba(42, 31, 14, 0.04)' }}>
-            {chat.map((m, i) => {
-              const agent = agents.find((a) => a.id === m.from);
-              return (
-                <div key={i} className="text-xs mb-0.5">
-                  <span className="font-semibold" style={{ color }}>{agent?.handle ?? m.from}:</span>{' '}
-                  <span style={{ color: 'var(--color-ink-light)' }}>{m.message}</span>
-                </div>
-              );
-            })}
-          </div>
+          <AutoScrollChat deps={chat.length}>
+            <div className="mt-2 rounded p-2" style={{ background: 'rgba(42, 31, 14, 0.04)' }}>
+              {chat.map((m, i) => {
+                const agent = agents.find((a) => a.id === m.from);
+                return (
+                  <div key={i} className="text-xs mb-0.5">
+                    <span className="font-semibold" style={{ color }}>{agent?.handle ?? m.from}:</span>{' '}
+                    <span style={{ color: 'var(--color-ink-light)' }}>{m.message}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </AutoScrollChat>
         )}
       </div>
     );
@@ -92,24 +94,45 @@ function PreGamePanel({ preGame, agents }: { preGame: NonNullable<LobbyState['pr
   );
 }
 
-function ChatLog({ messages, agents }: { messages: ChatMessage[]; agents: LobbyAgent[] }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
+function AutoScrollChat({ children, deps }: { children: React.ReactNode; deps: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScroll = useRef(true);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  };
+
+  useEffect(() => {
+    if (shouldAutoScroll.current && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [deps]);
 
   return (
-    <div className="flex flex-col gap-1 overflow-y-auto max-h-64">
-      {messages.length === 0 && <p className="text-xs italic" style={{ color: 'var(--color-ink-faint)' }}>No messages yet...</p>}
-      {messages.map((m, i) => {
-        const agent = agents.find((a) => a.id === m.from);
-        return (
-          <div key={i} className="text-xs">
-            <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agent?.handle ?? m.from}:</span>{' '}
-            <span style={{ color: 'var(--color-ink-light)' }}>{m.message}</span>
-          </div>
-        );
-      })}
-      <div ref={endRef} />
+    <div ref={containerRef} onScroll={handleScroll} className="overflow-y-auto max-h-64">
+      {children}
     </div>
+  );
+}
+
+function ChatLog({ messages, agents }: { messages: ChatMessage[]; agents: LobbyAgent[] }) {
+  return (
+    <AutoScrollChat deps={messages.length}>
+      <div className="flex flex-col gap-1">
+        {messages.length === 0 && <p className="text-xs italic" style={{ color: 'var(--color-ink-faint)' }}>No messages yet...</p>}
+        {messages.map((m, i) => {
+          const agent = agents.find((a) => a.id === m.from);
+          return (
+            <div key={i} className="text-xs">
+              <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agent?.handle ?? m.from}:</span>{' '}
+              <span style={{ color: 'var(--color-ink-light)' }}>{m.message}</span>
+            </div>
+          );
+        })}
+      </div>
+    </AutoScrollChat>
   );
 }
 

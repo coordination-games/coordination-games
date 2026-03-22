@@ -170,8 +170,26 @@ function ChatLog({
   handles?: Record<string, string>;
   unitLabels?: Record<string, string>;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScroll = useRef(true);
+
+  // Track if user has scrolled up
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+    shouldAutoScroll.current = atBottom;
+  };
+
+  // Auto-scroll on new messages if user hasn't scrolled up
+  useEffect(() => {
+    if (shouldAutoScroll.current && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [messages.length]);
+
   return (
-    <div className="flex flex-col gap-1">
+    <div ref={containerRef} onScroll={handleScroll} className="flex flex-col gap-1 overflow-y-auto h-full">
       {messages.length === 0 && (
         <p className="text-gray-600 text-xs italic">No messages</p>
       )}
@@ -331,12 +349,8 @@ export default function GamePage() {
   return (
     <div className="flex flex-col h-[calc(100vh-5rem)] -mx-6 -my-8 px-4 py-3 gap-2">
       {/* Top bar */}
-      <div className="flex items-center justify-between bg-gray-900 rounded-lg px-4 py-2 shrink-0">
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-gray-400">
-            Game{' '}
-            <span className="font-mono text-emerald-400">{id}</span>
-          </span>
+      <div className="flex flex-wrap items-center justify-between bg-gray-900 rounded-lg px-3 py-2 shrink-0 gap-2">
+        <div className="flex items-center gap-2 sm:gap-4">
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
@@ -366,7 +380,7 @@ export default function GamePage() {
             <button
               key={btn.value}
               onClick={() => { setSelectedTeam(btn.value); setSelectedUnit(null); }}
-              className={`px-3 py-1 text-xs rounded font-medium transition-colors ${
+              className={`px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer ${
                 selectedTeam === btn.value
                   ? btn.value === 'A'
                     ? 'bg-blue-900/60 text-blue-300'
@@ -382,10 +396,10 @@ export default function GamePage() {
         </div>
       </div>
 
-      {/* Main content area */}
-      <div className="flex gap-2 flex-1 min-h-0">
-        {/* Hex grid — takes most of the space */}
-        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 overflow-hidden">
+      {/* Main content area — stacks on mobile */}
+      <div className="flex flex-col md:flex-row gap-2 flex-1 min-h-0 overflow-hidden">
+        {/* Hex grid */}
+        <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 min-h-[50vh] md:min-h-0 overflow-hidden">
           <HexGrid
             tiles={gameState.tiles}
             mapRadius={gameState.mapRadius}
@@ -395,7 +409,6 @@ export default function GamePage() {
             visibleOverride={selectedUnit && gameState.visibleByUnit?.[selectedUnit] ? gameState.visibleByUnit[selectedUnit] : undefined}
             onUnitClick={(unitId, team) => {
               if (selectedUnit === unitId) {
-                // Click same unit again → deselect, back to team view
                 setSelectedUnit(null);
                 setSelectedTeam(team);
               } else {
@@ -406,14 +419,14 @@ export default function GamePage() {
           />
         </div>
 
-        {/* Right sidebar */}
-        <div className="w-52 shrink-0 flex flex-col gap-2">
+        {/* Sidebar — horizontal on mobile, vertical on desktop */}
+        <div className="flex flex-row md:flex-col gap-2 md:w-52 shrink-0 min-h-0 overflow-hidden">
           {/* Kill feed */}
-          <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-[40%] overflow-hidden">
+          <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 flex-1 md:max-h-[40%] overflow-hidden">
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              Kill Feed
+              Kills
             </h3>
-            <div className="overflow-y-auto flex-1 scrollbar-thin">
+            <div className="overflow-y-auto flex-1">
               <KillFeed kills={allKills} />
             </div>
           </div>
@@ -423,7 +436,7 @@ export default function GamePage() {
             <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
               {chatTeamLabel}
             </h3>
-            <div className="overflow-y-auto flex-1 scrollbar-thin">
+            <div className="overflow-y-auto flex-1">
               <ChatLog
                 messages={chatMessages}
                 team={selectedTeam === 'all' ? 'A' : selectedTeam}
@@ -438,14 +451,14 @@ export default function GamePage() {
             const preGameChat = selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
             const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
             const chatLabel = preGameChat.length > 0
-              ? `Pre-Game Chat (${preGameChat.length})`
-              : `Lobby Chat (${lobbyChat.length})`;
+              ? `Pre-Game (${preGameChat.length})`
+              : `Lobby (${lobbyChat.length})`;
             const chatColor = preGameChat.length > 0
               ? (selectedTeam === 'A' ? 'text-blue-400' : 'text-red-400')
               : 'text-yellow-400';
             if (chatToShow.length === 0) return null;
             return (
-              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-[30%] overflow-hidden">
+              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 flex-1 md:max-h-[30%] overflow-hidden">
                 <button
                   onClick={() => setShowLobbyChat(!showLobbyChat)}
                   className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
@@ -454,7 +467,7 @@ export default function GamePage() {
                   {chatLabel}
                 </button>
                 {showLobbyChat && (
-                  <div className="overflow-y-auto flex-1 scrollbar-thin">
+                  <div className="overflow-y-auto flex-1">
                     <div className="flex flex-col gap-1">
                       {chatToShow.map((m, i) => {
                         const name = gameState.handles?.[m.from] ?? m.from;
@@ -475,16 +488,16 @@ export default function GamePage() {
       </div>
 
       {/* Bottom bar — flag status */}
-      <div className="flex items-center justify-between bg-gray-900 rounded-lg px-4 py-2 shrink-0">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-2xl">🦞</span>
-          <span className="text-blue-400 font-semibold">Team A Flag:</span>
+      <div className="flex items-center justify-between bg-gray-900 rounded-lg px-3 py-2 shrink-0 text-xs sm:text-sm">
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className="text-lg sm:text-2xl">🦞</span>
+          <span className="text-blue-400 font-semibold">A:</span>
           <span className="text-gray-300">{gameState.flagA.status}</span>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-red-400 font-semibold">Team B Flag:</span>
+        <div className="flex items-center gap-1 sm:gap-2">
+          <span className="text-red-400 font-semibold">B:</span>
           <span className="text-gray-300">{gameState.flagB.status}</span>
-          <span className="text-2xl">🦞</span>
+          <span className="text-lg sm:text-2xl">🦞</span>
         </div>
       </div>
     </div>
