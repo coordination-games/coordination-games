@@ -236,16 +236,19 @@ export class LobbyRunner {
    * Run lobby behavior for a single bot in the background (3-4 rounds).
    */
   private async runBotLobbyBehavior(botId: string): Promise<void> {
-    const maxRounds = 4;
+    const maxRounds = 8;
     for (let round = 0; round < maxRounds; round++) {
       if (this.abortController.signal.aborted) return;
       if (this.phase !== 'forming') return;
 
-      // Skip if bot is already on a full team
+      // Wait if bot is already on a full team (but don't exit — team might break up)
       const teamId = this.lobby.agentTeam.get(botId);
       if (teamId) {
         const team = this.lobby.teams.get(teamId);
-        if (team && team.members.length >= this.teamSize) return;
+        if (team && team.members.length >= this.teamSize) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          continue;
+        }
       }
 
       await this.runLobbyBot(botId, round + 1).catch((err) => {

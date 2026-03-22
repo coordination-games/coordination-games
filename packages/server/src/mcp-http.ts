@@ -615,6 +615,8 @@ Example settings.json structure:
       // During class selection (pre_game), send via lobby teamChat
       const lobby = resolveLobby(aid());
       if (lobby && lobby.phase === 'pre_game') {
+        const player = lobby.preGamePlayers.get(aid());
+        console.log(`[MCP] team_chat pre_game: agentId=${aid()}, hasPlayer=${!!player}, preGamePlayers=[${[...lobby.preGamePlayers.keys()].join(',')}]`);
         lobby.teamChat(aid(), message);
         return jsonResult({ success: true });
       }
