@@ -31,6 +31,7 @@ import {
   mountMcpEndpoint,
   closeAllMcpSessions,
   notifyTurnResolved,
+  notifyAgent,
   getAgentName,
 } from './mcp-http.js';
 
@@ -355,10 +356,16 @@ export class GameServer {
       (gameId: string, agentId: string) => {
         this.onMoveSubmitted(gameId, agentId);
       },
-      // Chat callback: broadcast state to spectators on mid-turn chat
+      // Chat callback: broadcast state to spectators + notify teammates
       (gameId: string) => {
         const room = this.games.get(gameId);
-        if (room) this.broadcastState(room);
+        if (room) {
+          this.broadcastState(room);
+          // Notify all agents in this game so wait_for_update wakes up
+          for (const unit of room.game.units) {
+            notifyAgent(unit.id);
+          }
+        }
       },
       // Register callback: log when an agent registers
       (agentId: string, name: string) => {
@@ -390,6 +397,12 @@ export class GameServer {
 
         console.log(`[MCP] Agent ${agentId} (${name}) joined lobby ${lobbyId}, spectators: ${lobbyRoom.spectators.size}`);
         lobbyRoom.runner.emitState();
+        // Notify other agents already in this lobby
+        if (lobbyRoom.lobbyManager) {
+          for (const [id] of lobbyRoom.lobbyManager.agents) {
+            if (id !== agentId) notifyAgent(id);
+          }
+        }
         return { success: true };
       },
       // Leaderboard resolver
@@ -418,13 +431,19 @@ export class GameServer {
           wins: player.wins,
         };
       },
-      // Lobby chat callback: broadcast state to spectators when agent chats in lobby/pre-game
+      // Lobby chat callback: broadcast state to spectators + notify other agents
       (agentId: string) => {
         const lobbyId = this.agentToLobby.get(agentId);
         if (!lobbyId) return;
         const lobbyRoom = this.lobbies.get(lobbyId);
         if (lobbyRoom) {
           lobbyRoom.runner.emitState();
+          // Notify all other agents in this lobby so wait_for_update wakes up
+          if (lobbyRoom.lobbyManager) {
+            for (const [id] of lobbyRoom.lobbyManager.agents) {
+              if (id !== agentId) notifyAgent(id);
+            }
+          }
         }
       },
     );
@@ -943,7 +962,7 @@ export class GameServer {
     // Resolve the turn
     game.resolveTurn();
 
-    // Notify any external agents waiting via wait_for_turn
+    // Notify any external agents waiting via wait_for_update
     notifyTurnResolved(gameId);
 
     // Snapshot current state
@@ -991,7 +1010,7 @@ export class GameServer {
       }
     }
 
-    // Wake up any external agents waiting on wait_for_turn
+    // Wake up any external agents waiting on wait_for_update
     notifyTurnResolved(room.game.gameId);
 
     // Record ELO for all human/bot players
@@ -1053,6 +1072,12 @@ export class GameServer {
           lobbyRoom.state = state;
           console.log(`[Lobby] Found room, spectators=${lobbyRoom.spectators.size}`);
           this.broadcastLobbyState(lobbyRoom);
+          // Notify all agents in this lobby about state changes (phase transitions, new agents, etc.)
+          if (lobbyRoom.lobbyManager) {
+            for (const [id] of lobbyRoom.lobbyManager.agents) {
+              notifyAgent(id);
+            }
+          }
         } else {
           console.log(`[Lobby] WARNING: lobby room not found for ${state.lobbyId}`);
         }
@@ -1145,6 +1170,13 @@ export class GameServer {
     };
 
     this.games.set(gameId, room);
+
+    // Notify external agents that the game has started (wakes wait_for_update)
+    for (const p of players) {
+      if (p.id.startsWith('ext_')) {
+        notifyAgent(p.id);
+      }
+    }
 
     // Start the event-driven turn loop
     this.startNextTurn(gameId);

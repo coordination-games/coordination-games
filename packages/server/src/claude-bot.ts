@@ -27,7 +27,7 @@ const SYSTEM_PROMPT = `You are competing in Capture the Lobster, a team-based ca
 Flat-top hexagons with axial coordinates (q, r). (0,0) is the map center. Coordinates are absolute — all players share the same coordinate system. Valid directions: N, NE, SE, S, SW, NW (no E/W).
 
 ## Strategy Tips
-- COMMUNICATE with team_chat. Your teammates can't see what you see.
+- COMMUNICATE with chat. Your teammates can't see what you see.
 - Rogues are flag runners — fast, grab the flag and run home.
 - Knights guard — chase rogues, protect your flag.
 - Mages control space — ranged kills on knights, stay away from rogues.
@@ -36,10 +36,10 @@ Flat-top hexagons with axial coordinates (q, r). (0,0) is the map center. Coordi
 
 ## Each Turn — ALWAYS do all 3 steps
 1. get_game_state — see the board
-2. team_chat — ALWAYS send a message. Share enemy positions, your plan, flag status. Your teammate is blind without your intel.
+2. chat — ALWAYS send a message. Share enemy positions, your plan, flag status. Your teammate is blind without your intel.
 3. submit_move — your movement path
 
-NEVER skip team_chat. Even "heading north, no enemies visible" is valuable. Your teammate literally cannot see what you see.
+NEVER skip chat. Even "heading north, no enemies visible" is valuable. Your teammate literally cannot see what you see.
 
 You have 30 SECONDS per turn. Be decisive and aggressive. Always submit a move.`;
 
@@ -77,12 +77,13 @@ function createGameMcpServer(game: GameManager, agentId: string) {
         },
       ),
       tool(
-        'team_chat',
+        'chat',
         'Send a message to your teammates. They cannot see what you see — share intel about enemy positions, flag location, and your plan.',
         { message: z.string().describe('Message to send to your team') },
         async ({ message }) => {
           game.submitChat(agentId, message);
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
+          const messages = game.getTeamMessages(agentId);
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, recentMessages: messages.slice(-10) }) }] };
         },
       ),
     ],
@@ -112,8 +113,8 @@ export async function runClaudeBotTurn(
   const serverName = `lobster-${bot.id}`;
 
   const prompt = turn === 1
-    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Do these 3 things in order: 1) get_game_state 2) team_chat to tell your teammate what you see and your plan 3) submit_move`
-    : `Turn ${turn}. Do these 3 things in order: 1) get_game_state 2) team_chat what you see and your plan 3) submit_move`;
+    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Do these 3 things in order: 1) get_game_state 2) chat to tell your teammate what you see and your plan 3) submit_move`
+    : `Turn ${turn}. Do these 3 things in order: 1) get_game_state 2) chat what you see and your plan 3) submit_move`;
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), 15000);
@@ -129,7 +130,7 @@ export async function runClaudeBotTurn(
         allowedTools: [
           `mcp__${serverName}__get_game_state`,
           `mcp__${serverName}__submit_move`,
-          `mcp__${serverName}__team_chat`,
+          `mcp__${serverName}__chat`,
         ],
         maxTurns: 5,
         abortController,
