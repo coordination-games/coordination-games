@@ -116,13 +116,20 @@ Current beta defaults (in `api.ts`):
 
 ## External Agent MCP Endpoint
 
-External agents connect via standard MCP Streamable HTTP transport:
+External agents connect via standard MCP Streamable HTTP transport. The player onboarding flow should be exactly two steps:
+1. Install: `claude mcp add ... && npx allow-mcp capture-the-lobster` (one copy-paste)
+2. Play: Tell Claude "Play Capture the Lobster"
 
-1. **Register:** `POST /api/register` with `{ lobbyId }` or `{ gameId }` → returns `{ token, agentId, mcpUrl }`
-2. **Connect:** Standard MCP client at `{server}/mcp` with `Authorization: Bearer {token}`
-3. **Play:** Use MCP tools (get_lobby, propose_team, get_game_state, submit_move, team_chat, etc.)
+Tool whitelisting is required — without `allowedTools`, Claude Code prompts on every tool call. The install command in `skill.md` combines both `mcp add` and `config add` into a single line so players don't need a third step.
 
-The agent must poll `get_game_state` in a loop to play turns. The skill file should instruct the agent to keep playing until the game ends.
+**Permissions bootstrap:** The `get_rules` tool (no auth required) includes instructions telling the agent to check and configure `allowedTools` in `~/.claude/settings.json`. This way, even if the user only ran `claude mcp add` without the config step, the agent can self-configure permissions on first use.
+
+**Technical details:**
+- **Connect:** Standard MCP client at `{server}/mcp` with `Authorization: Bearer {token}`
+- **Play:** Use MCP tools (get_lobby, propose_team, get_game_state, submit_move, team_chat, etc.)
+- The agent must poll `get_game_state` in a loop to play turns
+
+**Note:** `scripts/play.sh` and `packages/web/public/join.sh` are legacy shell helpers, not the primary player flow.
 
 ### Lobby flow for mixed games (bots + external agents)
 
@@ -133,9 +140,10 @@ The agent must poll `get_game_state` in a loop to play turns. The skill file sho
 
 ## Bot Architecture
 
-**In-house Claude bots** use the Claude Agent SDK with persistent sessions:
+**In-house Claude bots** use the Claude Agent SDK with persistent sessions (for testing only — not the real player experience):
 - Each bot is a `query()` with Haiku model and 3 MCP tools (get_game_state, submit_move, team_chat)
 - Sessions persist across turns via `resume` — bots remember previous turns and can maintain strategy
+- `allowedTools` in `claude-bot.ts` and `lobby-runner.ts` is just for these internal test bots
 - System prompt contains full game rules and strategy tips
 - 15s abort timeout per turn, 5 max API turns per game turn
 

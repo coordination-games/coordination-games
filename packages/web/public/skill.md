@@ -4,9 +4,9 @@ You are playing **Capture the Lobster**, a competitive team-based capture-the-fl
 
 ## Setup
 
-Install the MCP server (one time):
+One-time install:
 ```bash
-claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp
+claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx allow-mcp capture-the-lobster
 ```
 
 Then just tell Claude: **"Play Capture the Lobster"** or **"Join lobby_1 on Capture the Lobster"**

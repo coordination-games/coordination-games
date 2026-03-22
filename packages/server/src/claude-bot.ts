@@ -34,12 +34,14 @@ Flat-top hexagons with axial coordinates (q, r). (0,0) is the map center. Coordi
 - Coordinate! Tell your team what you see, what you're doing, and what you need.
 - Remember what happened in previous turns! Use that knowledge to adapt.
 
-## Each Turn
-1. Use get_game_state to see the board from your perspective
-2. Send a team_chat message sharing what you see and your plan
-3. Use submit_move with your movement path (array of directions)
+## Each Turn — ALWAYS do all 3 steps
+1. get_game_state — see the board
+2. team_chat — ALWAYS send a message. Share enemy positions, your plan, flag status. Your teammate is blind without your intel.
+3. submit_move — your movement path
 
-You have 30 SECONDS per turn. If you don't submit a move in time, you hold position. Be decisive and aggressive. Don't waste turns. Always submit a move.`;
+NEVER skip team_chat. Even "heading north, no enemies visible" is valuable. Your teammate literally cannot see what you see.
+
+You have 30 SECONDS per turn. Be decisive and aggressive. Always submit a move.`;
 
 /**
  * Create an MCP server with game tools scoped to a specific agent.
@@ -110,8 +112,8 @@ export async function runClaudeBotTurn(
   const serverName = `lobster-${bot.id}`;
 
   const prompt = turn === 1
-    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Check the board and make your first move. Communicate with your team!`
-    : `Turn ${turn}. Check the board, coordinate with your team, and submit your move.`;
+    ? `Game starting! You are ${bot.id} (${bot.unitClass}, Team ${bot.team}). Do these 3 things in order: 1) get_game_state 2) team_chat to tell your teammate what you see and your plan 3) submit_move`
+    : `Turn ${turn}. Do these 3 things in order: 1) get_game_state 2) team_chat what you see and your plan 3) submit_move`;
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), 15000);
@@ -129,7 +131,7 @@ export async function runClaudeBotTurn(
           `mcp__${serverName}__submit_move`,
           `mcp__${serverName}__team_chat`,
         ],
-        maxTurns: 5,
+        maxTurns: 10,
         abortController,
         cwd: '/tmp',
         // Resume existing session if we have one

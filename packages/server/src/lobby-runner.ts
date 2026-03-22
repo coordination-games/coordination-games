@@ -42,6 +42,8 @@ export interface LobbyRunnerState {
   gameId: string | null;
   error: string | null;
   teamSize: number;
+  noTimeout: boolean;
+  timeRemainingSeconds: number;
 }
 
 export interface LobbyRunnerCallbacks {
@@ -121,6 +123,7 @@ export class LobbyRunner {
   private error: string | null = null;
   private abortController: AbortController;
   private teamSize: number;
+  private createdAt: number = Date.now();
   /** Session IDs for persistent bot conversations (lobby phase) */
   private lobbySessionIds: Map<string, string> = new Map();
   /** Session IDs for persistent bot conversations (pre-game phase) */
@@ -172,7 +175,7 @@ export class LobbyRunner {
       }
       // Compute time remaining
       const elapsed = (Date.now() - (this.lobby as any).preGameStartTime) / 1000;
-      const remaining = Math.max(0, 120 - elapsed);
+      const remaining = Math.max(0, 300 - elapsed);
       preGame = {
         players: players as any,
         timeRemainingSeconds: Math.round(remaining),
@@ -191,6 +194,8 @@ export class LobbyRunner {
       gameId: this.gameId,
       error: this.error,
       teamSize: this.teamSize,
+      noTimeout: this.noTimeout,
+      timeRemainingSeconds: this.noTimeout ? -1 : Math.max(0, Math.round((this.timeoutMs - (Date.now() - this.createdAt)) / 1000)),
     };
   }
 
@@ -501,8 +506,25 @@ export class LobbyRunner {
 
   private async runPreGamePhase(botPlayerIds: string[]): Promise<void> {
     if (botPlayerIds.length === 0) {
-      // No bots — wait for external agents to pick, then assign defaults
-      await new Promise((resolve) => setTimeout(resolve, 120000));
+      // No bots — wait for external agents to pick classes
+      // Resolve early once all players have chosen; respect noTimeout
+      await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+
+        const check = setInterval(() => {
+          const allPicked = [...this.lobby.preGamePlayers.values()].every(p => p.unitClass);
+          if (allPicked) { clearInterval(check); finish(); }
+        }, 1000);
+
+        if (!this.noTimeout) {
+          setTimeout(() => { clearInterval(check); finish(); }, 300000);
+        }
+
+        this.abortController.signal.addEventListener('abort', () => {
+          clearInterval(check); finish();
+        }, { once: true });
+      });
       this.assignDefaultClasses();
       this.emitState();
       return;
@@ -510,7 +532,7 @@ export class LobbyRunner {
 
     const preGameTimeout = setTimeout(() => {
       // Time's up — assign defaults
-    }, 120000);
+    }, 300000);
 
     // Round 1: Discuss — bots check team state and chat about strategy
     console.log('[PreGame] Round 1: Discussion');

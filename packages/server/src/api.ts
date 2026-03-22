@@ -320,6 +320,13 @@ export class GameServer {
     this.wss = new WebSocketServer({ noServer: true });
     this.elo = new EloTracker(path.resolve(__dirname, '../../elo.db'));
 
+    // Ping all WebSocket clients every 30s to keep connections alive through Cloudflare tunnel
+    setInterval(() => {
+      this.wss.clients.forEach((ws) => {
+        if (ws.readyState === WebSocket.OPEN) ws.ping();
+      });
+    }, 30000);
+
     // Enable Claude Agent SDK bots (uses local credentials from ~/.claude)
     this.useClaudeBots = process.env.USE_CLAUDE_BOTS !== 'false';
     console.log(this.useClaudeBots
@@ -383,7 +390,7 @@ export class GameServer {
           });
         }
 
-        console.log(`[MCP] Agent ${agentId} (${name}) joined lobby ${lobbyId}`);
+        console.log(`[MCP] Agent ${agentId} (${name}) joined lobby ${lobbyId}, spectators: ${lobbyRoom.spectators.size}`);
         lobbyRoom.runner.emitState();
         return { success: true };
       },
@@ -464,9 +471,10 @@ export class GameServer {
     router.get('/lobbies/:id', (req, res) => {
       const room = this.lobbies.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Lobby not found' });
-      if (!room.state) return res.json({ phase: 'forming' });
+      // Always compute fresh state for accurate timer
+      const freshState = room.runner.getState();
       res.json({
-        ...room.state,
+        ...freshState,
         externalSlots: Array.from(room.externalSlots.values()).map((s) => ({
           agentId: s.agentId,
           connected: s.connected,
@@ -480,7 +488,7 @@ export class GameServer {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
       const teamSize = (req.body?.teamSize as number) || 2;
-      const timeoutMs = (req.body?.timeoutMs as number) || 120000;
+      const timeoutMs = (req.body?.timeoutMs as number) || 600000;
       const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
       res.status(201).json({ lobbyId });
     });
@@ -491,13 +499,13 @@ export class GameServer {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
       const teamSize = (req.body?.teamSize as number) || 2;
-      const timeoutMs = (req.body?.timeoutMs as number) || 120000;
+      const timeoutMs = (req.body?.timeoutMs as number) || 600000;
       const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
       res.status(201).json({ lobbyId, teamSize });
     });
 
-    // Add a bot to a lobby (requires admin password since bots use API credits)
-    router.post('/lobbies/:id/add-bot', (req, res) => {
+    // Fill remaining lobby slots with bots (requires admin password since bots use API credits)
+    router.post('/lobbies/:id/fill-bots', (req, res) => {
       const adminPassword = process.env.ADMIN_PASSWORD;
       if (adminPassword && req.body?.password !== adminPassword) {
         return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
@@ -509,8 +517,17 @@ export class GameServer {
       if (lobbyRoom.state?.phase && lobbyRoom.state.phase !== 'forming') {
         return res.status(400).json({ error: 'Lobby is no longer in forming phase' });
       }
-      const { agentId, handle } = lobbyRoom.runner.addBot();
-      res.status(201).json({ agentId, handle });
+      const totalSlots = (lobbyRoom.runner as any).teamSize * 2;
+      const currentAgents = lobbyRoom.runner.lobby.agents.size;
+      const slotsToFill = totalSlots - currentAgents;
+      if (slotsToFill <= 0) {
+        return res.status(400).json({ error: 'Lobby is already full' });
+      }
+      const added: { agentId: string; handle: string }[] = [];
+      for (let i = 0; i < slotsToFill; i++) {
+        added.push(lobbyRoom.runner.addBot());
+      }
+      res.status(201).json({ added, filledSlots: added.length });
     });
 
     // Disable lobby timeout (keep lobby open indefinitely)
@@ -680,10 +697,8 @@ export class GameServer {
         this.wss.handleUpgrade(request, socket, head, (ws) => {
           lobbyRoom.spectators.add(ws);
 
-          // Send current state
-          if (lobbyRoom.state) {
-            ws.send(JSON.stringify({ type: 'lobby_update', data: lobbyRoom.state }));
-          }
+          // Send current state (fresh for accurate timer)
+          ws.send(JSON.stringify({ type: 'lobby_update', data: lobbyRoom.runner.getState() }));
 
           ws.on('close', () => {
             lobbyRoom.spectators.delete(ws);
@@ -1008,8 +1023,10 @@ export class GameServer {
   // ---------------------------------------------------------------------------
 
   private broadcastLobbyState(lobbyRoom: LobbyRoom): void {
-    if (!lobbyRoom.state) return;
-    const msg = JSON.stringify({ type: 'lobby_update', data: lobbyRoom.state });
+    if (lobbyRoom.spectators.size === 0) return;
+    const state = lobbyRoom.runner.getState();
+    console.log(`[Lobby] Broadcasting to ${lobbyRoom.spectators.size} spectators, phase=${state.phase}, agents=${state.agents.length}`);
+    const msg = JSON.stringify({ type: 'lobby_update', data: state });
     for (const ws of lobbyRoom.spectators) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(msg);
@@ -1023,7 +1040,7 @@ export class GameServer {
 
   createLobbyGame(
     teamSize: number = 2,
-    timeoutMs: number = 120000,
+    timeoutMs: number = 600000,
   ): { lobbyId: string } {
     // Clean up failed/finished lobbies before creating a new one
     for (const [id, room] of this.lobbies) {
@@ -1033,10 +1050,14 @@ export class GameServer {
     }
     const runner = new LobbyRunner(teamSize, timeoutMs, {
       onStateChange: (state) => {
+        console.log(`[Lobby] onStateChange: lobbyId=${state.lobbyId}, phase=${state.phase}, agents=${state.agents.length}`);
         const lobbyRoom = this.lobbies.get(state.lobbyId);
         if (lobbyRoom) {
           lobbyRoom.state = state;
+          console.log(`[Lobby] Found room, spectators=${lobbyRoom.spectators.size}`);
           this.broadcastLobbyState(lobbyRoom);
+        } else {
+          console.log(`[Lobby] WARNING: lobby room not found for ${state.lobbyId}`);
         }
       },
       onGameCreated: (gameId, teamPlayers, handles) => {
