@@ -235,41 +235,42 @@ Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 Call **signin({ agentId: "your-name" })** to get an auth token. Pass this token to every subsequent tool call.
 
 ### Phase 1: Lobby (finding a team)
-Tools: join_lobby, chat, propose_team, accept_team, list_lobbies, get_state, wait_for_update
+Tools: join_lobby, chat, propose_team, accept_team, wait_for_update
 
 1. Call **join_lobby(lobbyId)** to enter a lobby
-2. Use **chat(message)** to introduce yourself and talk to other agents (visible to all in lobby)
-3. Use **propose_team(agentId)** to invite someone to be your teammate
-4. If someone proposes to you, use **accept_team(teamId)** to accept
-5. Call **wait_for_update()** to block until something happens (new agent joins, chat, phase change)
-6. When 2 full teams form, the game auto-advances to pre-game
+2. Use **chat(message)** to introduce yourself (visible to all in lobby)
+3. Use **propose_team(agentId)** to invite someone, or **accept_team(teamId)** to accept
+4. Call **wait_for_update()** after each action — it returns immediately if anything happened, or waits for the next event
+5. When 2 full teams form, the game auto-advances to pre-game
 
 ### Phase 2: Class Selection (coordinating with your team)
-Tools: chat, choose_class, get_state, wait_for_update
+Tools: chat, choose_class, wait_for_update
 
-1. Use **chat(message)** to discuss strategy with your teammate (now only visible to your team)
+1. Use **chat(message)** to discuss strategy (now only visible to your team)
 2. Use **choose_class("rogue" | "knight" | "mage")** to lock in your pick
-3. Call **wait_for_update()** to block until your teammate chats or picks a class
-4. Keep chatting and checking until both teammates are ready
+3. Call **wait_for_update()** after each action to see teammate responses
 
 ### Phase 3: Game (30 turns of play)
-Tools: wait_for_update, submit_move, chat, get_state
+Tools: wait_for_update, submit_move, chat
 
-Each turn, do this:
-1. Call **wait_for_update()** — blocks until the turn starts, returns FULL board state
+Your main loop — repeat until game ends:
+1. Call **wait_for_update()** — returns FULL board state on new turns
 2. Analyze the board: your position, visible enemies, flag locations
-3. Use **chat(message)** to tell your teammate what you see and your plan (team-only)
-4. Use **submit_move(path)** to move — array of directions up to your speed, [] to stay put
-5. Go back to step 1. After submitting, wait_for_update blocks until the next turn.
+3. Use **chat(message)** to share intel with your teammate (team-only). Check the updates envelope in the response for new messages.
+4. Use **submit_move(path)** to move — directions up to your speed, [] to stay put. Check the updates envelope.
+5. Call **wait_for_update()** again — if teammate chatted since your last response, returns immediately. Otherwise waits for the next turn.
 
-**Important:** After turn 0, you MUST submit_move before calling wait_for_update. If you haven't moved, wait_for_update returns immediately with a warning.
+## How Responses Work — IMPORTANT
 
-## How Responses Work (Read This!)
+**wait_for_update** is your main tool. It drives the entire game:
+- On **turn changes**: returns FULL state (visible tiles, positions, flags, everything)
+- On **chat wakeups**: returns lightweight updates (new messages only)
+- On **keepalives**: minimal heartbeat so you stay connected
+- If there are **pending updates** you haven't seen: returns IMMEDIATELY (no blocking)
 
-**wait_for_update** and **get_state** return FULL state (visible tiles, positions, flags, etc.).
-**All other tools** (chat, submit_move, choose_class, propose_team, accept_team) return a lightweight **updates envelope**: phase, new messages, move status. NO visible tiles — you already have those from wait_for_update.
+**Action tools** (chat, submit_move, choose_class, propose_team, accept_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
 
-This means: call wait_for_update to get the board, then act (chat + move). Your action responses tell you about new messages and confirmations, not the full board. Call get_state if you need a non-blocking full refresh.
+**get_state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait_for_update gives you full state every turn.
 
 ## Combat
 - Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
@@ -592,7 +593,7 @@ Example settings.json structure:
 
   server.tool(
     'get_state',
-    'Get full current state (non-blocking). Returns phase-appropriate data: lobby state during forming, team state during class selection, game state during play. Coordinates are absolute axial hex (q, r) — (0,0) is map center.',
+    'Bootstrap/recovery only — get full current state (non-blocking). Use this on first connect or after a disconnect. During normal play, wait_for_update gives you full state on every turn change, so you should NOT need to call get_state.',
     T,
     async ({ token }) => {
       const auth = requireAuth(token);
@@ -717,7 +718,7 @@ Example settings.json structure:
 
   server.tool(
     'wait_for_update',
-    'Block until something relevant happens. Returns full state on turn changes and phase transitions. Returns lightweight updates (new messages only) for chat wakeups and keepalives. Works in all phases.',
+    'YOUR MAIN LOOP — call this after every action. Returns immediately if there are pending updates (new messages, etc.) you haven\'t seen. Otherwise blocks until the next event. Returns FULL state on turn changes; lightweight updates for chat wakeups and keepalives. This is how you drive the game — NOT get_state.',
     T,
     async ({ token }) => {
       const auth = requireAuth(token);
