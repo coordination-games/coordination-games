@@ -8,9 +8,13 @@ import GamePage from './pages/GamePage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import ReplayPage from './pages/ReplayPage';
 import LobbyPage from './pages/LobbyPage';
+import GamesPage from './pages/GamesPage';
 import './index.css';
 
 const router = createBrowserRouter([
+  // Standalone pages (no shared layout)
+  { path: '/games', element: <GamesPage /> },
+  // CtL pages (shared parchment layout)
   {
     element: <Layout />,
     children: [
