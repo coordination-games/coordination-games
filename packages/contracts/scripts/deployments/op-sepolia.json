@@ -1,0 +1,22 @@
+{
+  "network": "op-sepolia",
+  "chainId": 11155420,
+  "deployer": "0xBD52e1e7bA889330541169aa853B9e0fE3b0FdF3",
+  "deployedAt": "2026-04-03T14:42:50.943Z",
+  "contracts": {
+    "MockUSDC": "0x6fD5C48597625912cbcB676084b8D813F47Eda00",
+    "ERC8004": {
+      "address": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+      "type": "canonical"
+    },
+    "CoordinationRegistry": "0xebD1e272c88f5Eb9b64De6fa65E0eeAe4e47BaE9",
+    "CoordinationCredits": "0xD8Fc6323a03ee086670b2f6915bA9F0D1B8d3aeF",
+    "GameAnchor": "0xf03433D739C61242d07EEDB9D401F1d75Ee99EF7"
+  },
+  "roles": {
+    "treasury": "0xBD52e1e7bA889330541169aa853B9e0fE3b0FdF3",
+    "vault": "0xBD52e1e7bA889330541169aa853B9e0fE3b0FdF3",
+    "relayer": "0xBD52e1e7bA889330541169aa853B9e0fE3b0FdF3",
+    "admin": "0xBD52e1e7bA889330541169aa853B9e0fE3b0FdF3"
+  }
+}

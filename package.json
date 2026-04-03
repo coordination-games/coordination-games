@@ -9,7 +9,9 @@
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/server",
-    "dev:web": "npm run dev --workspace=packages/web"
+    "dev:web": "npm run dev --workspace=packages/web",
+    "build:contracts": "npm run build --workspace=packages/contracts",
+    "build:cli": "npm run build --workspace=packages/cli"
   },
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",

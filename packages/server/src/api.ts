@@ -36,6 +36,8 @@ import {
   notifyAgent,
   getAgentName,
 } from './mcp-http.js';
+import { createRelayRouter } from './relay.js';
+import { buildResultFromGameManager, computePayoutsFromGameManager } from './coordination.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -501,6 +503,21 @@ export class GameServer {
   private setupRoutes(): void {
     const router = express.Router();
 
+    // GET /framework — coordination framework info (available games, version)
+    router.get('/framework', (_req, res) => {
+      const { getFramework } = require('./coordination.js');
+      try {
+        const fw = getFramework();
+        res.json({
+          version: '0.1.0',
+          games: fw.listGameTypes(),
+          status: 'active',
+        });
+      } catch {
+        res.json({ version: '0.1.0', games: ['capture-the-lobster'], status: 'initializing' });
+      }
+    });
+
     // List active lobbies
     router.get('/lobbies', (_req, res) => {
       const list = Array.from(this.lobbies.entries()).map(([id, room]) => ({
@@ -689,7 +706,94 @@ export class GameServer {
       });
     });
 
+    // -----------------------------------------------------------------------
+    // Game bundle & result endpoints (for Merkle verification tooling)
+    // -----------------------------------------------------------------------
+
+    // GET /games/:id/bundle — full game bundle for independent verification
+    router.get('/games/:id/bundle', (req, res) => {
+      const room = this.games.get(req.params.id);
+      if (!room) return res.status(404).json({ error: 'Game not found' });
+
+      const game = room.game;
+      const turnHistory = game.getTurnHistory();
+
+      // Serialize turn history with moves for Merkle tree construction
+      const turns = turnHistory.map((turn: TurnRecord, idx: number) => {
+        const moves: { player: string; data: string; signature: string }[] = [];
+        for (const [unitId, directions] of turn.moves.entries()) {
+          moves.push({
+            player: unitId,
+            data: JSON.stringify(directions),
+            signature: (turn as any).signatures?.[unitId] || '0x',
+          });
+        }
+        // Sort by player for deterministic ordering
+        moves.sort((a, b) => a.player.localeCompare(b.player));
+
+        return {
+          turnNumber: idx + 1,
+          moves,
+          result: room.stateHistory[idx + 1] || null,
+        };
+      });
+
+      res.json({
+        gameId: game.gameId,
+        config: {
+          mapRadius: game.map.radius,
+          teamSize: game.config.teamSize,
+          turnLimit: game.config.turnLimit,
+        },
+        turns,
+        outcome: {
+          winner: game.winner,
+          score: game.score,
+          phase: game.phase,
+        },
+      });
+    });
+
+    // GET /games/:id/result — on-chain GameResult with Merkle root
+    router.get('/games/:id/result', (req, res) => {
+      const room = this.games.get(req.params.id);
+      if (!room) return res.status(404).json({ error: 'Game not found' });
+
+      if (room.game.phase !== 'finished') {
+        return res.status(400).json({ error: 'Game is still in progress' });
+      }
+
+      try {
+        const playerIds = room.game.units.map((u) => u.id);
+        const result = buildResultFromGameManager(room.game, room.game.gameId, playerIds);
+        const payouts = computePayoutsFromGameManager(room.game, playerIds);
+        res.json({
+          ...result,
+          payouts: Object.fromEntries(payouts),
+        });
+      } catch (err: any) {
+        // Fallback to basic result if framework fails
+        const game = room.game;
+        res.json({
+          gameId: game.gameId,
+          gameType: 'capture-the-lobster',
+          players: game.units.map((u) => u.id),
+          outcome: { winner: game.winner, score: game.score },
+          movesRoot: null,
+          configHash: null,
+          turnCount: game.turn,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
+      }
+    });
+
     this.app.use('/api', router);
+
+    // Mount on-chain relay routes (only if env vars configured)
+    const relayRouter = createRelayRouter();
+    if (relayRouter) {
+      this.app.use('/api/relay', relayRouter);
+    }
 
     // SPA catch-all: serve index.html for any non-API, non-MCP route
     const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
@@ -1065,6 +1169,18 @@ export class GameServer {
     }
 
     console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.winner ?? 'draw'}`);
+
+    // Build game result with Merkle root for future on-chain anchoring
+    try {
+      const playerIds = room.game.units.map((u) => u.id);
+      const result = buildResultFromGameManager(room.game, room.game.gameId, playerIds);
+      const payouts = computePayoutsFromGameManager(room.game, playerIds);
+      console.log(`[Coordination] Game result built. Merkle root: ${result.movesRoot.slice(0, 16)}... Turns: ${result.turnCount}`);
+      const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');
+      console.log(`[Coordination] Payouts: ${payoutSummary}`);
+    } catch (err) {
+      console.error('[Coordination] Failed to build game result:', err);
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -1,0 +1,34 @@
+{
+  "name": "coordination-games",
+  "version": "0.1.0",
+  "description": "CLI and MCP server for Coordination Games — play verifiable games with AI agents",
+  "type": "module",
+  "bin": {
+    "coga": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "tsc --skipLibCheck",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx watch src/index.ts"
+  },
+  "keywords": ["coordination", "games", "ai", "agents", "mcp", "erc-8004"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucianHymer/capture-the-lobster"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "ethers": "^6.13.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "typescript": "^5.4.0",
+    "tsx": "^4.0.0"
+  }
+}

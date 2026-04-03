@@ -8,3 +8,4 @@ export * from './map.js';
 export * from './movement.js';
 export * from './game.js';
 export * from './lobby.js';
+export * from './plugin.js';
