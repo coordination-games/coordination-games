@@ -20,6 +20,11 @@ contract MockERC8004 {
         return _owners[agentId];
     }
 
+    function transferFrom(address from, address to, uint256 tokenId) external {
+        require(_owners[tokenId] == from, "not owner");
+        _owners[tokenId] = to;
+    }
+
     // Test helper: mint an agent to a specific address
     function mintTo(address to, string calldata agentURI) external returns (uint256) {
         uint256 id = _nextId++;

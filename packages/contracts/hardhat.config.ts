@@ -33,7 +33,7 @@ const config: HardhatUserConfig = {
       url: "http://127.0.0.1:8545",
     },
     opSepolia: {
-      url: process.env.OP_SEPOLIA_RPC || "https://sepolia.optimism.io",
+      url: process.env.OP_SEPOLIA_RPC || "https://optimism-sepolia-rpc.publicnode.com",
       chainId: 11155420,
       accounts: getDeployerKey(),
     },

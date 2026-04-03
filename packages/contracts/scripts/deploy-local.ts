@@ -105,7 +105,7 @@ async function main() {
 
     // Register
     await registry.connect(user1).registerExisting(
-      "testplayer", agentId1, 0, 0, ethers.ZeroHash, ethers.ZeroHash
+      user1.address, "testplayer", agentId1, 0, 0, ethers.ZeroHash, ethers.ZeroHash
     );
     ok("(b) Registered agent 'testplayer'");
 
@@ -169,7 +169,7 @@ async function main() {
     await erc8004.mintTo(user2.address, "https://agent2.ai");
     await usdc.connect(user2).approve(await registry.getAddress(), 5_000_000n);
     await registry.connect(user2).registerExisting(
-      "opponent", agentId2, 0, 0, ethers.ZeroHash, ethers.ZeroHash
+      user2.address, "opponent", agentId2, 0, 0, ethers.ZeroHash, ethers.ZeroHash
     );
     ok("(k) Registered second player 'opponent'");
 

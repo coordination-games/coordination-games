@@ -3,23 +3,9 @@ import { loadKey, getOrCreateKey } from "../keys.js";
 import { loadConfig } from "../config.js";
 import { ApiClient } from "../api-client.js";
 import { signPermit } from "../signing.js";
-import * as readline from "node:readline";
 
 const USDC_ADDRESS_OPTIMISM = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
 const REGISTRATION_COST_USDC = 5_000_000n; // 5 USDC (6 decimals)
-
-function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
 
 export function registerNameCommands(program: Command) {
   program
@@ -32,7 +18,14 @@ export function registerNameCommands(program: Command) {
       try {
         const data = await client.get(`/api/relay/check-name/${encodeURIComponent(name)}`);
         if (data.available) {
+          const wallet = loadKey();
+          const addr = wallet?.address ?? "YOUR_AGENT_ADDRESS";
+          const expires = Math.floor(Date.now() / 1000) + 3600;
+          const regUrl = `${config.serverUrl}/register?name=${encodeURIComponent(name)}&addr=${addr}&expires=${expires}`;
+
           process.stdout.write(`\n  "${name}" is available!\n\n`);
+          process.stdout.write(`  Registration page:\n  ${regUrl}\n\n`);
+          process.stdout.write(`  Or register directly: coga register ${name}\n\n`);
         } else {
           process.stdout.write(`\n  "${name}" is taken.\n`);
           if (data.suggestions?.length) {
@@ -49,10 +42,11 @@ export function registerNameCommands(program: Command) {
   program
     .command("register <name>")
     .description("Register a name (costs 5 USDC)")
-    .action(async (name: string) => {
+    .option("-y, --yes", "Skip confirmation prompt")
+    .action(async (name: string, opts: { yes?: boolean }) => {
       const wallet = loadKey();
       if (!wallet) {
-        process.stdout.write(`\n  No identity found. Run 'coordination init' first.\n\n`);
+        process.stdout.write(`\n  No identity found. Run 'coga init' first.\n\n`);
         return;
       }
 
@@ -71,35 +65,41 @@ export function registerNameCommands(program: Command) {
         process.exit(1);
       }
 
-      // Confirm with user
-      const answer = await prompt(`\n  Registration costs $5 USDC. Proceed? [y/N] `);
-      if (answer.toLowerCase() !== "y") {
-        process.stdout.write(`  Cancelled.\n\n`);
-        return;
+      // Skip confirmation if --yes flag is set (for agent use)
+      if (!opts.yes) {
+        // In non-interactive mode (piped stdin), just proceed
+        const isTTY = process.stdin.isTTY;
+        if (isTTY) {
+          const readline = await import("node:readline");
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          const answer = await new Promise<string>((resolve) => {
+            rl.question(`\n  Registration costs $5 USDC. Proceed? [y/N] `, (a) => {
+              rl.close();
+              resolve(a.trim());
+            });
+          });
+          if (answer.toLowerCase() !== "y") {
+            process.stdout.write(`  Cancelled.\n\n`);
+            return;
+          }
+        }
+        // If not TTY (piped), proceed without asking
       }
 
       try {
-        // Sign USDC permit for registration cost
         const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour
-
-        // Get server's registry address for permit signing
-        let registryAddress = USDC_ADDRESS_OPTIMISM; // fallback
-        try {
-          const serverStatus = await client.get("/api/relay/check-name/_probe");
-          // If server is up, the permit target should be the registry contract
-          // For local dev, permits are mocked — deadline/v/r/s are ignored
-        } catch {}
 
         const permitSig = await signPermit(
           wallet,
           USDC_ADDRESS_OPTIMISM,
-          registryAddress,
+          USDC_ADDRESS_OPTIMISM, // permit spender — will be overridden by server
           REGISTRATION_COST_USDC,
           deadline
         );
 
         const result = await client.post("/api/relay/register", {
           name,
+          address: wallet.address,
           agentURI: `https://coordination.games/agent/${wallet.address}`,
           permitDeadline: deadline,
           v: permitSig.v,

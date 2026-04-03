@@ -76,13 +76,13 @@ describe("Integration", function () {
     // User1 registers
     await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
     await registry.connect(user1).registerExisting(
-      "AlphaBot", agentId1, 0, 0, ethers.ZeroHash, ethers.ZeroHash
+      user1.address, "AlphaBot", agentId1, 0, 0, ethers.ZeroHash, ethers.ZeroHash
     );
 
     // User2 registers
     await usdc.connect(user2).approve(await registry.getAddress(), 5_000_000n);
     await registry.connect(user2).registerExisting(
-      "BetaBot", agentId2, 0, 0, ethers.ZeroHash, ethers.ZeroHash
+      user2.address, "BetaBot", agentId2, 0, 0, ethers.ZeroHash, ethers.ZeroHash
     );
 
     // Both agents get 400_000_000 credits (4 USDC * 100)
@@ -151,7 +151,7 @@ describe("Integration", function () {
 
     await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
     await registry.connect(user1).registerExisting(
-      "TopAgent", agentId1, 0, 0, ethers.ZeroHash, ethers.ZeroHash
+      user1.address, "TopAgent", agentId1, 0, 0, ethers.ZeroHash, ethers.ZeroHash
     );
 
     expect(await registry.checkName("topagent")).to.be.false;

@@ -58,7 +58,7 @@ describe("CoordinationRegistry", function () {
       await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
 
       await expect(
-        registry.connect(user1).registerNew("Alice", "https://alice.ai", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerNew(user1.address, "Alice", "https://alice.ai", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.emit(registry, "Registered");
 
       // Treasury should have received $1 fee
@@ -74,15 +74,15 @@ describe("CoordinationRegistry", function () {
       await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
 
       await expect(
-        registry.connect(user1).registerNew("ab", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerNew(user1.address, "ab", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "InvalidName");
 
       await expect(
-        registry.connect(user1).registerNew("a".repeat(21), "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerNew(user1.address, "a".repeat(21), "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "InvalidName");
 
       await expect(
-        registry.connect(user1).registerNew("al!ce", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerNew(user1.address, "al!ce", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "InvalidName");
     });
 
@@ -90,15 +90,15 @@ describe("CoordinationRegistry", function () {
       const { registry, usdc, user1, user2 } = await loadFixture(deployFixture);
 
       await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
-      await registry.connect(user1).registerNew("Alice", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash);
+      await registry.connect(user1).registerNew(user1.address, "Alice", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash);
 
       await usdc.connect(user2).approve(await registry.getAddress(), 5_000_000n);
       await expect(
-        registry.connect(user2).registerNew("alice", "uri2", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user2).registerNew(user2.address, "alice", "uri2", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "NameTaken");
 
       await expect(
-        registry.connect(user2).registerNew("ALICE", "uri3", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user2).registerNew(user2.address, "ALICE", "uri3", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "NameTaken");
     });
 
@@ -107,7 +107,7 @@ describe("CoordinationRegistry", function () {
       await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
 
       await expect(
-        registry.connect(user1).registerNew("Agent_01-X", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerNew(user1.address, "Agent_01-X", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.emit(registry, "Registered");
     });
   });
@@ -122,7 +122,7 @@ describe("CoordinationRegistry", function () {
       await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
 
       await expect(
-        registry.connect(user1).registerExisting("Bob", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerExisting(user1.address, "Bob", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.emit(registry, "Registered");
     });
 
@@ -135,7 +135,7 @@ describe("CoordinationRegistry", function () {
       await usdc.connect(user2).approve(await registry.getAddress(), 5_000_000n);
 
       await expect(
-        registry.connect(user2).registerExisting("Bob", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user2).registerExisting(user2.address, "Bob", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "NotAgentOwner");
     });
 
@@ -147,10 +147,10 @@ describe("CoordinationRegistry", function () {
 
       await usdc.connect(user1).approve(await registry.getAddress(), 10_000_000n);
 
-      await registry.connect(user1).registerExisting("Bob", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash);
+      await registry.connect(user1).registerExisting(user1.address, "Bob", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash);
 
       await expect(
-        registry.connect(user1).registerExisting("Bob2", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash)
+        registry.connect(user1).registerExisting(user1.address, "Bob2", agentId, 0, 0, ethers.ZeroHash, ethers.ZeroHash)
       ).to.be.revertedWithCustomError(registry, "AlreadyRegistered");
     });
   });
@@ -164,7 +164,7 @@ describe("CoordinationRegistry", function () {
     it("should return false for taken names", async function () {
       const { registry, usdc, user1 } = await loadFixture(deployFixture);
       await usdc.connect(user1).approve(await registry.getAddress(), 5_000_000n);
-      await registry.connect(user1).registerNew("Taken", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash);
+      await registry.connect(user1).registerNew(user1.address, "Taken", "uri", 0, 0, ethers.ZeroHash, ethers.ZeroHash);
       expect(await registry.checkName("taken")).to.be.false;
     });
 

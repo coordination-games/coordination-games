@@ -104,15 +104,19 @@ export function createRelayRouter(): express.Router | null {
   // =========================================================================
   router.post('/register', async (req, res) => {
     try {
-      const { name, agentURI, permitDeadline, v, r, s, existingAgentId } = req.body;
+      const { name, address: userAddress, agentURI, permitDeadline, v, r, s, existingAgentId } = req.body;
 
       if (!name) {
         return res.status(400).json({ error: 'Missing name' });
+      }
+      if (!userAddress) {
+        return res.status(400).json({ error: 'Missing address' });
       }
 
       let tx;
       if (existingAgentId !== undefined && existingAgentId !== null) {
         tx = await registry.registerExisting(
+          userAddress,
           name,
           BigInt(existingAgentId),
           BigInt(permitDeadline || 0),
@@ -122,6 +126,7 @@ export function createRelayRouter(): express.Router | null {
         );
       } else {
         tx = await registry.registerNew(
+          userAddress,
           name,
           agentURI || '',
           BigInt(permitDeadline || 0),

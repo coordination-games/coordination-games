@@ -5,6 +5,10 @@ import "./interfaces/IERC8004.sol";
 import "./interfaces/IUSDC.sol";
 import "./interfaces/ICoordinationCredits.sol";
 
+interface IERC721 {
+    function transferFrom(address from, address to, uint256 tokenId) external;
+}
+
 contract CoordinationRegistry {
     IERC8004 public immutable canonical8004;
     IUSDC public immutable usdc;
@@ -41,7 +45,10 @@ contract CoordinationRegistry {
     }
 
     /// @notice Register a new agent (mints a new ERC-8004 identity)
+    /// @param user The agent's address (who the NFT and credits go to)
+    /// @dev The relay calls this on behalf of the user. USDC permit is from user to this contract.
     function registerNew(
+        address user,
         string calldata name,
         string calldata agentURI,
         uint256 deadline,
@@ -49,13 +56,17 @@ contract CoordinationRegistry {
         bytes32 r,
         bytes32 s
     ) external {
-        usdc.permit(msg.sender, address(this), REGISTRATION_FEE + INITIAL_CREDITS_USDC, deadline, v, r, s);
+        usdc.permit(user, address(this), REGISTRATION_FEE + INITIAL_CREDITS_USDC, deadline, v, r, s);
+        // canonical 8004 mints to msg.sender (this contract) via _safeMint
         uint256 agentId = canonical8004.register(agentURI);
-        _register(msg.sender, name, agentId);
+        // Transfer the NFT to the actual user
+        IERC721(address(canonical8004)).transferFrom(address(this), user, agentId);
+        _register(user, name, agentId);
     }
 
     /// @notice Register with an existing ERC-8004 agent identity
     function registerExisting(
+        address user,
         string calldata name,
         uint256 agentId,
         uint256 deadline,
@@ -63,9 +74,14 @@ contract CoordinationRegistry {
         bytes32 r,
         bytes32 s
     ) external {
-        usdc.permit(msg.sender, address(this), REGISTRATION_FEE + INITIAL_CREDITS_USDC, deadline, v, r, s);
-        if (canonical8004.ownerOf(agentId) != msg.sender) revert NotAgentOwner();
-        _register(msg.sender, name, agentId);
+        usdc.permit(user, address(this), REGISTRATION_FEE + INITIAL_CREDITS_USDC, deadline, v, r, s);
+        if (canonical8004.ownerOf(agentId) != user) revert NotAgentOwner();
+        _register(user, name, agentId);
+    }
+
+    /// @dev Required to receive ERC-721 tokens via _safeMint from canonical 8004
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC721Received.selector;
     }
 
     function _register(address user, string calldata name, uint256 agentId) internal {

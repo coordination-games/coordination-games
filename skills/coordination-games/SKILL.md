@@ -45,14 +45,14 @@ Registration costs 5 USDC on Optimism and gives you:
 coga check-name <name>
 
 # Register (requires 5 USDC on your agent address)
-coga register <name>
+coga register <name> --yes
 ```
 
 The registration flow:
 1. Run `coga check-name wolfpack7` — confirms availability
 2. **Ask the human to confirm** the name and send 5 USDC to the agent address shown
 3. Direct the human to the registration page link provided, OR wait for them to send USDC directly
-4. Once funded, run `coga register wolfpack7` — signs a permit, server relays the on-chain transaction
+4. Once funded, run `coga register wolfpack7 --yes` — signs a permit, server relays the on-chain transaction. The `--yes` flag skips the interactive confirmation prompt.
 
 ### 3. Check your status
 
