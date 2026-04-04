@@ -1,136 +1,91 @@
 /**
- * Basic Chat Plugin — provides team/all chat messaging for games.
+ * Basic Chat Plugin — Tier 2 (Relayed) chat for Coordination Games.
  *
- * Implements ToolPlugin with:
- * - Phase-aware routing (lobby=all, game=team)
- * - Per-agent message cursor tracking (prevents duplicates)
- * - Extensible message tags for pipeline enrichment
+ * Client-side plugin that:
+ * - Formats outgoing messages as relay data (type: "messaging")
+ * - In the pipeline, acts as a producer: reads relay messages of type
+ *   "messaging" and provides them as the "messaging" capability
+ * - Scope is determined by game phase (lobby=all, gameplay=team)
+ *
+ * This code runs on the agent's machine (CLI), NOT on the server.
+ * The server just relays the typed data by scope.
  */
 
-import type { ToolPlugin, AgentInfo, Message, PluginContext } from '@lobster/platform';
+import type { ToolPlugin, Message } from '@lobster/platform';
 
-interface ChatState {
-  messages: Message[];
-  cursors: Map<string, number>; // agentId -> last seen index
-  phase: 'lobby' | 'pre_game' | 'in_progress' | 'finished';
-  teamAssignments: Map<string, string>; // agentId -> team
+/** A relay message as received from the server. */
+export interface RelayMessage {
+  type: string;
+  data: unknown;
+  scope: 'team' | 'all' | string;
+  pluginId: string;
+  sender: string;
+  turn: number;
+  timestamp: number;
+  index: number;
 }
 
-export function createBasicChatPlugin(): ToolPlugin & { _state: ChatState } {
-  const state: ChatState = {
-    messages: [],
-    cursors: new Map(),
-    phase: 'lobby',
-    teamAssignments: new Map(),
-  };
+/**
+ * Format an outgoing chat message as relay data.
+ * The CLI sends this to the server's relay endpoint.
+ */
+export function formatChatMessage(
+  body: string,
+  phase: string,
+): { type: string; data: { body: string }; scope: 'team' | 'all'; pluginId: string } {
+  const scope: 'team' | 'all' =
+    phase === 'in_progress' || phase === 'pre_game' ? 'team' : 'all';
 
   return {
-    id: 'basic-chat',
-    version: '0.1.0',
-    modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
-    purity: 'stateful',
-
-    tools: [
-      {
-        name: 'chat',
-        description: 'Send a message to your team (during game) or all players (during lobby)',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            message: { type: 'string', description: 'The message to send' },
-          },
-          required: ['message'],
-        },
-      },
-    ],
-
-    init(ctx: PluginContext) {
-      // Initialize cursor for this player
-      state.cursors.set(ctx.playerId, 0);
-    },
-
-    handleData(mode: string, inputs: Map<string, any>): Map<string, any> {
-      return new Map([['messaging', [...state.messages]]]);
-    },
-
-    handleCall(tool: string, args: unknown, caller: AgentInfo): unknown {
-      if (tool !== 'chat') return { error: `Unknown tool: ${tool}` };
-
-      const { message } = args as { message: string };
-      if (!message || typeof message !== 'string') {
-        return { error: 'message is required and must be a string' };
-      }
-
-      // Determine scope based on phase
-      const scope: 'team' | 'all' =
-        state.phase === 'lobby' ? 'all' : 'team';
-
-      const msg: Message = {
-        from: parseInt(caller.id, 10) || 0,
-        body: message,
-        turn: 0, // set by caller context
-        scope,
-        tags: { source: 'basic-chat' },
-      };
-
-      state.messages.push(msg);
-
-      return { success: true, scope };
-    },
-
-    // Expose state for testing and external access
-    _state: state,
+    type: 'messaging',
+    data: { body },
+    scope,
+    pluginId: 'basic-chat',
   };
 }
 
 /**
- * Get new messages for an agent since their last cursor position.
- * Advances the cursor. Filters by team scope during gameplay.
+ * Extract Message objects from raw relay messages.
+ * This is the pipeline producer — it reads relay data of type "messaging"
+ * and converts it into the canonical Message format for downstream plugins.
  */
-export function getNewMessages(
-  plugin: ReturnType<typeof createBasicChatPlugin>,
-  agentId: string,
-  agentTeam?: string,
-): Message[] {
-  const state = plugin._state;
-  const cursor = state.cursors.get(agentId) ?? 0;
-  const allMessages = state.messages.slice(cursor);
-
-  // Advance cursor
-  state.cursors.set(agentId, state.messages.length);
-
-  // During gameplay, filter to team messages only
-  if (state.phase === 'in_progress' && agentTeam) {
-    return allMessages.filter((msg) => {
-      if (msg.scope === 'all') return true;
-      // Check if sender is on same team
-      const senderTeam = state.teamAssignments.get(String(msg.from));
-      return senderTeam === agentTeam;
+export function extractMessages(relayMessages: RelayMessage[]): Message[] {
+  return relayMessages
+    .filter((msg) => msg.type === 'messaging')
+    .map((msg) => {
+      const data = msg.data as { body?: string; tags?: Record<string, any> };
+      return {
+        from: parseInt(msg.sender, 10) || 0,
+        body: data.body ?? '',
+        turn: msg.turn,
+        scope: (msg.scope === 'team' || msg.scope === 'all') ? msg.scope : 'all',
+        tags: {
+          ...data.tags,
+          source: msg.pluginId,
+          sender: msg.sender,
+          timestamp: msg.timestamp,
+        },
+      } satisfies Message;
     });
-  }
-
-  return allMessages;
 }
 
 /**
- * Set the game phase (affects message routing).
+ * The BasicChatPlugin for the client-side pipeline.
+ *
+ * As a pipeline producer, it takes raw relay messages (passed as initial
+ * pipeline data under the key "relay-messages") and produces the
+ * "messaging" capability for downstream plugins to consume.
  */
-export function setPhase(
-  plugin: ReturnType<typeof createBasicChatPlugin>,
-  phase: ChatState['phase'],
-): void {
-  plugin._state.phase = phase;
-}
+export const BasicChatPlugin: ToolPlugin = {
+  id: 'basic-chat',
+  version: '0.2.0',
+  modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
+  purity: 'pure',
 
-/**
- * Set team assignments for team-scoped messaging.
- */
-export function setTeams(
-  plugin: ReturnType<typeof createBasicChatPlugin>,
-  teams: Map<string, string>,
-): void {
-  plugin._state.teamAssignments = teams;
-}
-
-/** Singleton-compatible export. */
-export const BasicChatPlugin = createBasicChatPlugin();
+  handleData(mode: string, inputs: Map<string, any>): Map<string, any> {
+    // Read raw relay messages from pipeline input
+    const relayMessages: RelayMessage[] = inputs.get('relay-messages') ?? [];
+    const messages = extractMessages(relayMessages);
+    return new Map([['messaging', messages]]);
+  },
+};

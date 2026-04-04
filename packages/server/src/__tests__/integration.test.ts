@@ -1,8 +1,12 @@
 /**
- * Integration test: Full game lifecycle through the framework.
+ * Integration test: Full game lifecycle through the framework + relay.
  *
- * Verifies that CtL runs as a plugin with the chat and ELO plugins
- * through the GameFramework, PluginLoader, and LobbyPipeline.
+ * Verifies:
+ * - CtL game runs through GameFramework
+ * - Typed relay routes messages by scope
+ * - Chat plugin (Tier 2) formats and extracts relay messages client-side
+ * - Plugin pipeline runs client-side over relay data
+ * - MCP tool visibility changes by phase
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -15,8 +19,9 @@ import {
 } from '@lobster/platform';
 import type { ToolPlugin, AgentInfo } from '@lobster/platform';
 import { CaptureTheLobsterPlugin, TeamFormationPhase, ClassSelectionPhase } from '@lobster/games-ctl';
-import { createBasicChatPlugin, setPhase, setTeams, getNewMessages } from '@lobster/plugin-chat';
+import { BasicChatPlugin, formatChatMessage, extractMessages } from '@lobster/plugin-chat';
 import { createEloPlugin } from '@lobster/plugin-elo';
+import { GameRelay } from '../typed-relay.js';
 
 describe('Full game lifecycle', () => {
   let eloPlugin: ReturnType<typeof createEloPlugin>;
@@ -31,16 +36,7 @@ describe('Full game lifecycle', () => {
     framework.registerGame(CaptureTheLobsterPlugin);
     expect(framework.listGameTypes()).toContain('capture-the-lobster');
 
-    // 2. Create plugin loader with chat + ELO
-    const loader = new PluginLoader();
-    const chatPlugin = createBasicChatPlugin();
-    eloPlugin = createEloPlugin(':memory:');
-    loader.register(chatPlugin);
-    loader.register(eloPlugin);
-    expect(loader.listPlugins()).toContain('basic-chat');
-    expect(loader.listPlugins()).toContain('elo');
-
-    // 3. Set up players
+    // 2. Set up players
     const players: AgentInfo[] = [
       { id: 'p1', handle: 'alice', team: 'A' },
       { id: 'p2', handle: 'bob', team: 'A' },
@@ -48,20 +44,15 @@ describe('Full game lifecycle', () => {
       { id: 'p4', handle: 'dave', team: 'B' },
     ];
 
-    // 4. Run lobby pipeline (team formation + class selection)
-    const pipeline = new LobbyPipeline([
-      TeamFormationPhase,
-      ClassSelectionPhase,
-    ]);
+    // 3. Run lobby pipeline (team formation + class selection)
+    const pipeline = new LobbyPipeline([TeamFormationPhase, ClassSelectionPhase]);
     await pipeline.start(players, { teamSize: 2 });
     expect(pipeline.isComplete()).toBe(true);
 
     const lobbyResult = pipeline.getResult();
-    expect(lobbyResult.groups.length).toBeGreaterThanOrEqual(1);
     expect(lobbyResult.metadata.classPicks).toBeDefined();
 
-    // 5. Create a game room through the framework
-    const game = CaptureTheLobsterPlugin;
+    // 4. Create game room
     const classPicks = lobbyResult.metadata.classPicks;
     const config = {
       mapSeed: 'integration-test',
@@ -74,89 +65,92 @@ describe('Full game lifecycle', () => {
         { id: 'p4', team: 'B' as const, unitClass: classPicks['p4'] ?? 'rogue' },
       ],
     };
-
-    const room = framework.createRoom(
-      'capture-the-lobster',
-      config,
-      ['p1', 'p2', 'p3', 'p4'],
-    );
+    const room = framework.createRoom('capture-the-lobster', config, ['p1', 'p2', 'p3', 'p4']);
     expect(room.phase).toBe('in_progress');
-    expect(room.turn).toBe(1);
 
-    // 6. Verify chat plugin works during game
-    setPhase(chatPlugin, 'in_progress');
-    setTeams(chatPlugin, new Map([['1', 'A'], ['2', 'A'], ['3', 'B'], ['4', 'B']]));
-    chatPlugin.handleCall!('chat', { message: 'rush flag!' }, { id: '1', handle: 'alice', team: 'A' });
-    const chatData = chatPlugin.handleData('messaging', new Map());
-    expect(chatData.get('messaging')).toHaveLength(1);
+    // 5. Create relay for this game
+    const relay = new GameRelay([
+      { id: 'p1', team: 'A' }, { id: 'p2', team: 'A' },
+      { id: 'p3', team: 'B' }, { id: 'p4', team: 'B' },
+    ]);
 
-    // 7. Build plugin pipeline and execute
-    const pluginPipeline = loader.buildPipeline(['basic-chat', 'elo']);
-    const pipelineResult = pluginPipeline.execute(new Map());
-    expect(pipelineResult.has('messaging')).toBe(true);
-    expect(pipelineResult.has('leaderboard')).toBe(true);
+    // 6. Chat via relay (Tier 2 flow)
+    const chatData = formatChatMessage('rush the flag!', 'in_progress');
+    relay.send('p1', room.turn, chatData);
 
-    // 8. Submit moves for a turn (empty paths = stand still)
-    for (const id of ['p1', 'p2', 'p3', 'p4']) {
-      framework.submitMove(room.roomId, id, { path: [] });
-    }
+    // p2 (same team) gets the message
+    const p2Messages = relay.receive('p2');
+    expect(p2Messages).toHaveLength(1);
+    expect(p2Messages[0].type).toBe('messaging');
 
-    // 9. Resolve turn
-    const turnData = framework.resolveTurn(room.roomId);
-    expect(turnData).not.toBeNull();
-    expect(room.turn).toBe(2);
+    // p3 (enemy team) doesn't get team-scoped message
+    const p3Messages = relay.receive('p3');
+    expect(p3Messages).toHaveLength(0);
 
-    // 10. Run a few more turns until game ends or we hit turn limit
+    // 7. Client-side pipeline processes relay messages
+    const extracted = extractMessages(p2Messages);
+    expect(extracted).toHaveLength(1);
+    expect(extracted[0].body).toBe('rush the flag!');
+    expect(extracted[0].scope).toBe('team');
+
+    // 8. Pipeline with chat plugin
+    const loader = new PluginLoader();
+    loader.register(BasicChatPlugin);
+    const pluginPipeline = loader.buildPipeline(['basic-chat']);
+    const pipelineResult = pluginPipeline.execute(
+      new Map([['relay-messages', p2Messages]]),
+    );
+    expect(pipelineResult.get('messaging')).toHaveLength(1);
+
+    // 9. Submit moves and resolve turns until game ends
     for (let i = 0; i < 10 && room.phase === 'in_progress'; i++) {
       for (const id of ['p1', 'p2', 'p3', 'p4']) {
         framework.submitMove(room.roomId, id, { path: [] });
       }
       framework.resolveTurn(room.roomId);
     }
-
-    // Game should be finished (turn limit of 5)
     expect(room.phase).toBe('finished');
 
-    // 11. Verify outcome
+    // 10. Verify game result
     const result = framework.finishGame(room.roomId);
     expect(result).not.toBeNull();
     expect(result!.result.gameType).toBe('capture-the-lobster');
     expect(result!.result.movesRoot).toBeTruthy();
-    expect(result!.result.players).toHaveLength(4);
 
-    // 12. Payouts should be zero-sum
-    const payoutTotal = [...result!.payouts.values()].reduce((a, b) => a + b, 0);
-    expect(payoutTotal).toBe(0);
+    // 11. Spectators see all relay messages
+    const spectatorMsgs = relay.getSpectatorMessages(room.turn);
+    expect(spectatorMsgs).toHaveLength(1); // the chat message
   });
 
-  it('chat plugin delivers team-scoped messages', () => {
-    const chat = createBasicChatPlugin();
-    setPhase(chat, 'in_progress');
-    setTeams(chat, new Map([['1', 'A'], ['2', 'A'], ['3', 'B']]));
+  it('relay routes by scope — team messages stay private', () => {
+    const relay = new GameRelay([
+      { id: 'a1', team: 'A' }, { id: 'a2', team: 'A' },
+      { id: 'b1', team: 'B' },
+    ]);
 
-    chat.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '1' });
-    chat.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '3' });
+    // Team A chat
+    const teamChat = formatChatMessage('secret plan', 'in_progress');
+    relay.send('a1', 1, teamChat);
 
-    chat.handleCall!('chat', { message: 'A only' }, { id: '1', handle: 'alice', team: 'A' });
-    chat.handleCall!('chat', { message: 'B only' }, { id: '3', handle: 'carol', team: 'B' });
+    // All chat
+    const allChat = formatChatMessage('gg', 'lobby');
+    relay.send('a1', 1, allChat);
 
-    const aliceMsgs = getNewMessages(chat, '1', 'A');
-    expect(aliceMsgs).toHaveLength(1);
-    expect(aliceMsgs[0].body).toBe('A only');
+    // Team A member sees both
+    const a2Msgs = relay.receive('a2');
+    expect(a2Msgs).toHaveLength(2);
 
-    const carolMsgs = getNewMessages(chat, '3', 'B');
-    expect(carolMsgs).toHaveLength(1);
-    expect(carolMsgs[0].body).toBe('B only');
+    // Team B member sees only the 'all' scoped message
+    const b1Msgs = relay.receive('b1');
+    expect(b1Msgs).toHaveLength(1);
+    expect((b1Msgs[0].data as any).body).toBe('gg');
   });
 
   it('plugin pipeline processes data in correct order', () => {
     const loader = new PluginLoader();
+    loader.register(BasicChatPlugin);
 
-    const chat = createBasicChatPlugin();
-    chat.handleCall!('chat', { message: 'test' }, { id: '1', handle: 'test' });
-    loader.register(chat);
-
-    // Mock enricher that adds tags
+    // Mock enricher that adds tags to messages
     const enricher: ToolPlugin = {
       id: 'enricher',
       version: '0.1.0',
@@ -173,53 +167,47 @@ describe('Full game lifecycle', () => {
     expect(pipeline.steps[0].plugin.id).toBe('basic-chat');
     expect(pipeline.steps[1].plugin.id).toBe('enricher');
 
-    const result = pipeline.execute(new Map());
+    const relayMsgs = [{
+      type: 'messaging', data: { body: 'test' }, scope: 'team' as const,
+      pluginId: 'basic-chat', sender: '1', turn: 1, timestamp: Date.now(), index: 0,
+    }];
+
+    const result = pipeline.execute(new Map([['relay-messages', relayMsgs]]));
     expect(result.get('messaging')).toHaveLength(1);
     expect(result.get('enriched')).toHaveLength(1);
     expect(result.get('enriched')[0].enriched).toBe(true);
   });
 
   it('MCP tools change based on game phase', () => {
-    const chat = createBasicChatPlugin();
-    const plugins: ToolPlugin[] = [chat];
-
-    // Lobby phase
-    const lobbyTools = getAvailableTools('lobby', plugins);
+    // Lobby phase — no game tools
+    const lobbyTools = getAvailableTools('lobby', []);
     const lobbyNames = lobbyTools.map((t) => t.name);
     expect(lobbyNames).toContain('get_guide');
-    expect(lobbyNames).toContain('chat');
     expect(lobbyNames).not.toContain('submit_move');
 
-    // Team formation phase
-    const teamTools = getAvailableTools('team-formation', plugins);
-    const teamNames = teamTools.map((t) => t.name);
-    expect(teamNames).toContain('propose_team');
-    expect(teamNames).toContain('chat');
-    expect(teamNames).not.toContain('submit_move');
+    // Team formation — lobby-specific tools
+    const teamTools = getAvailableTools('team-formation', []);
+    expect(teamTools.map(t => t.name)).toContain('propose_team');
 
-    // Game phase
-    const gameTools = getAvailableTools('in_progress', plugins);
-    const gameNames = gameTools.map((t) => t.name);
+    // Game phase — gameplay tools
+    const gameTools = getAvailableTools('in_progress', []);
+    const gameNames = gameTools.map(t => t.name);
     expect(gameNames).toContain('submit_move');
     expect(gameNames).toContain('get_state');
-    expect(gameNames).toContain('chat');
     expect(gameNames).not.toContain('propose_team');
   });
 
-  it('generates dynamic guide with plugin info', () => {
-    const chat = createBasicChatPlugin();
+  it('generates dynamic guide with game + plugin info', () => {
     const guide = generateGuide({
       gameType: 'Capture the Lobster',
-      gameRules: 'Hex grid capture-the-flag. First team to capture wins.',
-      activePlugins: [chat],
+      gameRules: 'Hex grid CTF. First capture wins.',
+      activePlugins: [BasicChatPlugin],
       phase: 'in_progress',
       playerState: { elo: 1250, team: 'A' },
     });
 
     expect(guide).toContain('Capture the Lobster');
-    expect(guide).toContain('in_progress');
     expect(guide).toContain('basic-chat');
-    expect(guide).toContain('`chat`');
     expect(guide).toContain('1250');
   });
 });

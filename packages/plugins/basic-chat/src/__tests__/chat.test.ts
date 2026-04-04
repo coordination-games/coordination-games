@@ -1,152 +1,130 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
-  createBasicChatPlugin,
-  getNewMessages,
-  setPhase,
-  setTeams,
+  BasicChatPlugin,
+  formatChatMessage,
+  extractMessages,
+  type RelayMessage,
 } from '../index.js';
-import type { AgentInfo } from '@lobster/platform';
 
-describe('BasicChatPlugin', () => {
-  let plugin: ReturnType<typeof createBasicChatPlugin>;
-  const alice: AgentInfo = { id: '1', handle: 'alice', team: 'A' };
-  const bob: AgentInfo = { id: '2', handle: 'bob', team: 'A' };
-  const carol: AgentInfo = { id: '3', handle: 'carol', team: 'B' };
+function makeRelayMessage(overrides: Partial<RelayMessage> = {}): RelayMessage {
+  return {
+    type: 'messaging',
+    data: { body: 'hello' },
+    scope: 'team',
+    pluginId: 'basic-chat',
+    sender: 'agent_1',
+    turn: 1,
+    timestamp: Date.now(),
+    index: 0,
+    ...overrides,
+  };
+}
 
-  beforeEach(() => {
-    plugin = createBasicChatPlugin();
+describe('formatChatMessage', () => {
+  it('formats as team scope during gameplay', () => {
+    const msg = formatChatMessage('rush flag', 'in_progress');
+    expect(msg.type).toBe('messaging');
+    expect(msg.scope).toBe('team');
+    expect(msg.data.body).toBe('rush flag');
+    expect(msg.pluginId).toBe('basic-chat');
   });
 
-  it('has correct plugin metadata', () => {
-    expect(plugin.id).toBe('basic-chat');
-    expect(plugin.purity).toBe('stateful');
-    expect(plugin.modes).toHaveLength(1);
-    expect(plugin.modes[0].provides).toContain('messaging');
-    expect(plugin.tools).toHaveLength(1);
-    expect(plugin.tools![0].name).toBe('chat');
+  it('formats as team scope during pre-game', () => {
+    const msg = formatChatMessage('pick mage', 'pre_game');
+    expect(msg.scope).toBe('team');
   });
 
-  it('sends a message', () => {
-    const result = plugin.handleCall!('chat', { message: 'hello' }, alice);
-    expect(result).toEqual({ success: true, scope: 'all' });
+  it('formats as all scope during lobby', () => {
+    const msg = formatChatMessage('hey everyone', 'lobby');
+    expect(msg.scope).toBe('all');
+  });
 
-    const data = plugin.handleData('messaging', new Map());
-    const messages = data.get('messaging');
+  it('formats as all scope during forming', () => {
+    const msg = formatChatMessage('hi', 'forming');
+    expect(msg.scope).toBe('all');
+  });
+});
+
+describe('extractMessages', () => {
+  it('converts relay messages to Message format', () => {
+    const relay = [makeRelayMessage({ sender: '42', data: { body: 'test' }, turn: 3 })];
+    const messages = extractMessages(relay);
+
     expect(messages).toHaveLength(1);
-    expect(messages[0].body).toBe('hello');
-    expect(messages[0].from).toBe(1);
+    expect(messages[0].from).toBe(42);
+    expect(messages[0].body).toBe('test');
+    expect(messages[0].turn).toBe(3);
+    expect(messages[0].scope).toBe('team');
+    expect(messages[0].tags.source).toBe('basic-chat');
+    expect(messages[0].tags.sender).toBe('42');
   });
 
-  it('rejects empty message', () => {
-    const result = plugin.handleCall!('chat', { message: '' }, alice);
-    expect(result).toHaveProperty('error');
-  });
-
-  it('rejects unknown tool', () => {
-    const result = plugin.handleCall!('unknown', {}, alice);
-    expect(result).toHaveProperty('error');
-  });
-
-  describe('phase-aware routing', () => {
-    it('sends as "all" during lobby', () => {
-      setPhase(plugin, 'lobby');
-      const result = plugin.handleCall!('chat', { message: 'hey' }, alice);
-      expect(result).toEqual({ success: true, scope: 'all' });
-
-      const messages = plugin.handleData('messaging', new Map()).get('messaging');
-      expect(messages[0].scope).toBe('all');
-    });
-
-    it('sends as "team" during game', () => {
-      setPhase(plugin, 'in_progress');
-      const result = plugin.handleCall!('chat', { message: 'rush flag' }, alice);
-      expect(result).toEqual({ success: true, scope: 'team' });
-
-      const messages = plugin.handleData('messaging', new Map()).get('messaging');
-      expect(messages[0].scope).toBe('team');
-    });
-
-    it('sends as "team" during pre_game', () => {
-      setPhase(plugin, 'pre_game');
-      const result = plugin.handleCall!('chat', { message: 'pick mage' }, alice);
-      expect(result).toEqual({ success: true, scope: 'team' });
-    });
-  });
-
-  describe('message cursor tracking', () => {
-    it('returns only new messages since last check', () => {
-      plugin.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '1' });
-      plugin.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '2' });
-
-      plugin.handleCall!('chat', { message: 'first' }, alice);
-      plugin.handleCall!('chat', { message: 'second' }, bob);
-
-      const msgs1 = getNewMessages(plugin, '1');
-      expect(msgs1).toHaveLength(2);
-
-      // Second call should return empty (cursor advanced)
-      const msgs2 = getNewMessages(plugin, '1');
-      expect(msgs2).toHaveLength(0);
-
-      // New message appears after cursor
-      plugin.handleCall!('chat', { message: 'third' }, alice);
-      const msgs3 = getNewMessages(plugin, '1');
-      expect(msgs3).toHaveLength(1);
-      expect(msgs3[0].body).toBe('third');
-    });
-
-    it('cursors are per-agent', () => {
-      plugin.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '1' });
-      plugin.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '2' });
-
-      plugin.handleCall!('chat', { message: 'hello' }, alice);
-
-      const msgs1 = getNewMessages(plugin, '1');
-      expect(msgs1).toHaveLength(1);
-
-      // Agent 2 hasn't checked yet, should still see the message
-      const msgs2 = getNewMessages(plugin, '2');
-      expect(msgs2).toHaveLength(1);
-    });
-  });
-
-  describe('team filtering during gameplay', () => {
-    it('filters messages by team during in_progress', () => {
-      setPhase(plugin, 'in_progress');
-      setTeams(plugin, new Map([['1', 'A'], ['2', 'A'], ['3', 'B']]));
-
-      plugin.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '1' });
-      plugin.init!({ gameType: 'test', gameId: 'g1', turnCursor: 0, relay: { send() {}, receive() { return []; } }, playerId: '3' });
-
-      plugin.handleCall!('chat', { message: 'team A msg' }, alice);
-      plugin.handleCall!('chat', { message: 'team B msg' }, carol);
-
-      // Alice (team A) should see team A message but not team B
-      const aliceMsgs = getNewMessages(plugin, '1', 'A');
-      expect(aliceMsgs).toHaveLength(1);
-      expect(aliceMsgs[0].body).toBe('team A msg');
-
-      // Carol (team B) should see team B message but not team A
-      const carolMsgs = getNewMessages(plugin, '3', 'B');
-      expect(carolMsgs).toHaveLength(1);
-      expect(carolMsgs[0].body).toBe('team B msg');
-    });
-  });
-
-  it('handleData returns all messages', () => {
-    plugin.handleCall!('chat', { message: 'one' }, alice);
-    plugin.handleCall!('chat', { message: 'two' }, bob);
-
-    const data = plugin.handleData('messaging', new Map());
-    const messages = data.get('messaging');
+  it('filters to only messaging type', () => {
+    const relay = [
+      makeRelayMessage({ type: 'messaging', data: { body: 'chat' } }),
+      makeRelayMessage({ type: 'vision-update', data: { tiles: [] } }),
+      makeRelayMessage({ type: 'messaging', data: { body: 'another' } }),
+    ];
+    const messages = extractMessages(relay);
     expect(messages).toHaveLength(2);
   });
 
-  it('messages include tags bag', () => {
-    plugin.handleCall!('chat', { message: 'tagged' }, alice);
+  it('handles missing body gracefully', () => {
+    const relay = [makeRelayMessage({ data: {} })];
+    const messages = extractMessages(relay);
+    expect(messages[0].body).toBe('');
+  });
 
-    const messages = plugin.handleData('messaging', new Map()).get('messaging');
-    expect(messages[0].tags).toBeDefined();
+  it('preserves existing tags from relay data', () => {
+    const relay = [makeRelayMessage({ data: { body: 'hi', tags: { trust: 0.9 } } })];
+    const messages = extractMessages(relay);
+    expect(messages[0].tags.trust).toBe(0.9);
     expect(messages[0].tags.source).toBe('basic-chat');
+  });
+
+  it('handles DM scope by treating as all', () => {
+    const relay = [makeRelayMessage({ scope: 'agent_5' })];
+    const messages = extractMessages(relay);
+    expect(messages[0].scope).toBe('all');
+  });
+});
+
+describe('BasicChatPlugin', () => {
+  it('has correct metadata', () => {
+    expect(BasicChatPlugin.id).toBe('basic-chat');
+    expect(BasicChatPlugin.version).toBe('0.2.0');
+    expect(BasicChatPlugin.purity).toBe('pure');
+    expect(BasicChatPlugin.modes).toHaveLength(1);
+    expect(BasicChatPlugin.modes[0].consumes).toEqual([]);
+    expect(BasicChatPlugin.modes[0].provides).toEqual(['messaging']);
+  });
+
+  it('produces messaging capability from relay messages', () => {
+    const relayMessages = [
+      makeRelayMessage({ sender: '1', data: { body: 'hello' }, turn: 1 }),
+      makeRelayMessage({ sender: '2', data: { body: 'world' }, turn: 2 }),
+    ];
+
+    const inputs = new Map([['relay-messages', relayMessages]]);
+    const outputs = BasicChatPlugin.handleData('messaging', inputs);
+
+    const messages = outputs.get('messaging');
+    expect(messages).toHaveLength(2);
+    expect(messages[0].body).toBe('hello');
+    expect(messages[1].body).toBe('world');
+  });
+
+  it('returns empty when no relay messages', () => {
+    const outputs = BasicChatPlugin.handleData('messaging', new Map());
+    expect(outputs.get('messaging')).toEqual([]);
+  });
+
+  it('ignores non-messaging relay types', () => {
+    const relayMessages = [
+      makeRelayMessage({ type: 'wiki-post', data: { title: 'test' } }),
+    ];
+    const inputs = new Map([['relay-messages', relayMessages]]);
+    const outputs = BasicChatPlugin.handleData('messaging', inputs);
+    expect(outputs.get('messaging')).toEqual([]);
   });
 });

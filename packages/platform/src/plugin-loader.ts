@@ -36,10 +36,18 @@ export class PluginPipeline {
 
     for (const step of this.steps) {
       // Gather inputs for this step
-      const inputs = new Map<string, any>();
-      for (const cap of step.mode.consumes) {
-        if (data.has(cap)) {
-          inputs.set(cap, data.get(cap));
+      // Producers (no consumes) get all accumulated data so they can
+      // read raw inputs like relay-messages. Consumers get only their
+      // declared consumed capabilities.
+      let inputs: Map<string, any>;
+      if (step.mode.consumes.length === 0) {
+        inputs = new Map(data);
+      } else {
+        inputs = new Map<string, any>();
+        for (const cap of step.mode.consumes) {
+          if (data.has(cap)) {
+            inputs.set(cap, data.get(cap));
+          }
         }
       }
 
