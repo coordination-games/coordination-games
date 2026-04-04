@@ -1,222 +1,165 @@
-# Plugin Architecture Refactor Plan
+# Plugin Architecture Refactor — Execution Plan
 
 **Status:** Plan only — do not execute until Lucian reviews.
-
-This document maps the current codebase to the plugin architecture described in GAME_ENGINE_PLAN.md. It covers four areas: CoordinationGame + LobbyConfig, ToolPlugin introduction, CLI/MCP split, and package restructuring.
+**Goal:** CtL becomes just a plugin (a few files). The platform is a generic game engine. Everything uses the plugin pipeline. End-to-end testable.
 
 ---
 
-## 1. CoordinationGame Gains LobbyConfig + Phase Composition
+## Current State
 
-### Current State
-
-`CoordinationGame<TConfig, TState, TMove, TOutcome>` in `packages/coordination/src/types.ts` has:
-- `gameType`, `version`, `moveSchema`
-- `createInitialState`, `validateMove`, `resolveTurn`, `isOver`, `getOutcome`
-- `entryCost`, `computePayouts`
-
-Lobby logic lives entirely in `packages/engine/src/lobby.ts` as `LobbyManager` — a monolithic class that handles forming, pre-game, and starting phases with hardcoded CtL assumptions (team proposals, class selection, auto-merge).
-
-`LobbyRunner` in `packages/server/src/lobby-runner.ts` orchestrates bots through the lobby. It directly calls `LobbyManager` methods and has CtL-specific bot prompts.
-
-### Changes
-
-**A. Add `lobby` and plugin declarations to `CoordinationGame` interface**
-
-File: `packages/coordination/src/types.ts`
-
-```typescript
-// ADD to CoordinationGame interface:
-
-  /** Lobby flow declaration — how players get from queue to game */
-  lobby: LobbyConfig;
-
-  /** Tool plugins this game requires (must be installed to play) */
-  requiredPlugins: string[];
-
-  /** Tool plugins this game recommends (suggested, not required) */
-  recommendedPlugins: string[];
+### Codebase Structure
+```
+packages/
+  engine/src/        — CtL game logic (hex, combat, fog, map, movement, game, lobby, plugin)
+                       8 test files in __tests__/ (vitest)
+  server/src/        — Express server, MCP (stdio + HTTP), bots, ELO, lobby runner
+                       1 test file in __tests__/ (vitest)
+  coordination/src/  — CoordinationGame interface, GameFramework, auth, balance, merkle
+                       No tests
+  contracts/         — Solidity contracts (hardhat, not anvil)
+  cli/               — coordination CLI (exists, partially built)
+  web/src/           — React frontend
 ```
 
-**B. Define `LobbyConfig` and `LobbyPhase` types**
+### What Works Today
+- CtL games run end-to-end: lobby → team formation → class selection → gameplay → spectating
+- External agents connect via MCP HTTP at capturethelobster.com/mcp
+- Claude bots play via Agent SDK
+- ELO tracking with SQLite
+- `CaptureTheLobsterPlugin` already implements `CoordinationGame` interface (engine/plugin.ts)
+- `GameFramework` exists in coordination/ but is NOT used by the live server — the server still uses `GameManager` directly
+- Live at capturethelobster.com via Cloudflare tunnel
 
-File: `packages/coordination/src/types.ts` (add below existing `LobbyConfig`)
+### Key Problem
+The server (api.ts, mcp-http.ts, lobby-runner.ts) directly uses `GameManager`, `LobbyManager`, and hardcoded chat/tools. The `CoordinationGame` interface and `GameFramework` exist but are unused bridges. The refactor makes the framework the actual runtime.
 
-The current `LobbyConfig` interface (`teamSize, numTeams, timeoutMs, gameType`) is too simple. Replace with:
+---
 
-```typescript
-/** Lobby flow configuration — ordered pipeline of pre-game phases. */
-interface LobbyConfig {
-  queueType: 'open' | 'stake-tiered' | 'invite';
-  phases: LobbyPhaseConfig[];
-  matchmaking: MatchmakingConfig;
-}
+## Target State
 
-interface LobbyPhaseConfig {
-  /** Phase plugin ID (e.g. "queue", "shuffle", "team-formation", "class-selection") */
-  phaseId: string;
-  /** Phase-specific config (timeout, constraints, etc.) */
-  config: Record<string, any>;
-}
+### Package Structure
+```
+packages/
+  platform/              — Generic game server framework
+    src/
+      types.ts           — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
+      framework.ts       — GameFramework (manages rooms, plugins, lobbies)
+      lobby.ts           — LobbyRoom, phase pipeline runner
+      plugin-loader.ts   — Plugin registry, topological sort, pipeline builder
+      relay.ts           — Typed data relay for plugin communication
+      mcp.ts             — Generic MCP transport, phase-aware tool visibility
+      spectator.ts       — WebSocket spectator feed with configurable delay
+      guide.ts           — Dynamic guide generator (game rules + active plugins + player state)
+      auth.ts            — Wallet-based auth (from coordination/)
+      balance.ts         — Vibes tracking (from coordination/)
+      merkle.ts          — Merkle tree construction (from coordination/)
+      phases/
+        queue.ts         — Platform phase: collect players, timeout, ready-check
+        shuffle.ts       — Platform phase: random sub-lobbies
+        random-pairing.ts — Platform phase: pair opponents (for OATHBREAKER)
+      __tests__/
+        framework.test.ts
+        lobby.test.ts
+        plugin-loader.test.ts
+        relay.test.ts
+        guide.test.ts
 
-interface MatchmakingConfig {
-  /** Min/max players needed to start */
-  minPlayers: number;
-  maxPlayers: number;
-  /** Team size (players per team) */
-  teamSize: number;
-  /** Number of teams */
-  numTeams: number;
-  /** Queue timeout before auto-fill or cancel */
-  queueTimeoutMs: number;
-}
+  games/
+    capture-the-lobster/
+      src/
+        plugin.ts        — CaptureTheLobsterPlugin (CoordinationGame impl + LobbyConfig)
+        hex.ts           — Axial hex coordinates (unchanged)
+        los.ts           — Line-of-sight (unchanged)
+        combat.ts        — RPS combat resolution (unchanged)
+        fog.ts           — Fog of war (unchanged)
+        map.ts           — Procedural map generation (unchanged)
+        movement.ts      — Movement validation & resolution (unchanged)
+        game.ts          — GameManager (turn resolution, state — loses chat responsibility)
+        phases/
+          team-formation.ts  — LobbyPhase: team proposals, acceptance, auto-merge
+          class-selection.ts — LobbyPhase: pick rogue/knight/mage
+        __tests__/
+          (existing 8 test files, moved here)
+          team-formation.test.ts
+          class-selection.test.ts
 
-/** A lobby phase plugin — defines one stage of the lobby pipeline. */
-interface LobbyPhase<TPhaseState = any> {
-  /** Unique phase ID */
-  id: string;
-  /** Human-readable name */
-  name: string;
-  /** Initialize phase state */
-  init(players: LobbyPlayer[], config: Record<string, any>): TPhaseState;
-  /** Process a player action within this phase */
-  handleAction(state: TPhaseState, playerId: string, action: string, data: any): TPhaseState;
-  /** Check if this phase is complete */
-  isComplete(state: TPhaseState): boolean;
-  /** Get the result when complete (passed to next phase or game creation) */
-  getResult(state: TPhaseState): Record<string, any>;
-  /** Optional: MCP tools available during this phase */
-  tools?: ToolDefinition[];
-}
+  plugins/
+    basic-chat/
+      src/
+        index.ts         — Chat plugin (ToolPlugin impl)
+      __tests__/
+        chat.test.ts
+    elo/
+      src/
+        index.ts         — ELO tracker plugin (ToolPlugin impl)
+      __tests__/
+        elo.test.ts      — (existing, moved)
+
+  server/src/            — Thin server entry point (wires platform + games + plugins)
+    index.ts             — Creates GameFramework, registers games & plugins, starts HTTP
+    bot-harness.ts       — Claude bot testing harness (not part of platform)
+    __tests__/
+      integration.test.ts — Full game lifecycle test
+
+  cli/                   — coordination CLI (existing, needs updates)
+  contracts/             — Solidity contracts (existing)
+  web/src/               — React frontend (existing)
 ```
 
-**C. Update the CtL plugin with lobby flow**
-
-File: `packages/engine/src/plugin.ts`
-
-Add to `CaptureTheLobsterPlugin`:
-
-```typescript
-  lobby: {
-    queueType: 'open',
-    phases: [
-      { phaseId: 'queue', config: { timeoutMs: 120000 } },
-      { phaseId: 'team-formation', config: { timeoutMs: 120000, allowProposals: true } },
-      { phaseId: 'class-selection', config: { timeoutMs: 60000, classes: ['rogue', 'knight', 'mage'] } },
-    ],
-    matchmaking: {
-      minPlayers: 4,
-      maxPlayers: 12,
-      teamSize: 2, // default, overridden by lobby creation
-      numTeams: 2,
-      queueTimeoutMs: 120000,
-    },
-  },
-  requiredPlugins: ['basic-chat'],
-  recommendedPlugins: ['shared-vision', 'map-annotations'],
-```
-
-**D. Extract CtL-specific lobby phases from LobbyManager**
-
-Current `LobbyManager` (410 lines) has three logical phases hardcoded together. Extract into separate `LobbyPhase` implementations:
-
-| Current code (lobby.ts) | Becomes | Location |
-|---|---|---|
-| `addAgent`, `proposeTeam`, `acceptTeam`, `autoMergeTeams`, `lobbyChat` (lines 60-280) | `TeamFormationPhase` | `packages/games/capture-the-lobster/phases/team-formation.ts` |
-| `startPreGame`, `chooseClass`, `getTeamState`, `teamChat` (lines 280-400) | `ClassSelectionPhase` | `packages/games/capture-the-lobster/phases/class-selection.ts` |
-| `createGame` (lines 400-410) | Stays in plugin — called by platform after phases complete | `packages/games/capture-the-lobster/plugin.ts` |
-
-Platform-provided phases (generic, reusable):
-
-| Phase | Location |
+### What Changes vs What Stays
+| Component | Action |
 |---|---|
-| `QueuePhase` — collect players, timeout, ready-check | `packages/platform/phases/queue.ts` |
-| `ShufflePhase` — random sub-lobbies from queue | `packages/platform/phases/shuffle.ts` |
-| `RandomPairingPhase` — pair opponents (for OATHBREAKER) | `packages/platform/phases/random-pairing.ts` |
-
-**E. Update `GameFramework` to run phase pipelines**
-
-File: `packages/coordination/src/server/framework.ts`
-
-Add a `LobbyRoom` concept alongside `GameRoom`:
-
-```typescript
-interface LobbyRoom {
-  lobbyId: string;
-  gameType: string;
-  players: LobbyPlayer[];
-  currentPhaseIndex: number;
-  phases: LobbyPhase[];
-  phaseStates: any[];
-  config: LobbyConfig;
-}
-```
-
-`GameFramework` gains:
-- `createLobby(gameType, config)` — instantiate phases from the game plugin's `lobby.phases`
-- `advancePhase(lobbyId)` — check `isComplete`, call `getResult`, init next phase
-- `handleLobbyAction(lobbyId, playerId, action, data)` — delegate to current phase
-- Phase registry: `registerPhase(id, PhaseClass)` — platform + game-specific phases
+| `engine/hex.ts`, `los.ts`, `combat.ts`, `fog.ts`, `map.ts`, `movement.ts` | **Move** to `games/capture-the-lobster/` — unchanged code |
+| `engine/game.ts` | **Move + modify** — remove chat, keep pure turn resolution |
+| `engine/lobby.ts` | **Extract into** `games/capture-the-lobster/phases/` — two LobbyPhase impls |
+| `engine/plugin.ts` | **Move + extend** — add LobbyConfig, requiredPlugins, recommendedPlugins |
+| `coordination/types.ts` | **Move to** `platform/types.ts` — add ToolPlugin, LobbyPhase, Message types |
+| `coordination/server/framework.ts` | **Move to** `platform/framework.ts` — add lobby pipeline, plugin loader |
+| `coordination/merkle.ts`, `auth.ts`, `balance.ts` | **Move to** `platform/` — unchanged |
+| `server/api.ts` | **Rewrite** — thin wrapper calling GameFramework |
+| `server/mcp-http.ts` | **Move to** `platform/mcp.ts` — genericize, phase-aware tools |
+| `server/mcp.ts` (stdio) | **Delete** — replaced by CLI's MCP serve mode |
+| `server/elo.ts` | **Move to** `plugins/elo/` — wrap as ToolPlugin |
+| `server/claude-bot.ts`, `lobby-runner.ts` | **Move to** `server/bot-harness.ts` — testing only |
+| `server/coordination.ts` | **Delete** — no longer needed, framework is the runtime |
+| `server/relay.ts` | **Move to** `platform/relay.ts` — extend for plugin typed data |
+| All existing engine tests | **Move to** `games/capture-the-lobster/__tests__/` |
 
 ---
 
-## 2. ToolPlugin Introduction
+## Execution Phases
 
-### Current State
+### Phase 1: Types & Interfaces (non-breaking, additive)
 
-There is no `ToolPlugin` interface. Tool-like behaviors are hardcoded:
+**What:** Add all new types to `coordination/types.ts`. No code changes to runtime.
 
-| Current behavior | Location | Lines |
-|---|---|---|
-| Chat (team messaging) | `mcp-http.ts` tool handler + `GameManager.submitChat` + `LobbyManager.lobbyChat/teamChat` | mcp-http.ts:659-695, game.ts:~200, lobby.ts:~230-270 |
-| ELO tracking | `elo.ts` — standalone SQLite tracker | 222 lines |
-| Game state (fog-filtered) | `game.ts:getStateForAgent` + `fog.ts:buildVisibleState` | game.ts:~130-200, fog.ts:136 lines |
-| Leaderboard | `mcp-http.ts` tool handler + `elo.ts:getLeaderboard` | mcp-http.ts:~800-830 |
-| Wait for update | `mcp-http.ts` — custom polling/wake system | mcp-http.ts:~700-780 |
-
-### Changes
-
-**A. Define `ToolPlugin` interface**
-
-File: `packages/coordination/src/types.ts`
+**Files to modify:**
+- `packages/coordination/src/types.ts` — add:
 
 ```typescript
-/** Tool plugin interface — extends agent capabilities during gameplay. */
+// ── ToolPlugin ──
 interface ToolPlugin {
-  /** Unique plugin ID (matches npm package name convention: coordination-plugin-*) */
   id: string;
   version: string;
-
-  /** Plugin can operate in multiple modes (different consumes/provides combos) */
   modes: PluginMode[];
-
-  /** Pure plugins are cacheable per turn; stateful must re-run */
   purity: 'pure' | 'stateful';
-
-  /** MCP tools this plugin exposes to agents (optional) */
   tools?: ToolDefinition[];
-
-  /** Initialize plugin with context (called once per game) */
   init?(ctx: PluginContext): void;
-
-  /** Passive: process data through the pipeline */
   handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
-
-  /** Active: agent explicitly calls a plugin tool */
   handleCall?(tool: string, args: unknown, caller: AgentInfo): unknown;
 }
 
 interface PluginMode {
   name: string;
-  consumes: string[];   // capability types needed as input
-  provides: string[];   // capability types produced as output
+  consumes: string[];
+  provides: string[];
 }
 
 interface PluginContext {
   gameType: string;
   gameId: string;
-  turnCursor: number;   // platform controls visibility
-  relay: RelayClient;    // for sending typed data through the server
+  turnCursor: number;
+  relay: RelayClient;
   playerId: string;
 }
 
@@ -229,367 +172,545 @@ interface AgentInfo {
 interface ToolDefinition {
   name: string;
   description: string;
-  inputSchema: Record<string, any>;  // JSON Schema
+  inputSchema: Record<string, any>;
 }
-```
 
-**B. Migrate chat to a `basic-chat` plugin**
+// ── LobbyPhase ──
+interface LobbyPhase<TPhaseState = any> {
+  id: string;
+  name: string;
+  run(ctx: PhaseContext): Promise<PhaseResult>;
+}
 
-Current chat is scattered across three files. Consolidate into one plugin:
+interface PhaseContext {
+  players: AgentInfo[];
+  gameConfig: Record<string, any>;
+  relay: RelayAccess;
+  onTimeout(): PhaseResult;
+}
 
-Source files to extract from:
-- `mcp-http.ts:659-695` — chat tool handler (phase-aware routing)
-- `game.ts` — `submitChat`, `teamMessages` storage, message filtering
-- `lobby.ts` — `lobbyChat`, `teamChat`, `preGameChat` storage
+interface PhaseResult {
+  groups: AgentInfo[][];
+  metadata: Record<string, any>;
+  removed?: AgentInfo[];
+}
 
-New file: `packages/plugins/basic-chat/index.ts`
+// ── LobbyConfig (replace existing simple version) ──
+interface LobbyConfig {
+  queueType: 'open' | 'stake-tiered' | 'invite';
+  phases: LobbyPhaseConfig[];
+  matchmaking: MatchmakingConfig;
+}
 
-```typescript
-export const BasicChatPlugin: ToolPlugin = {
-  id: 'basic-chat',
-  version: '0.1.0',
-  modes: [
-    { name: 'messaging', consumes: [], provides: ['messaging'] },
-  ],
-  purity: 'stateful',  // messages accumulate
-  tools: [
-    {
-      name: 'chat',
-      description: 'Send a message to your team',
-      inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] },
-    },
-  ],
-  // handleData: produce Message[] from stored messages
-  // handleCall: route chat to appropriate scope (team/all) based on game phase
-};
-```
+interface LobbyPhaseConfig {
+  phaseId: string;
+  config: Record<string, any>;
+}
 
-The `Message` type from the plan:
+interface MatchmakingConfig {
+  minPlayers: number;
+  maxPlayers: number;
+  teamSize: number;
+  numTeams: number;
+  queueTimeoutMs: number;
+}
 
-```typescript
+// ── Message type ──
 interface Message {
-  from: number;          // agent ID
+  from: number;
   body: string;
   turn: number;
   scope: 'team' | 'all';
-  tags: Record<string, any>;  // plugins enrich this
+  tags: Record<string, any>;
 }
+
+// ── Add to CoordinationGame ──
+// lobby: LobbyConfig;
+// requiredPlugins: string[];
+// recommendedPlugins: string[];
 ```
 
-**C. Migrate ELO to an analytics plugin**
+- `packages/engine/src/plugin.ts` — add lobby config to CaptureTheLobsterPlugin
 
-Current: `packages/server/src/elo.ts` (222 lines, SQLite-backed)
+**Tests:**
+- `packages/coordination/src/__tests__/types.test.ts` — type-level tests: verify interfaces compile, mock implementations satisfy them
+- Existing engine tests must still pass: `cd packages/engine && npx vitest run`
 
-New: `packages/plugins/elo/index.ts`
+**Verification:** `npm run build --workspaces` succeeds. All existing tests pass.
 
-This is a **Private** tier plugin (server-side analytics, no agent-facing tools during gameplay). It hooks into game completion events, not the turn pipeline.
+---
 
-```typescript
-export const EloPlugin: ToolPlugin = {
-  id: 'elo-tracker',
-  version: '0.1.0',
-  modes: [],  // no pipeline participation — event-driven
-  purity: 'stateful',
-  tools: [
-    { name: 'get_leaderboard', description: 'Get ELO rankings', inputSchema: { ... } },
-    { name: 'get_my_stats', description: 'Get your ELO stats', inputSchema: { ... } },
-  ],
-  // handleCall: proxy to EloTracker methods
-  // init: open SQLite DB, register for game-completion events
-};
-```
+### Phase 2: Plugin Loader & Pipeline (new code, no runtime impact)
 
-**D. Plugin loader and pipeline wiring**
+**What:** Build the plugin composition engine. This is new code alongside existing code.
 
-New file: `packages/platform/plugins/loader.ts`
+**New files:**
+- `packages/coordination/src/plugin-loader.ts`:
 
 ```typescript
 class PluginLoader {
   private registry: Map<string, ToolPlugin> = new Map();
 
   register(plugin: ToolPlugin): void;
-  
-  /** Build the pipeline for a game — topological sort on consumes/provides */
-  buildPipeline(gameType: string, activePlugins: string[]): PluginPipeline;
-  
-  /** Get MCP tools for active plugins */
+  getPlugin(id: string): ToolPlugin | undefined;
+  listPlugins(): string[];
+
+  /**
+   * Build execution pipeline from active plugins.
+   * 1. Producers first (no consumes)
+   * 2. Topological sort on dependency graph
+   * 3. Independent providers merge
+   * 4. Cycles = error
+   */
+  buildPipeline(activePlugins: string[]): PluginPipeline;
+
+  /** Get MCP tool definitions for active plugins */
   getTools(activePlugins: string[]): ToolDefinition[];
 }
 
 class PluginPipeline {
-  /** Run all plugins in order for a turn */
-  execute(turnData: Map<string, any>): Map<string, any>;
+  private steps: { plugin: ToolPlugin; mode: PluginMode }[];
+
+  /** Execute pipeline for a turn */
+  execute(initialData: Map<string, any>): Map<string, any>;
 }
 ```
 
-Ordering rules (from plan):
-1. Producers first (no `consumes`)
-2. Topological sort on dependency graph
-3. Independent providers of same capability run in parallel, merge outputs
-4. Cycles = error
+**Tests:**
+- `packages/coordination/src/__tests__/plugin-loader.test.ts`:
+  - Register plugins, verify listing
+  - Build pipeline with linear chain (producer → mapper → enricher → filter)
+  - Build pipeline with parallel providers (merge)
+  - Detect and reject cycles
+  - Verify topological order
+  - Pipeline execute() passes data through correctly
+  - getTools() returns only active plugin tools
+
+**Verification:** `cd packages/coordination && npx vitest run`
 
 ---
 
-## 3. CLI vs MCP Tool Split
+### Phase 3: Lobby Phase Pipeline (new code, alongside existing LobbyManager)
 
-### Current State
+**What:** Build the phase pipeline runner. Existing LobbyManager continues to work.
 
-All tools are MCP tools, exposed via `mcp-http.ts`. There's no CLI. The current tool set:
-
-| Tool | Category | Should be... |
-|---|---|---|
-| `signin` | Auth | CLI (one-time setup) |
-| `get_rules` | Info | MCP (becomes `get_guide`) |
-| `get_leaderboard` | Browse | CLI |
-| `get_my_stats` | Browse | CLI |
-| `list_lobbies` | Browse | CLI |
-| `create_lobby` | Lobby | CLI |
-| `join_lobby` | Lobby | CLI → transitions to MCP |
-| `propose_team` | Lobby | MCP (during lobby phase) |
-| `accept_team` | Lobby | MCP (during lobby phase) |
-| `leave_team` | Lobby | MCP (during lobby phase) |
-| `choose_class` | Pre-game | MCP (during pre-game phase) |
-| `chat` | Gameplay | MCP (plugin tool, not platform) |
-| `submit_move` | Gameplay | MCP |
-| `get_state` | Gameplay | MCP |
-| `wait_for_update` | Gameplay | MCP |
-
-### Target Split
-
-**MCP tools (the game loop — tight, ~5-8 tools during play):**
-
-```
-get_guide(game)       — dynamic context (rules + plugins + tools + status)
-get_state()           — fog-filtered game state
-submit_move(move)     — signed move
-wait_for_update()     — block until next turn
-+ active plugin tools — chat(), attest(), get_reputation() (only when active)
-```
-
-Phase-specific tools appear/disappear based on lobby phase:
-- During `team-formation`: `propose_team`, `accept_team`, `leave_team`
-- During `class-selection`: `choose_class`
-- During `in_progress`: `submit_move`, `get_state`
-
-**CLI commands (setup, admin, browsing):**
-
-```
-coordination status          — identity + vibes + current state
-coordination register <name> — one-time setup
-coordination balance         — vibes balance
-coordination fund            — show deposit address
-coordination withdraw        — cashout
-coordination games           — list available game types
-coordination lobbies         — list open lobbies
-coordination join <id>       — join a lobby (transitions to MCP game loop)
-coordination guide <game>    — dynamic context guide (also available as MCP tool)
-coordination plugins         — list installed plugins
-```
-
-### Migration Steps
-
-**A. Create `packages/cli/` package** (new)
-
-This is the `coordination` npm package. Two modes:
-- Skill mode (bash commands, primary for Claude Code)
-- MCP mode (`coordination serve --stdio` for Claude Desktop)
-
-The CLI is a new package — doesn't exist yet. It wraps the HTTP API for browsing/admin and serves as the MCP entry point for gameplay.
-
-**B. Move browse/admin tools out of `mcp-http.ts`**
-
-Current `mcp-http.ts` (1010 lines) handles everything. Split:
-
-| Remove from mcp-http.ts | Move to |
-|---|---|
-| `signin` tool handler | CLI auth flow (challenge-response) |
-| `get_leaderboard` tool | CLI `coordination leaderboard` → HTTP API call |
-| `get_my_stats` tool | CLI `coordination status` → HTTP API call |
-| `list_lobbies` tool | CLI `coordination lobbies` → HTTP API call |
-| `create_lobby` tool | CLI `coordination create-lobby` → HTTP API call |
-| `join_lobby` tool | CLI `coordination join` → HTTP API call, then switch to MCP mode |
-
-**C. Make `get_rules` dynamic → `get_guide`**
-
-Current `get_rules` returns a static rules string. Replace with dynamic guide:
+**New files:**
+- `packages/coordination/src/server/lobby-pipeline.ts`:
 
 ```typescript
-function generateGuide(game: string, playerPlugins: string[], playerState: any): string {
-  const gamePlugin = registry.getGame(game);
-  const activePlugins = resolvePlugins(playerPlugins, game);
-  return [
-    gamePlugin.rules,
-    gamePlugin.lobbyGuide,
-    ...activePlugins.flatMap(p => p.tools?.map(formatToolHelp) ?? []),
-    gamePlugin.strategyTips,
-    formatPlayerStatus(playerState),
-  ].join('\n');
+class LobbyPipeline {
+  private phases: LobbyPhase[];
+  private currentIndex: number = 0;
+  private phaseState: any = null;
+
+  constructor(phases: LobbyPhase[]);
+
+  /** Start the pipeline with initial players */
+  start(players: AgentInfo[], config: Record<string, any>): Promise<void>;
+
+  /** Handle a player action in the current phase */
+  handleAction(playerId: string, action: string, data: any): Promise<void>;
+
+  /** Get current phase info */
+  getCurrentPhase(): { id: string; name: string; index: number; total: number };
+
+  /** Check if pipeline is complete */
+  isComplete(): boolean;
+
+  /** Get final result (all phase metadata merged) */
+  getResult(): { groups: AgentInfo[][]; metadata: Record<string, any> };
 }
 ```
 
-**D. Phase-aware tool visibility in MCP**
+- `packages/games/capture-the-lobster/src/phases/team-formation.ts`:
+  - Wraps existing `LobbyManager` team formation logic
+  - Implements `LobbyPhase` interface
+  - `run()` handles proposals, acceptance, auto-merge
 
-`mcp-http.ts` currently exposes all tools regardless of game state. Change to:
+- `packages/games/capture-the-lobster/src/phases/class-selection.ts`:
+  - Wraps existing `LobbyManager` pre-game logic
+  - `run()` handles class picks, timer, team chat
+
+**Tests:**
+- `packages/coordination/src/__tests__/lobby-pipeline.test.ts`:
+  - Pipeline runs phases in order
+  - Phase results pass to next phase
+  - Timeout triggers onTimeout fallback
+  - Pipeline reports completion correctly
+- `packages/games/capture-the-lobster/src/__tests__/team-formation.test.ts`:
+  - Propose/accept team flow
+  - Auto-merge with remaining players
+  - Timeout produces valid groups
+- `packages/games/capture-the-lobster/src/__tests__/class-selection.test.ts`:
+  - Choose class updates state
+  - Timer countdown works
+  - Default class assignment on timeout
+
+**Verification:** All phase tests pass. Existing lobby tests still pass.
+
+---
+
+### Phase 4: Extract Chat to Plugin (parallel to existing)
+
+**What:** Create basic-chat as a ToolPlugin. Existing chat continues to work.
+
+**New files:**
+- `packages/plugins/basic-chat/src/index.ts`:
 
 ```typescript
-function getAvailableTools(phase: string, activePlugins: ToolPlugin[]): ToolDefinition[] {
-  const platformTools = PHASE_TOOLS[phase] ?? [];  // phase-specific platform tools
-  const pluginTools = activePlugins.flatMap(p => p.tools ?? []);
-  return [...platformTools, ...pluginTools];
-}
-
-const PHASE_TOOLS = {
-  'team-formation': [propose_team, accept_team, leave_team, chat],
-  'class-selection': [choose_class, chat],
-  'in_progress': [get_state, submit_move, wait_for_update],
+export const BasicChatPlugin: ToolPlugin = {
+  id: 'basic-chat',
+  version: '0.1.0',
+  modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
+  purity: 'stateful',
+  tools: [{
+    name: 'chat',
+    description: 'Send a message to your team',
+    inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] },
+  }],
+  handleData(mode, inputs) {
+    // Return stored messages as Message[] with tags bag
+    return new Map([['messaging', this.getMessages()]]);
+  },
+  handleCall(tool, args, caller) {
+    // Route to team/all based on game phase
+    // Store message with per-agent cursor tracking
+  },
 };
 ```
 
----
+- Per-agent message cursor tracking (prevents duplicates — critical, currently in mcp-http.ts)
+- Phase-aware routing (lobby=all, pre-game=team, game=team)
 
-## 4. Package Structure Changes
+**Tests:**
+- `packages/plugins/basic-chat/src/__tests__/chat.test.ts`:
+  - Send message, receive on same team
+  - Don't receive messages from other team during game
+  - Message cursor prevents duplicates
+  - Phase-aware routing (all during lobby, team during game)
+  - Messages include correct turn number
+  - Tags bag is extensible
 
-### Current Structure
-
-```
-packages/
-  engine/src/          — CtL game logic (hex, combat, fog, map, game, lobby, plugin)
-  server/src/          — Express server, MCP, bots, ELO, lobby runner
-  coordination/src/    — CoordinationGame interface, framework, auth, balance, merkle
-  web/src/             — React frontend
-```
-
-### Target Structure
-
-```
-packages/
-  platform/            — Generic game server framework (extracted from server + coordination)
-    src/
-      framework.ts     — GameFramework (from coordination/server/framework.ts)
-      lobby.ts         — LobbyRoom, phase pipeline runner (NEW)
-      mcp.ts           — Generic MCP transport, phase-aware tool visibility (from server/mcp-http.ts)
-      spectator.ts     — WebSocket spectator feed (from server/api.ts)
-      relay.ts         — Typed data relay for plugin communication (NEW)
-      auth.ts          — Wallet-based auth (from coordination/server/auth.ts)
-      balance.ts       — Vibes ($VIBE) tracking (from coordination/server/balance.ts)
-      merkle.ts        — Merkle tree construction (from coordination/merkle.ts)
-      types.ts         — All shared types (from coordination/types.ts)
-      phases/           — Platform-provided lobby phases
-        queue.ts
-        shuffle.ts
-        random-pairing.ts
-        ready-check.ts
-      plugins/
-        loader.ts      — Plugin registry, pipeline builder, topological sort (NEW)
-
-  games/
-    capture-the-lobster/
-      src/
-        plugin.ts      — CaptureTheLobsterPlugin (from engine/plugin.ts, gains lobby config)
-        hex.ts         — unchanged (from engine/hex.ts)
-        los.ts         — unchanged
-        combat.ts      — unchanged
-        fog.ts         — unchanged
-        map.ts         — unchanged
-        movement.ts    — unchanged
-        game.ts        — GameManager (from engine/game.ts, loses chat responsibility)
-        phases/
-          team-formation.ts  — extracted from engine/lobby.ts
-          class-selection.ts — extracted from engine/lobby.ts
-
-  plugins/
-    basic-chat/
-      index.ts         — Chat plugin (extracted from mcp-http.ts + game.ts + lobby.ts)
-    elo/
-      index.ts         — ELO tracker plugin (from server/elo.ts)
-
-  cli/                 — NEW: coordination CLI + MCP server
-    src/
-      index.ts         — CLI entry point
-      commands/        — CLI command handlers
-        status.ts
-        register.ts
-        lobbies.ts
-        join.ts
-        guide.ts
-        balance.ts
-        plugins.ts
-      mcp-serve.ts     — MCP stdio server mode
-      skill.md         — Claude Code skill file
-
-  web/src/             — stays, gains generic game renderer architecture
-    components/
-      HexGrid.tsx      — CtL-specific renderer (unchanged for now)
-    pages/
-      HomePage.tsx     — Platform landing (just revamped)
-```
-
-### Migration Order
-
-This should be done in phases to avoid breaking the running game:
-
-**Phase A: Types + interfaces (non-breaking)**
-1. Add `LobbyConfig`, `LobbyPhase`, `ToolPlugin` types to `coordination/types.ts`
-2. Add `lobby`, `requiredPlugins`, `recommendedPlugins` to `CoordinationGame` interface
-3. Update `CaptureTheLobsterPlugin` in `engine/plugin.ts` with lobby config
-4. All existing code continues to work — new fields are additive
-
-**Phase B: Extract lobby phases (parallel to existing code)**
-1. Create `TeamFormationPhase` and `ClassSelectionPhase` as `LobbyPhase` implementations
-2. They wrap the existing `LobbyManager` methods internally
-3. Add phase pipeline runner to `GameFramework`
-4. Old `LobbyRunner` continues to work alongside new path
-
-**Phase C: Extract chat plugin (parallel)**
-1. Create `basic-chat` plugin with the `ToolPlugin` interface
-2. It wraps existing chat storage/routing
-3. MCP tools gain plugin-aware tool injection
-4. Old chat tools continue to work
-
-**Phase D: Package restructure**
-1. Move engine files to `packages/games/capture-the-lobster/`
-2. Move framework code to `packages/platform/`
-3. Create `packages/plugins/` with extracted plugins
-4. Update all import paths, tsconfig references, npm workspace config
-5. This is the big breaking change — do it in one PR
-
-**Phase E: CLI package**
-1. Create `packages/cli/` with `coordination` binary
-2. Move browse/admin tools out of `mcp-http.ts`
-3. Implement `coordination guide` (dynamic)
-4. Add skill.md for Claude Code
+**Verification:** Chat plugin tests pass independently.
 
 ---
 
-## Files That Change (Summary)
+### Phase 5: Extract ELO to Plugin
 
-| File | Action | Notes |
+**What:** Wrap existing ELO tracker as a ToolPlugin.
+
+**New files:**
+- `packages/plugins/elo/src/index.ts` — wraps `EloTracker` class
+  - Tools: `get_leaderboard`, `get_my_stats`
+  - Hooks into game completion events
+
+**Tests:**
+- Move existing `server/__tests__/elo.test.ts` to `plugins/elo/__tests__/`
+- Add: plugin interface compliance test
+
+**Verification:** Existing ELO tests pass in new location.
+
+---
+
+### Phase 6: Platform MCP (genericize mcp-http.ts)
+
+**What:** Extract generic MCP transport from the current 1010-line mcp-http.ts.
+
+**Key changes:**
+- Phase-aware tool visibility: tools appear/disappear based on current lobby/game phase
+- Plugin tools injected dynamically from PluginLoader.getTools()
+- `get_rules` → `get_guide` (dynamic, personalized)
+- Remove admin tools (signin, leaderboard, stats) — those go to CLI
+- Keep game loop tools: get_guide, get_state, submit_move, wait_for_update + active plugin tools
+
+**New file:** `packages/platform/src/mcp.ts`
+
+```typescript
+function getAvailableTools(
+  phase: string,
+  activePlugins: ToolPlugin[],
+  phaseTools: Map<string, ToolDefinition[]>
+): ToolDefinition[] {
+  const platform = phaseTools.get(phase) ?? [];
+  const plugin = activePlugins.flatMap(p => p.tools ?? []);
+  return [...platform, ...plugin];
+}
+
+const PHASE_TOOLS: Map<string, ToolDefinition[]> = {
+  'team-formation': [propose_team, accept_team, leave_team],
+  'class-selection': [choose_class],
+  'in_progress': [get_state, submit_move, wait_for_update],
+};
+// get_guide is always available
+```
+
+**Tests:**
+- `packages/platform/src/__tests__/mcp.test.ts`:
+  - Correct tools for each phase
+  - Plugin tools appear when active
+  - Plugin tools disappear when not active
+  - get_guide returns dynamic content based on game + plugins
+
+**Verification:** MCP tests pass. Manual test with agent-browser: visit game, verify tools work.
+
+---
+
+### Phase 7: Package Restructure (the big move)
+
+**What:** Move files to new package structure. One atomic PR.
+
+**Steps:**
+1. Create new package dirs: `packages/platform/`, `packages/games/capture-the-lobster/`, `packages/plugins/basic-chat/`, `packages/plugins/elo/`
+2. Add `package.json` for each new package (name, version, main, types, scripts)
+3. Update root `package.json` workspaces to include new packages
+4. Move files per the table in "What Changes vs What Stays" above
+5. Update ALL import paths (use find-and-replace across codebase)
+6. Update tsconfig.json files and project references
+7. Delete `packages/engine/`, `packages/coordination/` (now empty)
+8. `npm install --include=dev` to rebuild node_modules links
+9. `npm run build --workspaces` must succeed
+10. `npm run test --workspaces --if-present` must pass
+
+**Tests:**
+- All existing tests pass in new locations
+- Build succeeds for every package
+- No broken imports (TypeScript compiler catches these)
+
+**Verification:**
+```bash
+npm run build --workspaces
+npm run test --workspaces --if-present
+```
+
+---
+
+### Phase 8: Wire It All Together (the integration)
+
+**What:** Make the server use `GameFramework` + plugin pipeline as the actual runtime. Delete the old direct-call paths.
+
+**Changes to `packages/server/src/index.ts`:**
+```typescript
+import { GameFramework } from '@lobster/platform';
+import { CaptureTheLobsterPlugin } from '@lobster/games-ctl';
+import { BasicChatPlugin } from '@lobster/plugin-chat';
+import { EloPlugin } from '@lobster/plugin-elo';
+import { TeamFormationPhase, ClassSelectionPhase } from '@lobster/games-ctl/phases';
+
+const framework = new GameFramework({ turnTimeoutMs: 30000 });
+framework.registerGame(CaptureTheLobsterPlugin);
+framework.registerPlugin(BasicChatPlugin);
+framework.registerPlugin(EloPlugin);
+framework.registerPhase('team-formation', TeamFormationPhase);
+framework.registerPhase('class-selection', ClassSelectionPhase);
+
+// Start server with framework
+startServer(framework, { port: 5173 });
+```
+
+**Delete:**
+- `server/coordination.ts` (bridge code, no longer needed)
+- `server/mcp.ts` (stdio transport, replaced by CLI)
+- Direct GameManager/LobbyManager usage in api.ts
+
+**Tests — Integration:**
+- `packages/server/src/__tests__/integration.test.ts`:
+
+```typescript
+describe('Full game lifecycle', () => {
+  it('runs a complete CtL game through the framework', async () => {
+    // 1. Create framework, register CtL plugin + chat plugin
+    // 2. Create lobby
+    // 3. Add 4 players
+    // 4. Run team formation phase → 2 teams of 2
+    // 5. Run class selection phase → all pick classes
+    // 6. Game starts
+    // 7. Submit moves for several turns
+    // 8. Verify state updates, fog of war, chat messages
+    // 9. Game ends (or timeout)
+    // 10. Verify outcome, payouts computed correctly
+    // 11. Verify Merkle tree built
+  });
+
+  it('chat plugin delivers team-scoped messages', async () => {
+    // Verify team A can't see team B messages during gameplay
+  });
+
+  it('plugin pipeline processes data in correct order', async () => {
+    // Register chat + mock enricher + mock filter
+    // Verify pipeline executes in topological order
+  });
+
+  it('MCP tools change based on game phase', async () => {
+    // Lobby phase: propose_team, accept_team visible
+    // Game phase: submit_move, get_state visible
+    // propose_team NOT visible during gameplay
+  });
+});
+```
+
+**Verification:**
+```bash
+npm run test --workspaces --if-present
+# Then manual e2e:
+PORT=5173 node packages/server/dist/index.js &
+npx agent-browser open http://localhost:5173
+npx agent-browser screenshot screenshots/integration-test.png
+# Verify frontend loads, games page works, lobby browser works
+```
+
+---
+
+### Phase 9: E2E Testing with Agent Browser
+
+**What:** Automated end-to-end tests that verify the full stack.
+
+**New file:** `packages/server/src/__tests__/e2e.test.ts`
+
+```typescript
+import { execSync } from 'child_process';
+
+describe('E2E: Full stack', () => {
+  let serverProcess: ChildProcess;
+
+  beforeAll(async () => {
+    // Build everything
+    execSync('npm run build --workspaces');
+    // Start server
+    serverProcess = spawn('node', ['packages/server/dist/index.js'], {
+      env: { ...process.env, PORT: '5174', USE_CLAUDE_BOTS: 'false' },
+    });
+    await waitForServer('http://localhost:5174');
+  });
+
+  afterAll(() => serverProcess.kill());
+
+  it('homepage loads', async () => {
+    const res = await fetch('http://localhost:5174');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Capture the Lobster');
+  });
+
+  it('/games microsite loads', async () => {
+    const res = await fetch('http://localhost:5174/games');
+    expect(res.status).toBe(200);
+  });
+
+  it('MCP endpoint responds', async () => {
+    const res = await fetch('http://localhost:5174/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('lobby API works', async () => {
+    const res = await fetch('http://localhost:5174/api/lobbies');
+    expect(res.status).toBe(200);
+  });
+
+  it('agent-browser can screenshot game page', async () => {
+    execSync('npx agent-browser set viewport 900 900');
+    execSync('npx agent-browser open http://localhost:5174');
+    execSync('npx agent-browser screenshot /tmp/e2e-home.png');
+    // Verify screenshot file exists and is non-empty
+    const stat = fs.statSync('/tmp/e2e-home.png');
+    expect(stat.size).toBeGreaterThan(1000);
+  });
+});
+```
+
+---
+
+### Phase 10: Update Documentation
+
+**What:** Update all docs to reflect new architecture.
+
+- **CLAUDE.md** — Update package structure, build commands, file map
+- **DESIGN.md** — Archive or merge into GAME_ENGINE_PLAN.md (it's stale)
+- **TECHNICAL-SPEC.md** — Archive or merge (stale, describes monolithic architecture)
+- **PLAYER-INTEGRATION.md** — Archive or merge (stale, describes old MCP-only flow)
+- **README.md** — Update with new package structure, plugin system
+- **GAME_ENGINE_PLAN.md** — Mark resolved decisions, update "Current codebase → new structure" section
+
+---
+
+## Test Strategy Summary
+
+| Level | Tool | What's Tested |
 |---|---|---|
-| `packages/coordination/src/types.ts` | **Modify** | Add ToolPlugin, LobbyPhase, LobbyConfig, PluginMode, Message types |
-| `packages/coordination/src/server/framework.ts` | **Modify** | Add LobbyRoom, phase pipeline, plugin loader |
-| `packages/engine/src/plugin.ts` | **Modify** | Add lobby config, required/recommended plugins |
-| `packages/engine/src/lobby.ts` | **Extract from** | Split into TeamFormationPhase + ClassSelectionPhase |
-| `packages/engine/src/game.ts` | **Modify** | Remove chat responsibility (delegate to plugin) |
-| `packages/server/src/mcp-http.ts` | **Modify** | Phase-aware tool visibility, plugin tool injection, remove admin tools |
-| `packages/server/src/api.ts` | **Modify** | Use framework lobby pipeline instead of direct LobbyManager |
-| `packages/server/src/elo.ts` | **Extract to** | `packages/plugins/elo/` |
-| `packages/server/src/lobby-runner.ts` | **Modify** | Use phase pipeline for bot orchestration |
-| `packages/plugins/basic-chat/index.ts` | **New** | Chat as ToolPlugin |
-| `packages/plugins/elo/index.ts` | **New** | ELO as ToolPlugin |
-| `packages/platform/` | **New** | Extracted framework + phases + plugin loader |
-| `packages/games/capture-the-lobster/` | **New** | CtL game plugin + phases (moved from engine) |
-| `packages/cli/` | **New** | coordination CLI + MCP server |
+| **Unit** | vitest | Hex math, combat, fog, movement, map gen, plugin loader, pipeline, phases |
+| **Integration** | vitest | Full game lifecycle through framework, plugin pipeline ordering, phase transitions, MCP tool visibility |
+| **E2E** | vitest + agent-browser | Server starts, pages load, MCP responds, API works, screenshots render |
+| **Contract** | hardhat | CoordinationRegistry, Vibes, GameAnchor (existing) |
+
+### Test Commands
+```bash
+# All tests
+npm run test --workspaces --if-present
+
+# Specific packages
+cd packages/platform && npx vitest run
+cd packages/games/capture-the-lobster && npx vitest run
+cd packages/plugins/basic-chat && npx vitest run
+cd packages/server && npx vitest run
+
+# E2E only
+cd packages/server && npx vitest run --testPathPattern e2e
+```
 
 ---
 
-## Key Risks
+## Risks & Mitigations
 
-1. **Breaking the live game.** The server at capturethelobster.com runs the current code. Package restructure (Phase D) must be done carefully — ideally one PR with all import path changes.
+| Risk | Mitigation |
+|---|---|
+| Breaking the live site | Do Phase 7 (restructure) in one atomic commit. Build + test before push. |
+| LobbyManager coupling | Extract-and-wrap: LobbyPhase implementations call LobbyManager methods internally |
+| Chat cursor deduplication | basic-chat plugin must replicate per-agent cursor logic from mcp-http.ts |
+| npm workspace issues | Always `npm install --include=dev`. Test with clean node_modules. |
+| Import path breakage | TypeScript compiler catches all broken imports at build time |
+| Bot harness depends on old APIs | Keep as `server/bot-harness.ts`, update to use framework |
 
-2. **LobbyManager is tightly coupled.** The forming→pre_game→starting flow has implicit state transitions that the phase pipeline must replicate exactly. Extract-and-wrap (keep LobbyManager internally, expose via LobbyPhase interface) is safer than rewrite.
+---
 
-3. **Chat is everywhere.** Messages flow through lobby.ts, game.ts, and mcp-http.ts with per-agent cursors for deduplication. The basic-chat plugin must replicate this cursor behavior or agents will see duplicate messages.
+## Stale Documents
 
-4. **Bot orchestration depends on LobbyManager directly.** `lobby-runner.ts` and `claude-bot.ts` call LobbyManager methods by name. They need to be updated to use the phase pipeline, or kept as a testing harness that bypasses the framework.
+These docs describe the pre-plugin architecture and should be archived/replaced:
 
-5. **npm workspace config.** Adding 4+ new packages to the workspace requires updating root `package.json` and dealing with the existing `--include=dev` workaround.
+| Document | Status | Action |
+|---|---|---|
+| `DESIGN.md` | Stale — describes pre-plugin CtL design ("teams of 4" only) | Archive or delete; GAME_ENGINE_PLAN.md is the source of truth |
+| `TECHNICAL-SPEC.md` | Stale — describes monolithic server architecture | Archive or delete; replaced by this plan + GAME_ENGINE_PLAN.md |
+| `PLAYER-INTEGRATION.md` | Stale — describes old MCP-only flow, no CLI | Archive or delete; CLI flow is in GAME_ENGINE_PLAN.md |
+
+---
+
+## Handoff Prompt
+
+Use this prompt when starting a fresh context to execute this refactor:
+
+```
+Read these files in order to understand the project and what needs to happen:
+
+1. CLAUDE.md — Current codebase conventions, build commands, known issues
+2. GAME_ENGINE_PLAN.md — The full platform vision: plugin architecture, Vibes economy, CoordinationGame interface, ToolPlugin interface, LobbyPhase pipeline, CLI/MCP split, on-chain layer
+3. REFACTOR_PLAN.md — The concrete execution plan with 10 phases, test strategy, file-by-file migration map
+
+Then execute REFACTOR_PLAN.md phases 1-10 in order. Each phase has:
+- Exactly what files to create/modify/move
+- What tests to write
+- How to verify the phase is complete
+
+Key constraints:
+- The live site (capturethelobster.com) must keep working — don't break main
+- Use vitest for all tests (already configured in the repo)
+- Build with tsc --skipLibCheck (see CLAUDE.md for why)
+- npm install --include=dev (see CLAUDE.md for the workspaces bug)
+- The CtL game logic (hex, combat, fog, movement, map) is PROVEN CODE — move it, don't rewrite it
+- Use agent-browser for visual verification (installed, Chrome available)
+- Test each phase before moving to the next
+
+The end state: CtL is just a plugin with a few files. The game engine is generic. Everything uses the plugin pipeline. All tests pass.
+```
