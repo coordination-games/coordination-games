@@ -1,36 +1,28 @@
 /**
- * Coordination framework integration for the CtL server.
+ * Framework integration — bridges the live game engine with the platform framework.
  *
- * Registers the Capture the Lobster plugin with the GameFramework
- * and provides helper functions for bridging between the existing
- * server code and the new framework.
+ * The game engine (GameManager) runs directly for performance during gameplay.
+ * The framework (GameFramework) handles lifecycle events: game creation,
+ * Merkle tree construction, payout computation, and on-chain settlement.
  *
- * This module coexists with the existing server code. The existing
- * GameServer class continues to manage games directly using GameManager.
- * The framework is available as an alternative path, and will become
- * the primary path as more games are added.
+ * This module provides the bridge between the two:
+ * - getFramework() — singleton framework with CtL registered
+ * - buildResultFromGameManager() — converts engine state to framework GameResult
+ * - computePayoutsFromGameManager() — computes payouts via the CtL plugin
  */
 
 import {
   GameFramework,
-  type CoordinationGame,
-  type GameRoom,
   type GameResult,
-  buildGameResult,
-  computePayouts,
   buildGameMerkleTree,
   type MerkleLeafData,
 } from '@lobster/platform';
 
 import {
   CaptureTheLobsterPlugin,
-  type CtlConfig,
-  type CtlState,
-  type CtlMove,
   type CtlOutcome,
   GameManager,
   TurnRecord,
-  Direction,
 } from '@lobster/games-ctl';
 
 // ---------------------------------------------------------------------------
@@ -39,34 +31,24 @@ import {
 
 let framework: GameFramework | null = null;
 
-/**
- * Get or create the global GameFramework instance.
- * Registers all known game plugins on first call.
- */
 export function getFramework(): GameFramework {
   if (!framework) {
     framework = new GameFramework({
       turnTimeoutMs: 30000,
-      balanceConfig: {
-        defaultBalance: 1000, // Dev mode: everyone starts with 1000 credits
-      },
+      balanceConfig: { defaultBalance: 1000 },
     });
-
-    // Register the CtL plugin
     framework.registerGame(CaptureTheLobsterPlugin);
-
-    console.log('[Coordination] Framework initialized with games:', framework.listGameTypes());
+    console.log('[Framework] Initialized with games:', framework.listGameTypes());
   }
   return framework;
 }
 
 // ---------------------------------------------------------------------------
-// Bridge: existing GameManager -> framework Merkle tree
+// Engine → Framework bridges (called at game finish time)
 // ---------------------------------------------------------------------------
 
 /**
- * Build a Merkle tree from an existing GameManager's turn history.
- * Useful for anchoring games that were run through the old code path.
+ * Build a Merkle tree from the engine's turn history.
  */
 export function buildMerkleTreeFromHistory(
   gameId: string,
@@ -80,14 +62,12 @@ export function buildMerkleTreeFromHistory(
       moveData: JSON.stringify(path),
     } as MerkleLeafData)),
   }));
-
   const tree = buildGameMerkleTree(turns);
   return { root: tree.root, leafCount: tree.leaves.length };
 }
 
 /**
- * Build a GameResult from an existing GameManager (for on-chain anchoring).
- * Bridges the old game flow with the new settlement system.
+ * Build a GameResult from the engine's state for on-chain anchoring.
  */
 export function buildResultFromGameManager(
   gameManager: GameManager,
@@ -107,18 +87,14 @@ export function buildResultFromGameManager(
       turnCount: gameManager.turn,
     },
     movesRoot: root,
-    configHash: '', // Will be computed when config hashing is needed
+    configHash: '',
     turnCount: turnHistory.length,
     timestamp: Date.now(),
   };
 }
 
-// ---------------------------------------------------------------------------
-// Bridge: existing GameManager -> framework payouts
-// ---------------------------------------------------------------------------
-
 /**
- * Compute payouts for an existing finished GameManager.
+ * Compute payouts using the CtL plugin's payout logic.
  */
 export function computePayoutsFromGameManager(
   gameManager: GameManager,
