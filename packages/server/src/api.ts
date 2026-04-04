@@ -38,6 +38,7 @@ import {
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
 import { buildResultFromGameManager, computePayoutsFromGameManager, getFramework } from './coordination.js';
+import { GameRelay, type RelayMessage } from './typed-relay.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -92,6 +93,8 @@ export interface SpectatorState {
   turnStartedAt: number;  // epoch ms
   /** Maps agent IDs to display names (e.g. "agent_1" -> "Pinchy") */
   handles: Record<string, string>;
+  /** Relay messages for this turn (spectators see all, agents see scoped) */
+  relayMessages?: RelayMessage[];
 }
 
 export interface ExternalSlot {
@@ -125,6 +128,8 @@ export interface GameRoom {
   /** Pre-game team chat (preserved for spectators) */
   preGameChatA: { from: string; message: string; timestamp: number }[];
   preGameChatB: { from: string; message: string; timestamp: number }[];
+  /** Typed relay for plugin data between agents */
+  relay: GameRelay;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,10 +372,21 @@ export class GameServer {
       (gameId: string, agentId: string) => {
         this.onMoveSubmitted(gameId, agentId);
       },
-      // Chat callback: broadcast state to spectators + notify teammates
-      (gameId: string) => {
+      // Chat callback: push through relay + broadcast state + notify teammates
+      (gameId: string, agentId?: string, message?: string) => {
         const room = this.games.get(gameId);
         if (room) {
+          // Push chat through the typed relay (alongside the direct GameManager chat)
+          if (agentId && message) {
+            const phase = room.game.phase;
+            const scope = (phase === 'in_progress' || phase === 'pre_game') ? 'team' : 'all';
+            room.relay.send(agentId, room.game.turn, {
+              type: 'messaging',
+              data: { body: message },
+              scope,
+              pluginId: 'basic-chat',
+            });
+          }
           this.broadcastState(room);
           // Notify all agents in this game so wait_for_update wakes up
           for (const unit of room.game.units) {
@@ -663,6 +679,39 @@ export class GameServer {
       const state = getDelayedState(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
       res.json(state);
+    });
+
+    // Send a relay message (for external agents via REST — internal bots use relay directly)
+    router.post('/games/:id/relay', (req, res) => {
+      const room = this.games.get(req.params.id);
+      if (!room) return res.status(404).json({ error: 'Game not found' });
+
+      const { sender, type, data, scope, pluginId } = req.body;
+      if (!sender || !type || !scope) {
+        return res.status(400).json({ error: 'sender, type, and scope are required' });
+      }
+
+      const msg = room.relay.send(sender, room.game.turn, {
+        type,
+        data: data ?? {},
+        scope,
+        pluginId: pluginId ?? 'unknown',
+      });
+
+      // Also push through GameManager chat if it's a messaging type (backwards compat)
+      if (type === 'messaging' && data?.body) {
+        room.game.submitChat(sender, data.body);
+      }
+
+      // Broadcast state update to spectators
+      this.broadcastState(room);
+
+      // Notify other agents
+      for (const unit of room.game.units) {
+        if (unit.id !== sender) notifyAgent(unit.id);
+      }
+
+      res.json({ ok: true, index: msg.index });
     });
 
     // Create a bot game (requires admin password since bots use API credits)
@@ -971,6 +1020,7 @@ export class GameServer {
       lobbyChat: [],
       preGameChatA: [],
       preGameChatB: [],
+      relay: new GameRelay(players.map(p => ({ id: p.id, team: p.team }))),
     };
 
     this.games.set(gameId, room);
@@ -1323,6 +1373,7 @@ export class GameServer {
       lobbyChat,
       preGameChatA,
       preGameChatB,
+      relay: new GameRelay(players.map(p => ({ id: p.id, team: p.team }))),
     };
 
     this.games.set(gameId, room);

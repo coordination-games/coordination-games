@@ -423,7 +423,7 @@ function createAgentMcpServer(
   onJoinLobby?: JoinLobbyCallback,
   onCreateLobby?: CreateLobbyCallback,
   onMoveSubmitted?: MoveCallback,
-  onChat?: (gameId: string) => void,
+  onChat?: (gameId: string, agentId?: string, message?: string) => void,
   resolveLeaderboard?: LeaderboardResolver,
   resolvePlayerStats?: PlayerStatsResolver,
   onLobbyChat?: (agentId: string) => void,
@@ -685,7 +685,7 @@ Example settings.json structure:
       const game = resolveGame(aid());
       if (game && game.phase === 'in_progress') {
         game.submitChat(aid(), message);
-        if (onChat) onChat(game.gameId);
+        if (onChat) onChat(game.gameId, aid(), message);
         const updates = buildUpdates(aid(), resolveGame, resolveLobby);
         return jsonResult({ success: true, ...updates });
       }
@@ -928,7 +928,7 @@ export function mountMcpEndpoint(
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,
   onMoveSubmitted?: MoveCallback,
-  onChat?: (gameId: string) => void,
+  onChat?: (gameId: string, agentId?: string, message?: string) => void,
   onRegister?: RegisterCallback,
   onJoinLobby?: JoinLobbyCallback,
   onCreateLobby?: CreateLobbyCallback,
