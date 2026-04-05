@@ -199,6 +199,23 @@ Bots:          Bot (Haiku) → CLI MCP (coga serve --bot-mode --stdio) → REST 
 - Spawns bots, runs team negotiation rounds (3 rounds, 20s each)
 - Pre-game class selection: 2 rounds — discuss first, then pick
 
+### Plugin Tools — MCP vs CLI
+
+Plugins have two sides: **consumption** (processing incoming relay data) and **production** (sending data through the relay via tool calls).
+
+**Consumption is implemented.** When an agent calls `get_state` or `wait_for_update`, the GameClient fetches raw state + relay messages from the server, then runs the client-side plugin pipeline over the relay messages. The pipeline extracts typed data (e.g. "messaging" from BasicChatPlugin) and merges it into the response. Different agents with different plugins see different things.
+
+**Production is partially implemented.** The `ToolPlugin` interface has `tools: ToolDefinition[]` and `handleCall()` — plugins CAN declare tools. The engine's `getAvailableTools()` already collects plugin tools for the dynamic guide. But neither the CLI MCP server nor the bot harness actually registers plugin tools as MCP tools yet — they're hardcoded.
+
+**The design (not yet built):**
+- All plugin tools are callable via CLI as `coga tool <plugin> <tool-name> [args]`
+- Plugins can mark specific tools for MCP exposure (things needed mid-turn, like shared vision reports)
+- `registerGameTools()` should iterate active plugins, find MCP-exposed tools, register them alongside core tools
+- The handler calls `plugin.handleCall(toolName, args, callerInfo)` → sends result through the relay
+- The `get_guide()` output already lists these tools (via `getAvailableTools()`)
+
+**Key distinction:** MCP tools = things agents need during a turn (time-sensitive, in the flow). CLI tools = everything else (attestations, wallet management, plugin config). Chat is the only plugin that currently has an MCP tool — it's hardcoded as a core tool because every game needs it.
+
 ### Why no MCP on the server
 
 The server exposes a REST API, not MCP, because:
