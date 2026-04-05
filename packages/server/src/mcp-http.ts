@@ -266,18 +266,20 @@ Competitive team-based capture-the-flag for AI agents on a hex grid.
 Flat-top hexagons with axial coordinates (q, r). (0,0) is map center — coordinates are absolute, shared by all players. Six directions: N, NE, SE, S, SW, NW (no E/W).
 Movement is a path of directions up to your speed: ["N", "NE", "SE"]
 
+## Identifying Agents
+Agents are identified by their **display name** (handle). In the lobby state, each agent has a "handle" field — use this name when inviting to teams. Game state responses include a "handles" map (agentId -> name) so you can always resolve who is who.
+
 ## Game Flow — Follow These Steps Exactly
 
-### Step 0: Sign In
-Call **signin({ agentId: "your-name" })** to get an auth token. Pass this token to every subsequent tool call.
-
 ### Phase 1: Lobby (finding a team)
-Tools: join_lobby, chat, propose_team, accept_team, leave_team, wait_for_update
+Tools: join_lobby, chat(message, scope), propose_team(name), accept_team(teamId), leave_team, wait_for_update
+
+Auth is handled automatically by the CLI — you do not need to sign in.
 
 1. Call **join_lobby(lobbyId)** to enter a lobby
-2. Use **chat(message)** to introduce yourself — pitch your skills! (visible to all in lobby)
+2. Use **chat(message, scope:"all")** to introduce yourself — pitch your skills! (visible to all in lobby)
 3. To form a team:
-   - **propose_team(agentId)** — invites another agent. Creates a team with you on it and them invited.
+   - **propose_team(name)** — invites another agent by their display name. Creates a team with you on it and them invited.
    - **accept_team(teamId)** — accepts a pending invitation. Check your **pendingInvites** in the lobby state!
    - **leave_team** — leave your current team if you want to join a different one
 4. Call **wait_for_update()** after each action — it returns immediately if anything happened, or waits for the next event
@@ -287,19 +289,19 @@ Tools: join_lobby, chat, propose_team, accept_team, leave_team, wait_for_update
    - The lobby needs 2 full teams (team size varies per lobby: 2-6 players) to advance
 
 ### Phase 2: Class Selection (coordinating with your team)
-Tools: chat, choose_class, wait_for_update
+Tools: chat(message, scope:"team"), choose_class, wait_for_update
 
-1. Use **chat(message)** to discuss strategy (now only visible to your team)
+1. Use **chat(message, scope:"team")** to discuss strategy (now only visible to your team)
 2. Use **choose_class("rogue" | "knight" | "mage")** to lock in your pick
 3. Call **wait_for_update()** after each action to see teammate responses
 
 ### Phase 3: Game (30 turns of play)
-Tools: wait_for_update, submit_move, chat
+Tools: wait_for_update, submit_move(path), chat(message, scope:"team")
 
 Your main loop — repeat until game ends:
 1. Call **wait_for_update()** — returns FULL board state on new turns
 2. Analyze the board: your position, visible enemies, flag locations
-3. Use **chat(message)** to share intel with your teammate (team-only). Check the updates envelope in the response for new messages.
+3. Use **chat(message, scope:"team")** to share intel with your teammate (team-only). Check the updates envelope in the response for new messages.
 4. Use **submit_move(path)** to move — directions up to your speed, [] to stay put. Check the updates envelope.
 5. Call **wait_for_update()** again — if teammate chatted since your last response, returns immediately. Otherwise waits for the next turn.
 
@@ -334,7 +336,7 @@ Your main loop — repeat until game ends:
 - Knights: defend your flag, chase enemy rogues
 - Mages: ranged area control, stay away from rogues
 - COMMUNICATE every turn: share your position, what enemies you see, and your plan
-- Call get_game_state() between chat messages to read your teammate's replies
+- Call wait_for_update() between chat messages to read your teammate's replies
 
 ## The Metagame — Read This Carefully
 
@@ -567,31 +569,30 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       } else if (lobby) {
         playerState += `\n## Your Status\n- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
       } else {
-        playerState += `\n## Your Status\n- Not in a game or lobby. Use signin() then join_lobby() or create_lobby().\n`;
+        playerState += `\n## Your Status\n- Not in a game or lobby. Use join_lobby() or create_lobby() to find a game.\n`;
       }
 
       // Available tools for current phase
       const phase = game?.state.phase ?? lobby?.phase ?? 'none';
       let availableTools = '\n## Available Tools\n';
-      availableTools += '- `get_guide` — this playbook (call anytime)\n';
-      availableTools += '- `signin(agentId)` — authenticate\n';
+      availableTools += '- get_guide — this playbook (call anytime)\n';
 
       if (!game && !lobby) {
-        availableTools += '- `list_lobbies` / `join_lobby(id)` / `create_lobby(teamSize)` — find a game\n';
+        availableTools += '- list_lobbies / join_lobby(id) / create_lobby(teamSize) — find a game\n';
       } else if (lobby && lobby.phase === 'forming') {
-        availableTools += '- `propose_team(agentId)` / `accept_team(teamId)` / `leave_team` — form teams\n';
-        availableTools += '- `chat(message)` — talk to everyone in the lobby\n';
-        availableTools += '- `wait_for_update` — wait for changes\n';
-        availableTools += '- Or use submit_move with action: `submit_move({action:"propose-team",target:"agent1"})`\n';
+        availableTools += '- propose_team(name) — invite an agent by display name\n';
+        availableTools += '- accept_team(teamId) / leave_team — manage team membership\n';
+        availableTools += '- chat(message, scope) — talk in lobby (scope: "all" or "team")\n';
+        availableTools += '- wait_for_update — wait for changes\n';
       } else if (lobby && lobby.phase === 'pre_game') {
-        availableTools += '- `choose_class("rogue"|"knight"|"mage")` — pick your class\n';
-        availableTools += '- `chat(message)` — team chat\n';
-        availableTools += '- `wait_for_update` — wait for changes\n';
+        availableTools += '- choose_class("rogue"|"knight"|"mage") — pick your class\n';
+        availableTools += '- chat(message, scope:"team") — team chat\n';
+        availableTools += '- wait_for_update — wait for changes\n';
       } else if (game && game.state.phase === 'in_progress') {
-        availableTools += '- `wait_for_update` — YOUR MAIN LOOP. Returns full state on turn changes.\n';
-        availableTools += '- `submit_move(path)` — directions array, e.g. ["N","NE"]\n';
-        availableTools += '- `chat(message)` — team-only chat\n';
-        availableTools += '- `get_state` — bootstrap/recovery only\n';
+        availableTools += '- wait_for_update — YOUR MAIN LOOP. Returns full state on turn changes.\n';
+        availableTools += '- submit_move(path) — directions array, e.g. ["N","NE"]\n';
+        availableTools += '- chat(message, scope:"team") — team-only chat\n';
+        availableTools += '- get_state — bootstrap/recovery only\n';
       }
 
       // Required plugins section
@@ -761,21 +762,24 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
 
   server.tool(
     'propose_team',
-    'Invite another agent to form a team with you. If neither of you is on a team, creates a new team with you on it and them invited. They must call accept_team(teamId) to join. Check lobby state for pendingInvites to see if YOU have been invited somewhere.',
-    { ...T, agentId: z.string().describe('The ID of the agent you want to invite to your team') },
-    async ({ token, agentId: targetAgentId }) => {
+    'Invite another agent to form a team with you by their display name. If neither of you is on a team, creates a new team with you on it and them invited. They must call accept_team(teamId) to join. Check lobby state for pendingInvites to see if YOU have been invited somewhere.',
+    { ...T, name: z.string().describe('The display name of the agent you want to invite (e.g. "Pinchy")') },
+    async ({ token, name: targetName }) => {
       const auth = requireAuth(token);
       if (auth) return auth;
       const lobby = resolveLobby(aid());
       if (!lobby) return errorResult('No lobby available.');
       if (lobby.phase !== 'forming') return errorResult('Team proposals are only available during the forming phase.');
-      const result = lobby.proposeTeam(aid(), targetAgentId);
+      // Resolve name to agentId
+      const targetId = handleRegistry.get(targetName);
+      if (!targetId) return errorResult('Agent "' + targetName + '" not found. Check the lobby state for available agent names.');
+      const result = lobby.proposeTeam(aid(), targetId);
       if (!result.success) return errorResult(result.error ?? 'Failed to propose team.');
       const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({
         success: true,
         teamId: result.teamId,
-        message: `Invited ${targetAgentId} to ${result.teamId}. They need to call accept_team("${result.teamId}") to join.`,
+        message: 'Invited ' + targetName + ' to ' + result.teamId + '. They need to call accept_team("' + result.teamId + '") to join.',
         ...updates,
       });
     },
@@ -952,7 +956,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       ...T,
       path: z.array(z.string()).optional().describe('Gameplay: array of direction strings, e.g. ["N", "NE"]'),
       action: z.string().optional().describe('Lobby phase action: "propose-team", "accept-team", "leave-team", "choose-class"'),
-      target: z.string().optional().describe('Target for lobby actions (agentId for propose-team, teamId for accept-team)'),
+      target: z.string().optional().describe('Target for lobby actions (name for propose-team, teamId for accept-team)'),
       class: z.string().optional().describe('Class for choose-class action: rogue, knight, or mage'),
     },
     async (args) => {
@@ -966,9 +970,11 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
 
         switch (args.action) {
           case 'propose-team': {
-            if (!args.target) return errorResult('propose-team requires a "target" (agentId).');
+            if (!args.target) return errorResult('propose-team requires a "target" (name or agentId).');
             if (lobby.phase !== 'forming') return errorResult('Team proposals only during forming phase.');
-            const result = lobby.proposeTeam(aid(), args.target);
+            // Resolve name to agentId if needed
+            const resolvedTarget = handleRegistry.get(args.target) ?? args.target;
+            const result = lobby.proposeTeam(aid(), resolvedTarget);
             if (!result.success) return errorResult(result.error ?? 'Failed.');
             const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
             return jsonResult({ success: true, teamId: result.teamId, ...updates });

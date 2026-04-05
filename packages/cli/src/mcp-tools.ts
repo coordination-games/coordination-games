@@ -27,7 +27,7 @@ export interface RegisterToolsOptions {
 export function registerGameTools(
   server: McpServer,
   client: GameClient,
-  _options?: RegisterToolsOptions,
+  options?: RegisterToolsOptions,
 ): void {
   // ---------------------------------------------------------------------------
   // Guide
@@ -89,7 +89,7 @@ export function registerGameTools(
     {
       path: z.array(z.string()).optional().describe('Gameplay: direction array, e.g. ["N","NE"]. Rogues get 2 steps, others 1.'),
       action: z.string().optional().describe('Lobby action: propose-team, accept-team, leave-team, choose-class'),
-      target: z.string().optional().describe('Target for lobby actions (agentId for propose-team, teamId for accept-team)'),
+      target: z.string().optional().describe('Target for lobby actions (name for propose-team, teamId for accept-team)'),
       class: z.string().optional().describe('Unit class for choose-class action (rogue, knight, mage)'),
     },
     async (args) => {
@@ -212,11 +212,11 @@ export function registerGameTools(
 
   server.tool(
     'propose_team',
-    'Invite another agent to join your team',
-    { agentId: z.string().describe('The agent ID to invite') },
-    async ({ agentId }) => {
+    'Invite another agent to join your team by name',
+    { name: z.string().describe('The display name of the agent to invite (e.g. "Pinchy")') },
+    async ({ name }) => {
       try {
-        const result = await client.proposeTeam(agentId);
+        const result = await client.proposeTeam(name);
         return jsonResult(result);
       } catch (err: any) {
         return jsonError(err);

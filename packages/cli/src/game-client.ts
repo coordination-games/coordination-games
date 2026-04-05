@@ -171,10 +171,10 @@ export class GameClient {
   // Team operations
   // ---------------------------------------------------------------------------
 
-  /** Invite an agent to your team. */
-  async proposeTeam(agentId: string): Promise<any> {
+  /** Invite an agent to your team by display name. */
+  async proposeTeam(name: string): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/team/propose', { agentId });
+    return this.api.post('/api/player/team/propose', { name });
   }
 
   /** Accept a team invite. */

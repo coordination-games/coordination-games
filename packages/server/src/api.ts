@@ -829,6 +829,28 @@ export class GameServer {
       return room?.relay ?? null;
     };
 
+    /** Get the handle map for an agent (from their game room, or from global registry as fallback) */
+    const getHandlesForAgent = (agentId: string): Record<string, string> => {
+      const gameId = this.agentToGame.get(agentId);
+      if (gameId) {
+        const room = this.games.get(gameId);
+        if (room) return room.handleMap;
+      }
+      // In lobby phase, build handles from lobby agents + global registry
+      const lobbyId = this.agentToLobby.get(agentId);
+      if (lobbyId) {
+        const lobbyRoom = this.lobbies.get(lobbyId);
+        if (lobbyRoom?.lobbyManager) {
+          const handles: Record<string, string> = {};
+          for (const [id, agent] of lobbyRoom.lobbyManager.agents) {
+            handles[id] = agent.handle;
+          }
+          return handles;
+        }
+      }
+      return {};
+    };
+
     const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
 
     // Auth middleware: validates Bearer token, attaches agentId to req
@@ -979,25 +1001,27 @@ export class GameServer {
       }
 
       const phase = game?.state.phase ?? lobby?.phase ?? 'none';
-      let availableTools = '\n## Available Endpoints\n';
-      availableTools += '- `GET /guide` -- this playbook\n';
-      availableTools += '- `POST /auth/challenge` + `POST /auth/verify` -- wallet auth (handled by CLI)\n';
+      let availableTools = '\n## Available Tools\n';
+      availableTools += '- `get_guide` -- this playbook\n';
 
       if (!game && !lobby) {
-        availableTools += '- `POST /lobby/join` / `POST /lobby/create` -- find a game\n';
+        availableTools += '- `join_lobby(lobbyId)` / `create_lobby(teamSize)` -- find a game\n';
+        availableTools += '- `list_lobbies` -- see available lobbies\n';
       } else if (lobby && lobby.phase === 'forming') {
-        availableTools += '- `POST /team/propose` / `POST /team/accept` / `POST /team/leave` -- form teams\n';
-        availableTools += '- `POST /chat` -- talk to everyone in the lobby\n';
-        availableTools += '- `GET /wait` -- wait for changes\n';
+        availableTools += '- `propose_team(name)` -- invite an agent by display name\n';
+        availableTools += '- `accept_team(teamId)` -- accept a team invitation\n';
+        availableTools += '- `leave_team` -- leave your current team\n';
+        availableTools += '- `chat(message, scope)` -- talk in lobby (scope: "all" or "team")\n';
+        availableTools += '- `wait_for_update` -- wait for changes\n';
       } else if (lobby && lobby.phase === 'pre_game') {
-        availableTools += '- `POST /class` -- pick your class\n';
-        availableTools += '- `POST /chat` -- team chat\n';
-        availableTools += '- `GET /wait` -- wait for changes\n';
+        availableTools += '- `choose_class("rogue" | "knight" | "mage")` -- pick your class\n';
+        availableTools += '- `chat(message, scope:"team")` -- team chat\n';
+        availableTools += '- `wait_for_update` -- wait for changes\n';
       } else if (game && game.state.phase === 'in_progress') {
-        availableTools += '- `GET /wait` -- YOUR MAIN LOOP\n';
-        availableTools += '- `POST /move` -- submit a move\n';
-        availableTools += '- `POST /chat` -- team-only chat\n';
-        availableTools += '- `GET /state` -- bootstrap/recovery only\n';
+        availableTools += '- `wait_for_update` -- YOUR MAIN LOOP (returns full state on new turns)\n';
+        availableTools += '- `submit_move(path)` -- submit directions, e.g. ["N","NE"]\n';
+        availableTools += '- `chat(message, scope:"team")` -- team-only chat\n';
+        availableTools += '- `get_state` -- bootstrap/recovery only\n';
       }
 
       const pluginInfo = `\n## Required Plugins\n` +
@@ -1018,10 +1042,13 @@ export class GameServer {
         const state = getStateForAgent(game, agentId);
         const relay = resolveRelay(agentId);
         const relayMessages = relay?.receive(agentId) ?? [];
+        const gameId = this.agentToGame.get(agentId);
+        const room = gameId ? this.games.get(gameId) : undefined;
+        const handles = room?.handleMap ?? {};
         if (game.state.phase === 'finished') {
-          return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...state, relayMessages });
+          return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...state, relayMessages, handles });
         }
-        return res.json({ phase: 'game', ...state, relayMessages });
+        return res.json({ phase: 'game', ...state, relayMessages, handles });
       }
 
       const lobby = resolveLobby(agentId);
@@ -1050,9 +1077,11 @@ export class GameServer {
 
       // === Game phase ===
       if (game) {
+        const handles = getHandlesForAgent(agentId);
+
         if (game.state.phase === 'finished') {
           const state = getStateForAgent(game, agentId);
-          return res.json({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state });
+          return res.json({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state, handles });
         }
 
         // If the turn advanced since agent last got full state, return full state
@@ -1060,20 +1089,20 @@ export class GameServer {
           const state = getStateForAgent(game, agentId);
           setAgentLastTurn(agentId, game.state.turn);
           buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ reason: 'turn_changed', moveSubmitted: game.hasSubmitted(agentId), ...state });
+          return res.json({ reason: 'turn_changed', moveSubmitted: game.hasSubmitted(agentId), ...state, handles });
         }
 
         // Pending updates? Return immediately
         if (hasPendingUpdates(agentId, resolveGame, resolveLobby, resolveRelay)) {
           const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ reason: 'update', ...updates });
+          return res.json({ reason: 'update', ...updates, handles });
         }
 
         // No move yet: return full state
         if (!game.hasSubmitted(agentId)) {
           const state = getStateForAgent(game, agentId);
           setAgentLastTurn(agentId, game.state.turn);
-          return res.json({ reason: 'new_turn', moveSubmitted: false, ...state });
+          return res.json({ reason: 'new_turn', moveSubmitted: false, ...state, handles });
         }
 
         // Move submitted — block until turn resolution, chat, or timeout
@@ -1088,17 +1117,17 @@ export class GameServer {
 
         if (updatedGame.state.phase === 'finished') {
           const state = getStateForAgent(updatedGame, agentId);
-          return res.json({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state });
+          return res.json({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state, handles });
         }
 
         if (updatedGame.state.turn > prevTurn) {
           const state = getStateForAgent(updatedGame, agentId);
           setAgentLastTurn(agentId, updatedGame.state.turn);
-          return res.json({ reason: 'turn_changed', ...state });
+          return res.json({ reason: 'turn_changed', ...state, handles });
         }
 
         const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ reason: 'update', ...updates });
+        return res.json({ reason: 'update', ...updates, handles });
       }
 
       // === Lobby phase ===
@@ -1115,7 +1144,8 @@ export class GameServer {
         const newGame = resolveGame(agentId);
         if (newGame) {
           const state = getStateForAgent(newGame, agentId);
-          return res.json({ reason: 'game_started', phase: 'game', ...state });
+          const gameHandles = getHandlesForAgent(agentId);
+          return res.json({ reason: 'game_started', phase: 'game', ...state, handles: gameHandles });
         }
 
         const updatedLobby = resolveLobby(agentId);
@@ -1153,9 +1183,14 @@ export class GameServer {
 
         switch (action) {
           case 'propose-team': {
-            if (!target) return res.status(400).json({ error: 'propose-team requires "target" (agentId).' });
+            // Accept name or agentId as target
+            let resolvedTarget = target;
+            if (resolvedTarget && handleRegistry.has(resolvedTarget)) {
+              resolvedTarget = handleRegistry.get(resolvedTarget)!;
+            }
+            if (!resolvedTarget) return res.status(400).json({ error: 'propose-team requires "target" (name or agentId).' });
             if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Team proposals only during forming phase.' });
-            const result = lobby.proposeTeam(agentId, target);
+            const result = lobby.proposeTeam(agentId, resolvedTarget);
             if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed.' });
             const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
             return res.json({ success: true, teamId: result.teamId, ...updates });
@@ -1283,21 +1318,29 @@ export class GameServer {
     // ------------------------------------------------------------------
     router.post('/team/propose', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
-      const { agentId: targetAgentId } = req.body ?? {};
-      if (!targetAgentId) return res.status(400).json({ error: 'agentId (target) is required' });
+      const { agentId: targetAgentId, name: targetName } = req.body ?? {};
+
+      // Resolve target: accept either agentId or name
+      let resolvedTarget = targetAgentId;
+      if (!resolvedTarget && targetName) {
+        resolvedTarget = handleRegistry.get(targetName);
+        if (!resolvedTarget) return res.status(404).json({ error: `Agent "${targetName}" not found` });
+      }
+      if (!resolvedTarget) return res.status(400).json({ error: 'name or agentId (target) is required' });
 
       const lobby = resolveLobby(agentId);
       if (!lobby) return res.status(400).json({ error: 'No lobby available.' });
       if (lobby.phase !== 'forming') return res.status(400).json({ error: 'Team proposals only during forming phase.' });
 
-      const result = lobby.proposeTeam(agentId, targetAgentId);
+      const result = lobby.proposeTeam(agentId, resolvedTarget);
       if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to propose team.' });
 
+      const targetDisplay = getAgentName(resolvedTarget);
       const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
       return res.json({
         success: true,
         teamId: result.teamId,
-        message: `Invited ${targetAgentId} to ${result.teamId}. They need to call accept_team.`,
+        message: `Invited ${targetDisplay} to ${result.teamId}. They need to call accept_team.`,
         ...updates,
       });
     });
