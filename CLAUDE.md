@@ -258,7 +258,6 @@ packages/server/src/             — Server entry point (wires platform + games 
   claude-bot.ts                  — Claude Agent SDK bot harness
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Streamable HTTP MCP transport
-  elo.ts                         — Server-local ELO tracker (SQLite-backed)
   relay.ts                       — On-chain gas relayer (registration, credits, settlement, EAS attestations)
   index.ts                       — Entry point with crash guards
 

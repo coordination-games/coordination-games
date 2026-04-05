@@ -36,7 +36,7 @@ import {
   getTurnLimitForRadius,
   CaptureTheLobsterPlugin,
 } from './game-session.js';
-import { EloTracker } from './elo.js';
+import { EloTracker } from '@coordination-games/plugin-elo';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
