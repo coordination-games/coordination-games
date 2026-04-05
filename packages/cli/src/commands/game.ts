@@ -1,25 +1,30 @@
 import { Command } from "commander";
 import { loadConfig, loadSession, saveSession } from "../config.js";
-import { ApiClient } from "../api-client.js";
 import { GameClient } from "../game-client.js";
-import { McpClient } from "../mcp-client.js";
-import { processState, initPipeline } from "../pipeline.js";
-import { formatChatMessage } from "@coordination-games/plugin-chat";
 import { loadKey } from "../keys.js";
 
-function getMcpClient(config: { serverUrl: string }): McpClient {
-  return new McpClient(config.serverUrl);
-}
-
-function requireToken(): string {
-  const session = loadSession();
-  if (!session.token) {
+/**
+ * Create a GameClient that auto-authenticates using the local wallet.
+ * All CLI commands use this instead of the old McpClient + requireToken() flow.
+ */
+function createClient(): GameClient {
+  const config = loadConfig();
+  const wallet = loadKey();
+  if (!wallet) {
     process.stderr.write(
-      `\n  Not authenticated. Run 'coga init' to create a wallet first.\n\n`
+      `\n  No wallet found. Run 'coga init' to create one.\n\n`
     );
     process.exit(1);
   }
-  return session.token;
+
+  const session = loadSession();
+  const name = session.handle || wallet.address.slice(0, 10);
+
+  return new GameClient(config.serverUrl, {
+    privateKey: wallet.privateKey,
+    token: session.token,
+    name,
+  });
 }
 
 export function registerGameCommands(program: Command) {
@@ -49,7 +54,6 @@ export function registerGameCommands(program: Command) {
         process.stdout.write(`  Address: ${wallet.address}\n`);
         process.stdout.write(`  Token: ${token}\n\n`);
 
-        // Save to session for legacy CLI commands that use requireToken()
         const session = loadSession();
         session.token = token ?? undefined;
         session.handle = name;
@@ -65,11 +69,10 @@ export function registerGameCommands(program: Command) {
     .command("lobbies")
     .description("List available game lobbies")
     .action(async () => {
-      const config = loadConfig();
-      const client = new ApiClient(config.serverUrl);
+      const client = createClient();
 
       try {
-        const lobbies = await client.get("/api/lobbies");
+        const lobbies = await client.listLobbies();
 
         if (!Array.isArray(lobbies) || lobbies.length === 0) {
           process.stdout.write(`\n  No active lobbies.\n\n`);
@@ -100,18 +103,13 @@ export function registerGameCommands(program: Command) {
     .command("create-lobby")
     .description("Create a new game lobby")
     .option("-s, --size <n>", "Team size (2-6)", "2")
+    .option("-g, --game <name>", "Game plugin name", "capture-the-lobster")
     .action(async (opts) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
-
+      const client = createClient();
       const teamSize = Math.min(6, Math.max(2, parseInt(opts.size, 10) || 2));
 
       try {
-        const result = await mcp.callTool("create_lobby", {
-          token,
-          teamSize,
-        });
+        const result = await client.createLobby(teamSize);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -136,15 +134,10 @@ export function registerGameCommands(program: Command) {
     .command("join <lobbyId>")
     .description("Join a game lobby")
     .action(async (lobbyId: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+      const client = createClient();
 
       try {
-        const result = await mcp.callTool("join_lobby", {
-          token,
-          lobbyId,
-        });
+        const result = await client.joinLobby(lobbyId);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -170,16 +163,11 @@ export function registerGameCommands(program: Command) {
   program
     .command("guide [game]")
     .description("Dynamic playbook — game rules, your plugins, available actions")
-    .action(async (game?: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+    .action(async (_game?: string) => {
+      const client = createClient();
 
       try {
-        const result = await mcp.callTool("get_guide", {
-          token,
-          ...(game ? { game } : {}),
-        });
+        const result = await client.getGuide();
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -199,39 +187,24 @@ export function registerGameCommands(program: Command) {
     .command("state")
     .description("Get current game/lobby state (processed through your plugin pipeline)")
     .action(async () => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+      const client = createClient();
 
       try {
-        const rawResult = await mcp.callTool("get_state", { token });
+        const result = await client.getState();
 
-        if (rawResult.error) {
-          process.stderr.write(`  Error: ${rawResult.error}\n`);
+        if (result.error) {
+          process.stderr.write(`  Error: ${result.error}\n`);
           process.exit(1);
         }
 
         // Track game ID if present
-        if (rawResult.gameId) {
+        if (result.gameId) {
           const session = loadSession();
-          session.currentGameId = rawResult.gameId;
+          session.currentGameId = result.gameId;
           saveSession(session);
         }
 
-        // Run client-side pipeline over relay messages
-        const processed = processState({
-          gameState: rawResult,
-          relayMessages: rawResult.relayMessages ?? [],
-        });
-
-        // Output: game state + pipeline-processed messages
-        const output: any = { ...rawResult };
-        delete output.relayMessages; // remove raw relay data
-        if (processed.messages.length > 0) {
-          output.messages = processed.messages;
-        }
-
-        process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -245,9 +218,7 @@ export function registerGameCommands(program: Command) {
       'Submit an action for the current phase. During gameplay: \'["N","NE"]\' (directions). During lobby phases: \'{"action":"propose-team","target":"agent123"}\''
     )
     .action(async (dataStr: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+      const client = createClient();
 
       try {
         let moveData: any;
@@ -263,12 +234,12 @@ export function registerGameCommands(program: Command) {
           return;
         }
 
-        // If it's an array, treat as direction path (gameplay move)
-        const toolArgs = Array.isArray(moveData)
-          ? { token, path: moveData }
-          : { token, ...moveData };
-
-        const result = await mcp.callTool("submit_move", toolArgs);
+        let result: any;
+        if (Array.isArray(moveData)) {
+          result = await client.submitMove(moveData);
+        } else {
+          result = await client.submitAction(moveData.action, moveData.target, moveData.class);
+        }
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -291,39 +262,25 @@ export function registerGameCommands(program: Command) {
     .command("wait")
     .description("Wait for the next game update (long-poll)")
     .action(async () => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+      const client = createClient();
 
       try {
         process.stdout.write("  Waiting for update...\n");
-        const rawResult = await mcp.callTool("wait_for_update", { token });
+        const result = await client.waitForUpdate();
 
-        if (rawResult.error) {
-          process.stderr.write(`  Error: ${rawResult.error}\n`);
+        if (result.error) {
+          process.stderr.write(`  Error: ${result.error}\n`);
           process.exit(1);
         }
 
         // Track game ID if present
-        if (rawResult.gameId) {
+        if (result.gameId) {
           const session = loadSession();
-          session.currentGameId = rawResult.gameId;
+          session.currentGameId = result.gameId;
           saveSession(session);
         }
 
-        // Run pipeline over relay messages
-        const processed = processState({
-          gameState: rawResult,
-          relayMessages: rawResult.relayMessages ?? [],
-        });
-
-        const output: any = { ...rawResult };
-        delete output.relayMessages;
-        if (processed.messages.length > 0) {
-          output.messages = processed.messages;
-        }
-
-        process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -335,15 +292,10 @@ export function registerGameCommands(program: Command) {
     .command("chat <message>")
     .description("Send a message (team chat during game, all chat in lobby)")
     .action(async (message: string) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+      const client = createClient();
 
       try {
-        // Use the chat plugin to format the relay message
-        // For now, we send through the MCP chat tool (which pushes to relay)
-        // TODO: Once fully relay-native, send directly to relay endpoint
-        const result = await mcp.callTool("chat", { token, message });
+        const result = await client.callPluginTool("basic-chat", "chat", { message });
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -359,35 +311,31 @@ export function registerGameCommands(program: Command) {
 
   // ==================== tool ====================
   program
-    .command("tool <name> [args...]")
-    .description("Invoke a plugin tool (e.g. coga tool attest wolfpack7 85)")
-    .action(async (name: string, args: string[]) => {
-      const config = loadConfig();
-      const token = requireToken();
-      const mcp = getMcpClient(config);
+    .command("tool <pluginId> <toolName> [args...]")
+    .description("Invoke a plugin tool (e.g. coga tool basic-chat chat 'hello')")
+    .action(async (pluginId: string, toolName: string, args: string[]) => {
+      const client = createClient();
 
       try {
         // Parse args as key=value pairs or positional args
-        const toolArgs: Record<string, any> = { token };
+        const toolArgs: Record<string, any> = {};
 
         for (const arg of args) {
           if (arg.includes("=")) {
             const [key, ...rest] = arg.split("=");
             const value = rest.join("=");
-            // Try to parse as JSON, fall back to string
             try {
               toolArgs[key] = JSON.parse(value);
             } catch {
               toolArgs[key] = value;
             }
           } else {
-            // Positional args: store as _args array
             if (!toolArgs._args) toolArgs._args = [];
             toolArgs._args.push(arg);
           }
         }
 
-        const result = await mcp.callTool(name, toolArgs);
+        const result = await client.callPluginTool(pluginId, toolName, toolArgs);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
