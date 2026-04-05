@@ -7,9 +7,9 @@ export function registerServeCommand(program: Command) {
     .description("Start MCP server for AI tool integration")
     .option("--stdio", "Use stdio transport (for Claude Code, Claude Desktop)")
     .option("--http [port]", "Use HTTP transport (for OpenAI, other HTTP MCP clients)")
-    .option("--bot-mode", "Bot mode: use provided key, skip interactive prompts")
-    .option("--key <key>", "Private key for bot mode (hex, with or without 0x prefix)")
-    .option("--name <name>", "Bot display name")
+    .option("--bot-mode", undefined, false)  // hidden: internal testing
+    .option("--key <key>", undefined)         // hidden: bot private key
+    .option("--name <name>", undefined)       // hidden: bot display name
     .option("--server-url <url>", "Game server URL (default: from config)")
     .action(async (opts) => {
       // Dynamic import to avoid loading MCP deps when not needed

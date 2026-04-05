@@ -1,26 +1,24 @@
 /**
- * Generic Claude bot harness — spawns `coga serve --bot-mode` subprocesses.
+ * Generic Claude bot harness — uses Agent SDK + GameClient.
  *
- * Game-agnostic: the bot doesn't know what game it's playing until it
- * calls get_guide(). System prompt is generic, game rules come from the
- * server's MCP tools.
- *
- * Each bot gets a separate coga subprocess with an ephemeral private key.
- * The subprocess handles auth (challenge-response) and the client-side
- * plugin pipeline automatically.
+ * Bots get in-process MCP tools backed by GameClient (REST + pipeline).
+ * Same code path as real players via CLI, just with server-issued tokens.
+ * Uses Claude Agent SDK (local Claude subscription, no API key needed).
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpStdioServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import crypto from 'node:crypto';
-import path from 'node:path';
-import fs from 'node:fs';
+import {
+  query,
+  createSdkMcpServer,
+  tool,
+} from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import { GameClient } from '../../cli/src/game-client.js';
 
 // ---------------------------------------------------------------------------
-// Types
+// System prompt
 // ---------------------------------------------------------------------------
 
-const GENERIC_SYSTEM_PROMPT = `You are a competitive game-playing AI agent. You connect to a game server via MCP tools.
+const GENERIC_SYSTEM_PROMPT = `You are a competitive game-playing AI agent.
 
 ## Your First Turn
 1. Call get_guide() to learn the game rules and available tools
@@ -34,63 +32,121 @@ Follow the game loop described in the guide. Always:
 
 Be decisive and aggressive. You have limited time per turn. Always submit an action.`;
 
-/**
- * Persistent bot session — maintains conversation history across turns.
- */
+// ---------------------------------------------------------------------------
+// Create in-process MCP server backed by GameClient
+// ---------------------------------------------------------------------------
+
+export function createBotMcpServer(client: GameClient) {
+  return createSdkMcpServer({
+    name: 'game-server',
+    version: '0.1.0',
+    tools: [
+      tool(
+        'get_guide',
+        'Game rules, available tools, and your current status. Call this FIRST.',
+        {},
+        async () => jsonResult(await client.getGuide()),
+      ),
+      tool(
+        'get_state',
+        'Get current game/lobby state (fog-filtered). For bootstrap/recovery only — wait_for_update is your main loop.',
+        {},
+        async () => jsonResult(await client.getState()),
+      ),
+      tool(
+        'wait_for_update',
+        'YOUR MAIN LOOP — blocks until next event (turn change, chat). Returns full state on turn changes.',
+        {},
+        async () => jsonResult(await client.waitForUpdate()),
+      ),
+      tool(
+        'submit_move',
+        'Submit your move: array of directions (N/NE/SE/S/SW/NW). Empty array to stay put.',
+        { path: z.array(z.string()).describe('Direction array, e.g. ["N","NE"]') },
+        async ({ path }) => jsonResult(await client.submitMove(path ?? [])),
+      ),
+      tool(
+        'chat',
+        'Send a message to your team. Share what you see, your plan, enemy positions.',
+        { message: z.string().describe('Your message') },
+        async ({ message }) => jsonResult(await client.chat(message)),
+      ),
+      tool(
+        'list_lobbies',
+        'List available lobbies.',
+        {},
+        async () => jsonResult(await client.listLobbies()),
+      ),
+      tool(
+        'join_lobby',
+        'Join a lobby by ID.',
+        { lobbyId: z.string() },
+        async ({ lobbyId }) => jsonResult(await client.joinLobby(lobbyId)),
+      ),
+      tool(
+        'create_lobby',
+        'Create a new lobby.',
+        { teamSize: z.number().min(2).max(6).optional() },
+        async ({ teamSize }) => jsonResult(await client.createLobby(teamSize)),
+      ),
+      tool(
+        'propose_team',
+        'Invite another agent to your team.',
+        { agentId: z.string() },
+        async ({ agentId }) => jsonResult(await client.proposeTeam(agentId)),
+      ),
+      tool(
+        'accept_team',
+        'Accept a team invitation.',
+        { teamId: z.string() },
+        async ({ teamId }) => jsonResult(await client.acceptTeam(teamId)),
+      ),
+      tool(
+        'leave_team',
+        'Leave your current team.',
+        {},
+        async () => jsonResult(await client.leaveTeam()),
+      ),
+      tool(
+        'choose_class',
+        'Pick your unit class: rogue (speed 3), knight (speed 2), or mage (range 2).',
+        { class: z.enum(['rogue', 'knight', 'mage']) },
+        async (args) => jsonResult(await client.chooseClass(args['class'])),
+      ),
+    ],
+  });
+}
+
+function jsonResult(data: unknown) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data) }] };
+}
+
+// ---------------------------------------------------------------------------
+// Bot session management
+// ---------------------------------------------------------------------------
+
 export interface BotSession {
   id: string;
   handle: string;
   team: 'A' | 'B';
-  key: string;               // Ephemeral private key (hex with 0x prefix)
-  sessionId: string | null;  // Claude session ID for resume
-  guideLoaded: boolean;      // Whether get_guide() has been called
-}
-
-// ---------------------------------------------------------------------------
-// coga subprocess MCP config
-// ---------------------------------------------------------------------------
-
-const mcpServerName = 'game-server';
-
-/**
- * Find the coga CLI binary — prefers the monorepo build, falls back to global.
- */
-function getCogaPath(): string {
-  const monorepoPath = path.resolve(__dirname, '../../cli/dist/index.cjs');
-  try {
-    fs.accessSync(monorepoPath);
-    return monorepoPath;
-  } catch {
-    return 'coga'; // fall back to global install
-  }
+  client: GameClient;
+  sessionId: string | null;
+  guideLoaded: boolean;
 }
 
 /**
- * Create an MCP stdio config that spawns a coga subprocess in bot mode.
- * Each bot gets an ephemeral private key for challenge-response auth.
- */
-export function createBotMcpConfig(botName: string, key: string, serverUrl: string): McpStdioServerConfig {
-  const cogaPath = getCogaPath();
-  return {
-    type: 'stdio',
-    command: 'node',
-    args: [cogaPath, 'serve', '--bot-mode', '--key', key, '--name', botName, '--server-url', serverUrl, '--stdio'],
-  };
-}
-
-/**
- * Run a single Claude bot's turn using the Claude Agent SDK.
- * Spawns a coga subprocess via stdio MCP transport.
+ * Run a single Claude bot's turn using the Agent SDK.
+ * Tools are backed by GameClient (REST + pipeline).
  */
 export async function runClaudeBotTurn(
   bot: BotSession,
   turn: number,
-  serverUrl: string,
 ): Promise<void> {
-  const mcpConfig = createBotMcpConfig(bot.handle, bot.key, serverUrl);
+  const mcpServer = createBotMcpServer(bot.client);
+  const serverName = 'game-server';
 
   const prompt = turn === 1
-    ? `Game starting! You are ${bot.handle} (${bot.id}, Team ${bot.team}). First call get_guide() to learn the rules, then follow its instructions for your first turn.`
+    ? `Game starting! You are ${bot.handle} (${bot.id}, Team ${bot.team}). Call get_guide() first to learn the rules, then follow them.`
     : `Turn ${turn}. Follow your game loop: check state, communicate, submit your action.`;
 
   const abortController = new AbortController();
@@ -105,17 +161,15 @@ export async function runClaudeBotTurn(
         systemPrompt: GENERIC_SYSTEM_PROMPT,
         model: 'haiku',
         tools: [],
-        mcpServers: { [mcpServerName]: mcpConfig },
-        allowedTools: [`mcp__${mcpServerName}__*`],
+        mcpServers: { [serverName]: mcpServer },
+        allowedTools: [`mcp__${serverName}__*`],
         maxTurns: 8,
         abortController,
         cwd: '/tmp',
-        // Resume existing session if we have one
         ...(bot.sessionId ? { resume: bot.sessionId } : { persistSession: true }),
       },
     });
 
-    // Drain messages, capture session ID
     for await (const message of q) {
       if ('session_id' in message && (message as any).session_id && !bot.sessionId) {
         bot.sessionId = (message as any).session_id;
@@ -127,12 +181,10 @@ export async function runClaudeBotTurn(
     }
   } catch (err: any) {
     const msg = err.message ?? String(err);
-    const isAbort = err.name === 'AbortError' || msg.includes('abort');
-    if (isAbort) {
-      // Don't reset session on timeout — it's still valid on disk
+    if (err.name === 'AbortError' || msg.includes('abort')) {
+      // Timeout — don't reset session
     } else {
-      console.error(`Claude bot ${bot.id} error:`, msg);
-      // Only reset session on real errors (corrupt session, etc.)
+      console.error(`Bot ${bot.id} error:`, msg);
       bot.sessionId = null;
     }
   } finally {
@@ -141,44 +193,40 @@ export async function runClaudeBotTurn(
 }
 
 /**
- * Create bot sessions for all players.
- * Each bot gets an ephemeral private key for challenge-response auth.
+ * Create bot sessions. Each bot gets a GameClient backed by a server-issued token.
  */
 export function createBotSessions(
   bots: { id: string; handle: string; team: 'A' | 'B' }[],
+  serverUrl: string,
+  getToken: (id: string, handle: string) => string,
 ): BotSession[] {
   return bots.map((b) => ({
     id: b.id,
     handle: b.handle,
     team: b.team,
-    key: '0x' + crypto.randomBytes(32).toString('hex'),
+    client: new GameClient(serverUrl, { token: getToken(b.id, b.handle) }),
     sessionId: null,
     guideLoaded: false,
   }));
 }
 
 /**
- * Run all Claude bots for a single turn in parallel.
- * Game-agnostic: doesn't check game state directly.
- * Pass `aliveBotIds` to skip dead/inactive bots.
+ * Run all bots for a single turn in parallel.
  */
 export async function runAllBotsTurn(
   sessions: BotSession[],
   turn: number,
-  serverUrl: string,
   aliveBotIds?: Set<string>,
 ): Promise<void> {
-  const activeSessions = aliveBotIds
+  const active = aliveBotIds
     ? sessions.filter((bot) => aliveBotIds.has(bot.id))
     : sessions;
 
-  const promises = activeSessions.map((bot) =>
-    runClaudeBotTurn(bot, turn, serverUrl).catch(
-      (err) => {
-        console.error(`Claude bot ${bot.id} error:`, err.message ?? err);
-      },
+  await Promise.all(
+    active.map((bot) =>
+      runClaudeBotTurn(bot, turn).catch((err) => {
+        console.error(`Bot ${bot.id} error:`, err.message ?? err);
+      }),
     ),
   );
-
-  await Promise.all(promises);
 }

@@ -40,6 +40,7 @@ import { EloTracker } from '@coordination-games/plugin-elo';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
+  createBotToken,
   notifyTurnResolved,
   notifyAgent,
   getAgentName,
@@ -439,155 +440,8 @@ export class GameServer {
     this.setupWebSocket();
 
     // MCP endpoint removed — all game operations go through REST at /api/player/*
-    // Bots use `coga serve --bot-mode` subprocess which calls REST.
-    // Keeping mcp-http.ts as a utility module for token registry, waiters, etc.
-    /* REMOVED: mountMcpEndpoint(
-      this.app,
-      // Game resolver: find the GameSession for an agentId
-      (agentId: string) => {
-        const gameId = this.agentToGame.get(agentId);
-        if (!gameId) return null;
-        const room = this.games.get(gameId);
-        return room?.game ?? null;
-      },
-      // Lobby resolver: find the LobbyManager for an agentId
-      (agentId: string) => {
-        const lobbyId = this.agentToLobby.get(agentId);
-        if (!lobbyId) return null;
-        const lobbyRoom = this.lobbies.get(lobbyId);
-        return lobbyRoom?.lobbyManager ?? null;
-      },
-      // Move callback: check if all moves submitted for early turn resolution
-      (gameId: string, agentId: string) => {
-        this.onMoveSubmitted(gameId, agentId);
-      },
-      // Chat callback: push through relay + broadcast state + notify teammates
-      (gameId: string, agentId?: string, message?: string) => {
-        const room = this.games.get(gameId);
-        if (room) {
-          // Push chat through the typed relay
-          if (agentId && message) {
-            const phase = room.game.state.phase;
-            const scope = (phase === 'in_progress' || phase === 'pre_game') ? 'team' : 'all';
-            room.relay.send(agentId, room.game.state.turn, {
-              type: 'messaging',
-              data: { body: message },
-              scope,
-              pluginId: 'basic-chat',
-            });
-          }
-          this.broadcastState(room);
-          // Notify all agents in this game so wait_for_update wakes up
-          for (const unit of room.game.state.units) {
-            notifyAgent(unit.id);
-          }
-        }
-      },
-      // Register callback: log when an agent registers
-      (agentId: string, name: string) => {
-        console.log(`[MCP] Agent ${agentId} registered as "${name}"`);
-      },
-      // Join lobby callback: wire the agent into the lobby system
-      (agentId: string, name: string, lobbyId: string) => {
-        const lobbyRoom = this.lobbies.get(lobbyId);
-        if (!lobbyRoom) return { success: false, error: 'Lobby not found' };
-
-        // Track the slot
-        lobbyRoom.externalSlots.set(agentId, {
-          token: '',
-          agentId,
-          connected: true,
-        });
-
-        // Map agent -> lobby for MCP resolver
-        this.agentToLobby.set(agentId, lobbyId);
-
-        // Add agent to the lobby manager
-        if (lobbyRoom.lobbyManager) {
-          lobbyRoom.lobbyManager.addAgent({
-            id: agentId,
-            handle: name,
-            elo: 1000,
-          });
-        }
-
-        console.log(`[MCP] Agent ${agentId} (${name}) joined lobby ${lobbyId}, spectators: ${lobbyRoom.spectators.size}`);
-        lobbyRoom.runner.emitState();
-        // Notify other agents already in this lobby
-        if (lobbyRoom.lobbyManager) {
-          for (const [id] of lobbyRoom.lobbyManager.agents) {
-            if (id !== agentId) notifyAgent(id);
-          }
-        }
-        return { success: true };
-      },
-      // Create lobby callback: create a new lobby and auto-join the agent
-      (agentId: string, name: string, teamSize: number) => {
-        if (this.activeGameCount() >= this.maxConcurrentGames) {
-          return { success: false, error: 'Server busy — a lobby or game is already running.' };
-        }
-        const size = Math.min(6, Math.max(2, Math.floor(teamSize)));
-        const { lobbyId } = this.createLobbyGame(size, 600000);
-        const lobbyRoom = this.lobbies.get(lobbyId)!;
-        // Auto-join the creator
-        lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
-        this.agentToLobby.set(agentId, lobbyId);
-        if (lobbyRoom.lobbyManager) {
-          lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: name, elo: 1000 });
-        }
-        lobbyRoom.runner.emitState();
-        console.log(`[MCP] Agent ${agentId} (${name}) created and joined lobby ${lobbyId} (${size}v${size})`);
-        return { success: true, lobbyId };
-      },
-      // Leaderboard resolver
-      (limit: number, offset: number) => {
-        const players = this.elo.getLeaderboard(limit, offset);
-        return players.map((p, i) => ({
-          rank: offset + i + 1,
-          handle: p.handle,
-          elo: p.elo,
-          gamesPlayed: p.gamesPlayed,
-          wins: p.wins,
-        }));
-      },
-      // Player stats resolver
-      (handle: string) => {
-        const player = this.elo.getPlayerByHandle(handle);
-        if (!player) return null;
-        // Get rank by counting players with higher ELO
-        const leaderboard = this.elo.getLeaderboard(1000, 0);
-        const rank = leaderboard.findIndex(p => p.handle === handle) + 1;
-        return {
-          handle: player.handle,
-          elo: player.elo,
-          rank: rank || 0,
-          gamesPlayed: player.gamesPlayed,
-          wins: player.wins,
-        };
-      },
-      // Lobby chat callback: broadcast state to spectators + notify other agents
-      (agentId: string) => {
-        const lobbyId = this.agentToLobby.get(agentId);
-        if (!lobbyId) return;
-        const lobbyRoom = this.lobbies.get(lobbyId);
-        if (lobbyRoom) {
-          lobbyRoom.runner.emitState();
-          // Notify all other agents in this lobby so wait_for_update wakes up
-          if (lobbyRoom.lobbyManager) {
-            for (const [id] of lobbyRoom.lobbyManager.agents) {
-              if (id !== agentId) notifyAgent(id);
-            }
-          }
-        }
-      },
-      // Relay resolver: find the GameRelay for an agentId
-      (agentId: string) => {
-        const gameId = this.agentToGame.get(agentId);
-        if (!gameId) return null;
-        const room = this.games.get(gameId);
-        return room?.relay ?? null;
-      },
-    ); */
+    // Bots use GameClient + direct Anthropic API (no MCP, no subprocesses).
+    // mcp-http.ts is kept as a utility module for token registry, waiters, etc.
   }
 
   // ---------------------------------------------------------------------------
@@ -1775,11 +1629,11 @@ export class GameServer {
       deadlineTimer: null,
       botHandles,
       botMeta: players,
-      botSessions: createBotSessions(players.map(p => ({
-        id: p.id,
-        handle: handleMap[p.id] ?? p.id,
-        team: p.team,
-      }))),
+      botSessions: createBotSessions(
+        players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
+        this.serverUrl,
+        (id, handle) => createBotToken(id, handle),
+      ),
       finished: false,
       turnInProgress: false,
       externalSlots: new Map(),
@@ -1875,9 +1729,9 @@ export class GameServer {
       if (unit?.alive) aliveBotIds.add(botId);
     }
 
-    // Claude bots connect via coga subprocess (stdio MCP)
+    // Claude bots use GameClient + Anthropic API directly
     await Promise.race([
-      runAllBotsTurn(room.botSessions, game.state.turn, this.serverUrl, aliveBotIds),
+      runAllBotsTurn(room.botSessions, game.state.turn, aliveBotIds),
       new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
     ]);
 
@@ -2139,11 +1993,13 @@ export class GameServer {
       deadlineTimer: null,
       botHandles,
       botMeta: players,
-      botSessions: createBotSessions(players.filter((p) => !p.id.startsWith('ext_')).map(p => ({
-        id: p.id,
-        handle: handleMap[p.id] ?? p.id,
-        team: p.team,
-      }))),
+      botSessions: createBotSessions(
+        players.filter((p) => !p.id.startsWith('ext_')).map(p => ({
+          id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team,
+        })),
+        this.serverUrl,
+        (id, handle) => createBotToken(id, handle),
+      ),
       finished: false,
       turnInProgress: false,
       externalSlots,
