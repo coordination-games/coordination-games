@@ -13,7 +13,7 @@ import {
   LobbyAgent,
   UnitClass,
 } from '@coordination-games/game-ctl';
-import { GameClient } from '../../cli/src/game-client.js';
+import { GameClient } from './game-client.js';
 import { createBotToken } from './mcp-http.js';
 import { createBotMcpServer } from './claude-bot.js';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';

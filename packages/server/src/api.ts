@@ -1212,81 +1212,7 @@ export class GameServer {
       return res.json({ success: true, path: directions, ...updates });
     });
 
-    // ------------------------------------------------------------------
-    // Chat handler — used by both /chat and /tool (basic-chat:chat)
-    // ------------------------------------------------------------------
-    const handleChat = (agentId: string, message: string, res: any) => {
-
-      // Lobby forming phase: public chat
-      const lobby = resolveLobby(agentId);
-      if (lobby && lobby.phase === 'forming') {
-        lobby.lobbyChat(agentId, message);
-        // Broadcast + notify
-        const lobbyId = this.agentToLobby.get(agentId);
-        if (lobbyId) {
-          const lobbyRoom = this.lobbies.get(lobbyId);
-          if (lobbyRoom) {
-            lobbyRoom.runner.emitState();
-            for (const [id] of lobby.agents) {
-              if (id !== agentId) notifyAgent(id);
-            }
-          }
-        }
-        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, ...updates });
-      }
-
-      // Pre-game phase: team chat
-      if (lobby && lobby.phase === 'pre_game') {
-        lobby.teamChat(agentId, message);
-        const lobbyId = this.agentToLobby.get(agentId);
-        if (lobbyId) {
-          const lobbyRoom = this.lobbies.get(lobbyId);
-          if (lobbyRoom) {
-            lobbyRoom.runner.emitState();
-            for (const [id] of lobby.agents) {
-              if (id !== agentId) notifyAgent(id);
-            }
-          }
-        }
-        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, ...updates });
-      }
-
-      // Game phase: team chat via relay
-      const game = resolveGame(agentId);
-      if (game && game.state.phase === 'in_progress') {
-        const gameId = this.agentToGame.get(agentId)!;
-        const room = this.games.get(gameId);
-        if (room) {
-          const scope = 'team';
-          room.relay.send(agentId, game.state.turn, {
-            type: 'messaging',
-            data: { body: message },
-            scope,
-            pluginId: 'basic-chat',
-          });
-          this.broadcastState(room);
-          for (const unit of game.state.units) {
-            if (unit.id !== agentId) notifyAgent(unit.id);
-          }
-        }
-        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, ...updates });
-      }
-
-      return res.status(400).json({ error: 'No active lobby or game.' });
-    };
-
-    // ------------------------------------------------------------------
-    // 8. POST /chat — Send a message (delegates to handleChat)
-    // ------------------------------------------------------------------
-    router.post('/chat', requirePlayerAuth, (req: any, res: any) => {
-      const agentId = req.agentId as string;
-      const { message } = req.body ?? {};
-      if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required (string)' });
-      return handleChat(agentId, message, res);
-    });
+    // (No dedicated /chat endpoint — chat goes through /tool as basic-chat:chat)
 
     // ------------------------------------------------------------------
     // 9. POST /lobby/join — Join a lobby
@@ -1434,8 +1360,9 @@ export class GameServer {
     });
 
     // ------------------------------------------------------------------
-    // 15b. POST /tool — Call a plugin tool
-    // Routes to the appropriate handler based on pluginId + toolName.
+    // 8. POST /tool — Generic plugin tool invocation
+    // Calls plugin.handleCall(), sends relay data if returned, returns updates.
+    // This is THE way plugins produce data — no special cases.
     // ------------------------------------------------------------------
     router.post('/tool', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
@@ -1444,14 +1371,86 @@ export class GameServer {
         return res.status(400).json({ error: 'pluginId and tool are required' });
       }
 
-      if (pluginId === 'basic-chat' && toolName === 'chat') {
-        const message = (args as any)?.message;
-        if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required' });
-        return handleChat(agentId, message, res);
+      // Look up the plugin — for now, hardcoded registry. TODO: dynamic plugin loader.
+      const pluginRegistry: Record<string, any> = {
+        'basic-chat': BasicChatPlugin,
+      };
+      const plugin = pluginRegistry[pluginId];
+      if (!plugin || !plugin.handleCall) {
+        return res.status(404).json({ error: `Plugin "${pluginId}" not found or has no handleCall` });
       }
 
-      // TODO: generalize with a plugin registry for additional plugins
-      return res.status(404).json({ error: `Plugin "${pluginId}" tool "${toolName}" not found` });
+      // Check the tool exists on this plugin
+      const toolDef = (plugin.tools ?? []).find((t: any) => t.name === toolName);
+      if (!toolDef) {
+        return res.status(404).json({ error: `Plugin "${pluginId}" has no tool "${toolName}"` });
+      }
+
+      // Call the plugin's handler
+      const callerInfo = { id: agentId, handle: getAgentName(agentId) };
+      const result = plugin.handleCall(toolName, args, callerInfo);
+
+      // If the plugin returned relay data, send it through the relay
+      if (result && (result as any).relay) {
+        const relayData = (result as any).relay;
+        let scope = relayData.scope ?? 'all';
+
+        // Resolve 'auto' scope based on current phase
+        if (scope === 'auto') {
+          const game = resolveGame(agentId);
+          const lobby = resolveLobby(agentId);
+          if (game && (game.state.phase === 'in_progress' || game.state.phase === 'pre_game')) {
+            scope = 'team';
+          } else if (lobby && lobby.phase === 'pre_game') {
+            scope = 'team';
+          } else {
+            scope = 'all';
+          }
+        }
+
+        // Send through relay (game phase) or lobby chat (lobby phase)
+        const game = resolveGame(agentId);
+        const lobby = resolveLobby(agentId);
+
+        if (game) {
+          const gameId = this.agentToGame.get(agentId)!;
+          const room = this.games.get(gameId);
+          if (room) {
+            room.relay.send(agentId, game.state.turn, {
+              type: relayData.type,
+              data: relayData.data,
+              scope,
+              pluginId: relayData.pluginId ?? pluginId,
+            });
+            this.broadcastState(room);
+            for (const unit of game.state.units) {
+              if (unit.id !== agentId) notifyAgent(unit.id);
+            }
+          }
+        } else if (lobby) {
+          // Lobby phase: use lobby's built-in chat for messaging type
+          if (relayData.type === 'messaging' && relayData.data?.body) {
+            if (lobby.phase === 'forming') {
+              lobby.lobbyChat(agentId, relayData.data.body);
+            } else if (lobby.phase === 'pre_game') {
+              lobby.teamChat(agentId, relayData.data.body);
+            }
+            const lobbyId = this.agentToLobby.get(agentId);
+            if (lobbyId) {
+              const lobbyRoom = this.lobbies.get(lobbyId);
+              if (lobbyRoom) {
+                lobbyRoom.runner.emitState();
+                for (const [id] of lobby.agents) {
+                  if (id !== agentId) notifyAgent(id);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, ...updates });
     });
 
     // ------------------------------------------------------------------

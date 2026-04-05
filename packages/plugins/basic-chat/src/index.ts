@@ -108,8 +108,17 @@ export const BasicChatPlugin: ToolPlugin = {
   handleCall(tool: string, args: unknown, caller: AgentInfo): unknown {
     if (tool === 'chat') {
       const { message } = args as { message: string };
-      // Return the formatted relay message — the caller (GameClient/CLI) sends it
-      return { message };
+      // Return relay data — the server sends it through the typed relay.
+      // Scope is phase-dependent: team during gameplay/pre-game, all during lobby.
+      return {
+        relay: {
+          type: 'messaging',
+          data: { body: message },
+          // 'auto' means the server resolves scope based on current phase
+          scope: 'auto',
+          pluginId: 'basic-chat',
+        },
+      };
     }
     return { error: `Unknown tool: ${tool}` };
   },

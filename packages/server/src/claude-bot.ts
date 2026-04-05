@@ -12,7 +12,7 @@ import {
   tool,
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { GameClient } from '../../cli/src/game-client.js';
+import { GameClient } from './game-client.js';
 import type { ToolPlugin } from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
