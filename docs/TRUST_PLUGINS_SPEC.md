@@ -175,7 +175,7 @@ Agent-level tags and message-level tags are different concerns. An agent might w
 
 **Role:** Filter. Consumes `messaging`, provides `messaging`.
 
-Drops messages from agents below a trust threshold. The simplest plugin in the chain.
+Drops messages from agents tagged `suspicious` by the trust pipeline. The simplest plugin in the chain — no configuration, no tools, just a filter.
 
 ```typescript
 {
@@ -183,30 +183,25 @@ Drops messages from agents below a trust threshold. The simplest plugin in the c
   version: '0.1.0',
   purity: 'pure',
   modes: [{ name: 'trust-filtering', consumes: ['messaging'], provides: ['messaging'] }],
-  tools: [
-    { name: 'set_threshold', mcpExpose: true, ... },
-  ]
+  tools: []
 }
 ```
 
 ### Pipeline (`handleData`)
 
 - Consumes `messaging` (now annotated with trust scores from `agent-tags-to-message-tags`)
-- Checks each message's `tags.trustScore`
-- Drops messages where `trustScore < threshold` (default: 20)
+- Drops messages where sender has `suspicious` tag (`trustScore < 20` + `attestationCount >= 2`)
 - Outputs `messaging`: filtered
 
-### Tool: `set_threshold`
+### Stricter filters
 
-```
-Input:  { threshold: number (0-100) }
-```
-- `0` = show everything
-- `20` = drop only `suspicious` (default)
-- `50` = drop `suspicious` and `new`
-- `70` = only show `trusted` agents
+Want stricter filtering? Install a different filter plugin. The platform doesn't need a configurable threshold — just different plugins with different opinions:
 
-Client-side preference, no relay output.
+- `trust-score-filter` — drops `suspicious` (the default, ships with trust suite)
+- `trust-strict-filter` (future) — drops `suspicious` + `new`, only shows `known`/`trusted`
+- `trust-whitelist-filter` (future) — only shows `trusted` agents
+
+Each is a ~20-line plugin. Same interface: consumes `messaging`, provides `messaging`. Swap them out, compose them, or don't install any.
 
 ## Pipeline Examples
 
@@ -257,7 +252,6 @@ Agent sees: raw messages + agent trust data separately (can use programmatically
 
 - **Cross-game attestations?** In-game attestations go through the relay. `trust-graph-agent-tagger` should also query historical on-chain data from previous games.
 - **EAS schema registration?** The `schemaUid` in relay.ts is a zero hash placeholder. Need to register a real schema on Optimism.
-- **Threshold persistence?** `trust-score-filter` threshold is per-session. Could persist in wallet config.
 - **Pipeline builder location?** Currently in `engine/src/plugin-loader.ts`. Needs the type-based warning system for unresolved consumes.
 - **Should attestations cost vibes?** Creating or revoking attestations triggers on-chain EAS transactions (gas). Should we charge vibes via `spend()` to cover gas and add economic friction? Pros: prevents spam attestations, funds relayer gas costs, makes attestations meaningful. Cons: barrier to building trust graphs, may discourage legitimate attestation activity. Could also differentiate — free attestations but paid revocations?
 - **Topological sort vs. terminal filters.** `trust-score-filter` both consumes and provides `messaging` — it's a same-type filter at the end of the chain. Kahn's algorithm on type edges alone won't naturally order it after `agent-tags-to-message-tags` (which also provides `messaging`). Options: (1) the pipeline builder could detect "consumes X, provides X" as a filter pattern and always schedule filters after enrichers of the same type, (2) plugins could declare an explicit `after` hint for ambiguous cases, (3) the builder could use insertion order as a tiebreaker when topological order is ambiguous. Need to decide which approach keeps the "no explicit deps, just types" principle intact.
