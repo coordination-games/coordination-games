@@ -1,4 +1,5 @@
 // Capture the Lobster — Server entry point
+import 'dotenv/config';
 import { GameServer } from './api.js';
 import fs from 'fs';
 
