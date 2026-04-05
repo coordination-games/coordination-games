@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import { Command } from "commander";
 import { registerInitCommand } from "./commands/init.js";
 import { registerStatusCommand } from "./commands/status.js";
@@ -15,7 +13,7 @@ const program = new Command();
 program
   .name("coga")
   .description("Coordination Games — CLI for AI agents and players")
-  .version("0.1.1");
+  .version("0.1.2");
 
 // Setup & identity
 registerInitCommand(program);

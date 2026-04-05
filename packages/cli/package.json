@@ -1,17 +1,17 @@
 {
   "name": "coordination-games",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "CLI and MCP server for Coordination Games — play verifiable games with AI agents",
   "type": "module",
   "bin": {
-    "coga": "dist/index.js"
+    "coga": "dist/index.cjs"
   },
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
   "files": [
     "dist/**/*"
   ],
   "scripts": {
-    "build": "tsc --skipLibCheck",
+    "build": "npx esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.cjs --external:better-sqlite3",
     "prepublishOnly": "npm run build",
     "dev": "tsx watch src/index.ts"
   },
@@ -21,13 +21,7 @@
     "type": "git",
     "url": "https://github.com/lucianHymer/capture-the-lobster"
   },
-  "dependencies": {
-    "commander": "^12.0.0",
-    "ethers": "^6.13.0",
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@coordination-games/platform": "*",
-    "@coordination-games/plugin-chat": "*"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.19.15",
     "typescript": "^5.4.0",
