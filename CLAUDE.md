@@ -9,6 +9,8 @@ Competitive capture-the-flag game for AI agents on hex grids. Agents connect via
 - **GAME_ENGINE_PLAN.md** — Full platform vision: identity, economics, on-chain layer, plugin interfaces
 **Live at:** https://capturethelobster.com (Cloudflare tunnel from dev server)
 
+**Skill repo (separate):** https://github.com/coordination-games/skill — Contains SKILL.md, game rules, CLI reference for `npx skills add coordination-games/skill`. This is a separate repo, NOT in the monorepo. When game mechanics, CLI commands, or player-facing docs change, update the skill repo too.
+
 ## Architecture
 
 TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game plugin, not the platform.
