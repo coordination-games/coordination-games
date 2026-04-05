@@ -2,36 +2,44 @@
 
 ## Overview
 
-Three composable plugins that handle trust, tagging, and filtering through the existing plugin pipeline. Matches the architecture described on the /games microsite.
+Five composable plugins that handle trust, tagging, and filtering through the client-side plugin pipeline. Each plugin declares what types it consumes and provides. The pipeline builder resolves the chain via topological sort on types — no explicit dependencies between plugins.
 
 ```
-Pipeline flow (topologically sorted):
+Pipeline (type-based resolution):
 
-relay-messages ──→ [basic-chat]          ──→ messaging          (producer)
-relay-messages ──→ [trust-graph]         ──→ agent-tags         (enricher: looks up on-chain trust scores)
-                   [reputation-tagger]   ──→ messaging          (enricher: marks messages with spam probability)
-                                             consumes: messaging, agent-tags
-                   [reputation-filter]   ──→ messaging          (filter: drops messages where tags.spam = true)
-                                             consumes: messaging
+  [basic-chat]                    messaging ─────────┐
+  [extract-agents]                agents ─────┐      │
+  [trust-graph-agent-tagger]      agent-tags ──┤      │
+  [agent-tags-to-message-tags]    messaging ◄──┘──────┘
+  [trust-score-filter]            messaging (filtered)
 ```
 
-Each plugin is independent. Agents install what they want:
-- Just `trust-graph` → get attestation tools + agent tags in pipeline, raw chat
-- Add `reputation-tagger` → messages get spam probability annotations
-- Add `reputation-filter` → spam messages dropped entirely
+Plus `trust-graph` as a tools-only plugin (attest, revoke, reputation) — no pipeline modes.
 
-## Plugin 1: `trust-graph` — On-Chain Reputation
+## Client-Side Pipeline Builder
 
-**Role:** Enricher. Consumes `relay-messages`, provides `agent-tags`.
+The pipeline is built at init time from the agent's installed plugins. Each plugin declares `modes` with `consumes` and `provides` — capability type names, not plugin IDs.
 
-Agents attest to other agents' trustworthiness. Attestations are EIP-712 signed locally, anchored on-chain via EAS on Optimism. The plugin looks up on-chain trust scores and tags agents.
+**Resolution:** The builder collects all modes from active plugins, then runs Kahn's topological sort based on type edges. If plugin B consumes a type that plugin A provides, A runs before B. No explicit dependencies — just types.
+
+**Unresolved types:** If a plugin consumes a type that no other installed plugin provides, the builder logs a warning: `"trust-graph-agent-tagger consumes 'agents' but no installed plugin provides it"`. The plugin is skipped, not crashed. This means if an agent uninstalls `extract-agents`, the trust chain gracefully degrades.
+
+**Type overwriting:** When multiple plugins provide the same type (e.g. `agent-tags-to-message-tags` provides `messaging`, which `basic-chat` also provides), the later plugin in the pipeline overwrites the earlier value. This is intentional — filters and enrichers transform types in-place.
+
+**Initial data:** The pipeline starts with raw typed data from the relay. Each relay message has a `type` field (e.g. `"messaging"`, `"attestation"`). The pipeline groups these by type and provides them as initial capabilities.
+
+## Plugin 1: `trust-graph` — Attestation Tools
+
+**Role:** Tools only. No pipeline modes.
+
+Agents attest to other agents' trustworthiness. Attestations are EIP-712 signed locally, anchored on-chain via EAS on Optimism. This plugin only produces and queries attestations — it does NOT tag or filter anything.
 
 ```typescript
 {
   id: 'trust-graph',
   version: '0.1.0',
   purity: 'stateful',
-  modes: [{ name: 'reputation', consumes: [], provides: ['agent-tags'] }],
+  modes: [],
   tools: [
     { name: 'attest', mcpExpose: true, ... },
     { name: 'revoke', mcpExpose: true, ... },
@@ -49,7 +57,7 @@ Output: { attestationId: string }
 Relay:  { type: 'attestation', data: { target, confidence, context }, scope: 'all', pluginId: 'trust-graph' }
 ```
 - `agent` is the target's name (names are the primary identifier agents see)
-- Server resolves name → agentId, relays EIP-712 signed attestation to EAS on Optimism
+- Server relays EIP-712 signed attestation to EAS on Optimism
 - Relay broadcast lets other agents' pipelines pick up new attestations in real-time
 
 **`revoke`** — Revoke a previous attestation
@@ -68,121 +76,186 @@ Output: {
   recentAttestors: [{ name: string, confidence: number, context: string }]
 }
 ```
-- Read-only query, no relay output
-- Queries EAS GraphQL (on-chain) + local cache for recent unconfirmed attestations
-
-### Pipeline (`handleData`)
-
-- Reads `relay-messages`, filters for `type === 'attestation'` and `type === 'revocation'`
-- Merges in-game attestations with historical on-chain data (EAS GraphQL query)
-- Outputs `agent-tags`: `Map<agentName, string[]>` — tags like `trusted`, `known`, `new`, `suspicious`
-- Tagging rules:
-  - `averageConfidence >= 70` + `attestationCount >= 3` → `trusted`
-  - `averageConfidence >= 40` → `known`
-  - `attestationCount === 0` → `new`
-  - `averageConfidence < 20` + `attestationCount >= 2` → `suspicious`
+Read-only query. No relay output. Queries EAS GraphQL (on-chain) + local cache.
 
 ### Existing code to migrate
 
-**`relay.ts` (server):** Lines 398-663. Real, working code — EIP-712 signature verification, EAS contract calls on Optimism, EAS GraphQL reputation queries. Currently wired as REST endpoints at `/api/relay/attest`, `/api/relay/revoke`, `/api/relay/reputation/:agentId`. Only active when on-chain env vars are set.
+**`relay.ts` (server), lines 398-663:** Working EIP-712 signature verification, EAS contract calls on Optimism, EAS GraphQL reputation queries. Currently wired as REST endpoints (`/api/relay/attest`, `/api/relay/revoke`, `/api/relay/reputation/:agentId`). Only active when on-chain env vars are set.
 
-**`commands/trust.ts` (CLI):** Lines 1-193. EIP-712 signing, REST calls to relay endpoints. Three commands: `attest`, `revoke`, `reputation`.
+**`commands/trust.ts` (CLI):** Currently stubbed with "not yet implemented" — previously had EIP-712 signing + REST calls.
 
-**Migration:** The EAS interaction code in `relay.ts` stays server-side (it needs the relayer wallet). But instead of dedicated REST endpoints, the plugin's `handleCall` returns `{ relay: { ... } }` and the server routes it through `POST /api/tool` like any other plugin. The server-side hook for EAS submission happens in the plugin's server-side handler. CLI commands become `coga tool trust-graph attest` etc.
+**Migration:** The EAS interaction code stays server-side (needs relayer wallet). Plugin's `handleCall` returns `{ relay: { ... } }`, server routes through `POST /api/tool`. CLI commands become `coga tool trust-graph attest` etc. Delete dedicated `/api/relay/attest|revoke|reputation` endpoints.
 
-**What to delete after migration:**
-- `relay.ts` lines 398-663 (attest/revoke/reputation endpoints)
-- `commands/trust.ts` entirely
-- The REST endpoint wiring in `api.ts` for `/api/relay/attest|revoke|reputation`
+## Plugin 2: `extract-agents` — Pull Agents from Relay Data
 
-## Plugin 2: `reputation-tagger` — Spam Probability Tagger
+**Role:** Producer. Provides `agents`.
 
-**Role:** Enricher. Consumes `messaging` + `agent-tags`, provides `messaging` (annotated).
-
-Reads chat messages and agent tags, marks each message with a spam probability based on the sender's reputation. Does NOT filter — just tags. Downstream filters decide what to do.
+Reads typed relay data and extracts the set of unique agents involved. This is a generic building block — any downstream plugin that needs to know about agents in the game consumes this type.
 
 ```typescript
 {
-  id: 'reputation-tagger',
+  id: 'extract-agents',
   version: '0.1.0',
   purity: 'pure',
-  modes: [{ name: 'spam-tagging', consumes: ['messaging', 'agent-tags'], provides: ['messaging'] }],
-  tools: []  // no agent-facing tools, pure pipeline processor
+  modes: [{ name: 'extraction', consumes: [], provides: ['agents'] }],
+  tools: []
 }
 ```
 
 ### Pipeline (`handleData`)
 
-- Consumes `messaging` (from basic-chat) and `agent-tags` (from trust-graph)
-- For each message, adds `tags.spam: number` (0.0–1.0 probability) based on sender's agent-tags:
-  - `trusted` sender → `tags.spam: 0.0`
-  - `known` sender → `tags.spam: 0.1`
-  - `new` sender → `tags.spam: 0.5`
-  - `suspicious` sender → `tags.spam: 0.9`
-- Outputs `messaging`: same `Message[]` format, now with `tags.spam` annotated
+- Reads all relay data (any type — messaging, attestation, etc.)
+- Extracts unique agent identifiers from `sender` fields
+- Also includes agents from game state (teammates, opponents seen through fog)
+- Outputs `agents`: `Map<agentName, { id: string, name: string, team?: string }>`
 
-### Why this is separate from trust-graph
+### Why this is a plugin
 
-Trust-graph produces raw reputation data (on-chain attestations → agent tags). This plugin interprets those tags in the context of messaging — "what does 'suspicious' mean for chat?" That's a policy decision. Different agents might want different spam probability mappings. Separating them means an agent can use trust-graph tags for their own logic without our spam model.
+Every pipeline that needs per-agent data starts here. Trust scoring needs agents. Future plugins (activity tracking, behavior analysis) need agents. Making this a plugin means the agent extraction logic is shared, testable, and replaceable.
 
-### Why this is separate from the filter
+## Plugin 3: `trust-graph-agent-tagger` — Tag Agents with Trust Scores
 
-Tagging and filtering are different concerns. An agent might want to see spam probabilities but not auto-filter. Or they might build their own filter with different thresholds. The microsite explicitly separates these: tagger marks, filter drops.
+**Role:** Enricher. Consumes `agents`, provides `agent-tags`.
 
-## Plugin 3: `reputation-filter` — Drop Spam Messages
-
-**Role:** Filter. Consumes `messaging`, provides `messaging` (filtered).
-
-Drops messages where `tags.spam` exceeds a threshold. Simple, stateless, configurable.
+Looks up on-chain trust scores for each agent and produces tags. Does NOT read messages — only cares about agents.
 
 ```typescript
 {
-  id: 'reputation-filter',
+  id: 'trust-graph-agent-tagger',
+  version: '0.1.0',
+  purity: 'stateful',
+  modes: [{ name: 'trust-tagging', consumes: ['agents'], provides: ['agent-tags'] }],
+  tools: []
+}
+```
+
+### Pipeline (`handleData`)
+
+- Consumes `agents` (from `extract-agents`)
+- For each agent, queries trust graph (EAS GraphQL + in-game attestation relay data)
+- Produces `agent-tags`: `Map<agentName, { trustScore: number, attestationCount: number, tags: string[] }>`
+- Tagging rules:
+  - `trustScore >= 70` + `attestationCount >= 3` → `trusted`
+  - `trustScore >= 40` → `known`
+  - `attestationCount === 0` → `new`
+  - `trustScore < 20` + `attestationCount >= 2` → `suspicious`
+
+### Why this is separate from `trust-graph`
+
+`trust-graph` is about producing attestations (tools). This is about reading the trust graph and tagging agents (pipeline). An agent might want attestation tools without the tagging pipeline, or vice versa.
+
+## Plugin 4: `agent-tags-to-message-tags` — Propagate Agent Tags onto Messages
+
+**Role:** Enricher. Consumes `messaging` + `agent-tags`, provides `messaging`.
+
+Takes per-agent reputation tags and copies them onto messages from those agents. After this plugin runs, each message carries its sender's trust score.
+
+```typescript
+{
+  id: 'agent-tags-to-message-tags',
   version: '0.1.0',
   purity: 'pure',
-  modes: [{ name: 'filtering', consumes: ['messaging'], provides: ['messaging'] }],
+  modes: [{ name: 'tag-propagation', consumes: ['messaging', 'agent-tags'], provides: ['messaging'] }],
+  tools: []
+}
+```
+
+### Pipeline (`handleData`)
+
+- Consumes `messaging` (from `basic-chat`) and `agent-tags` (from `trust-graph-agent-tagger`)
+- For each message, looks up sender in `agent-tags`
+- Attaches `tags: { trustScore: number, labels: string[] }` to the message
+- Outputs `messaging`: same `Message[]` format, now with trust metadata per message
+
+### Why this is separate from trust-graph-agent-tagger
+
+Agent-level tags and message-level tags are different concerns. An agent might want to see agent tags in a sidebar without modifying messages. Or a different plugin might propagate different agent-level metadata onto messages (activity frequency, game history, etc.). This plugin is the generic "copy agent metadata onto messages" step.
+
+## Plugin 5: `trust-score-filter` — Drop Low-Trust Messages
+
+**Role:** Filter. Consumes `messaging`, provides `messaging`.
+
+Drops messages from agents below a trust threshold. The simplest plugin in the chain.
+
+```typescript
+{
+  id: 'trust-score-filter',
+  version: '0.1.0',
+  purity: 'pure',
+  modes: [{ name: 'trust-filtering', consumes: ['messaging'], provides: ['messaging'] }],
   tools: [
-    { name: 'set_filter', mcpExpose: true, ... },
+    { name: 'set_threshold', mcpExpose: true, ... },
   ]
 }
 ```
 
 ### Pipeline (`handleData`)
 
-- Consumes `messaging` (now annotated with `tags.spam` from reputation-tagger)
-- Drops messages where `tags.spam >= threshold`
-- Default threshold: `0.8` (drops `suspicious` senders)
-- Outputs `messaging`: same format, spam removed
+- Consumes `messaging` (now annotated with trust scores from `agent-tags-to-message-tags`)
+- Checks each message's `tags.trustScore`
+- Drops messages where `trustScore < threshold` (default: 20)
+- Outputs `messaging`: filtered
 
-### Tool: `set_filter`
+### Tool: `set_threshold`
 
 ```
-Input:  { threshold: number (0.0-1.0) }
+Input:  { threshold: number (0-100) }
 ```
-- `0.0` = drop everything (nuclear)
-- `0.5` = drop `new` and `suspicious` (strict)
-- `0.8` = drop only `suspicious` (moderate, default)
-- `1.0` = drop nothing (off)
+- `0` = show everything
+- `20` = drop only `suspicious` (default)
+- `50` = drop `suspicious` and `new`
+- `70` = only show `trusted` agents
 
-No relay output — client-side preference only.
+Client-side preference, no relay output.
 
-### How agents see different things
+## Pipeline Examples
 
-Two agents in the same game, same relay:
-- Agent A has all three plugins → sees only `trusted` and `known` senders' messages
-- Agent B has only basic-chat → sees every message, unfiltered
+### Agent with all 5 plugins installed
 
-This is the pipeline's entire value proposition.
+```
+Relay data arrives (type: messaging, type: attestation, ...)
+  → basic-chat: extracts messaging → provides "messaging"
+  → extract-agents: extracts unique agents → provides "agents"
+  → trust-graph-agent-tagger: agents → on-chain lookup → provides "agent-tags"
+  → agent-tags-to-message-tags: messaging + agent-tags → annotated messaging
+  → trust-score-filter: messaging → drops low-trust → filtered messaging
+
+Agent sees: filtered, trust-annotated messages
+```
+
+### Agent with only basic-chat
+
+```
+Relay data arrives
+  → basic-chat: extracts messaging → provides "messaging"
+
+Agent sees: raw messages, no trust info
+```
+
+### Agent with extract-agents + trust-graph-agent-tagger (no message plugins)
+
+```
+Relay data arrives
+  → basic-chat: provides "messaging"
+  → extract-agents: provides "agents"
+  → trust-graph-agent-tagger: provides "agent-tags"
+  ⚠ agent-tags-to-message-tags not installed — agent-tags not propagated to messages
+  ⚠ trust-score-filter not installed — no filtering
+
+Agent sees: raw messages + agent trust data separately (can use programmatically)
+```
 
 ## Implementation Order
 
-1. **`trust-graph`** — Refactor existing `relay.ts` + `trust.ts` code into a ToolPlugin. Most code exists, just needs to flow through the plugin system instead of dedicated REST endpoints.
-2. **`reputation-tagger`** — Pure pipeline plugin, ~50 lines. No server-side code.
-3. **`reputation-filter`** — Pure pipeline plugin, ~30 lines. Trivial once tagger exists.
+1. **`extract-agents`** — ~30 lines. Pure producer. Unblocks everything downstream.
+2. **`trust-graph`** — Refactor existing `relay.ts` + `trust.ts` into ToolPlugin. Most code exists.
+3. **`trust-graph-agent-tagger`** — ~80 lines. Needs EAS GraphQL query (can reuse from relay.ts).
+4. **`agent-tags-to-message-tags`** — ~20 lines. Trivial map operation.
+5. **`trust-score-filter`** — ~20 lines. Trivial filter operation.
 
 ## Open Questions
 
-- **Cross-game vs in-game attestations?** In-game attestations go through the relay. But trust scores should also reflect historical on-chain data from previous games. The `handleData` pipeline step should merge both sources.
-- **Tag thresholds configurable?** Trust-graph uses hardcoded thresholds for tagging. Start hardcoded, adjust based on real usage.
-- **Filter state persistence?** Per-session now. Could persist in wallet config via `coga config set filter-threshold 0.5`.
-- **EAS schema registration?** The `schemaUid` in relay.ts is currently a zero hash placeholder. Need to run `register-eas-schema.ts` to get a real schema on Optimism before attestations work properly.
+- **Cross-game attestations?** In-game attestations go through the relay. `trust-graph-agent-tagger` should also query historical on-chain data from previous games.
+- **EAS schema registration?** The `schemaUid` in relay.ts is a zero hash placeholder. Need to register a real schema on Optimism.
+- **Threshold persistence?** `trust-score-filter` threshold is per-session. Could persist in wallet config.
+- **Pipeline builder location?** Currently in `engine/src/plugin-loader.ts`. Needs the type-based warning system for unresolved consumes.
