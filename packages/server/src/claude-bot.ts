@@ -1,20 +1,20 @@
 /**
- * Generic Claude bot harness — connects via real MCP HTTP endpoint.
+ * Generic Claude bot harness — spawns `coga serve --bot-mode` subprocesses.
  *
  * Game-agnostic: the bot doesn't know what game it's playing until it
  * calls get_guide(). System prompt is generic, game rules come from the
  * server's MCP tools.
  *
- * TODO: Migrate to use shared GameClient + registerGameTools from
- * packages/cli/src/{game-client,mcp-tools}.ts. Each bot would get a
- * GameClient(serverUrl, botToken) and an in-process McpServer with
- * registerGameTools(server, client, { botMode: true }). The Claude
- * Agent SDK would connect via a subprocess MCP wrapper script, since
- * it needs either HTTP or stdio transport (no in-process option).
+ * Each bot gets a separate coga subprocess with an ephemeral private key.
+ * The subprocess handles auth (challenge-response) and the client-side
+ * plugin pipeline automatically.
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { McpStdioServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import crypto from 'node:crypto';
+import path from 'node:path';
+import fs from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,28 +41,53 @@ export interface BotSession {
   id: string;
   handle: string;
   team: 'A' | 'B';
-  token: string;            // MCP auth token (pre-registered)
-  sessionId: string | null; // Claude session ID for resume
-  guideLoaded: boolean;     // Whether get_guide() has been called
+  key: string;               // Ephemeral private key (hex with 0x prefix)
+  sessionId: string | null;  // Claude session ID for resume
+  guideLoaded: boolean;      // Whether get_guide() has been called
+}
+
+// ---------------------------------------------------------------------------
+// coga subprocess MCP config
+// ---------------------------------------------------------------------------
+
+const mcpServerName = 'game-server';
+
+/**
+ * Find the coga CLI binary — prefers the monorepo build, falls back to global.
+ */
+function getCogaPath(): string {
+  const monorepoPath = path.resolve(__dirname, '../../cli/dist/index.cjs');
+  try {
+    fs.accessSync(monorepoPath);
+    return monorepoPath;
+  } catch {
+    return 'coga'; // fall back to global install
+  }
+}
+
+/**
+ * Create an MCP stdio config that spawns a coga subprocess in bot mode.
+ * Each bot gets an ephemeral private key for challenge-response auth.
+ */
+export function createBotMcpConfig(botName: string, key: string, serverUrl: string): McpStdioServerConfig {
+  const cogaPath = getCogaPath();
+  return {
+    type: 'stdio',
+    command: 'node',
+    args: [cogaPath, 'serve', '--bot-mode', '--key', key, '--name', botName, '--server-url', serverUrl, '--stdio'],
+  };
 }
 
 /**
  * Run a single Claude bot's turn using the Claude Agent SDK.
- * Connects to the game server via the real MCP HTTP endpoint.
+ * Spawns a coga subprocess via stdio MCP transport.
  */
 export async function runClaudeBotTurn(
   bot: BotSession,
   turn: number,
   serverUrl: string,
 ): Promise<void> {
-  const mcpServerName = 'game-server';
-  const mcpConfig: McpHttpServerConfig = {
-    type: 'http',
-    url: serverUrl,
-    headers: {
-      'Authorization': `Bearer ${bot.token}`,
-    },
-  };
+  const mcpConfig = createBotMcpConfig(bot.handle, bot.key, serverUrl);
 
   const prompt = turn === 1
     ? `Game starting! You are ${bot.handle} (${bot.id}, Team ${bot.team}). First call get_guide() to learn the rules, then follow its instructions for your first turn.`
@@ -117,16 +142,16 @@ export async function runClaudeBotTurn(
 
 /**
  * Create bot sessions for all players.
- * Each bot gets a pre-registered auth token.
+ * Each bot gets an ephemeral private key for challenge-response auth.
  */
 export function createBotSessions(
-  bots: { id: string; handle: string; team: 'A' | 'B'; token: string }[],
+  bots: { id: string; handle: string; team: 'A' | 'B' }[],
 ): BotSession[] {
   return bots.map((b) => ({
     id: b.id,
     handle: b.handle,
     team: b.team,
-    token: b.token,
+    key: '0x' + crypto.randomBytes(32).toString('hex'),
     sessionId: null,
     guideLoaded: false,
   }));

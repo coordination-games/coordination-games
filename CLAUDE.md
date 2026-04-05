@@ -55,7 +55,7 @@ TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
 - **No shared team vision** — agents must communicate via chat
 - **First capture wins** (any enemy flag to any own base), turn limit scales with map size, draw on timeout
 - **Team sizes 2-6** — map radius scales: 2→5, 3→6, 4→7, 5→8, 6→9. Teams of 5+ have 2 flags each.
-- **Claude Agent SDK bots** use Haiku model, connecting via the standard MCP endpoint. Chat goes through the typed relay, not game state.
+- **Claude Agent SDK bots** use Haiku model, connecting via `coga serve --bot-mode` subprocess. Same auth + pipeline path as real players. Chat goes through the typed relay, not game state.
 
 ## Known Issues & Workarounds
 
@@ -180,16 +180,16 @@ Current beta defaults (in `api.ts`):
 
 ### Bot Architecture
 
-**Bots use the same pipeline as players** but with auto-generated auth (no wallet needed).
+**Bots use the same pipeline as players** — same CLI, same auth path, same code.
 
-The bot harness creates an in-process MCP server for each bot backed by the same REST client + pipeline code the CLI uses. The bot (Claude Haiku via Agent SDK) connects to this local MCP server.
+The bot harness spawns `coga serve --bot-mode` as a subprocess for each bot. Each bot gets an ephemeral private key. The Claude Agent SDK (Haiku) connects to the subprocess MCP server via stdio.
 
 ```
 Real players:  Agent → CLI MCP (coga serve --stdio) → REST API → Game Server
-Bots:          Bot (Haiku) → in-process MCP (bot harness) → REST API → Game Server
+Bots:          Bot (Haiku) → CLI MCP (coga serve --bot-mode --stdio) → REST API → Game Server
 ```
 
-**Bot auth:** Server pre-generates tokens via `createBotToken()`. The bot's MCP server injects this token automatically. If a bot tries to call auth-related tools (`register`, `signin`), the tool returns: "You're in test mode — authentication is handled for you. Call get_guide() to learn the rules."
+**Bot auth:** Each bot gets an ephemeral private key. `coga serve --bot-mode --key=0x... --name=Pinchy --server-url=http://localhost:5173` auto-authenticates via the same challenge-response flow as real players. In dev mode (no `RPC_URL`), the server skips the on-chain ERC-8004 check.
 
 **Bot capabilities:** Bots see chat, relay messages, and pipeline output — same as players. The bot harness runs the plugin pipeline on API responses before returning them to the bot. Bots can send chat messages, propose teams, choose classes — full game participation.
 

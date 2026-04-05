@@ -40,12 +40,9 @@ import { EloTracker } from '@coordination-games/plugin-elo';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
-  mountMcpEndpoint,
-  closeAllMcpSessions,
   notifyTurnResolved,
   notifyAgent,
   getAgentName,
-  createBotToken,
   getAgentIdFromToken,
   tokenRegistry,
   handleRegistry,
@@ -413,12 +410,12 @@ export class GameServer {
   /** Maps external agentId -> lobbyId for lobby resolution */
   private agentToLobby: Map<string, string> = new Map();
 
-  /** MCP server URL for bot connections (bots connect via real MCP HTTP endpoint) */
+  /** Server URL for bot connections (base URL — bots connect via coga subprocess) */
   private serverUrl: string;
 
   constructor(port?: number) {
     const effectivePort = port ?? (Number(process.env.PORT) || 3000);
-    this.serverUrl = process.env.GAME_SERVER_URL ?? `http://localhost:${effectivePort}/mcp`;
+    this.serverUrl = process.env.GAME_SERVER_URL ?? `http://localhost:${effectivePort}`;
     this.app = express();
     this.app.use(express.json());
 
@@ -441,8 +438,10 @@ export class GameServer {
     this.setupRoutes();
     this.setupWebSocket();
 
-    // Mount the MCP Streamable HTTP endpoint
-    mountMcpEndpoint(
+    // MCP endpoint removed — all game operations go through REST at /api/player/*
+    // Bots use `coga serve --bot-mode` subprocess which calls REST.
+    // Keeping mcp-http.ts as a utility module for token registry, waiters, etc.
+    /* REMOVED: mountMcpEndpoint(
       this.app,
       // Game resolver: find the GameSession for an agentId
       (agentId: string) => {
@@ -588,7 +587,7 @@ export class GameServer {
         const room = this.games.get(gameId);
         return room?.relay ?? null;
       },
-    );
+    ); */
   }
 
   // ---------------------------------------------------------------------------
@@ -981,12 +980,12 @@ export class GameServer {
     const requirePlayerAuth = (req: any, res: any, next: any) => {
       const authHeader = req.headers['authorization'] as string | undefined;
       if (!authHeader?.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'auth_required', message: 'Missing Authorization: Bearer <token> header. Call POST /api/player/signin to get a token.' });
+        return res.status(401).json({ error: 'auth_required', message: 'Missing Authorization: Bearer <token> header. Authenticate via POST /api/player/auth/challenge + /auth/verify.' });
       }
       const token = authHeader.slice(7);
       const agentId = getAgentIdFromToken(token);
       if (!agentId) {
-        return res.status(401).json({ error: 'auth_required', message: 'Invalid or expired token. Call POST /api/player/signin to get a new token.' });
+        return res.status(401).json({ error: 'auth_required', message: 'Invalid or expired token. Re-authenticate via POST /api/player/auth/challenge + /auth/verify.' });
       }
       req.agentId = agentId;
       req.agentName = getAgentName(agentId);
@@ -994,61 +993,112 @@ export class GameServer {
     };
 
     // ------------------------------------------------------------------
+    // Challenge nonce registry (nonce -> { message, expiresAt })
+    // ------------------------------------------------------------------
+    const challengeRegistry = new Map<string, { message: string; expiresAt: number }>();
+
+    // Periodically clean expired challenges (every 5 min)
+    setInterval(() => {
+      const now = Date.now();
+      for (const [nonce, entry] of challengeRegistry) {
+        if (now > entry.expiresAt) challengeRegistry.delete(nonce);
+      }
+    }, 5 * 60 * 1000);
+
+    // ------------------------------------------------------------------
     // 1. POST /auth/challenge — Issue a challenge nonce for wallet auth
     // ------------------------------------------------------------------
     router.post('/auth/challenge', (_req, res) => {
-      const nonce = crypto.randomBytes(16).toString('hex');
-      res.json({ nonce, expiresIn: 300 });
+      const nonce = crypto.randomBytes(32).toString('hex');
+      const message = `Sign this message to authenticate with Coordination Games.\nNonce: ${nonce}`;
+      const expiresAt = Date.now() + 5 * 60 * 1000; // 5 min
+      challengeRegistry.set(nonce, { message, expiresAt });
+      res.json({ nonce, message, expiresAt: new Date(expiresAt).toISOString() });
     });
 
     // ------------------------------------------------------------------
-    // 2. POST /auth/verify — Verify a signed challenge (stub for now)
+    // 2. POST /auth/verify — Verify a signed challenge with real sig check
     // ------------------------------------------------------------------
-    router.post('/auth/verify', (req, res) => {
-      const { nonce, signature, address, name } = req.body ?? {};
-      if (!name) return res.status(400).json({ error: 'name is required' });
-      // TODO: Wire real ERC-8004 signature verification
-      // For now, issue a simple token (same as signin)
-      const agentId = `ext_${crypto.randomBytes(4).toString('hex')}`;
-      const token = crypto.randomBytes(5).toString('hex');
-      const expiresAt = Date.now() + TOKEN_TTL_MS;
-      tokenRegistry.set(token, { agentId, name, expiresAt });
-      handleRegistry.set(name, agentId);
-      console.log(`[REST] Auth verified for "${name}" (agentId: ${agentId})`);
-      res.json({ token, agentId, name, expiresAt: new Date(expiresAt).toISOString() });
-    });
+    router.post('/auth/verify', async (req, res) => {
+      try {
+        const { nonce, signature, address, name } = req.body ?? {};
+        if (!nonce || !signature || !address || !name) {
+          return res.status(400).json({ error: 'nonce, signature, address, and name are all required' });
+        }
 
-    // ------------------------------------------------------------------
-    // 3. POST /signin — Simple signin (display name only, for dev mode)
-    // ------------------------------------------------------------------
-    router.post('/signin', (req, res) => {
-      const { name } = req.body ?? {};
-      if (!name || typeof name !== 'string') return res.status(400).json({ error: 'name is required (string)' });
-      const trimmed = name.trim();
-      if (!trimmed) return res.status(400).json({ error: 'name cannot be empty' });
-      if (trimmed.length > 32) return res.status(400).json({ error: 'name must be 32 characters or fewer' });
+        // Validate the challenge nonce
+        const challenge = challengeRegistry.get(nonce);
+        if (!challenge || Date.now() > challenge.expiresAt) {
+          challengeRegistry.delete(nonce);
+          return res.status(401).json({ error: 'Invalid or expired challenge nonce' });
+        }
+        challengeRegistry.delete(nonce); // consume the nonce (one-time use)
 
-      // If this name was used before, reuse the same agentId (enables reconnection)
-      const existingAgentId = handleRegistry.get(trimmed);
-      const agentId = existingAgentId ?? `ext_${crypto.randomBytes(4).toString('hex')}`;
+        // Recover the signer address from the signature
+        const { ethers } = await import('ethers');
+        const recoveredAddress = ethers.verifyMessage(challenge.message, signature);
 
-      if (!existingAgentId) {
-        handleRegistry.set(trimmed, agentId);
+        if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
+          return res.status(401).json({ error: 'Signature verification failed — recovered address does not match' });
+        }
+
+        // If on-chain mode is enabled, verify ERC-8004 name ownership
+        if (process.env.RPC_URL && process.env.REGISTRY_ADDRESS && process.env.ERC8004_ADDRESS) {
+          try {
+            const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+
+            // Check name -> agentId in CoordinationRegistry
+            const registryAbi = ['function nameToAgent(bytes32) view returns (uint256)'];
+            const registry = new ethers.Contract(process.env.REGISTRY_ADDRESS, registryAbi, provider);
+            const nameKey = ethers.keccak256(ethers.toUtf8Bytes(name.toLowerCase()));
+            const agentId = await registry.nameToAgent(nameKey);
+
+            if (agentId === 0n) {
+              return res.status(401).json({ error: `Name "${name}" is not registered on-chain` });
+            }
+
+            // Check agentId -> owner in ERC-8004
+            const erc8004Abi = ['function ownerOf(uint256) view returns (address)'];
+            const erc8004 = new ethers.Contract(process.env.ERC8004_ADDRESS, erc8004Abi, provider);
+            const owner = await erc8004.ownerOf(agentId);
+
+            if (owner.toLowerCase() !== address.toLowerCase()) {
+              return res.status(401).json({ error: `Address ${address} does not own name "${name}"` });
+            }
+
+            console.log(`[REST] On-chain verified: "${name}" owned by ${address} (agentId: ${agentId})`);
+          } catch (chainErr: any) {
+            console.error(`[REST] On-chain verification failed:`, chainErr.message);
+            return res.status(500).json({ error: 'On-chain verification failed: ' + chainErr.message });
+          }
+        }
+
+        // Name validated (signature valid, on-chain check passed or skipped in dev mode)
+        // Reuse agentId if this name was seen before (enables reconnection)
+        const trimmed = name.trim();
+        const existingAgentId = handleRegistry.get(trimmed);
+        const resolvedAgentId = existingAgentId ?? `ext_${crypto.randomBytes(4).toString('hex')}`;
+
+        if (!existingAgentId) {
+          handleRegistry.set(trimmed, resolvedAgentId);
+        }
+
+        const token = crypto.randomBytes(5).toString('hex');
+        const expiresAt = Date.now() + TOKEN_TTL_MS;
+        tokenRegistry.set(token, { agentId: resolvedAgentId, name: trimmed, expiresAt });
+
+        console.log(`[REST] Auth verified for "${trimmed}" (agentId: ${resolvedAgentId}, address: ${address})${existingAgentId ? ' (reconnected)' : ''}`);
+        res.json({
+          token,
+          agentId: resolvedAgentId,
+          name: trimmed,
+          expiresAt: new Date(expiresAt).toISOString(),
+          reconnected: !!existingAgentId,
+        });
+      } catch (err: any) {
+        console.error(`[REST] Auth verify error:`, err);
+        res.status(500).json({ error: 'Internal server error during auth verification' });
       }
-
-      const token = crypto.randomBytes(5).toString('hex');
-      const expiresAt = Date.now() + TOKEN_TTL_MS;
-      tokenRegistry.set(token, { agentId, name: trimmed, expiresAt });
-
-      console.log(`[REST] Agent ${agentId} signed in as "${trimmed}"${existingAgentId ? ' (reconnected)' : ''}`);
-
-      res.json({
-        token,
-        agentId,
-        name: trimmed,
-        expiresAt: new Date(expiresAt).toISOString(),
-        reconnected: !!existingAgentId,
-      });
     });
 
     // ------------------------------------------------------------------
@@ -1070,13 +1120,13 @@ export class GameServer {
       } else if (lobby) {
         playerState += `\n## Your Status\n- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
       } else {
-        playerState += `\n## Your Status\n- Not in a game or lobby. Use signin then join_lobby or create_lobby.\n`;
+        playerState += `\n## Your Status\n- Not in a game or lobby. Use join_lobby or create_lobby to find a game.\n`;
       }
 
       const phase = game?.state.phase ?? lobby?.phase ?? 'none';
       let availableTools = '\n## Available Endpoints\n';
       availableTools += '- `GET /guide` -- this playbook\n';
-      availableTools += '- `POST /signin` -- authenticate\n';
+      availableTools += '- `POST /auth/challenge` + `POST /auth/verify` -- wallet auth (handled by CLI)\n';
 
       if (!game && !lobby) {
         availableTools += '- `POST /lobby/join` / `POST /lobby/create` -- find a game\n';
@@ -1729,7 +1779,6 @@ export class GameServer {
         id: p.id,
         handle: handleMap[p.id] ?? p.id,
         team: p.team,
-        token: createBotToken(p.id, handleMap[p.id] ?? p.id),
       }))),
       finished: false,
       turnInProgress: false,
@@ -1780,7 +1829,7 @@ export class GameServer {
       room.turnResolve = resolve;
     });
 
-    // Kick off bots via MCP HTTP endpoint (async)
+    // Kick off bots via coga subprocess (async)
     const botPromise = this.runBots(room);
 
     // Set deadline timer
@@ -1826,7 +1875,7 @@ export class GameServer {
       if (unit?.alive) aliveBotIds.add(botId);
     }
 
-    // Claude bots connect via MCP HTTP endpoint
+    // Claude bots connect via coga subprocess (stdio MCP)
     await Promise.race([
       runAllBotsTurn(room.botSessions, game.state.turn, this.serverUrl, aliveBotIds),
       new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
@@ -2007,13 +2056,13 @@ export class GameServer {
           console.log(`[Lobby] WARNING: lobby room not found for ${state.lobbyId}`);
         }
       },
-      onGameCreated: (gameId, teamPlayers, handles, botTokens) => {
+      onGameCreated: (gameId, teamPlayers, handles) => {
         // Grab lobby chat before transitioning to game
         const lobbyRoom = this.lobbies.get(runner.lobby.lobbyId);
         const lobbyChat = lobbyRoom?.state?.chat ?? [];
         const preGameChatA = runner.lobby.preGameChat?.A ?? [];
         const preGameChatB = runner.lobby.preGameChat?.B ?? [];
-        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB, botTokens);
+        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB);
       },
     }, this.serverUrl);
 
@@ -2046,7 +2095,6 @@ export class GameServer {
     lobbyChat: { from: string; message: string; timestamp: number }[] = [],
     preGameChatA: { from: string; message: string; timestamp: number }[] = [],
     preGameChatB: { from: string; message: string; timestamp: number }[] = [],
-    botTokens: Record<string, string> = {},
   ): void {
     const players = teamPlayers;
     const botHandles: string[] = [];
@@ -2095,7 +2143,6 @@ export class GameServer {
         id: p.id,
         handle: handleMap[p.id] ?? p.id,
         team: p.team,
-        token: botTokens[p.id] ?? createBotToken(p.id, handleMap[p.id] ?? p.id),
       }))),
       finished: false,
       turnInProgress: false,
@@ -2150,7 +2197,7 @@ export class GameServer {
       lobbyRoom.runner.abort();
       for (const ws of lobbyRoom.spectators) ws.close();
     }
-    closeAllMcpSessions().catch(() => {});
+    // MCP sessions removed — auth is via REST now
     this.wss.close();
     this.server.close();
     this.elo.close();

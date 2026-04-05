@@ -1,9 +1,11 @@
 import { Command } from "commander";
 import { loadConfig, loadSession, saveSession } from "../config.js";
 import { ApiClient } from "../api-client.js";
+import { GameClient } from "../game-client.js";
 import { McpClient } from "../mcp-client.js";
 import { processState, initPipeline } from "../pipeline.js";
 import { formatChatMessage } from "@coordination-games/plugin-chat";
+import { loadKey } from "../keys.js";
 
 function getMcpClient(config: { serverUrl: string }): McpClient {
   return new McpClient(config.serverUrl);
@@ -13,7 +15,7 @@ function requireToken(): string {
   const session = loadSession();
   if (!session.token) {
     process.stderr.write(
-      `\n  Not signed in. Run 'coga signin <handle>' first.\n\n`
+      `\n  Not authenticated. Run 'coga init' to create a wallet first.\n\n`
     );
     process.exit(1);
   }
@@ -21,19 +23,37 @@ function requireToken(): string {
 }
 
 export function registerGameCommands(program: Command) {
-  // ==================== signin ====================
+  // ==================== signin (wallet-based auth) ====================
   program
-    .command("signin <handle>")
-    .description("Sign in to the game server (get auth token)")
-    .action(async (handle: string) => {
+    .command("signin [handle]")
+    .description("Authenticate with the game server using your local wallet")
+    .action(async (handle?: string) => {
       const config = loadConfig();
-      const mcp = getMcpClient(config);
+      const wallet = loadKey();
+      if (!wallet) {
+        process.stderr.write(`\n  No wallet found. Run 'coga init' to create one.\n\n`);
+        process.exit(1);
+        return;
+      }
+
+      const name = handle || wallet.address.slice(0, 10);
+      const client = new GameClient(config.serverUrl, {
+        privateKey: wallet.privateKey,
+        name,
+      });
 
       try {
-        const { token, agentId } = await mcp.signin(handle);
-        process.stdout.write(`\n  Signed in as "${handle}"\n`);
-        process.stdout.write(`  Agent ID: ${agentId}\n`);
+        await client.authenticate(wallet.privateKey);
+        const token = client.getToken();
+        process.stdout.write(`\n  Authenticated as "${name}"\n`);
+        process.stdout.write(`  Address: ${wallet.address}\n`);
         process.stdout.write(`  Token: ${token}\n\n`);
+
+        // Save to session for legacy CLI commands that use requireToken()
+        const session = loadSession();
+        session.token = token ?? undefined;
+        session.handle = name;
+        saveSession(session);
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);

@@ -3,18 +3,19 @@
  * Creates a LobbyManager, waits for agents to join (bots or external),
  * handles team formation, pre-game class selection, and game creation.
  *
- * Bots connect via the real MCP HTTP endpoint — they don't use in-process
- * tools. This makes them game-generic.
+ * Bots connect via spawned `coga serve --bot-mode` subprocesses — they
+ * authenticate via challenge-response using ephemeral keys and run the
+ * full client-side plugin pipeline.
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import crypto from 'node:crypto';
 import {
   LobbyManager,
   LobbyAgent,
   UnitClass,
 } from '@coordination-games/game-ctl';
-import { createBotToken } from './mcp-http.js';
+import { createBotMcpConfig } from './claude-bot.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,7 +49,7 @@ export interface LobbyRunnerState {
 
 export interface LobbyRunnerCallbacks {
   onStateChange: (state: LobbyRunnerState) => void;
-  onGameCreated: (gameId: string, teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[], handles: Record<string, string>, botTokens: Record<string, string>) => void;
+  onGameCreated: (gameId: string, teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[], handles: Record<string, string>) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,11 +106,11 @@ export class LobbyRunner {
   private preGameSessionIds: Map<string, string> = new Map();
   /** Tracks which agent IDs are bots (vs external agents) */
   private botIds: Set<string> = new Set();
-  /** Bot tokens for MCP auth */
-  private botTokens: Map<string, string> = new Map();
+  /** Ephemeral private keys for bot auth */
+  private botKeys: Map<string, string> = new Map();
   /** Counter for unique bot names */
   private botIndex: number = 0;
-  /** MCP server URL for bot connections */
+  /** Server URL for bot connections (base URL, no /mcp suffix) */
   private serverUrl: string;
 
   constructor(
@@ -123,7 +124,7 @@ export class LobbyRunner {
     this.timeoutMs = timeoutMs;
     this.teamSize = teamSize;
     this.abortController = new AbortController();
-    this.serverUrl = serverUrl ?? `http://localhost:${process.env.PORT || 5173}/mcp`;
+    this.serverUrl = serverUrl ?? `http://localhost:${process.env.PORT || 5173}`;
   }
 
   disableTimeout(): void {
@@ -202,9 +203,9 @@ export class LobbyRunner {
     this.lobby.addAgent(agent);
     this.botIds.add(id);
 
-    // Create a pre-registered auth token for this bot
-    const token = createBotToken(id, handle);
-    this.botTokens.set(id, token);
+    // Generate an ephemeral private key for this bot's auth
+    const key = '0x' + crypto.randomBytes(32).toString('hex');
+    this.botKeys.set(id, key);
 
     this.emitState();
 
@@ -216,11 +217,6 @@ export class LobbyRunner {
     }
 
     return { agentId: id, handle };
-  }
-
-  /** Get the bot token for a given agent ID */
-  getBotToken(agentId: string): string | undefined {
-    return this.botTokens.get(agentId);
   }
 
   /** Check if an agent ID is a bot */
@@ -325,13 +321,7 @@ export class LobbyRunner {
       this.phase = 'game';
       this.emitState();
 
-      // Collect bot tokens for the game phase
-      const botTokenMap: Record<string, string> = {};
-      for (const [id, token] of this.botTokens) {
-        botTokenMap[id] = token;
-      }
-
-      this.callbacks.onGameCreated(gameId, teamPlayers, handles, botTokenMap);
+      this.callbacks.onGameCreated(gameId, teamPlayers, handles);
     } catch (err: any) {
       console.error('Lobby runner error:', err);
       this.phase = 'failed';
@@ -392,7 +382,7 @@ export class LobbyRunner {
   }
 
   // ---------------------------------------------------------------------------
-  // Single bot lobby round — connects via MCP HTTP endpoint
+  // Single bot lobby round — spawns coga subprocess via stdio
   // ---------------------------------------------------------------------------
 
   private async runLobbyBot(
@@ -401,18 +391,14 @@ export class LobbyRunner {
   ): Promise<void> {
     const agent = this.lobby.agents.get(botId);
     const handle = agent?.handle ?? botId;
-    const token = this.botTokens.get(botId);
-    if (!token) {
-      console.error(`[LobbyBot] No token for bot ${botId}`);
+    const key = this.botKeys.get(botId);
+    if (!key) {
+      console.error(`[LobbyBot] No key for bot ${botId}`);
       return;
     }
 
     const mcpServerName = 'game-server';
-    const mcpConfig: McpHttpServerConfig = {
-      type: 'http',
-      url: this.serverUrl,
-      headers: { 'Authorization': `Bearer ${token}` },
-    };
+    const mcpConfig = createBotMcpConfig(handle, key, this.serverUrl);
 
     const prompt = round === 1
       ? `You just joined a lobby. You are ${handle} (${botId}). Call get_guide() first to learn the rules, then check the lobby state, chat with others, and try to form a team of ${this.teamSize}. Be social and decisive!`
@@ -458,7 +444,7 @@ export class LobbyRunner {
   }
 
   // ---------------------------------------------------------------------------
-  // Pre-game phase: bots pick classes — connects via MCP HTTP endpoint
+  // Pre-game phase: bots pick classes — spawns coga subprocess via stdio
   // ---------------------------------------------------------------------------
 
   private async runPreGamePhase(botPlayerIds: string[]): Promise<void> {
@@ -536,18 +522,14 @@ export class LobbyRunner {
     const handle = agent?.handle ?? botId;
     const player = this.lobby.preGamePlayers.get(botId);
     const team = player?.team ?? 'A';
-    const token = this.botTokens.get(botId);
-    if (!token) {
-      console.error(`[PreGameBot] No token for bot ${botId}`);
+    const key = this.botKeys.get(botId);
+    if (!key) {
+      console.error(`[PreGameBot] No key for bot ${botId}`);
       return;
     }
 
     const mcpServerName = 'game-server';
-    const mcpConfig: McpHttpServerConfig = {
-      type: 'http',
-      url: this.serverUrl,
-      headers: { 'Authorization': `Bearer ${token}` },
-    };
+    const mcpConfig = createBotMcpConfig(handle, key, this.serverUrl);
 
     const prompt = mode === 'discuss'
       ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Check your team state, then chat about strategy and class composition. DON'T pick your class yet — just discuss who should play what role. A good team needs a mix of classes!`

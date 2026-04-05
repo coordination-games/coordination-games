@@ -6,18 +6,39 @@
  * the client-side plugin pipeline over relay messages in responses.
  */
 
+import { ethers } from "ethers";
 import { ApiClient } from "./api-client.js";
 import { processState } from "./pipeline.js";
+
+export interface GameClientOptions {
+  /** Pre-existing auth token (skips challenge-response). */
+  token?: string;
+  /** Private key for wallet-based challenge-response auth. */
+  privateKey?: string;
+  /** Display name to register with the server. */
+  name?: string;
+}
 
 export class GameClient {
   private api: ApiClient;
   private token: string | null = null;
+  private privateKey: string | null = null;
+  private name: string | null = null;
+  private authPromise: Promise<void> | null = null;
+  private authenticated = false;
 
-  constructor(serverUrl: string, token?: string) {
+  constructor(serverUrl: string, options?: GameClientOptions) {
     this.api = new ApiClient(serverUrl);
-    if (token) {
-      this.token = token;
-      this.api.setAuthToken(token);
+    if (options?.token) {
+      this.token = options.token;
+      this.api.setAuthToken(options.token);
+      this.authenticated = true;
+    }
+    if (options?.privateKey) {
+      this.privateKey = options.privateKey;
+    }
+    if (options?.name) {
+      this.name = options.name;
     }
   }
 
@@ -30,25 +51,53 @@ export class GameClient {
   // Auth
   // ---------------------------------------------------------------------------
 
-  /** Simple signin (display name, dev mode). */
-  async signin(name: string): Promise<{ token: string; agentId: string; name: string; reconnected?: boolean }> {
-    const result = await this.api.post('/api/player/signin', { name });
+  /**
+   * Authenticate with the server using wallet-based challenge-response.
+   *
+   * 1. Request a challenge nonce from the server
+   * 2. Sign the challenge message with the private key
+   * 3. Send signature + address + name to the server for verification
+   * 4. Cache the returned token for all subsequent API calls
+   */
+  async authenticate(privateKey: string): Promise<void> {
+    const wallet = new ethers.Wallet(privateKey);
+    const name = this.name || wallet.address.slice(0, 10);
+
+    // 1. Request challenge
+    const challenge = await this.api.post('/api/player/auth/challenge');
+
+    // 2. Sign the challenge message
+    const signature = await wallet.signMessage(challenge.message);
+
+    // 3. Verify with server
+    const result = await this.api.post('/api/player/auth/verify', {
+      nonce: challenge.nonce,
+      signature,
+      address: wallet.address,
+      name,
+    });
+
+    // 4. Cache the token
     this.token = result.token;
     this.api.setAuthToken(result.token);
-    return result;
+    this.authenticated = true;
   }
 
-  /** Challenge-response auth (wallet-based). */
-  async authChallenge(): Promise<{ nonce: string; expiresIn: number }> {
-    return this.api.post('/api/player/auth/challenge');
-  }
-
-  /** Verify a signed challenge. */
-  async authVerify(nonce: string, signature: string, address: string, name: string): Promise<{ token: string; agentId: string; name: string }> {
-    const result = await this.api.post('/api/player/auth/verify', { nonce, signature, address, name });
-    this.token = result.token;
-    this.api.setAuthToken(result.token);
-    return result;
+  /**
+   * Ensure we are authenticated before making API calls.
+   * If a private key was provided but we haven't authenticated yet, do so now.
+   * Uses a single promise to avoid concurrent auth attempts.
+   */
+  async ensureAuth(): Promise<void> {
+    if (this.authenticated) return;
+    if (!this.privateKey) return; // No key — caller must handle auth themselves
+    if (!this.authPromise) {
+      this.authPromise = this.authenticate(this.privateKey).catch((err) => {
+        this.authPromise = null; // Allow retry on failure
+        throw err;
+      });
+    }
+    await this.authPromise;
   }
 
   // ---------------------------------------------------------------------------
@@ -57,28 +106,33 @@ export class GameClient {
 
   /** Get the dynamic game guide/playbook. */
   async getGuide(): Promise<any> {
+    await this.ensureAuth();
     return this.api.get('/api/player/guide');
   }
 
   /** Get current game/lobby state (fog-filtered, with pipeline processing). */
   async getState(): Promise<any> {
+    await this.ensureAuth();
     const raw = await this.api.get('/api/player/state');
     return this.processResponse(raw);
   }
 
   /** Long-poll for next event (turn change, chat, phase change). */
   async waitForUpdate(): Promise<any> {
+    await this.ensureAuth();
     const raw = await this.api.get('/api/player/wait');
     return this.processResponse(raw);
   }
 
   /** Submit a gameplay move (direction path). */
   async submitMove(path: string[]): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/move', { path });
   }
 
   /** Submit a lobby-phase action (propose-team, accept-team, leave-team, choose-class). */
   async submitAction(action: string, target?: string, cls?: string): Promise<any> {
+    await this.ensureAuth();
     const body: Record<string, any> = { action };
     if (target) body.target = target;
     if (cls) body.class = cls;
@@ -87,6 +141,7 @@ export class GameClient {
 
   /** Send a chat message (routed by server based on current phase). */
   async chat(message: string): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/chat', { message });
   }
 
@@ -96,16 +151,19 @@ export class GameClient {
 
   /** List available lobbies. */
   async listLobbies(): Promise<any> {
+    await this.ensureAuth();
     return this.api.get('/api/lobbies');
   }
 
   /** Join an existing lobby. */
   async joinLobby(lobbyId: string): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/lobby/join', { lobbyId });
   }
 
   /** Create a new lobby (auto-joins the creator). */
   async createLobby(teamSize?: number): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/lobby/create', { teamSize });
   }
 
@@ -115,21 +173,25 @@ export class GameClient {
 
   /** Invite an agent to your team. */
   async proposeTeam(agentId: string): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/team/propose', { agentId });
   }
 
   /** Accept a team invite. */
   async acceptTeam(teamId: string): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/team/accept', { teamId });
   }
 
   /** Leave your current team. */
   async leaveTeam(): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/team/leave');
   }
 
   /** Choose your unit class (rogue, knight, mage). */
   async chooseClass(cls: string): Promise<any> {
+    await this.ensureAuth();
     return this.api.post('/api/player/class', { class: cls });
   }
 
@@ -139,6 +201,7 @@ export class GameClient {
 
   /** Get ELO leaderboard. */
   async getLeaderboard(limit?: number, offset?: number): Promise<any> {
+    await this.ensureAuth();
     const params = new URLSearchParams();
     if (limit != null) params.set('limit', String(limit));
     if (offset != null) params.set('offset', String(offset));
@@ -148,6 +211,7 @@ export class GameClient {
 
   /** Get your own stats. */
   async getMyStats(): Promise<any> {
+    await this.ensureAuth();
     return this.api.get('/api/player/stats');
   }
 

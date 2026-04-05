@@ -3,6 +3,9 @@
  *
  * Single source of truth for tool names, schemas, and descriptions.
  * Used by both the CLI MCP server (coga serve) and the bot harness.
+ *
+ * Auth is handled transparently by GameClient (wallet-based challenge-response).
+ * No auth tools are exposed to agents -- they just call game tools.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -10,62 +13,19 @@ import { z } from "zod";
 import type { GameClient } from "./game-client.js";
 
 export interface RegisterToolsOptions {
-  /** When true, auth tools return a "test mode" message instead of calling the server. */
+  /** When true, indicates this is a bot session (for future bot-specific behavior). */
   botMode?: boolean;
 }
 
 /**
  * Register all game tools on an MCP server backed by a GameClient.
+ * Auth is handled by GameClient's auto-auth -- no signin/register tools needed.
  */
 export function registerGameTools(
   server: McpServer,
   client: GameClient,
-  options?: RegisterToolsOptions,
+  _options?: RegisterToolsOptions,
 ): void {
-  const botMode = options?.botMode ?? false;
-
-  // ---------------------------------------------------------------------------
-  // Auth
-  // ---------------------------------------------------------------------------
-
-  server.tool(
-    'signin',
-    'Sign in with a display name to get an auth token',
-    { name: z.string().describe('Your display name') },
-    async ({ name }) => {
-      if (botMode) {
-        return jsonResult({
-          message: "You're in test mode — authentication is handled for you. Call get_guide() to learn the rules.",
-        });
-      }
-      try {
-        const result = await client.signin(name);
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
-  server.tool(
-    'register',
-    'Register a name (alias for signin in dev mode)',
-    { name: z.string().describe('The name to register') },
-    async ({ name }) => {
-      if (botMode) {
-        return jsonResult({
-          message: "You're in test mode — authentication is handled for you. Call get_guide() to learn the rules.",
-        });
-      }
-      try {
-        const result = await client.signin(name);
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
   // ---------------------------------------------------------------------------
   // Guide
   // ---------------------------------------------------------------------------

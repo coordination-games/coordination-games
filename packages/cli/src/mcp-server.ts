@@ -5,6 +5,10 @@
  * tools via the shared registerGameTools() function. Supports stdio
  * transport (for Claude Code / Claude Desktop) and HTTP transport
  * (for OpenAI and other HTTP MCP clients).
+ *
+ * Auth is handled transparently by GameClient -- if a private key is
+ * provided, it auto-authenticates via challenge-response before the
+ * first API call. No auth tools are exposed to agents.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -13,26 +17,37 @@ import { GameClient } from "./game-client.js";
 import { registerGameTools } from "./mcp-tools.js";
 import { loadConfig } from "./config.js";
 
-function createMcpServerWithClient(): { server: McpServer; client: GameClient } {
-  const config = loadConfig();
-  const client = new GameClient(config.serverUrl);
+export interface ServeOptions {
+  serverUrl: string;
+  privateKey?: string;
+  name?: string;
+  botMode?: boolean;
+  httpPort?: number;
+}
+
+function createMcpServerWithClient(options?: ServeOptions): { server: McpServer; client: GameClient } {
+  const serverUrl = options?.serverUrl || loadConfig().serverUrl;
+  const client = new GameClient(serverUrl, {
+    privateKey: options?.privateKey,
+    name: options?.name,
+  });
   const server = new McpServer({
     name: "coordination-games",
     version: "0.1.0",
   });
-  registerGameTools(server, client);
+  registerGameTools(server, client, { botMode: options?.botMode });
   return { server, client };
 }
 
-export async function startMcpServer(mode: "stdio" | "http", port?: number) {
-  const { server } = createMcpServerWithClient();
+export async function startMcpServer(mode: "stdio" | "http", options?: ServeOptions) {
+  const { server } = createMcpServerWithClient(options);
 
   if (mode === "stdio") {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     // Server runs until stdin closes
   } else if (mode === "http") {
-    const httpPort = port || 3000;
+    const httpPort = options?.httpPort || 3000;
     try {
       const { StreamableHTTPServerTransport } = await import(
         "@modelcontextprotocol/sdk/server/streamableHttp.js"
@@ -58,7 +73,7 @@ export async function startMcpServer(mode: "stdio" | "http", port?: number) {
         }
 
         if (!sessionId && isInitializeRequest(req.body)) {
-          const { server: newServer } = createMcpServerWithClient();
+          const { server: newServer } = createMcpServerWithClient(options);
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => crypto.randomUUID(),
           });
