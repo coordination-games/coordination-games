@@ -13,7 +13,8 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { Direction, UnitClass, CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { LobbyManager as EngineLobbyManager } from '@coordination-games/game-ctl';
-import type { GameSession } from './game-session.js';
+import type { CtlSession } from './game-session.js';
+import { getStateForAgent, submitCtlMove, allMovesSubmitted } from './game-session.js';
 import crypto from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ const T = { token: z.string().optional().describe("Auth token from signin(). Pas
 // Per-agent MCP server factory
 // ---------------------------------------------------------------------------
 
-export type GameResolver = (agentId: string) => GameSession | null;
+export type GameResolver = (agentId: string) => CtlSession | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type RelayResolver = (agentId: string) => import('./typed-relay.js').GameRelay | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
@@ -347,20 +348,23 @@ function buildUpdates(
   agentId: string,
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,
+  resolveRelay?: RelayResolver,
 ): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
 
   const game = resolveGame(agentId);
   if (game) {
-    updates.phase = game.phase === 'finished' ? 'finished' : 'game';
-    updates.turn = game.turn;
-    updates.moveSubmitted = game.moveSubmissions.has(agentId);
-    // Only return messages the agent hasn't seen yet
-    const allMessages = game.getTeamMessages(agentId);
-    updates.newMessages = getNewMessages(agentId, `game:${game.gameId}`, allMessages);
-    if (game.phase === 'finished') {
+    updates.phase = game.state.phase === 'finished' ? 'finished' : 'game';
+    updates.turn = game.state.turn;
+    updates.moveSubmitted = game.hasSubmitted(agentId);
+    // Get new relay messages for this agent
+    const relay = resolveRelay?.(agentId);
+    if (relay) {
+      updates.relayMessages = relay.receive(agentId);
+    }
+    if (game.state.phase === 'finished') {
       updates.gameOver = true;
-      updates.winner = game.winner;
+      updates.winner = game.state.winner;
     }
     return updates;
   }
@@ -388,16 +392,17 @@ function buildUpdates(
   return updates;
 }
 
-/** Check if there are pending updates (new messages) the agent hasn't seen */
+/** Check if there are pending updates (relay messages or lobby chat) the agent hasn't seen */
 function hasPendingUpdates(
   agentId: string,
   resolveGame: GameResolver,
   resolveLobby: LobbyResolver,
+  resolveRelay?: RelayResolver,
 ): boolean {
   const game = resolveGame(agentId);
   if (game) {
-    const allMessages = game.getTeamMessages(agentId);
-    return peekNewMessages(agentId, `game:${game.gameId}`, allMessages).length > 0;
+    const relay = resolveRelay?.(agentId);
+    return relay ? relay.hasNewMessages(agentId) : false;
   }
 
   const lobby = resolveLobby(agentId);
@@ -533,8 +538,8 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       const lobby = resolveLobby(aid());
 
       if (game) {
-        playerState = `\n## Your Status\n- **Phase:** ${game.phase}\n- **Turn:** ${game.turn}\n`;
-        const unit = game.units.find((u: any) => u.id === aid());
+        playerState = `\n## Your Status\n- **Phase:** ${game.state.phase}\n- **Turn:** ${game.state.turn}\n`;
+        const unit = game.state.units.find((u: any) => u.id === aid());
         if (unit) {
           playerState += `- **Team:** ${unit.team}\n- **Class:** ${unit.unitClass}\n- **Alive:** ${unit.alive}\n`;
         }
@@ -545,7 +550,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       }
 
       // Available tools for current phase
-      const phase = game?.phase ?? lobby?.phase ?? 'none';
+      const phase = game?.state.phase ?? lobby?.phase ?? 'none';
       let availableTools = '\n## Available Tools\n';
       availableTools += '- `get_guide` — this playbook (call anytime)\n';
       availableTools += '- `signin(agentId)` — authenticate\n';
@@ -561,7 +566,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         availableTools += '- `choose_class("rogue"|"knight"|"mage")` — pick your class\n';
         availableTools += '- `chat(message)` — team chat\n';
         availableTools += '- `wait_for_update` — wait for changes\n';
-      } else if (game && game.phase === 'in_progress') {
+      } else if (game && game.state.phase === 'in_progress') {
         availableTools += '- `wait_for_update` — YOUR MAIN LOOP. Returns full state on turn changes.\n';
         availableTools += '- `submit_move(path)` — directions array, e.g. ["N","NE"]\n';
         availableTools += '- `chat(message)` — team-only chat\n';
@@ -637,7 +642,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       if (!result.success) return errorResult(result.error ?? `Failed to join lobby "${lobbyId}".`);
       // Return lightweight updates envelope
       const lobby = resolveLobby(aid());
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({ success: true, agentId: aid(), lobbyId, ...updates });
     },
   );
@@ -653,7 +658,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       const size = teamSize ?? 2;
       const result = onCreateLobby(aid(), sessionEntry.name!, size);
       if (!result.success) return errorResult(result.error ?? 'Failed to create lobby.');
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({ success: true, lobbyId: result.lobbyId, teamSize: size, ...updates });
     },
   );
@@ -670,11 +675,11 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
 
       const game = resolveGame(aid());
       if (game) {
-        const state = game.getStateForAgent(aid());
+        const state = getStateForAgent(game, aid());
         // Include relay messages for client-side pipeline processing
         const relay = resolveRelay?.(aid());
         const relayMessages = relay?.receive(aid()) ?? [];
-        if (game.phase === 'finished') return jsonResult({ phase: 'finished', gameOver: true, winner: game.winner, ...state, relayMessages });
+        if (game.state.phase === 'finished') return jsonResult({ phase: 'finished', gameOver: true, winner: game.state.winner, ...state, relayMessages });
         return jsonResult({ phase: 'game', ...state, relayMessages });
       }
 
@@ -709,7 +714,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       if (lobby && lobby.phase === 'forming') {
         lobby.lobbyChat(aid(), message);
         if (onLobbyChat) onLobbyChat(aid());
-        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
         return jsonResult({ success: true, ...updates });
       }
 
@@ -717,16 +722,15 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       if (lobby && lobby.phase === 'pre_game') {
         lobby.teamChat(aid(), message);
         if (onLobbyChat) onLobbyChat(aid());
-        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
         return jsonResult({ success: true, ...updates });
       }
 
       // Game phase: team chat
       const game = resolveGame(aid());
-      if (game && game.phase === 'in_progress') {
-        game.submitChat(aid(), message);
+      if (game && game.state.phase === 'in_progress') {
         if (onChat) onChat(game.gameId, aid(), message);
-        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
         return jsonResult({ success: true, ...updates });
       }
 
@@ -746,7 +750,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       if (lobby.phase !== 'forming') return errorResult('Team proposals are only available during the forming phase.');
       const result = lobby.proposeTeam(aid(), targetAgentId);
       if (!result.success) return errorResult(result.error ?? 'Failed to propose team.');
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({
         success: true,
         teamId: result.teamId,
@@ -768,7 +772,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       if (lobby.phase !== 'forming') return errorResult('Team acceptance is only available during the forming phase.');
       const result = lobby.acceptTeam(aid(), teamId);
       if (!result.success) return errorResult(result.error ?? 'Failed to accept team.');
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({ success: true, ...updates });
     },
   );
@@ -785,7 +789,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       if (lobby.phase !== 'forming') return errorResult('Can only leave teams during the forming phase.');
       const result = lobby.leaveTeam(aid());
       if (!result.success) return errorResult(result.error ?? 'Failed to leave team.');
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({ success: true, message: 'You left your team. You can now accept invites or propose a new team.', ...updates });
     },
   );
@@ -803,7 +807,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       const unitClass = args['class'] as UnitClass;
       const result = lobby.chooseClass(aid(), unitClass);
       if (!result.success) return errorResult(result.error ?? 'Failed to choose class.');
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({ success: true, class: unitClass, ...updates });
     },
   );
@@ -823,36 +827,36 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
 
       // === Game phase ===
       if (game) {
-        if (game.phase === 'finished') {
-          const state = game.getStateForAgent(aid());
-          return jsonResult({ reason: 'game_over', gameOver: true, winner: game.winner, ...state });
+        if (game.state.phase === 'finished') {
+          const state = getStateForAgent(game, aid());
+          return jsonResult({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state });
         }
 
         // If the turn advanced since agent last got full state, ALWAYS return full state
         // This prevents the agent from missing turn boundaries when woken by chat
-        if (hasAgentMissedTurn(aid(), game.turn)) {
-          const state = game.getStateForAgent(aid());
-          setAgentLastTurn(aid(), game.turn);
+        if (hasAgentMissedTurn(aid(), game.state.turn)) {
+          const state = getStateForAgent(game, aid());
+          setAgentLastTurn(aid(), game.state.turn);
           // Consume any pending messages so they don't trigger again
-          buildUpdates(aid(), resolveGame, resolveLobby);
-          return jsonResult({ reason: 'turn_changed', moveSubmitted: game.moveSubmissions.has(aid()), ...state });
+          buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
+          return jsonResult({ reason: 'turn_changed', moveSubmitted: game.hasSubmitted(aid()), ...state });
         }
 
         // Check for pending updates BEFORE blocking — if there are unseen messages, return immediately
-        if (hasPendingUpdates(aid(), resolveGame, resolveLobby)) {
-          const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        if (hasPendingUpdates(aid(), resolveGame, resolveLobby, resolveRelay)) {
+          const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
           return jsonResult({ reason: 'update', ...updates });
         }
 
         // No move yet: return full state so agent can see the board and decide
-        if (!game.moveSubmissions.has(aid())) {
-          const state = game.getStateForAgent(aid());
-          setAgentLastTurn(aid(), game.turn);
+        if (!game.hasSubmitted(aid())) {
+          const state = getStateForAgent(game, aid());
+          setAgentLastTurn(aid(), game.state.turn);
           return jsonResult({ reason: 'new_turn', moveSubmitted: false, ...state });
         }
 
         // Move submitted, no pending updates — wait for turn resolution, teammate chat, or keepalive
-        const prevTurn = game.turn;
+        const prevTurn = game.state.turn;
         await Promise.race([
           waitForNextTurn(game.gameId, 25000),
           waitForAgentUpdate(aid(), 25000),
@@ -861,28 +865,28 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         const updatedGame = resolveGame(aid());
         if (!updatedGame) return jsonResult({ reason: 'game_ended' });
 
-        if (updatedGame.phase === 'finished') {
-          const state = updatedGame.getStateForAgent(aid());
-          return jsonResult({ reason: 'game_over', gameOver: true, winner: updatedGame.winner, ...state });
+        if (updatedGame.state.phase === 'finished') {
+          const state = getStateForAgent(updatedGame, aid());
+          return jsonResult({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state });
         }
 
         // Turn changed → full state
-        if (updatedGame.turn > prevTurn) {
-          const state = updatedGame.getStateForAgent(aid());
-          setAgentLastTurn(aid(), updatedGame.turn);
+        if (updatedGame.state.turn > prevTurn) {
+          const state = getStateForAgent(updatedGame, aid());
+          setAgentLastTurn(aid(), updatedGame.state.turn);
           return jsonResult({ reason: 'turn_changed', ...state });
         }
 
         // Chat wakeup or keepalive → lightweight updates only
-        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
         return jsonResult({ reason: 'update', ...updates });
       }
 
       // === Lobby phase ===
       if (lobby) {
         // Check for pending updates BEFORE blocking
-        if (hasPendingUpdates(aid(), resolveGame, resolveLobby)) {
-          const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        if (hasPendingUpdates(aid(), resolveGame, resolveLobby, resolveRelay)) {
+          const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
           return jsonResult({ reason: 'update', ...updates });
         }
 
@@ -892,7 +896,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         // After waking, check if game started (lobby → game transition)
         const newGame = resolveGame(aid());
         if (newGame) {
-          const state = newGame.getStateForAgent(aid());
+          const state = getStateForAgent(newGame, aid());
           return jsonResult({ reason: 'game_started', phase: 'game', ...state });
         }
 
@@ -912,7 +916,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         }
 
         // Same phase → lightweight updates (chat, team changes)
-        const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+        const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
         return jsonResult({ reason: 'update', ...updates });
       }
 
@@ -945,7 +949,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
             if (lobby.phase !== 'forming') return errorResult('Team proposals only during forming phase.');
             const result = lobby.proposeTeam(aid(), args.target);
             if (!result.success) return errorResult(result.error ?? 'Failed.');
-            const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+            const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
             return jsonResult({ success: true, teamId: result.teamId, ...updates });
           }
           case 'accept-team': {
@@ -953,14 +957,14 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
             if (lobby.phase !== 'forming') return errorResult('Team acceptance only during forming phase.');
             const result = lobby.acceptTeam(aid(), args.target);
             if (!result.success) return errorResult(result.error ?? 'Failed.');
-            const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+            const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
             return jsonResult({ success: true, ...updates });
           }
           case 'leave-team': {
             if (lobby.phase !== 'forming') return errorResult('Can only leave teams during forming phase.');
             const result = lobby.leaveTeam(aid());
             if (!result.success) return errorResult(result.error ?? 'Failed.');
-            const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+            const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
             return jsonResult({ success: true, ...updates });
           }
           case 'choose-class': {
@@ -971,7 +975,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
             if (lobby.phase !== 'pre_game') return errorResult('Class selection only during pre-game phase.');
             const result = lobby.chooseClass(aid(), cls as UnitClass);
             if (!result.success) return errorResult(result.error ?? 'Failed.');
-            const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+            const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
             return jsonResult({ success: true, class: cls, ...updates });
           }
           default:
@@ -982,7 +986,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       // --- Gameplay move (direction path) ---
       const game = resolveGame(aid());
       if (!game) return errorResult('No game in progress.');
-      if (game.phase !== 'in_progress') return errorResult('Cannot submit moves — game phase is: ' + game.phase);
+      if (game.state.phase !== 'in_progress') return errorResult('Cannot submit moves — game phase is: ' + game.state.phase);
 
       const path = args.path ?? [];
       for (const dir of path) {
@@ -990,10 +994,10 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       }
 
       const directions = path as Direction[];
-      const result = game.submitMove(aid(), directions);
+      const result = submitCtlMove(game, aid(), directions);
       if (!result.success) return errorResult(result.error ?? 'Failed to submit move.');
       if (onMoveSubmitted) onMoveSubmitted(game.gameId, aid());
-      const updates = buildUpdates(aid(), resolveGame, resolveLobby);
+      const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
       return jsonResult({ success: true, path: directions, ...updates });
     },
   );

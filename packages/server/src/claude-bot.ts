@@ -8,7 +8,9 @@ import {
   Direction,
   UnitClass,
 } from '@coordination-games/game-ctl';
-import type { GameSession } from './game-session.js';
+import type { CtlSession } from './game-session.js';
+import { getStateForAgent, submitCtlMove } from './game-session.js';
+import type { GameRelay } from './typed-relay.js';
 
 const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
 
@@ -46,7 +48,7 @@ You have 30 SECONDS per turn. Be decisive and aggressive. Always submit a move.`
 /**
  * Create an MCP server with game tools scoped to a specific agent.
  */
-function createGameMcpServer(game: GameSession, agentId: string) {
+function createGameMcpServer(game: CtlSession, agentId: string, relay?: GameRelay) {
   return createSdkMcpServer({
     name: `lobster-${agentId}`,
     version: '0.1.0',
@@ -57,7 +59,7 @@ function createGameMcpServer(game: GameSession, agentId: string) {
         {},
         async () => {
           try {
-            const state = game.getStateForAgent(agentId);
+            const state = getStateForAgent(game, agentId);
             return { content: [{ type: 'text' as const, text: JSON.stringify(state) }] };
           } catch (err: any) {
             return { content: [{ type: 'text' as const, text: `Error: ${err.message}` }], isError: true };
@@ -72,7 +74,7 @@ function createGameMcpServer(game: GameSession, agentId: string) {
           const directions = (path ?? []).filter((d: string): d is Direction =>
             VALID_DIRECTIONS.includes(d as Direction),
           );
-          const result = game.submitMove(agentId, directions);
+          const result = submitCtlMove(game, agentId, directions);
           return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
         },
       ),
@@ -81,9 +83,11 @@ function createGameMcpServer(game: GameSession, agentId: string) {
         'Send a message to your teammates. They cannot see what you see — share intel about enemy positions, flag location, and your plan.',
         { message: z.string().describe('Message to send to your team') },
         async ({ message }) => {
-          game.submitChat(agentId, message);
-          const messages = game.getTeamMessages(agentId);
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, recentMessages: messages.slice(-10) }) }] };
+          if (relay) {
+            relay.send(agentId, game.state.turn, { type: 'messaging', data: { body: message }, scope: 'team', pluginId: 'basic-chat' });
+          }
+          const recentMessages = relay ? relay.getSpectatorMessages(game.state.turn).filter(m => m.type === 'messaging').slice(-10).map(m => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn })) : [];
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, recentMessages }) }] };
         },
       ),
     ],
@@ -105,11 +109,12 @@ export interface BotSession {
  * If the bot has a sessionId, resumes the existing conversation.
  */
 export async function runClaudeBotTurn(
-  game: GameSession,
+  game: CtlSession,
   bot: BotSession,
   turn: number,
+  relay?: GameRelay,
 ): Promise<void> {
-  const mcpServer = createGameMcpServer(game, bot.id);
+  const mcpServer = createGameMcpServer(game, bot.id, relay);
   const serverName = `lobster-${bot.id}`;
 
   const prompt = turn === 1
@@ -181,17 +186,18 @@ export function createBotSessions(
  * Run all Claude bots for a single turn in parallel.
  */
 export async function runAllBotsTurn(
-  game: GameSession,
+  game: CtlSession,
   sessions: BotSession[],
   turn: number,
+  relay?: GameRelay,
 ): Promise<void> {
   const aliveSessions = sessions.filter((bot) => {
-    const unit = game.units.find((u) => u.id === bot.id);
+    const unit = game.state.units.find((u: { id: string }) => u.id === bot.id);
     return unit && unit.alive;
   });
 
   const promises = aliveSessions.map((bot) =>
-    runClaudeBotTurn(game, bot, turn).catch(
+    runClaudeBotTurn(game, bot, turn, relay).catch(
       (err) => {
         console.error(`Claude bot ${bot.id} error:`, err.message ?? err);
       },
@@ -202,9 +208,9 @@ export async function runAllBotsTurn(
 
   // Submit empty moves for any bots that didn't submit (timeout/error/dead)
   for (const bot of sessions) {
-    if (!game.moveSubmissions.has(bot.id)) {
-      const unit = game.units.find((u) => u.id === bot.id);
-      if (unit?.alive) game.submitMove(bot.id, []);
+    if (!game.hasSubmitted(bot.id)) {
+      const unit = game.state.units.find((u: { id: string }) => u.id === bot.id);
+      if (unit?.alive) submitCtlMove(game, bot.id, []);
     }
   }
 }

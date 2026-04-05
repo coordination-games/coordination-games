@@ -1,9 +1,9 @@
 /**
- * CtlGameSession — CtL-specific game session wrapping the generic GameSession.
+ * CtL game session helpers.
  *
- * Adds CtL-specific state accessors that api.ts uses for spectator views,
- * bot orchestration, etc. Also keeps legacy chat methods until we fully
- * migrate to relay-only chat.
+ * The server uses the generic GameSession<CtlGameState, CtlMove> from platform.
+ * These helpers provide typed access to CtL-specific state and wrap the pure
+ * game functions for server-side operations.
  */
 
 import { GameSession } from '@coordination-games/platform';
@@ -11,142 +11,112 @@ import {
   CtlGameState,
   GameUnit,
   FlagState,
-  TeamMessage,
-  TurnRecord,
   GamePhase,
   GameState,
   GameConfig,
   Direction,
-  createGameState,
-  submitMove as pureSubmitMove,
-  submitChat as pureSubmitChat,
-  allMovesSubmitted as pureAllMovesSubmitted,
-  resolveTurn as pureResolveTurn,
-  getStateForAgent as pureGetStateForAgent,
-  getTeamMessages as pureGetTeamMessages,
-  isGameOver as pureIsGameOver,
-  CaptureTheLobsterPlugin,
+  TurnRecord,
   UnitClass,
   GameMap,
+  createGameState,
+  getStateForAgent as pureGetStateForAgent,
+  resolveTurn as pureResolveTurn,
+  allMovesSubmitted as pureAllMovesSubmitted,
+  submitMove as pureSubmitMove,
+  isGameOver as pureIsGameOver,
+  CaptureTheLobsterPlugin,
   getMapRadiusForTeamSize,
   getTurnLimitForRadius,
   getUnitVision,
 } from '@coordination-games/game-ctl';
-import type { CtlMove, CtlConfig } from '@coordination-games/game-ctl';
+import type { CtlMove } from '@coordination-games/game-ctl';
 
-/**
- * CtL game session. Wraps the pure game functions with mutable state tracking.
- * Provides typed accessors for CtL-specific state (units, flags, map, etc.).
- */
-export class CtlGameSession {
-  private _state: CtlGameState;
-  private _turnHistory: TurnRecord[] = [];
-  readonly gameId: string;
+export type CtlSession = GameSession<CtlGameState, CtlMove>;
 
-  /** Track which agents have submitted moves this turn */
-  private _submittedMoves = new Set<string>();
+// Re-export for convenience
+export type { CtlGameState, CtlMove, GameUnit, FlagState, GamePhase, GameState, GameConfig, Direction, TurnRecord, UnitClass, GameMap };
+export { GameSession, CaptureTheLobsterPlugin, createGameState, getMapRadiusForTeamSize, getTurnLimitForRadius, getUnitVision };
 
-  constructor(state: CtlGameState, gameId: string) {
-    this._state = state;
-    this.gameId = gameId;
-  }
+// ---------------------------------------------------------------------------
+// CtL-specific server operations
+// ---------------------------------------------------------------------------
 
-  // --- State accessors ---
-
-  get state(): CtlGameState { return this._state; }
-  get turn(): number { return this._state.turn; }
-  get phase(): GamePhase { return this._state.phase; }
-  get winner(): 'A' | 'B' | null { return this._state.winner; }
-  get score(): { A: number; B: number } { return this._state.score; }
-  get units(): GameUnit[] { return this._state.units; }
-  get flags(): { A: FlagState[]; B: FlagState[] } { return this._state.flags; }
-  get config(): Required<GameConfig> { return this._state.config; }
-  get teamMessages(): { A: TeamMessage[]; B: TeamMessage[] } { return this._state.teamMessages; }
-  get mapRadius(): number { return this._state.mapRadius; }
-  get mapTiles(): [string, string][] { return this._state.mapTiles; }
-  get mapBases(): CtlGameState['mapBases'] { return this._state.mapBases; }
-
-  get map(): { tiles: Map<string, string>; radius: number; bases: CtlGameState['mapBases'] } {
-    return {
-      tiles: new Map(this._state.mapTiles),
-      radius: this._state.mapRadius,
-      bases: this._state.mapBases,
-    };
-  }
-
-  // --- Move tracking ---
-
-  get moveSubmissions(): { has(id: string): boolean; size: number } {
-    return {
-      has: (id: string) => this._submittedMoves.has(id),
-      size: this._submittedMoves.size,
-    };
-  }
-
-  // --- Mutating operations ---
-
-  submitMove(agentId: string, path: Direction[]): { success: boolean; error?: string } {
-    const result = pureSubmitMove(this._state, agentId, path);
-    if (result.success) {
-      this._state = result.state;
-      this._submittedMoves.add(agentId);
-    }
-    return { success: result.success, error: result.error };
-  }
-
-  /** Legacy: direct chat on game state. Use relay instead for new code. */
-  submitChat(agentId: string, message: string): void {
-    this._state = pureSubmitChat(this._state, agentId, message);
-  }
-
-  /** Legacy: get team messages from game state. Use relay instead for new code. */
-  getTeamMessages(agentId: string, sinceTurn?: number): TeamMessage[] {
-    return pureGetTeamMessages(this._state, agentId, sinceTurn);
-  }
-
-  allMovesSubmitted(): boolean {
-    return pureAllMovesSubmitted(this._state);
-  }
-
-  resolveTurn(): TurnRecord {
-    for (const unit of this._state.units) {
-      if (unit.alive && !this._submittedMoves.has(unit.id)) {
-        const result = pureSubmitMove(this._state, unit.id, []);
-        this._state = result.state;
-      }
-    }
-
-    const { state: newState, record } = pureResolveTurn(this._state);
-    this._state = newState;
-    this._turnHistory.push(record);
-    this._submittedMoves.clear();
-    return record;
-  }
-
-  getStateForAgent(agentId: string): GameState {
-    return pureGetStateForAgent(this._state, agentId, this._submittedMoves);
-  }
-
-  isGameOver(): boolean {
-    return pureIsGameOver(this._state);
-  }
-
-  getTurnHistory(): TurnRecord[] {
-    return this._turnHistory;
-  }
-
-  // --- Static factory ---
-
-  static create(
-    gameId: string,
-    map: GameMap,
-    players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
-    config?: GameConfig,
-  ): CtlGameSession {
-    const state = createGameState(map, players, config);
-    return new CtlGameSession(state, gameId);
-  }
+/** Submit a directional move for an agent. */
+export function submitCtlMove(
+  session: CtlSession,
+  agentId: string,
+  path: Direction[],
+): { success: boolean; error?: string } {
+  return session.submitMove(agentId, { path });
 }
 
-// Re-export as GameSession for backwards compatibility with api.ts
-export { CtlGameSession as GameSession };
+/** Check if all alive units have submitted moves. */
+export function allMovesSubmitted(session: CtlSession): boolean {
+  return pureAllMovesSubmitted(session.state);
+}
+
+/** Resolve the current turn — fills empty moves for AFK units, then resolves. */
+export function resolveCtlTurn(session: CtlSession): TurnRecord {
+  // Fill empty moves for alive units that haven't submitted
+  for (const unit of session.state.units) {
+    if (unit.alive && !session.hasSubmitted(unit.id)) {
+      session.submitMove(unit.id, { path: [] });
+    }
+  }
+
+  // The generic session calls plugin.resolveTurn which handles the actual resolution
+  const prevState = session.state;
+  session.resolveTurn();
+
+  // Build the turn record from the pure function (for history/spectator)
+  const { record } = pureResolveTurn(prevState);
+  recordTurn(session.gameId, record);
+  return record;
+}
+
+/** Get the fog-filtered state for an agent. */
+export function getStateForAgent(session: CtlSession, agentId: string): GameState {
+  return pureGetStateForAgent(session.state, agentId, new Set(session.submittedMoves.keys()));
+}
+
+/** Check if the game is over. */
+export function isGameOver(session: CtlSession): boolean {
+  return pureIsGameOver(session.state);
+}
+
+// ---------------------------------------------------------------------------
+// Turn history tracking (server-side, not in generic GameSession)
+// ---------------------------------------------------------------------------
+
+const turnHistories = new Map<string, TurnRecord[]>();
+
+/** Get the turn history for a game. */
+export function getTurnHistory(session: CtlSession): TurnRecord[] {
+  return turnHistories.get(session.gameId) ?? [];
+}
+
+/** Record a turn in the history. Called by resolveCtlTurn. */
+function recordTurn(gameId: string, record: TurnRecord): void {
+  let history = turnHistories.get(gameId);
+  if (!history) {
+    history = [];
+    turnHistories.set(gameId, history);
+  }
+  history.push(record);
+}
+
+/** Clean up turn history when game is done. */
+export function clearTurnHistory(gameId: string): void {
+  turnHistories.delete(gameId);
+}
+
+/** Create a new CtL game session. */
+export function createCtlSession(
+  gameId: string,
+  map: GameMap,
+  players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
+  config?: GameConfig,
+): CtlSession {
+  const state = createGameState(map, players, config);
+  return new GameSession(CaptureTheLobsterPlugin, state, gameId);
+}

@@ -106,4 +106,4 @@ Combat resolves **after all movement**, at final positions only:
 - Turn resolution is **deterministic** — same inputs always produce same outputs
 - All moves are signed by the player's wallet (EIP-712 typed data)
 - Game state is verifiable: anyone can replay the game from the signed move history
-- The game plugin implements `CoordinationGame<CtlConfig, CtlState, CtlMove, CtlOutcome>` from the platform
+- The game plugin implements `CoordinationGame<CtlConfig, CtlGameState, CtlMove, CtlOutcome>` from the platform

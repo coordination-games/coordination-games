@@ -12,26 +12,21 @@ The engine provides a turn clock, typed relay, and verification layer. Game plug
 
 ---
 
-## Architecture Decision: Stateless Engine (Option A)
+## Architecture Decision: Stateless Engine
 
 ### Why
 
 The game engine is the product. CtL is a proof of concept. We want the engine to be the cleanest possible abstraction so other game devs can implement `CoordinationGame` and get lobbies, signing, Merkle proofs, spectator feeds, and settlement for free.
 
-A mutable `GameManager` class was the original implementation, but it created problems:
-- The `CoordinationGame` interface expects immutable state objects, so the plugin had to wrap the mutable class with a `WeakMap<CtlState, GameManager>` cache — a fragile, leaky abstraction
-- The server bypassed the framework entirely during gameplay, talking to GameManager directly, meaning determinism wasn't enforced and Merkle proofs were an afterthought
-- Game devs copying this pattern would inherit the complexity
+### What We Did
 
-### What We're Doing
+1. **Pure functions.** `resolveTurn(state, moves) -> newState`. All game logic is stateless — state in, state out. No mutable classes.
 
-1. **GameManager becomes pure functions.** `resolveTurn(state, moves) -> newState` instead of `gm.resolveTurn()`. The helpers (combat, movement, fog, hex) are already functional — the class was just glue.
+2. **The plugin is trivial.** `CaptureTheLobsterPlugin.resolveTurn` just calls the pure function. No wrappers, no caching.
 
-2. **The plugin becomes trivial.** `CaptureTheLobsterPlugin.resolveTurn` just calls the pure function. No WeakMap, no reconstruction, no cache.
+3. **Generic GameSession in platform.** `GameSession<TState, TMove>` works with any `CoordinationGame`. Holds state, tracks move submissions, records state history. Game-specific helpers (e.g. `submitCtlMove`, `resolveCtlTurn`) live alongside the game code.
 
-3. **The server runs games through GameRoom.** `GameFramework.createRoom()`, `GameFramework.submitMove()`, `GameFramework.resolveTurn()`. The framework automatically records turn history, hashes states, builds Merkle trees.
-
-4. **`coordination.ts` bridge gets deleted.** It existed to connect the direct GameManager to the framework at game-finish time. With games running through GameRoom, it's unnecessary.
+4. **Chat is relay-only.** Removed `teamMessages` from game state entirely. Chat flows through the typed relay as `type: "messaging"` data. Game state contains only provable game logic — positions, scores, moves.
 
 ### What a Game Dev Implements
 
@@ -67,21 +62,24 @@ These are presentation and orchestration concerns. The game plugin is pure game 
 
 ## What Works Right Now
 
-- **Plugin architecture** — CtL, chat, ELO all as separate packages
-- **Typed relay** — routes messages by scope, included in state responses
+- **Plugin architecture** — CtL, chat, ELO all as separate packages (`@coordination-games/*`)
+- **Typed relay** — routes messages by scope, included in state responses via `relay.receive()`
+- **Relay-native chat** — chat removed from game state, flows entirely through relay
+- **Generic GameSession** — `GameSession<TState, TMove>` in platform, works with any game
 - **Client-side pipeline** — runs in CLI over relay messages
 - **Phase-generic move** — works for both lobby actions and gameplay
-- **Dynamic guide** — shows game rules + phase-appropriate tools
-- **178+ tests** pass across all packages
+- **Dynamic guide** — shows game rules, phase-appropriate tools, required plugins
+- **289 tests** pass across all packages
 - **Live** at capturethelobster.com
 
 ## What Still Needs Work
 
 - Plugin config (`~/.coordination/plugins.yaml`) — hardcoded defaults
 - Schema registry — types are informal strings
-- Full relay-native chat — still dual-writes through old path
 - Dynamic MCP tool generation from phase declarations
 - Third-party plugin install flow
+- Generic bot harness — bots connecting via standard MCP endpoint (see docs/GENERIC_BOTS_SPEC.md)
+- Linting / strict TypeScript (Biome + typescript-eslint, ban `any`)
 
 ---
 

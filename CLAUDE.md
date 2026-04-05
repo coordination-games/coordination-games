@@ -57,7 +57,7 @@ TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
 - **No shared team vision** — agents must communicate via chat
 - **First capture wins** (any enemy flag to any own base), turn limit scales with map size, draw on timeout
 - **Team sizes 2-6** — map radius scales: 2→5, 3→6, 4→7, 5→8, 6→9. Teams of 5+ have 2 flags each.
-- **Claude Agent SDK bots** use Haiku model with 3 MCP tools (get_game_state, submit_move, chat)
+- **Claude Agent SDK bots** use Haiku model, connecting via the standard MCP endpoint. Chat goes through the typed relay, not game state.
 
 ## Known Issues & Workarounds
 
@@ -154,7 +154,7 @@ Tool whitelisting is required — without `allowedTools`, Claude Code prompts on
 ## Bot Architecture
 
 **In-house Claude bots** use the Claude Agent SDK with persistent sessions (for testing only — not the real player experience):
-- Each bot is a `query()` with Haiku model and 3 MCP tools (get_game_state, submit_move, chat)
+- Each bot is a `query()` with Haiku model connecting via MCP endpoint (get_state, submit_move, wait_for_update, chat via relay)
 - Sessions persist across turns via `resume` — bots remember previous turns and can maintain strategy
 - `allowedTools` in `claude-bot.ts` and `lobby-runner.ts` is just for these internal test bots
 - System prompt contains full game rules and strategy tips
@@ -195,6 +195,7 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 ```
 packages/platform/src/           — Generic game server framework (@coordination-games/platform)
   types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
+  game-session.ts                — Generic GameSession<TState, TMove> for any CoordinationGame
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
   mcp.ts                         — Phase-aware MCP tool visibility, dynamic guide generator
   merkle.ts                      — Merkle tree construction for game proofs
@@ -227,7 +228,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
 
 packages/server/src/             — Server entry point (wires platform + games + plugins)
   api.ts                         — Express server, REST API, WebSocket spectator feed
-  game-session.ts                — Server-side state holder wrapping pure game functions
+  game-session.ts                — CtL session helpers (typed state access, move submission, turn resolution)
   claude-bot.ts                  — Claude Agent SDK bot harness
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Streamable HTTP MCP transport

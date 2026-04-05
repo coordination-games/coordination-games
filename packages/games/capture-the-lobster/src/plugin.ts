@@ -16,7 +16,6 @@ import {
   createGameState,
   validateMoveForPlayer,
   submitMove as gameSubmitMove,
-  submitChat as gameSubmitChat,
   resolveTurn,
   isGameOver,
 } from './game.js';
@@ -48,7 +47,6 @@ export interface CtlPlayerConfig {
 /** A single player's move in CtL. */
 export interface CtlMove {
   path: Direction[];
-  chatMessage?: string;
 }
 
 /** CtL game outcome. */
@@ -122,9 +120,6 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     let current = state;
 
     for (const [playerId, move] of moves) {
-      if (move.chatMessage) {
-        current = gameSubmitChat(current, playerId, move.chatMessage);
-      }
       const result = gameSubmitMove(current, playerId, move.path);
       current = result.state;
     }

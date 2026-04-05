@@ -6,13 +6,6 @@ import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
 
 import {
-  GamePhase,
-  GameUnit,
-  FlagState,
-  TeamMessage,
-  TurnRecord,
-  UnitClass,
-  Direction,
   Hex,
   generateMap,
   TileType,
@@ -21,11 +14,28 @@ import {
   hexToString,
   CLASS_VISION,
   LobbyManager as EngineLobbyManager,
+  CtlOutcome,
+} from '@coordination-games/game-ctl';
+import {
+  type CtlSession,
+  type GameUnit,
+  type FlagState,
+  type GamePhase,
+  type TurnRecord,
+  type UnitClass,
+  type Direction,
+  type GameConfig,
+  submitCtlMove,
+  allMovesSubmitted,
+  resolveCtlTurn,
+  getStateForAgent,
+  isGameOver,
+  createCtlSession,
+  getTurnHistory,
   getMapRadiusForTeamSize,
   getTurnLimitForRadius,
   CaptureTheLobsterPlugin,
-  CtlOutcome,
-} from '@coordination-games/game-ctl';
+} from './game-session.js';
 import { EloTracker } from './elo.js';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
@@ -38,7 +48,6 @@ import {
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
 import { GameRelay, type RelayMessage } from './typed-relay.js';
-import { GameSession } from './game-session.js';
 import { buildGameMerkleTree, type MerkleLeafData } from '@coordination-games/platform';
 
 // ---------------------------------------------------------------------------
@@ -80,8 +89,8 @@ export interface SpectatorState {
     carryingFlag: boolean;
   }[];
   kills: { killerId: string; victimId: string; reason: string }[];
-  chatA: TeamMessage[];
-  chatB: TeamMessage[];
+  chatA: { from: string; message: string; turn: number }[];
+  chatB: { from: string; message: string; turn: number }[];
   flagA: { status: 'at_base' | 'carried'; carrier?: string };
   flagB: { status: 'at_base' | 'carried'; carrier?: string };
   score: { A: number; B: number };
@@ -105,7 +114,7 @@ export interface ExternalSlot {
 }
 
 export interface GameRoom {
-  game: GameSession;
+  game: CtlSession;
   spectators: Set<WebSocket>;
   stateHistory: SpectatorState[];   // indexed by turn
   spectatorDelay: number;           // turns of delay (default 5)
@@ -137,11 +146,11 @@ export interface GameRoom {
 // ---------------------------------------------------------------------------
 
 function buildGameResultFromSession(
-  session: GameSession,
+  session: CtlSession,
   gameId: string,
   playerIds: string[],
 ) {
-  const turnHistory = session.getTurnHistory();
+  const turnHistory = getTurnHistory(session);
   const turns = turnHistory.map((record) => ({
     turnNumber: record.turn,
     moves: [...record.moves.entries()].map(([playerId, path]) => ({
@@ -157,9 +166,9 @@ function buildGameResultFromSession(
     gameType: 'capture-the-lobster',
     players: playerIds,
     outcome: {
-      winner: session.winner,
-      score: { ...session.score },
-      turnCount: session.turn,
+      winner: session.state.winner,
+      score: { ...session.state.score },
+      turnCount: session.state.turn,
     },
     movesRoot: tree.root,
     configHash: '',
@@ -169,17 +178,17 @@ function buildGameResultFromSession(
 }
 
 function computePayoutsFromSession(
-  session: GameSession,
+  session: CtlSession,
   playerIds: string[],
 ): Map<string, number> {
   const outcome: CtlOutcome = {
-    winner: session.winner,
-    score: { ...session.score },
-    turnCount: session.turn,
+    winner: session.state.winner,
+    score: { ...session.state.score },
+    turnCount: session.state.turn,
     playerStats: new Map(),
   };
 
-  for (const unit of session.units) {
+  for (const unit of session.state.units) {
     outcome.playerStats.set(unit.id, {
       team: unit.team,
       kills: 0,
@@ -206,9 +215,9 @@ const BOT_DISPLAY_NAMES = [
 // Spectator state builder
 // ---------------------------------------------------------------------------
 
-function buildSpectatorState(game: GameSession, handles: Record<string, string> = {}): SpectatorState {
-  const map = game.map;
-  const { units, flags, turn, phase, config, score } = game;
+function buildSpectatorState(game: CtlSession, handles: Record<string, string> = {}, relay?: GameRelay): SpectatorState {
+  const map = { tiles: new Map(game.state.mapTiles), radius: game.state.mapRadius, bases: game.state.mapBases };
+  const { units, flags, turn, phase, config, score } = game.state;
 
   // Build full tile array (no fog — spectators see everything)
   const tiles: SpectatorTile[] = [];
@@ -268,7 +277,7 @@ function buildSpectatorState(game: GameSession, handles: Record<string, string> 
   }
 
   // Kills from most recent turn
-  const history = game.getTurnHistory();
+  const history = getTurnHistory(game);
   const lastRecord = history.length > 0 ? history[history.length - 1] : null;
   const kills = lastRecord?.kills ?? [];
 
@@ -322,12 +331,12 @@ function buildSpectatorState(game: GameSession, handles: Record<string, string> 
       carryingFlag: u.carryingFlag,
     })),
     kills,
-    chatA: game.teamMessages.A,
-    chatB: game.teamMessages.B,
+    chatA: relay ? relay.getSpectatorMessages(turn).filter(m => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'A')).map(m => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn })) : [],
+    chatB: relay ? relay.getSpectatorMessages(turn).filter(m => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'B')).map(m => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn })) : [],
     flagA: flagStatus(flags.A),
     flagB: flagStatus(flags.B),
     score: { A: score.A, B: score.B },
-    winner: game.winner ?? null,
+    winner: game.state.winner ?? null,
     mapRadius: map.radius,
     visibleA: [...visibleA],
     visibleB: [...visibleB],
@@ -343,7 +352,7 @@ function buildSpectatorState(game: GameSession, handles: Record<string, string> 
 // ---------------------------------------------------------------------------
 
 function getDelayedState(room: GameRoom): SpectatorState | null {
-  const delayedTurn = room.game.turn - room.spectatorDelay;
+  const delayedTurn = room.game.state.turn - room.spectatorDelay;
   const idx = Math.max(0, delayedTurn);
   if (room.stateHistory.length === 0) return null;
   if (idx >= room.stateHistory.length) {
@@ -434,9 +443,9 @@ export class GameServer {
         if (room) {
           // Push chat through the typed relay
           if (agentId && message) {
-            const phase = room.game.phase;
+            const phase = room.game.state.phase;
             const scope = (phase === 'in_progress' || phase === 'pre_game') ? 'team' : 'all';
-            room.relay.send(agentId, room.game.turn, {
+            room.relay.send(agentId, room.game.state.turn, {
               type: 'messaging',
               data: { body: message },
               scope,
@@ -445,7 +454,7 @@ export class GameServer {
           }
           this.broadcastState(room);
           // Notify all agents in this game so wait_for_update wakes up
-          for (const unit of room.game.units) {
+          for (const unit of room.game.state.units) {
             notifyAgent(unit.id);
           }
         }
@@ -568,7 +577,7 @@ export class GameServer {
     console.log(`[Turn] Move submitted by ${agentId} for game ${gameId}`);
 
     // Check if all moves are in (both bots and external agents)
-    if (room.game.allMovesSubmitted() && room.turnResolve) {
+    if (allMovesSubmitted(room.game) && room.turnResolve) {
       console.log(`[Turn] All moves submitted for game ${gameId} — resolving early`);
       room.turnResolve();
       room.turnResolve = null;
@@ -705,13 +714,13 @@ export class GameServer {
     router.get('/games', (_req, res) => {
       const list = Array.from(this.games.entries()).map(([id, room]) => ({
         id,
-        turn: room.game.turn,
-        maxTurns: room.game.config.turnLimit,
-        phase: room.game.phase,
-        winner: room.game.winner,
+        turn: room.game.state.turn,
+        maxTurns: room.game.state.config.turnLimit,
+        phase: room.game.state.phase,
+        winner: room.game.state.winner,
         teams: {
-          A: room.game.units.filter((u) => u.team === 'A').map((u) => u.id),
-          B: room.game.units.filter((u) => u.team === 'B').map((u) => u.id),
+          A: room.game.state.units.filter((u) => u.team === 'A').map((u) => u.id),
+          B: room.game.state.units.filter((u) => u.team === 'B').map((u) => u.id),
         },
         spectators: room.spectators.size,
         externalAgents: room.externalSlots.size,
@@ -749,7 +758,7 @@ export class GameServer {
         return res.status(400).json({ error: 'sender, type, and scope are required' });
       }
 
-      const msg = room.relay.send(sender, room.game.turn, {
+      const msg = room.relay.send(sender, room.game.state.turn, {
         type,
         data: data ?? {},
         scope,
@@ -758,14 +767,13 @@ export class GameServer {
 
       // Also push through game session chat if it's a messaging type
       if (type === 'messaging' && data?.body) {
-        room.game.submitChat(sender, data.body);
       }
 
       // Broadcast state update to spectators
       this.broadcastState(room);
 
       // Notify other agents
-      for (const unit of room.game.units) {
+      for (const unit of room.game.state.units) {
         if (unit.id !== sender) notifyAgent(unit.id);
       }
 
@@ -799,16 +807,16 @@ export class GameServer {
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      if (room.game.phase !== 'finished') {
+      if (room.game.state.phase !== 'finished') {
         return res.status(400).json({ error: 'Game is still in progress' });
       }
 
       res.json({
         gameId: room.game.gameId,
         turns: room.stateHistory,
-        winner: room.game.winner,
-        score: room.game.score,
-        mapRadius: room.game.map.radius,
+        winner: room.game.state.winner,
+        score: room.game.state.score,
+        mapRadius: room.game.state.mapRadius,
       });
     });
 
@@ -822,7 +830,7 @@ export class GameServer {
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
       const game = room.game;
-      const turnHistory = game.getTurnHistory();
+      const turnHistory = getTurnHistory(game);
 
       // Serialize turn history with moves for Merkle tree construction
       const turns = turnHistory.map((turn: TurnRecord, idx: number) => {
@@ -847,15 +855,15 @@ export class GameServer {
       res.json({
         gameId: game.gameId,
         config: {
-          mapRadius: game.map.radius,
-          teamSize: game.config.teamSize,
-          turnLimit: game.config.turnLimit,
+          mapRadius: game.state.mapRadius,
+          teamSize: game.state.config.teamSize,
+          turnLimit: game.state.config.turnLimit,
         },
         turns,
         outcome: {
-          winner: game.winner,
-          score: game.score,
-          phase: game.phase,
+          winner: game.state.winner,
+          score: game.state.score,
+          phase: game.state.phase,
         },
       });
     });
@@ -865,12 +873,12 @@ export class GameServer {
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      if (room.game.phase !== 'finished') {
+      if (room.game.state.phase !== 'finished') {
         return res.status(400).json({ error: 'Game is still in progress' });
       }
 
       try {
-        const playerIds = room.game.units.map((u) => u.id);
+        const playerIds = room.game.state.units.map((u) => u.id);
         const result = buildGameResultFromSession(room.game, req.params.id, playerIds);
         const payouts = computePayoutsFromSession(room.game, playerIds);
         res.json({
@@ -882,11 +890,11 @@ export class GameServer {
         res.json({
           gameId: req.params.id,
           gameType: 'capture-the-lobster',
-          players: game.units.map((u) => u.id),
-          outcome: { winner: game.winner, score: game.score },
+          players: game.state.units.map((u) => u.id),
+          outcome: { winner: game.state.winner, score: game.state.score },
           movesRoot: null,
           configHash: null,
-          turnCount: game.turn,
+          turnCount: game.state.turn,
           timestamp: Math.floor(Date.now() / 1000),
         });
       }
@@ -988,7 +996,7 @@ export class GameServer {
     if (!state) return;
 
     // Include delayed relay messages for spectators (they see everything, with delay)
-    const delayedTurn = room.game.turn - room.spectatorDelay;
+    const delayedTurn = room.game.state.turn - room.spectatorDelay;
     const relayMessages = room.relay.getSpectatorMessages(Math.max(0, delayedTurn));
     const stateWithRelay = { ...state, relayMessages };
 
@@ -1024,7 +1032,7 @@ export class GameServer {
     return count;
   }
 
-  createBotGame(teamSize: number = 4): { gameId: string; game: GameSession } {
+  createBotGame(teamSize: number = 4): { gameId: string; game: CtlSession } {
     const gameId = crypto.randomUUID();
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
@@ -1054,13 +1062,14 @@ export class GameServer {
 
     const radius = getMapRadiusForTeamSize(teamSize);
     const gameMap = generateMap({ radius, teamSize });
-    const game = GameSession.create(gameId, gameMap, players, {
+    const game = createCtlSession(gameId, gameMap, players, {
       teamSize,
       turnLimit: getTurnLimitForRadius(radius),
     });
 
     // Take initial snapshot
-    const initialState = buildSpectatorState(game, handleMap);
+    const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
+    const initialState = buildSpectatorState(game, handleMap, relay);
 
     const room: GameRoom = {
       game,
@@ -1081,7 +1090,7 @@ export class GameServer {
       lobbyChat: [],
       preGameChatA: [],
       preGameChatB: [],
-      relay: new GameRelay(players.map(p => ({ id: p.id, team: p.team }))),
+      relay,
     };
 
     this.games.set(gameId, room);
@@ -1107,14 +1116,14 @@ export class GameServer {
     const { game } = room;
 
     // Check if game is over
-    if (game.isGameOver()) {
+    if (isGameOver(game)) {
       this.finishGame(room);
       return;
     }
 
     room.turnInProgress = true;
 
-    console.log(`[Turn] Starting turn ${game.turn} for game ${gameId}`);
+    console.log(`[Turn] Starting turn ${game.state.turn} for game ${gameId}`);
 
     // Create a promise that resolves when all moves are submitted
     const allMovesPromise = new Promise<void>((resolve) => {
@@ -1127,7 +1136,7 @@ export class GameServer {
     // Set deadline timer
     const deadlinePromise = new Promise<void>((resolve) => {
       room.deadlineTimer = setTimeout(() => {
-        console.log(`[Turn] Deadline hit for turn ${game.turn} in game ${gameId}`);
+        console.log(`[Turn] Deadline hit for turn ${game.state.turn} in game ${gameId}`);
         resolve();
       }, room.turnTimeoutMs);
     });
@@ -1137,7 +1146,7 @@ export class GameServer {
       // All moves submitted (bots + external agents)
       botPromise.then(() => {
         // After bots finish, check if all moves are in
-        if (game.allMovesSubmitted()) {
+        if (allMovesSubmitted(game)) {
           // Clear the resolve so it doesn't fire again
           room.turnResolve = null;
           return;
@@ -1162,20 +1171,20 @@ export class GameServer {
 
     // Claude bots with their own timeout
     await Promise.race([
-      runAllBotsTurn(game, room.botSessions, game.turn),
+      runAllBotsTurn(game, room.botSessions, game.state.turn, room.relay),
       new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
     ]);
 
     // Submit empty moves for bots that didn't submit
     for (const botId of botHandles) {
-      if (!game.moveSubmissions.has(botId)) {
-        const unit = game.units.find((u) => u.id === botId);
-        if (unit?.alive) game.submitMove(botId, []);
+      if (!game.hasSubmitted(botId)) {
+        const unit = game.state.units.find((u) => u.id === botId);
+        if (unit?.alive) submitCtlMove(game, botId, []);
       }
     }
 
     // After bot moves, check if all moves are now in
-    if (game.allMovesSubmitted() && room.turnResolve) {
+    if (allMovesSubmitted(game) && room.turnResolve) {
       room.turnResolve();
       room.turnResolve = null;
     }
@@ -1198,22 +1207,22 @@ export class GameServer {
     room.turnResolve = null;
 
     // Force empty moves for any agent (bot or external) that hasn't submitted
-    const allPlayerIds = game.units.map((u) => u.id);
+    const allPlayerIds = game.state.units.map((u) => u.id);
     for (const playerId of allPlayerIds) {
-      if (!game.moveSubmissions.has(playerId)) {
-        const unit = game.units.find((u) => u.id === playerId);
-        if (unit?.alive) game.submitMove(playerId, []);
+      if (!game.hasSubmitted(playerId)) {
+        const unit = game.state.units.find((u) => u.id === playerId);
+        if (unit?.alive) submitCtlMove(game, playerId, []);
       }
     }
 
     // Resolve the turn
-    game.resolveTurn();
+    resolveCtlTurn(game);
 
     // Notify any external agents waiting via wait_for_update
     notifyTurnResolved(gameId);
 
     // Snapshot current state
-    const state = buildSpectatorState(game, room.handleMap);
+    const state = buildSpectatorState(game, room.handleMap, room.relay);
     room.stateHistory.push(state);
 
     // Broadcast to spectators
@@ -1222,7 +1231,7 @@ export class GameServer {
     room.turnInProgress = false;
 
     // Check if game is over
-    if (game.isGameOver()) {
+    if (isGameOver(game)) {
       this.finishGame(room);
       return;
     }
@@ -1248,7 +1257,7 @@ export class GameServer {
     room.turnInProgress = false;
 
     // Final broadcast
-    const finalState = buildSpectatorState(room.game, room.handleMap);
+    const finalState = buildSpectatorState(room.game, room.handleMap, room.relay);
     room.stateHistory.push(finalState);
     const msg = JSON.stringify({ type: 'game_over', data: finalState });
     for (const ws of room.spectators) {
@@ -1262,27 +1271,27 @@ export class GameServer {
 
     // Record ELO for all human/bot players
     try {
-      const players = room.game.units.map((u) => {
+      const players = room.game.state.units.map((u) => {
         const handle = room.handleMap[u.id] ?? getAgentName(u.id);
         const dbPlayer = this.elo.getOrCreatePlayer(handle);
         return { id: dbPlayer.id, team: u.team as 'A' | 'B', unitClass: u.unitClass };
       });
       this.elo.recordMatch(
         room.game.gameId,
-        (room.game.map as any).seed ?? room.game.gameId,
-        room.game.turn,
-        room.game.winner as 'A' | 'B' | null,
+        (room.game.state as any).mapSeed ?? room.game.gameId,
+        room.game.state.turn,
+        room.game.state.winner as 'A' | 'B' | null,
         players,
       );
     } catch (err) {
       console.error('[ELO] Failed to record match:', err);
     }
 
-    console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.winner ?? 'draw'}`);
+    console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.state.winner ?? 'draw'}`);
 
     // Build game result with Merkle root for future on-chain anchoring
     try {
-      const playerIds = room.game.units.map((u) => u.id);
+      const playerIds = room.game.state.units.map((u) => u.id);
       const result = buildGameResultFromSession(room.game, room.game.state.turn.toString(), playerIds);
       const payouts = computePayoutsFromSession(room.game, playerIds);
       console.log(`[Coordination] Game result built. Merkle root: ${result.movesRoot.slice(0, 16)}... Turns: ${result.turnCount}`);
@@ -1407,12 +1416,13 @@ export class GameServer {
     );
     const radius = getMapRadiusForTeamSize(teamSize);
     const gameMap = generateMap({ radius, teamSize });
-    const game = GameSession.create(gameId, gameMap, players, {
+    const game = createCtlSession(gameId, gameMap, players, {
       teamSize,
       turnLimit: getTurnLimitForRadius(radius),
     });
 
-    const initialState = buildSpectatorState(game, handleMap);
+    const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
+    const initialState = buildSpectatorState(game, handleMap, relay);
 
     const room: GameRoom = {
       game,
@@ -1433,7 +1443,7 @@ export class GameServer {
       lobbyChat,
       preGameChatA,
       preGameChatB,
-      relay: new GameRelay(players.map(p => ({ id: p.id, team: p.team }))),
+      relay,
     };
 
     this.games.set(gameId, room);

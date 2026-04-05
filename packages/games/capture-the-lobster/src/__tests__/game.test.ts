@@ -3,11 +3,9 @@ import {
   CtlGameState,
   createGameState,
   submitMove,
-  submitChat,
   resolveTurn,
   allMovesSubmitted,
   getStateForAgent,
-  getTeamMessages,
   isGameOver,
   validateMoveForPlayer,
 } from '../game.js';
@@ -419,40 +417,6 @@ describe('Game (pure functions)', () => {
       state = submitMove(state, 'a0', ['N']).state;
       agentState = getStateForAgent(state, 'a0');
       expect(agentState.moveSubmitted).toBe(true);
-    });
-  });
-
-  describe('submitChat + getTeamMessages', () => {
-    it('stores and retrieves team messages correctly', () => {
-      let state = createGameState(map, makePlayers(2));
-
-      state = submitChat(state, 'a0', 'hello team');
-      state = submitChat(state, 'a1', 'roger that');
-      state = submitChat(state, 'b0', 'enemy spotted');
-
-      const aMessages = getTeamMessages(state, 'a0');
-      expect(aMessages).toHaveLength(2);
-      expect(aMessages[0].message).toBe('hello team');
-      expect(aMessages[1].message).toBe('roger that');
-
-      const bMessages = getTeamMessages(state, 'b0');
-      expect(bMessages).toHaveLength(1);
-      expect(bMessages[0].message).toBe('enemy spotted');
-    });
-
-    it('filters messages by sinceTurn', () => {
-      let state = createGameState(map, makePlayers(1));
-
-      state = submitChat(state, 'a0', 'turn 0 msg');
-      state = resolveTurn(state).state; // now turn 1
-      state = submitChat(state, 'a0', 'turn 1 msg');
-
-      const allMessages = getTeamMessages(state, 'a0', 0);
-      expect(allMessages).toHaveLength(2);
-
-      const recentMessages = getTeamMessages(state, 'a0', 1);
-      expect(recentMessages).toHaveLength(1);
-      expect(recentMessages[0].message).toBe('turn 1 msg');
     });
   });
 

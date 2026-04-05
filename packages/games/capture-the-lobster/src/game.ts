@@ -32,12 +32,6 @@ export interface FlagState {
   carrierId?: string;
 }
 
-export interface TeamMessage {
-  from: string;
-  message: string;
-  turn: number;
-}
-
 export interface TurnRecord {
   turn: number;
   moves: Map<string, Direction[]>;
@@ -45,7 +39,6 @@ export interface TurnRecord {
   unitPositionsAfter: Map<string, Hex>;
   kills: { killerId: string; victimId: string; reason: string }[];
   flagEvents: string[];
-  messages: TeamMessage[];
 }
 
 export type GamePhase = 'pre_game' | 'in_progress' | 'finished';
@@ -63,7 +56,6 @@ export interface GameState {
   visibleTiles: VisibleTile[];
   yourFlag: { status: 'at_base' | 'carried' | 'unknown' };
   enemyFlag: { status: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' };
-  messagesSinceLastCheck: TeamMessage[];
   timeRemainingSeconds: number;
   moveSubmitted: boolean;
   score: { yourTeam: number; enemyTeam: number };
@@ -96,8 +88,6 @@ export interface CtlGameState {
   };
   /** Current turn's move submissions (cleared after resolution) */
   moveSubmissions: [string, Direction[]][];
-  /** Team chat messages (all turns) */
-  teamMessages: { A: TeamMessage[]; B: TeamMessage[] };
 }
 
 /** Compute turn limit based on map radius */
@@ -189,7 +179,6 @@ export function createGameState(
     mapRadius: map.radius,
     mapBases: map.bases as any,
     moveSubmissions: [],
-    teamMessages: { A: [], B: [] },
   };
 }
 
@@ -241,28 +230,6 @@ export function submitMove(
   return {
     state: { ...state, moveSubmissions: [...submissions.entries()] },
     success: true,
-  };
-}
-
-/**
- * Submit a chat message — returns a new state with the message appended.
- */
-export function submitChat(
-  state: CtlGameState,
-  playerId: string,
-  message: string,
-): CtlGameState {
-  const unit = state.units.find((u) => u.id === playerId);
-  if (!unit) return state;
-
-  const msg: TeamMessage = { from: playerId, message, turn: state.turn };
-  const team = unit.team;
-  return {
-    ...state,
-    teamMessages: {
-      ...state.teamMessages,
-      [team]: [...state.teamMessages[team], msg],
-    },
   };
 }
 
@@ -438,12 +405,6 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     unitPositionsAfter.set(unit.id, { ...unit.position });
   }
 
-  // Collect messages for this turn
-  const turnMessages = [
-    ...state.teamMessages.A.filter((m) => m.turn === currentTurn),
-    ...state.teamMessages.B.filter((m) => m.turn === currentTurn),
-  ];
-
   const record: TurnRecord = {
     turn: currentTurn,
     moves,
@@ -451,7 +412,6 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     unitPositionsAfter,
     kills: combatResult.kills,
     flagEvents,
-    messages: turnMessages,
   };
 
   const newTurn = currentTurn + 1;
@@ -474,7 +434,6 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     mapRadius: state.mapRadius,
     mapBases: state.mapBases,
     moveSubmissions: [], // cleared after resolution
-    teamMessages: state.teamMessages,
   };
 
   return { state: newState, record };
@@ -488,8 +447,6 @@ export function getStateForAgent(
   agentId: string,
   /** Moves already submitted this turn (may be tracked externally) */
   submittedMoves?: Set<string>,
-  /** Message cursor — only return messages after this turn */
-  messageCursor?: number,
 ): GameState {
   const unit = state.units.find((u) => u.id === agentId);
   if (!unit) throw new Error(`Unknown agent: ${agentId}`);
@@ -561,10 +518,6 @@ export function getStateForAgent(
     }
   }
 
-  // Messages since cursor
-  const since = messageCursor ?? -1;
-  const messages = state.teamMessages[team].filter((m) => m.turn > since);
-
   // Check if this agent has submitted a move
   const moveSubmitted = submittedMoves
     ? submittedMoves.has(agentId)
@@ -583,7 +536,6 @@ export function getStateForAgent(
     visibleTiles,
     yourFlag: { status: yourFlagStatus },
     enemyFlag: { status: enemyFlagStatus },
-    messagesSinceLastCheck: messages,
     timeRemainingSeconds: state.config.turnTimerSeconds,
     moveSubmitted,
     score: {
@@ -591,20 +543,6 @@ export function getStateForAgent(
       enemyTeam: state.score[enemyTeam],
     },
   };
-}
-
-/**
- * Get team messages for an agent, optionally since a specific turn.
- */
-export function getTeamMessages(
-  state: CtlGameState,
-  playerId: string,
-  sinceTurn?: number,
-): TeamMessage[] {
-  const unit = state.units.find((u) => u.id === playerId);
-  if (!unit) return [];
-  const since = sinceTurn ?? 0;
-  return state.teamMessages[unit.team].filter((m) => m.turn >= since);
 }
 
 /**
