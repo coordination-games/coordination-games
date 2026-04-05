@@ -40,4 +40,4 @@ registerVerifyCommand(program);
 // MCP server mode
 registerServeCommand(program);
 
-program.parse();
+program.parse(process.argv);

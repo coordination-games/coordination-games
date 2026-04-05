@@ -107,10 +107,9 @@ export function registerWalletCommands(program: Command) {
     });
 
   program
-    .command("export-key")
-    .description("Export key file to a path")
-    .argument("[path]", "Destination path", "./coordination-key.json")
-    .action(async (destPath: string) => {
+    .command("export-key [path]")
+    .description("Export key file to a path (default: ./coordination-key.json)")
+    .action(async (destPath: string = "./coordination-key.json") => {
       try {
         exportKey(destPath);
         process.stdout.write(`\n  Key exported to: ${destPath}\n\n`);

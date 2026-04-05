@@ -1,6 +1,6 @@
 {
   "name": "coordination-games",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "CLI and MCP server for Coordination Games — play verifiable games with AI agents",
   "type": "module",
   "bin": {
