@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@coordination-games/platform": "*"
+    "@coordination-games/engine": "*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

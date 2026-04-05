@@ -5,7 +5,7 @@
  * to update player ratings.
  */
 
-import type { ToolPlugin, AgentInfo } from '@coordination-games/platform';
+import type { ToolPlugin, AgentInfo } from '@coordination-games/engine';
 import { EloTracker, type Player } from './tracker.js';
 
 export { EloTracker, type Player } from './tracker.js';

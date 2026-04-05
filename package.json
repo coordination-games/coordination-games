@@ -8,7 +8,7 @@
     "packages/plugins/*"
   ],
   "scripts": {
-    "build": "npm run build -w packages/platform && npm run build -w packages/games/capture-the-lobster -w packages/plugins/basic-chat -w packages/plugins/elo && npm run build -w packages/server -w packages/web -w packages/cli",
+    "build": "npm run build -w packages/engine && npm run build -w packages/games/capture-the-lobster -w packages/plugins/basic-chat -w packages/plugins/elo && npm run build -w packages/server -w packages/web -w packages/cli",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/server",
     "dev:web": "npm run dev --workspace=packages/web",

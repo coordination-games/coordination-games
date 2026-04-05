@@ -45,10 +45,11 @@ import {
   notifyTurnResolved,
   notifyAgent,
   getAgentName,
+  createBotToken,
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
 import { GameRelay, type RelayMessage } from './typed-relay.js';
-import { buildGameMerkleTree, type MerkleLeafData } from '@coordination-games/platform';
+import { buildGameMerkleTree, type MerkleLeafData } from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -398,7 +399,12 @@ export class GameServer {
   /** Maps external agentId -> lobbyId for lobby resolution */
   private agentToLobby: Map<string, string> = new Map();
 
+  /** MCP server URL for bot connections (bots connect via real MCP HTTP endpoint) */
+  private serverUrl: string;
+
   constructor(port?: number) {
+    const effectivePort = port ?? (Number(process.env.PORT) || 3000);
+    this.serverUrl = process.env.GAME_SERVER_URL ?? `http://localhost:${effectivePort}/mcp`;
     this.app = express();
     this.app.use(express.json());
 
@@ -1085,7 +1091,12 @@ export class GameServer {
       deadlineTimer: null,
       botHandles,
       botMeta: players,
-      botSessions: createBotSessions(players),
+      botSessions: createBotSessions(players.map(p => ({
+        id: p.id,
+        handle: handleMap[p.id] ?? p.id,
+        team: p.team,
+        token: createBotToken(p.id, handleMap[p.id] ?? p.id),
+      }))),
       finished: false,
       turnInProgress: false,
       externalSlots: new Map(),
@@ -1135,7 +1146,7 @@ export class GameServer {
       room.turnResolve = resolve;
     });
 
-    // Kick off in-process bots (async)
+    // Kick off bots via MCP HTTP endpoint (async)
     const botPromise = this.runBots(room);
 
     // Set deadline timer
@@ -1169,14 +1180,21 @@ export class GameServer {
   }
 
   /**
-   * Run in-process bots for the current turn.
+   * Run bots for the current turn via the MCP HTTP endpoint.
    */
   private async runBots(room: GameRoom): Promise<void> {
     const { game, botHandles } = room;
 
-    // Claude bots with their own timeout
+    // Build set of alive bot IDs
+    const aliveBotIds = new Set<string>();
+    for (const botId of botHandles) {
+      const unit = game.state.units.find((u: { id: string }) => u.id === botId);
+      if (unit?.alive) aliveBotIds.add(botId);
+    }
+
+    // Claude bots connect via MCP HTTP endpoint
     await Promise.race([
-      runAllBotsTurn(game, room.botSessions, game.state.turn, room.relay),
+      runAllBotsTurn(room.botSessions, game.state.turn, this.serverUrl, aliveBotIds),
       new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
     ]);
 
@@ -1338,7 +1356,7 @@ export class GameServer {
       }
     }
     const runner = new LobbyRunner(teamSize, timeoutMs, {
-      onStateChange: (state) => {
+      onStateChange: (state: LobbyRunnerState) => {
         console.log(`[Lobby] onStateChange: lobbyId=${state.lobbyId}, phase=${state.phase}, agents=${state.agents.length}`);
         const lobbyRoom = this.lobbies.get(state.lobbyId);
         if (lobbyRoom) {
@@ -1355,15 +1373,15 @@ export class GameServer {
           console.log(`[Lobby] WARNING: lobby room not found for ${state.lobbyId}`);
         }
       },
-      onGameCreated: (gameId, teamPlayers, handles) => {
+      onGameCreated: (gameId, teamPlayers, handles, botTokens) => {
         // Grab lobby chat before transitioning to game
         const lobbyRoom = this.lobbies.get(runner.lobby.lobbyId);
         const lobbyChat = lobbyRoom?.state?.chat ?? [];
         const preGameChatA = runner.lobby.preGameChat?.A ?? [];
         const preGameChatB = runner.lobby.preGameChat?.B ?? [];
-        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB);
+        this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB, botTokens);
       },
-    });
+    }, this.serverUrl);
 
     const lobbyId = runner.lobby.lobbyId;
     const lobbyRoom: LobbyRoom = {
@@ -1394,6 +1412,7 @@ export class GameServer {
     lobbyChat: { from: string; message: string; timestamp: number }[] = [],
     preGameChatA: { from: string; message: string; timestamp: number }[] = [],
     preGameChatB: { from: string; message: string; timestamp: number }[] = [],
+    botTokens: Record<string, string> = {},
   ): void {
     const players = teamPlayers;
     const botHandles: string[] = [];
@@ -1438,7 +1457,12 @@ export class GameServer {
       deadlineTimer: null,
       botHandles,
       botMeta: players,
-      botSessions: createBotSessions(players.filter((p) => !p.id.startsWith('ext_'))),
+      botSessions: createBotSessions(players.filter((p) => !p.id.startsWith('ext_')).map(p => ({
+        id: p.id,
+        handle: handleMap[p.id] ?? p.id,
+        team: p.team,
+        token: botTokens[p.id] ?? createBotToken(p.id, handleMap[p.id] ?? p.id),
+      }))),
       finished: false,
       turnInProgress: false,
       externalSlots,

@@ -11,9 +11,9 @@
  *   3. Combine game state + pipeline output for the agent
  */
 
-import { PluginLoader, PluginPipeline } from '@coordination-games/platform';
+import { PluginLoader, PluginPipeline } from '@coordination-games/engine';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
-import type { ToolPlugin } from '@coordination-games/platform';
+import type { ToolPlugin } from '@coordination-games/engine';
 
 // Default plugins — always available
 const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];

@@ -1,5 +1,5 @@
 {
-  "name": "@coordination-games/platform",
+  "name": "@coordination-games/engine",
   "version": "0.1.0",
   "private": true,
   "type": "module",

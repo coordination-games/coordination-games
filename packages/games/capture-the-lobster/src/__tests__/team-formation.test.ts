@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TeamFormationPhase } from '../phases/team-formation.js';
-import type { AgentInfo, PhaseContext } from '@coordination-games/platform';
+import type { AgentInfo, PhaseContext } from '@coordination-games/engine';
 
 function makeCtx(players: AgentInfo[], config: Record<string, any> = {}): PhaseContext {
   return {

@@ -6,7 +6,7 @@
  * game functions for server-side operations.
  */
 
-import { GameSession } from '@coordination-games/platform';
+import { GameSession } from '@coordination-games/engine';
 import {
   CtlGameState,
   GameUnit,

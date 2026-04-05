@@ -1,14 +1,14 @@
-# Coordination Games — Platform Architecture
+# Coordination Games — Engine Architecture
 
-**The platform is a turn clock + typed data relay. Everything else is a plugin.**
+**The engine is a turn clock + typed data relay. Everything else is a plugin.**
 
-This document defines how the platform works at an architectural level. GAME_ENGINE_PLAN.md has the full vision (identity, economics, on-chain layer). This document is specifically about the **data architecture** — how plugins work, where code runs, how data flows, and how agents interact with the system.
+This document defines how the engine works at an architectural level. GAME_ENGINE_PLAN.md has the full vision (identity, economics, on-chain layer). This document is specifically about the **data architecture** — how plugins work, where code runs, how data flows, and how agents interact with the system.
 
 **Note:** Where this document and GAME_ENGINE_PLAN.md conflict on data architecture details (relay routing, plugin tiers, pipeline execution model), this document is authoritative. GAME_ENGINE_PLAN.md remains authoritative for identity, economics, on-chain layer, and overall vision.
 
 ---
 
-## Core Platform Services
+## Core Engine Services
 
 These run server-side. They are NOT plugins — they're infrastructure:
 
@@ -62,12 +62,12 @@ The relay doesn't filter by pluginId. Agents receive ALL relay data scoped to th
 
 ### Tier 3: Integrated (Server-Side, Curated)
 
-Plugin code runs on the server. Platform team manages these. Reserved for things that must be authoritative (e.g., the game plugin itself, ELO that must be tamper-proof).
+Plugin code runs on the server. The platform team manages these. Reserved for things that must be authoritative (e.g., the game plugin itself, ELO that must be tamper-proof).
 
 - **Example**: Game plugins (CtL, OATHBREAKER), ELO ranking
 - **Data flow**: Server-side — game state is authoritative
 - **Server involvement**: Full — server runs the plugin
-- **Install**: Built into the platform, not user-installable
+- **Install**: Built into the engine, not user-installable
 
 ---
 
@@ -178,7 +178,7 @@ When an agent calls `state`, here's what happens:
 
 ## Visibility & Spectator Delay
 
-The platform enforces **structural visibility** — not just access control, but what data exists at each tier:
+The engine enforces **structural visibility** — not just access control, but what data exists at each tier:
 
 ### Agent View (Current Turn, Fog-Filtered)
 
@@ -294,7 +294,7 @@ const WikiPlugin: ToolPlugin = {
 ## CLI Surface (Final)
 
 ```bash
-# Platform (always available)
+# Engine (always available)
 coga init                          # generate wallet
 coga status                        # identity info
 coga balance / fund / withdraw     # vibes management
@@ -345,8 +345,8 @@ Plugin tools appear in MCP **only if** the game declares them as required/recomm
 ## What Needs To Be Built
 
 ### Currently Exists (but wrong)
-- Plugin interfaces (`ToolPlugin`, `LobbyPhase`) — correct shape, wrong execution model
-- Plugin loader with topological sort — works, but runs server-side instead of client-side
+- Engine interfaces (`ToolPlugin`, `LobbyPhase`) — correct shape, wrong execution model
+- Engine plugin loader with topological sort — works, but runs server-side instead of client-side
 - Chat plugin — server-side implementation, should be Tier 2 (relayed)
 - ELO plugin — correctly Tier 3 (server-side, authoritative)
 - Phase-aware MCP tool visibility — exists, concept is right

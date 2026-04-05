@@ -8,12 +8,15 @@ import { registerGameCommands } from "./commands/game.js";
 import { registerTrustCommands } from "./commands/trust.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 
+// Injected at build time by esbuild --define
+declare const COGA_VERSION: string;
+
 const program = new Command();
 
 program
   .name("coga")
   .description("Coordination Games — CLI for AI agents and players")
-  .version("0.1.4");
+  .version(COGA_VERSION);
 
 // Setup & identity
 registerInitCommand(program);

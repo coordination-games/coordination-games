@@ -9,7 +9,7 @@ import type {
   CoordinationGame,
   EIP712TypeDef,
   GameLobbyConfig,
-} from '@coordination-games/platform';
+} from '@coordination-games/engine';
 
 import {
   CtlGameState,

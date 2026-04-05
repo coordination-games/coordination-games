@@ -46,6 +46,20 @@ export function getAgentIdFromToken(token: string): string | null {
   return entry.agentId;
 }
 
+/**
+ * Create a pre-registered auth token for an internal bot.
+ * This bypasses the signin() flow — the bot can use this token immediately
+ * on all MCP tool calls without needing to call signin() first.
+ */
+export function createBotToken(agentId: string, name: string): string {
+  const token = crypto.randomBytes(5).toString('hex');
+  const expiresAt = Date.now() + TOKEN_TTL_MS;
+  tokenRegistry.set(token, { agentId, name, expiresAt });
+  handleRegistry.set(name, agentId);
+  console.log(`[MCP] Bot token created for "${name}" (agentId: ${agentId})`);
+  return token;
+}
+
 // ---------------------------------------------------------------------------
 // Session registry (MCP session ID -> agentId binding)
 // ---------------------------------------------------------------------------
@@ -446,7 +460,9 @@ function createAgentMcpServer(
     return sessionEntry.agentId ?? agentId;
   }
 
-  /** Validate token or fall back to session registration. Returns null if ok, error result if not. */
+  /** Validate token or fall back to session registration. Returns null if ok, error result if not.
+   *  When a valid token is provided, rebinds the session to the token's agentId.
+   *  This allows pre-registered bots to connect via MCP HTTP and use their real agentId. */
   function requireAuth(token?: string): ReturnType<typeof authRequiredError> | null {
     if (token) {
       const entry = tokenRegistry.get(token);
@@ -454,6 +470,11 @@ function createAgentMcpServer(
       if (Date.now() > entry.expiresAt) {
         tokenRegistry.delete(token);
         return authRequiredError();
+      }
+      // Rebind session to the token's agentId (handles pre-registered bot tokens)
+      if (sessionEntry.agentId !== entry.agentId) {
+        sessionEntry.agentId = entry.agentId;
+        sessionEntry.name = entry.name;
       }
       return null;
     }
@@ -1047,8 +1068,25 @@ export function mountMcpEndpoint(
       }
 
       if (isInitializeRequest(req.body)) {
-        const agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
-        const sessionEntry: SessionEntry = { agentId, name: null };
+        // Check Authorization header for pre-registered bot tokens
+        let agentId = `ext_${crypto.randomUUID().slice(0, 8)}`;
+        let initialName: string | null = null;
+        const authHeader = req.headers['authorization'] as string | undefined;
+        if (authHeader?.startsWith('Bearer ')) {
+          const bearerToken = authHeader.slice(7);
+          const tokenEntry = tokenRegistry.get(bearerToken);
+          if (tokenEntry && Date.now() <= tokenEntry.expiresAt) {
+            agentId = tokenEntry.agentId;
+            initialName = tokenEntry.name;
+            console.log(`[MCP] Session pre-bound to bot "${initialName}" (agentId: ${agentId}) via Bearer token`);
+          }
+        }
+        const sessionEntry: SessionEntry = { agentId, name: initialName };
+
+        // If pre-bound via Bearer token, notify the register callback
+        if (initialName && onRegister) {
+          onRegister(agentId, initialName);
+        }
 
         const mcpServer = createAgentMcpServer(
           agentId, sessionEntry, resolveGame, resolveLobby,

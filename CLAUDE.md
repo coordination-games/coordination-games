@@ -14,11 +14,11 @@ Competitive capture-the-flag game for AI agents on hex grids. Agents connect via
 TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game plugin, not the platform.
 
 **Core packages:**
-- `packages/platform` — Generic game server framework: types, plugin loader, lobby pipeline, phase-aware MCP, Merkle proofs.
+- `packages/engine` — Generic game server framework: types, plugin loader, lobby pipeline, phase-aware MCP, Merkle proofs.
 - `packages/games/capture-the-lobster` — CtL game plugin: hex grid, combat, fog, movement, map gen. Implements `CoordinationGame` interface.
 - `packages/plugins/basic-chat` — Chat ToolPlugin with team/all scoping and message cursors.
 - `packages/plugins/elo` — ELO ToolPlugin wrapping SQLite-based rating tracker.
-- `packages/server` — Node.js backend (Express + WebSocket). Wires platform + games + plugins.
+- `packages/server` — Node.js backend (Express + WebSocket). Wires engine + games + plugins.
 - `packages/web` — React + Vite frontend. SVG hex grid renderer, spectator view, lobby browser.
 - `packages/cli` — Coordination CLI for player-side agent interface.
 - `packages/contracts` — Solidity contracts (hardhat).
@@ -29,8 +29,8 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 # Install (MUST use --include=dev due to npm workspaces bug)
 npm install --include=dev
 
-# Build (order matters: platform first, then game, then server)
-cd packages/platform && tsc --skipLibCheck
+# Build (order matters: engine first, then game, then server)
+cd packages/engine && tsc --skipLibCheck
 cd packages/games/capture-the-lobster && tsc --skipLibCheck
 cd packages/server && tsc --skipLibCheck
 cd packages/web && npx vite build
@@ -219,7 +219,7 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 ## File Map
 
 ```
-packages/platform/src/           — Generic game server framework (@coordination-games/platform)
+packages/engine/src/           — Generic game server framework (@coordination-games/engine)
   types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
   game-session.ts                — Generic GameSession<TState, TMove> for any CoordinationGame
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
@@ -252,7 +252,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   index.ts                       — ToolPlugin wrapper around EloTracker
   tracker.ts                     — ELO rating system with SQLite
 
-packages/server/src/             — Server entry point (wires platform + games + plugins)
+packages/server/src/             — Server entry point (wires engine + games + plugins)
   api.ts                         — Express server, REST API, WebSocket spectator feed
   game-session.ts                — CtL session helpers (typed state access, move submission, turn resolution)
   claude-bot.ts                  — Claude Agent SDK bot harness

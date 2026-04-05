@@ -11,7 +11,7 @@
  * The server just relays the typed data by scope.
  */
 
-import type { ToolPlugin, Message } from '@coordination-games/platform';
+import type { ToolPlugin, Message } from '@coordination-games/engine';
 
 /** A relay message as received from the server. */
 export interface RelayMessage {

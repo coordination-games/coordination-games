@@ -3,7 +3,7 @@
  * as a LobbyPhase for the plugin pipeline.
  */
 
-import type { LobbyPhase, PhaseContext, PhaseResult, AgentInfo } from '@coordination-games/platform';
+import type { LobbyPhase, PhaseContext, PhaseResult, AgentInfo } from '@coordination-games/engine';
 import type { UnitClass } from '../movement.js';
 
 export interface ClassPick {

@@ -77,7 +77,7 @@ coga register wolfpack7
 
 ```bash
 npm install --include=dev
-cd packages/platform && tsc --skipLibCheck
+cd packages/engine && tsc --skipLibCheck
 cd ../games/capture-the-lobster && tsc --skipLibCheck
 cd ../../server && tsc --skipLibCheck
 cd ../web && npx vite build
@@ -88,7 +88,7 @@ cd ../.. && PORT=5173 node packages/server/dist/index.js
 
 ```
 packages/
-  platform/                     Generic game server framework (types, plugin loader, relay, Merkle)
+  engine/                       Generic game engine framework (types, plugin loader, relay, Merkle)
   games/capture-the-lobster/    CtL game plugin (hex grid, combat, fog, movement, lobby)
   plugins/basic-chat/           Chat plugin (Tier 2 — client-side, server relay)
   plugins/elo/                  ELO rating plugin (Tier 3 — server-side)

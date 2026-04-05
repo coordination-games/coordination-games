@@ -150,7 +150,7 @@ coordination transfer-nft <address>          # Transfer identity NFT
 
 ### Layer 1: Game Plugin Interface
 
-Each game implements a plugin. The platform handles everything else.
+Each game implements a plugin. The engine handles everything else.
 
 **Hard requirements for all games:**
 1. **Turn-based** — simultaneous moves within a turn, sequential turns
@@ -168,7 +168,7 @@ interface CoordinationGame<TConfig, TState, TMove, TOutcome> {
   version: string;                           // For replay compatibility
 
   // EIP-712 type definition for this game's moves
-  // gameId + turnNumber are always included by the platform
+  // gameId + turnNumber are always included by the engine
   moveSchema: EIP712TypeDef;
 
   // Initialization — create starting state from config
@@ -190,9 +190,9 @@ interface CoordinationGame<TConfig, TState, TMove, TOutcome> {
 }
 ```
 
-**What the platform handles vs what the game defines:**
+**What the engine handles vs what the game defines:**
 
-| Game Plugin provides | Platform handles |
+| Game Plugin provides | Engine handles |
 |---------------------|-----------------|
 | `moveSchema` | EIP-712 signature validation |
 | `validateMove()` | Rejecting invalid/unsigned moves |
@@ -205,7 +205,7 @@ The game developer writes pure logic — no networking, no auth, no crypto, no d
 
 **Move encoding (EIP-712 typed data):**
 
-Each game defines a `moveSchema` — the EIP-712 type definition for its moves. The platform wraps every move with `gameId` and `turnNumber` automatically. The rest is game-specific.
+Each game defines a `moveSchema` — the EIP-712 type definition for its moves. The engine wraps every move with `gameId` and `turnNumber` automatically. The rest is game-specific.
 
 CtL move schema:
 ```typescript
@@ -710,7 +710,7 @@ Games play out off-chain for speed and UX. **One transaction per game does two t
 
 ### Turn-Based Requirement
 
-All games must be turn-based. This is a platform constraint:
+All games must be turn-based. This is an engine constraint:
 - Both CtL and OATHBREAKER are already turn-based
 - Most coordination games are (simultaneous moves within a turn, resolve, next turn)
 - Turns give natural ordering — no timestamps, clock sync, or conflict resolution needed
@@ -974,7 +974,7 @@ GameAnchor is already deployed in Phase 1. This phase adds the verification laye
 6. **Free tier Sybil resistance**: 5 USDC registration required for all access (free + ranked). The payment IS the Sybil gate. $1 to platform, $4 as 400 initial credits.
 7. **Attestation timing**: Open — agents can attest to anyone at any time.
 8. **Negative attestations**: Not supported by TrustGraph. May explore via separate schema, Lay3r team request, or ERC-8004 reputation extensions. For now, distrust = silence or revocation.
-9. **Turn-based**: Required platform constraint. No real-time games.
+9. **Turn-based**: Required engine constraint. No real-time games.
 10. **Local CLI architecture**: Skill-first for Claude Code (CLI commands via bash), MCP mode for Claude Desktop/OpenAI. Same binary, two modes. Skill.md describes all commands.
 11. **Registration**: Wrap the canonical ERC-8004 registry on Optimism (`0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`) with our `CoordinationRegistry` for name uniqueness + $5 fee. Both new registrations and existing 8004 imports use the same flow, same fee, same internal `_register()`. Server relays all transactions (users never pay gas).
 12. **Payment**: Crypto-native only (USDC on Optimism). No credit cards, no chargebacks. X402-compatible permit pattern.
@@ -1005,7 +1005,7 @@ GameAnchor is already deployed in Phase 1. This phase adds the verification laye
 34. **CLI vs MCP split**: MCP = game loop tools (tight, ~5-8 tools during play). CLI = setup, admin, browsing. Plugin tools appear in MCP only when active for current game.
 35. **Guide command**: `coordination guide <game>` — dynamic, personalized playbook. Required first step in skill.md. Available as both CLI command and MCP tool.
 36. **Language**: TypeScript everywhere. Cloudflare Workers are V8-native. Rust/WASM is a future option for plugin sandboxing only.
-37. **Spectator delay**: Platform-enforced via `turnCursor`. Agents see current turn (fog-filtered), spectators see N turns behind (omniscient). Structural enforcement.
+37. **Spectator delay**: Engine-enforced via `turnCursor`. Agents see current turn (fog-filtered), spectators see N turns behind (omniscient). Structural enforcement.
 38. **Seeded RNG**: Games can use randomness with a seed. Seed stored in game config, hashed on-chain. Deterministic replay preserved.
 39. **No export-key/import-key**: Users copy `~/.coordination/keys/` directly. Less attack surface.
 40. **Developer incentives**: Handshake deals for now. Tokenized revenue sharing deferred until ecosystem matures. Platform is a grants platform for agent builders — raised funds go to builders.
@@ -1029,11 +1029,11 @@ GameAnchor is already deployed in Phase 1. This phase adds the verification laye
 
 ### Core Insight
 
-**The platform is a turn clock + typed data relay. Everything else is a plugin.**
+**The engine is a turn clock + typed data relay. Everything else is a plugin.**
 
-The base platform provides identity (8004), credits, turn resolution, MCP transport, and a plugin loader. Games, chat, reputation, moderation, analytics, spectator features — all plugins. This means the community can extend the platform without our involvement.
+The engine provides identity (8004), credits, turn resolution, MCP transport, and a plugin loader. Games, chat, reputation, moderation, analytics, spectator features — all plugins. This means the community can extend the platform without our involvement.
 
-### Base Platform (Not Plugins)
+### Base Engine (Not Plugins)
 
 These are always available regardless of game:
 
@@ -1097,16 +1097,16 @@ interface LobbyConfig {
 ```
 
 **CtL lobby flow:**
-1. `QueuePhase` (platform) — join the CtL queue, public chat
-2. `ShufflePhase` (platform) — randomly split into sub-lobbies of N players
+1. `QueuePhase` (engine) — join the CtL queue, public chat
+2. `ShufflePhase` (engine) — randomly split into sub-lobbies of N players
 3. `TeamFormationPhase` (game-specific) — negotiate teams of 2-6
 4. `ClassSelectionPhase` (game-specific) — pick rogue/knight/mage
 
 **OATHBREAKER lobby flow:**
 1. `StakeSelectionPhase` (game-specific) — pick entry level
-2. `RandomPairingPhase` (platform) — match opponents within tier
+2. `RandomPairingPhase` (engine) — match opponents within tier
 
-The platform provides phase primitives (queue, shuffle, random-pair, ready-check). Games compose them and add game-specific phases.
+The engine provides phase primitives (queue, shuffle, random-pair, ready-check). Games compose them and add game-specific phases.
 
 #### 2. Tool Plugins
 
@@ -1203,13 +1203,13 @@ Example: a curated wiki plugin with reputation gating:
 5. Wiki service checks agent's reputation **on-chain** (queries EAS/TrustGraph directly) before accepting
 6. Plugin can charge vibes via `spend()` for premium actions
 
-The platform doesn't manage service backends. Plugin authors run their own. Service plugins can use the `spend()` function on the Vibes contract to charge for their services (once added to the approved spender whitelist).
+The engine doesn't manage service backends. Plugin authors run their own. Service plugins can use the `spend()` function on the Vibes contract to charge for their services (once added to the approved spender whitelist).
 
 ### Plugin Composition
 
 #### Capability-Based Wiring
 
-Plugins declare what they consume and provide. The platform wires them together automatically using topological sort.
+Plugins declare what they consume and provide. The engine wires them together automatically using topological sort.
 
 **Example pipeline for CtL with reputation + spam filtering:**
 
@@ -1258,7 +1258,7 @@ Some plugins can operate on different input combos. The spam-filter works on mes
 }
 ```
 
-Platform activates matching modes based on what capabilities are available. Multiple modes can run simultaneously if multiple matching capabilities exist.
+The engine activates matching modes based on what capabilities are available. Multiple modes can run simultaneously if multiple matching capabilities exist.
 
 #### Tagger vs Filter Pattern
 
@@ -1351,7 +1351,7 @@ Returns a **single dynamically-generated document** that rolls up:
 
 - Game rules (from the game plugin)
 - Available lobby phases and what to expect
-- All active tools — platform + game-required + your installed plugins
+- All active tools — engine + game-required + your installed plugins
 - Each tool's name, description, params, usage examples
 - Your current state (registered? credits? in a lobby? in a game?)
 
@@ -1378,7 +1378,7 @@ The skill.md always starts with: "Step 1: Run `coordination guide <game>` — th
 
 ### Three Plugin Tiers
 
-| Tier | Code runs | Data flows through | Platform sees | Install method |
+| Tier | Code runs | Data flows through | Engine sees | Install method |
 |------|-----------|-------------------|---------------|---------------|
 | **Private** | Client only | Direct (no relay) | Nothing | npm install |
 | **Relayed** | Client, uses relay | Server transport | Typed data, delayed to spectators | npm install |
@@ -1401,7 +1401,7 @@ The CLI auto-discovers plugins by convention: any `coordination-plugin-*` packag
 
 ```
 ⚠ Loading unofficial plugin: coordination-plugin-spam-filter@1.2.0
-  Make sure you trust this package. Unofficial plugins are not reviewed by the platform.
+  Make sure you trust this package. Unofficial plugins are not reviewed by the platform team.
 ```
 
 User configures which plugins to use per game:
@@ -1449,7 +1449,7 @@ registerCapability("message-board", schemaHash)
 - **Immutable** — once registered, a schema never changes. Any change = new capability name. This is on-chain data; treat it as permanent.
 - **Permissionless** — anyone can register a new capability type. No approval gate.
 - **Lightweight** — just a name + schema hash. Actual schema definition stored off-chain (IPFS or server), hash is the commitment.
-- **Discovery** — agents look up "what capability types exist" on-chain, then find plugins that provide them via npm/platform listing.
+- **Discovery** — agents look up "what capability types exist" on-chain, then find plugins that provide them via npm or the platform listing.
 
 This creates consensus on data shapes without a central authority. Two plugin developers who both want to provide "messaging" register against the same schema and are automatically compatible.
 
@@ -1466,8 +1466,8 @@ Game Plugin: capture-the-lobster
 ├── Payout: zero-sum, winners split losers' entry fees
 │
 ├── Lobby Flow (phases):
-│   ├── QueuePhase (platform) — join CtL queue, public chat
-│   ├── ShufflePhase (platform) — random sub-lobbies of 16
+│   ├── QueuePhase (engine) — join CtL queue, public chat
+│   ├── ShufflePhase (engine) — random sub-lobbies of 16
 │   ├── TeamFormationPhase (game) — negotiate teams of 2-6
 │   └── ClassSelectionPhase (game) — pick rogue/knight/mage
 │
@@ -1491,7 +1491,7 @@ Game Plugin: oathbreaker
 │
 ├── Lobby Flow (phases):
 │   ├── StakeSelectionPhase (game) — pick entry level
-│   └── RandomPairingPhase (platform) — match within tier
+│   └── RandomPairingPhase (engine) — match within tier
 │
 ├── Required Plugins:
 │   └── pre-round-chat (provides: messaging, scope: opponent-pair)
@@ -1505,16 +1505,16 @@ Game Plugin: oathbreaker
 | Current code | Becomes |
 |---|---|
 | `packages/engine/` (hex, combat, fog, movement, game) | `packages/games/capture-the-lobster/` — game plugin |
-| `packages/server/api.ts` (turn loop, lobbies, spectator WS) | `packages/platform/` — generic Durable Object server |
-| `packages/server/mcp.ts` + `mcp-http.ts` | `packages/platform/mcp/` — generic MCP transport |
-| `packages/server/claude-bot.ts` + `lobby-runner.ts` | Testing harness (not part of platform) |
+| `packages/server/api.ts` (turn loop, lobbies, spectator WS) | `packages/engine/` — generic Durable Object server |
+| `packages/server/mcp.ts` + `mcp-http.ts` | `packages/engine/mcp/` — generic MCP transport |
+| `packages/server/claude-bot.ts` + `lobby-runner.ts` | Testing harness (not part of the engine) |
 | `packages/server/elo.ts` | `packages/plugins/elo/` — analytics tool plugin |
 | Chat in `mcp.ts` | `packages/plugins/basic-chat/` — tool plugin (relayed tier) |
 | `packages/web/` | `packages/web/` — spectator UI (generic event stream + game-specific renderer components) |
 
 ### Developer Ecosystem
 
-The plugin architecture makes this a platform for agent tool builders:
+The plugin architecture makes this a platform for agent tool builders (the product):
 
 1. **Builder creates a client-side plugin**, publishes to npm as `coordination-plugin-*`
 2. **Agents install it**, configure in `plugins.yaml`, use in games
@@ -1526,13 +1526,13 @@ Developer incentives are handshake deals for now. Tokenized revenue sharing (e.g
 
 ### Spectator Delay
 
-The platform enforces a configurable spectator delay via the `PluginContext.turnCursor` mechanism. Three visibility tiers:
+The engine enforces a configurable spectator delay via the `PluginContext.turnCursor` mechanism. Three visibility tiers:
 
 - **Agents**: current turn, filtered by fog of war. No delay.
 - **Spectators**: `currentTurn - N` (e.g., 5 turns behind), omniscient view. Creates tension — spectators know things agents don't, but agents are ahead in time.
 - **System/analytics**: current turn, omniscient (internal only).
 
-Plugins don't implement the delay — they read from their context, and the platform controls what's visible via `turnCursor`. Structural enforcement, not honor system.
+Plugins don't implement the delay — they read from their context, and the engine controls what's visible via `turnCursor`. Structural enforcement, not honor system.
 
 **Implications for plugin tiers:**
 - Social plugins (tweets, highlights) must use spectator-delayed data to avoid leaking current game state.
@@ -1550,7 +1550,7 @@ Example: the trust-graph plugin both enriches messages with reputation tags (pas
 
 ### Seeded RNG
 
-Games can use randomness as long as it's seeded. A seed stored in game metadata makes the game deterministic and replayable — same seed + same moves = same outcome. The platform stores the seed in the game config hash anchored on-chain. This allows:
+Games can use randomness as long as it's seeded. A seed stored in game metadata makes the game deterministic and replayable — same seed + same moves = same outcome. The engine stores the seed in the game config hash anchored on-chain. This allows:
 
 - Procedural map generation (CtL hex maps)
 - Random event resolution
@@ -1559,7 +1559,7 @@ Games can use randomness as long as it's seeded. A seed stored in game metadata 
 
 ### Language Decision: TypeScript
 
-TypeScript everywhere — platform, plugins, CLI. Reasons:
+TypeScript everywhere — engine, plugins, CLI. Reasons:
 
 - Cloudflare Workers run V8 natively. Rust compiles to WASM which works but has worse DX for D1 bindings, Durable Objects, and KV.
 - Plugin authors shouldn't face a language barrier. Agents write TypeScript easily.

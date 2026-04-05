@@ -11,7 +11,7 @@
     "dist/**/*"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.cjs --banner:js='#!/usr/bin/env node' --external:better-sqlite3",
+    "build": "node build.cjs",
     "prepublishOnly": "npm run build",
     "dev": "tsx watch src/index.ts"
   },

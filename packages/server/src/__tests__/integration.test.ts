@@ -16,8 +16,8 @@ import {
   LobbyPipeline,
   getAvailableTools,
   generateGuide,
-} from '@coordination-games/platform';
-import type { ToolPlugin, AgentInfo } from '@coordination-games/platform';
+} from '@coordination-games/engine';
+import type { ToolPlugin, AgentInfo } from '@coordination-games/engine';
 import { CaptureTheLobsterPlugin, TeamFormationPhase, ClassSelectionPhase } from '@coordination-games/game-ctl';
 import { BasicChatPlugin, formatChatMessage, extractMessages } from '@coordination-games/plugin-chat';
 import { createEloPlugin } from '@coordination-games/plugin-elo';

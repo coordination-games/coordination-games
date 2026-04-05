@@ -2,19 +2,19 @@
  * Lobby runner: orchestrates a lobby with Claude Agent SDK bots.
  * Creates a LobbyManager, waits for agents to join (bots or external),
  * handles team formation, pre-game class selection, and game creation.
+ *
+ * Bots connect via the real MCP HTTP endpoint — they don't use in-process
+ * tools. This makes them game-generic.
  */
 
-import {
-  query,
-  createSdkMcpServer,
-  tool,
-} from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { McpHttpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import {
   LobbyManager,
   LobbyAgent,
   UnitClass,
 } from '@coordination-games/game-ctl';
+import { createBotToken } from './mcp-http.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,7 +48,7 @@ export interface LobbyRunnerState {
 
 export interface LobbyRunnerCallbacks {
   onStateChange: (state: LobbyRunnerState) => void;
-  onGameCreated: (gameId: string, teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[], handles: Record<string, string>) => void;
+  onGameCreated: (gameId: string, teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[], handles: Record<string, string>, botTokens: Record<string, string>) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,52 +62,27 @@ const BOT_NAMES = [
 ];
 
 // ---------------------------------------------------------------------------
-// System prompts
+// Generic system prompts for lobby bots
 // ---------------------------------------------------------------------------
 
-const LOBBY_SYSTEM_PROMPT = `You are a competitive AI agent in the lobby for "Capture the Lobster", a team-based capture-the-flag game.
-
-## Lobby Phase
-You are in the team formation lobby. There are multiple agents here. You need to form a team of the required size.
+const LOBBY_SYSTEM_PROMPT = `You are a competitive AI agent in a game lobby. You connect to the server via MCP tools.
 
 ## What to do:
-1. Use get_state to see who's in the lobby and current team state
-2. Use chat to talk to other agents — negotiate, introduce yourself, propose alliances
-3. Use propose_team to invite another agent to your team (or create a new team with them)
-4. Use accept_team to accept a team invitation
-5. Use leave_team if you're stuck on a team that isn't filling up — leave and try a different partner
-
-## Strategy
-- Be social! Chat with others before proposing teams
-- Look at other agents' handles and ELO ratings
-- Try to form a strong team
-- Once you have a team invite, accept it quickly
-- If your team is incomplete and stuck, leave and try someone else
-- Be decisive — the lobby has a time limit!
+1. Use get_guide() on your first round to learn about the game
+2. Check lobby state and chat with others
+3. Form teams by proposing/accepting team invitations
+4. Be social and decisive — the lobby has a time limit!
 
 Keep your messages short and fun. You're a competitive AI with personality.`;
 
-const PREGAME_SYSTEM_PROMPT = `You are picking your class for "Capture the Lobster", a team-based capture-the-flag game on a hex grid.
-
-## Classes
-- **Rogue**: Speed 3, Vision 4. Beats Mage. Best flag runner — fast and can see far.
-- **Knight**: Speed 2, Vision 2. Beats Rogue. Best defender — tough and can chase down rogues.
-- **Mage**: Speed 1, Vision 3, Range 2. Beats Knight. Best area control — ranged attacks on knights.
-
-## Rock-Paper-Scissors Combat
-Rogue > Mage > Knight > Rogue
+const PREGAME_SYSTEM_PROMPT = `You are picking your class/role for a team game. You connect to the server via MCP tools.
 
 ## What to do:
-1. Use get_state to see your teammates and what classes they've picked
-2. Use chat to coordinate with your team
-3. Use choose_class to pick your class
+1. Check your team state to see teammates and their picks
+2. Chat with teammates to coordinate
+3. Pick your class/role based on team composition
 
-## Strategy
-- Coordinate with your team! Don't all pick the same class.
-- A good team has a mix: at least one rogue (flag runner) and varied combat classes
-- Talk to your teammates about who should play what role
-
-Be quick — pre-game has a 30 second timer!`;
+Be quick and coordinate with your team!`;
 
 // ---------------------------------------------------------------------------
 // Lobby Runner
@@ -130,19 +105,25 @@ export class LobbyRunner {
   private preGameSessionIds: Map<string, string> = new Map();
   /** Tracks which agent IDs are bots (vs external agents) */
   private botIds: Set<string> = new Set();
+  /** Bot tokens for MCP auth */
+  private botTokens: Map<string, string> = new Map();
   /** Counter for unique bot names */
   private botIndex: number = 0;
+  /** MCP server URL for bot connections */
+  private serverUrl: string;
 
   constructor(
     teamSize: number = 2,
     timeoutMs: number = 240000,
     callbacks: LobbyRunnerCallbacks,
+    serverUrl?: string,
   ) {
     this.lobby = new LobbyManager(undefined, teamSize);
     this.callbacks = callbacks;
     this.timeoutMs = timeoutMs;
     this.teamSize = teamSize;
     this.abortController = new AbortController();
+    this.serverUrl = serverUrl ?? `http://localhost:${process.env.PORT || 5173}/mcp`;
   }
 
   disableTimeout(): void {
@@ -220,6 +201,11 @@ export class LobbyRunner {
     };
     this.lobby.addAgent(agent);
     this.botIds.add(id);
+
+    // Create a pre-registered auth token for this bot
+    const token = createBotToken(id, handle);
+    this.botTokens.set(id, token);
+
     this.emitState();
 
     // Start running this bot's lobby behavior in the background (3-4 rounds)
@@ -230,6 +216,16 @@ export class LobbyRunner {
     }
 
     return { agentId: id, handle };
+  }
+
+  /** Get the bot token for a given agent ID */
+  getBotToken(agentId: string): string | undefined {
+    return this.botTokens.get(agentId);
+  }
+
+  /** Check if an agent ID is a bot */
+  isBot(agentId: string): boolean {
+    return this.botIds.has(agentId);
   }
 
   /**
@@ -329,7 +325,13 @@ export class LobbyRunner {
       this.phase = 'game';
       this.emitState();
 
-      this.callbacks.onGameCreated(gameId, teamPlayers, handles);
+      // Collect bot tokens for the game phase
+      const botTokenMap: Record<string, string> = {};
+      for (const [id, token] of this.botTokens) {
+        botTokenMap[id] = token;
+      }
+
+      this.callbacks.onGameCreated(gameId, teamPlayers, handles, botTokenMap);
     } catch (err: any) {
       console.error('Lobby runner error:', err);
       this.phase = 'failed';
@@ -390,77 +392,31 @@ export class LobbyRunner {
   }
 
   // ---------------------------------------------------------------------------
-  // Single bot lobby round
+  // Single bot lobby round — connects via MCP HTTP endpoint
   // ---------------------------------------------------------------------------
 
   private async runLobbyBot(
     botId: string,
     round: number,
   ): Promise<void> {
-    const lobby = this.lobby;
-    const self = this;
-    const agent = lobby.agents.get(botId);
+    const agent = this.lobby.agents.get(botId);
     const handle = agent?.handle ?? botId;
+    const token = this.botTokens.get(botId);
+    if (!token) {
+      console.error(`[LobbyBot] No token for bot ${botId}`);
+      return;
+    }
 
-    const mcpServer = createSdkMcpServer({
-      name: `lobby-${botId}`,
-      version: '0.1.0',
-      tools: [
-        tool(
-          'get_state',
-          'Get the current lobby state: who is here, teams formed, recent chat messages.',
-          {},
-          async () => {
-            const state = lobby.getLobbyState(botId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify(state) }] };
-          },
-        ),
-        tool(
-          'chat',
-          'Send a message visible to everyone in the lobby.',
-          { message: z.string().describe('Your message to the lobby') },
-          async ({ message }) => {
-            lobby.lobbyChat(botId, message);
-            self.emitState();
-            const state = lobby.getLobbyState(botId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, recentChat: state.chat.slice(-10) }) }] };
-          },
-        ),
-        tool(
-          'propose_team',
-          'Propose to team up with another agent. If neither of you is on a team, creates a new team. If one of you is on a team, invites the other.',
-          { targetAgentId: z.string().describe('The ID of the agent to team up with') },
-          async ({ targetAgentId }) => {
-            const result = lobby.proposeTeam(botId, targetAgentId);
-            self.emitState();
-            return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-          },
-        ),
-        tool(
-          'accept_team',
-          'Accept an invitation to join a team.',
-          { teamId: z.string().describe('The team ID to accept') },
-          async ({ teamId }) => {
-            const result = lobby.acceptTeam(botId, teamId);
-            self.emitState();
-            return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-          },
-        ),
-        tool(
-          'leave_team',
-          'Leave your current team. Use this if your team is stuck or you want to join a different team.',
-          {},
-          async () => {
-            const result = lobby.leaveTeam(botId);
-            self.emitState();
-            return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-          },
-        ),
-      ],
-    });
+    const mcpServerName = 'game-server';
+    const mcpConfig: McpHttpServerConfig = {
+      type: 'http',
+      url: this.serverUrl,
+      headers: { 'Authorization': `Bearer ${token}` },
+    };
 
-    const serverName = `lobby-${botId}`;
-    const prompt = `Round ${round}. You are ${handle} (${botId}). Check the lobby state, chat with others, and try to form a team of ${this.teamSize}. Be social and decisive!`;
+    const prompt = round === 1
+      ? `You just joined a lobby. You are ${handle} (${botId}). Call get_guide() first to learn the rules, then check the lobby state, chat with others, and try to form a team of ${this.teamSize}. Be social and decisive!`
+      : `Round ${round}. You are ${handle} (${botId}). Check the lobby state, chat with others, and try to form a team of ${this.teamSize}. Be social and decisive!`;
 
     const localAbort = new AbortController();
     const onRunnerAbort = () => localAbort.abort();
@@ -476,14 +432,8 @@ export class LobbyRunner {
           systemPrompt: LOBBY_SYSTEM_PROMPT,
           model: 'haiku',
           tools: [],
-          mcpServers: { [serverName]: mcpServer },
-          allowedTools: [
-            `mcp__${serverName}__get_state`,
-            `mcp__${serverName}__chat`,
-            `mcp__${serverName}__propose_team`,
-            `mcp__${serverName}__accept_team`,
-            `mcp__${serverName}__leave_team`,
-          ],
+          mcpServers: { [mcpServerName]: mcpConfig },
+          allowedTools: [`mcp__${mcpServerName}__*`],
           maxTurns: 6,
           abortController: localAbort,
           cwd: '/tmp',
@@ -508,7 +458,7 @@ export class LobbyRunner {
   }
 
   // ---------------------------------------------------------------------------
-  // Pre-game phase: bots pick classes
+  // Pre-game phase: bots pick classes — connects via MCP HTTP endpoint
   // ---------------------------------------------------------------------------
 
   private async runPreGamePhase(botPlayerIds: string[]): Promise<void> {
@@ -582,56 +532,26 @@ export class LobbyRunner {
   }
 
   private async runPreGameBot(botId: string, mode: 'discuss' | 'pick' = 'pick'): Promise<void> {
-    const lobby = this.lobby;
-    const self = this;
-    const agent = lobby.agents.get(botId);
+    const agent = this.lobby.agents.get(botId);
     const handle = agent?.handle ?? botId;
-    const player = lobby.preGamePlayers.get(botId);
+    const player = this.lobby.preGamePlayers.get(botId);
     const team = player?.team ?? 'A';
+    const token = this.botTokens.get(botId);
+    if (!token) {
+      console.error(`[PreGameBot] No token for bot ${botId}`);
+      return;
+    }
 
-    const mcpServer = createSdkMcpServer({
-      name: `pregame-${botId}`,
-      version: '0.1.0',
-      tools: [
-        tool(
-          'get_state',
-          'Get your team state: teammates, their class picks, and time remaining.',
-          {},
-          async () => {
-            const state = lobby.getTeamState(botId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify(state) }] };
-          },
-        ),
-        tool(
-          'chat',
-          'Send a message to your teammates only.',
-          { message: z.string().describe('Message to your team') },
-          async ({ message }) => {
-            lobby.teamChat(botId, message);
-            self.emitState();
-            const teamState = lobby.getTeamState(botId);
-            return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, teamState }) }] };
-          },
-        ),
-        tool(
-          'choose_class',
-          'Choose your unit class for the game.',
-          {
-            unitClass: z.enum(['rogue', 'knight', 'mage']).describe('Your class choice'),
-          },
-          async ({ unitClass }) => {
-            const result = lobby.chooseClass(botId, unitClass as UnitClass);
-            self.emitState();
-            return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
-          },
-        ),
-      ],
-    });
+    const mcpServerName = 'game-server';
+    const mcpConfig: McpHttpServerConfig = {
+      type: 'http',
+      url: this.serverUrl,
+      headers: { 'Authorization': `Bearer ${token}` },
+    };
 
-    const serverName = `pregame-${botId}`;
     const prompt = mode === 'discuss'
-      ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Call get_state to see your teammates, then use chat to discuss strategy and class composition. DON'T pick your class yet — just discuss who should play what role. A good team needs a mix of classes!`
-      : `Time to pick! You are ${handle} (${botId}) on Team ${team}. Call get_state to see what your teammates said and picked, then choose_class based on what the team agreed. If no agreement, pick what the team is missing.`;
+      ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Check your team state, then chat about strategy and class composition. DON'T pick your class yet — just discuss who should play what role. A good team needs a mix of classes!`
+      : `Time to pick! You are ${handle} (${botId}) on Team ${team}. Check what your teammates said and picked, then choose your class based on what the team agreed. If no agreement, pick what the team is missing.`;
 
     const localAbort = new AbortController();
     const onRunnerAbort = () => localAbort.abort();
@@ -646,12 +566,8 @@ export class LobbyRunner {
           systemPrompt: PREGAME_SYSTEM_PROMPT,
           model: 'haiku',
           tools: [],
-          mcpServers: { [serverName]: mcpServer },
-          allowedTools: [
-            `mcp__${serverName}__get_state`,
-            `mcp__${serverName}__chat`,
-            `mcp__${serverName}__choose_class`,
-          ],
+          mcpServers: { [mcpServerName]: mcpConfig },
+          allowedTools: [`mcp__${mcpServerName}__*`],
           maxTurns: 5,
           abortController: localAbort,
           cwd: '/tmp',

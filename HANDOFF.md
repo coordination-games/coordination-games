@@ -24,7 +24,7 @@ The game engine is the product. CtL is a proof of concept. We want the engine to
 
 2. **The plugin is trivial.** `CaptureTheLobsterPlugin.resolveTurn` just calls the pure function. No wrappers, no caching.
 
-3. **Generic GameSession in platform.** `GameSession<TState, TMove>` works with any `CoordinationGame`. Holds state, tracks move submissions, records state history. Game-specific helpers (e.g. `submitCtlMove`, `resolveCtlTurn`) live alongside the game code.
+3. **Generic GameSession in the engine.** `GameSession<TState, TMove>` works with any `CoordinationGame`. Holds state, tracks move submissions, records state history. Game-specific helpers (e.g. `submitCtlMove`, `resolveCtlTurn`) live alongside the game code.
 
 4. **Chat is relay-only.** Removed `teamMessages` from game state entirely. Chat flows through the typed relay as `type: "messaging"` data. Game state contains only provable game logic — positions, scores, moves.
 
@@ -45,7 +45,7 @@ const MyGame: CoordinationGame<Config, State, Move, Outcome> = {
 }
 ```
 
-Register it, and the platform handles everything else.
+Register it, and the engine handles everything else.
 
 ### What the Server Owns (Not the Game Plugin)
 
@@ -65,7 +65,7 @@ These are presentation and orchestration concerns. The game plugin is pure game 
 - **Plugin architecture** — CtL, chat, ELO all as separate packages (`@coordination-games/*`)
 - **Typed relay** — routes messages by scope, included in state responses via `relay.receive()`
 - **Relay-native chat** — chat removed from game state, flows entirely through relay
-- **Generic GameSession** — `GameSession<TState, TMove>` in platform, works with any game
+- **Generic GameSession** — `GameSession<TState, TMove>` in the engine, works with any game
 - **Client-side pipeline** — runs in CLI over relay messages
 - **Phase-generic move** — works for both lobby actions and gameplay
 - **Dynamic guide** — shows game rules, phase-appropriate tools, required plugins
@@ -91,7 +91,7 @@ GAME_ENGINE_PLAN.md      — Full platform vision: identity, economics, on-chain
 CLAUDE.md                — Dev guide: build commands, known issues, file map
 HANDOFF.md               — This document
 
-packages/platform/       — @coordination-games/platform (types, plugin loader, lobby pipeline, MCP, Merkle)
+packages/engine/       — @coordination-games/engine (types, plugin loader, lobby pipeline, MCP, Merkle)
 packages/games/capture-the-lobster/ — @coordination-games/game-ctl (pure game functions + plugin wrapper)
 packages/plugins/basic-chat/ — @coordination-games/plugin-chat (Tier 2 client-side chat)
 packages/plugins/elo/    — @coordination-games/plugin-elo (Tier 3 server-side ELO)

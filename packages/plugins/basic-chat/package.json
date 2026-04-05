@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@coordination-games/platform": "*"
+    "@coordination-games/engine": "*"
   },
   "devDependencies": {
     "vitest": "^2.0.0"
