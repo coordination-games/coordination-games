@@ -395,8 +395,14 @@ export function createRelayRouter(): express.Router | null {
   });
 
   // =========================================================================
-  // POST /attest — relay attestation to EAS on Optimism (TrustGraph)
+  // TRUST GRAPH — EAS attestation endpoints (PENDING MIGRATION)
+  //
+  // This code works but bypasses the plugin system. It will be migrated to
+  // the trust-graph ToolPlugin (see docs/TRUST_PLUGINS_SPEC.md).
+  // After migration: delete these endpoints, route through POST /api/tool.
   // =========================================================================
+
+  // POST /attest — relay attestation to EAS on Optimism (TrustGraph)
   router.post('/attest', async (req, res) => {
     try {
       const { attester, recipient, confidence, context, signature, schemaUid } = req.body;
