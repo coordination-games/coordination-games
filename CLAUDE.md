@@ -126,7 +126,7 @@ Deployment record: `packages/contracts/scripts/deployments/op-sepolia.json`
 
 **Architecture:** The server has dual-mode infrastructure — works in-memory for dev/beta and connects to on-chain contracts when env vars are set:
 - `relay.ts` — Gas-paying relayer: agent registration, credit topup/burn, game settlement, EAS attestations
-- `auth.ts` — Challenge-response auth with EIP-712 signing + ERC-8004 verification (falls back to simple token auth)
+- `auth.ts` — Challenge-response auth with EIP-712 signing + ERC-8004 verification
 - `balance.ts` — Server-side balance tracking: on-chain balance minus committed to games minus pending burns
 
 **To enable on-chain mode**, set these env vars when starting the server:
@@ -180,20 +180,20 @@ Current beta defaults (in `api.ts`):
 
 ### Bot Architecture
 
-**Bots use the same pipeline as players** — same CLI, same auth path, same code.
+**Bots use in-process MCP via the Claude Agent SDK**, backed by GameClient (same REST + pipeline as players).
 
-The bot harness spawns `coga serve --bot-mode` as a subprocess for each bot. Each bot gets an ephemeral private key. The Claude Agent SDK (Haiku) connects to the subprocess MCP server via stdio.
+The bot harness (`claude-bot.ts`) creates an in-process MCP server using `createSdkMcpServer()` + `tool()` from the Agent SDK. Each tool calls `GameClient` methods, which hit the REST API and run the pipeline. Bots get server-issued tokens via `createBotToken()` — no wallet needed.
 
 ```
 Real players:  Agent → CLI MCP (coga serve --stdio) → REST API → Game Server
-Bots:          Bot (Haiku) → CLI MCP (coga serve --bot-mode --stdio) → REST API → Game Server
+Bots:          Bot (Haiku) → in-process MCP (createSdkMcpServer) → GameClient → REST API → Game Server
 ```
 
-**Bot auth:** Each bot gets an ephemeral private key. `coga serve --bot-mode --key=0x... --name=Pinchy --server-url=http://localhost:5173` auto-authenticates via the same challenge-response flow as real players. In dev mode (no `RPC_URL`), the server skips the on-chain ERC-8004 check.
-
-**Bot capabilities:** Bots see chat, relay messages, and pipeline output — same as players. The bot harness runs the plugin pipeline on API responses before returning them to the bot. Bots can send chat messages, propose teams, choose classes — full game participation.
+**Bot auth:** Server generates tokens in-memory via `createBotToken()`. No wallet, no challenge-response. The token goes into `GameClient({ token })`. From GameClient's perspective, it's just a token — same as wallet-authenticated players.
 
 **Bot sessions persist across turns** via Claude Agent SDK `resume` — bots remember previous turns and maintain strategy. System prompt is generic ("You are a game-playing agent. Call get_guide() to learn the rules."). Game knowledge comes from `get_guide()`, not hardcoded prompts.
+
+**Claude Agent SDK bots** use Haiku model, connecting via `coga serve --bot-mode` subprocess. Same auth + pipeline path as real players. Chat goes through the typed relay, not game state.
 
 **Lobby phase** uses `LobbyRunner`:
 - Spawns bots, runs team negotiation rounds (3 rounds, 20s each)
@@ -205,16 +205,33 @@ Plugins have two sides: **consumption** (processing incoming relay data) and **p
 
 **Consumption is implemented.** When an agent calls `get_state` or `wait_for_update`, the GameClient fetches raw state + relay messages from the server, then runs the client-side plugin pipeline over the relay messages. The pipeline extracts typed data (e.g. "messaging" from BasicChatPlugin) and merges it into the response. Different agents with different plugins see different things.
 
-**Production is partially implemented.** The `ToolPlugin` interface has `tools: ToolDefinition[]` and `handleCall()` — plugins CAN declare tools. The engine's `getAvailableTools()` already collects plugin tools for the dynamic guide. But neither the CLI MCP server nor the bot harness actually registers plugin tools as MCP tools yet — they're hardcoded.
+**Production is implemented.** Plugins declare tools via `ToolDefinition[]` with `handleCall()`. Tools with `mcpExpose: true` are registered as MCP tools. All plugin tools are callable via CLI as `coga tool <pluginId> <toolName> [args]`. No special cases — chat is a plugin tool, not a built-in.
 
-**The design (not yet built):**
-- All plugin tools are callable via CLI as `coga tool <plugin> <tool-name> [args]`
-- Plugins can mark specific tools for MCP exposure (things needed mid-turn, like shared vision reports)
-- `registerGameTools()` should iterate active plugins, find MCP-exposed tools, register them alongside core tools
-- The handler calls `plugin.handleCall(toolName, args, callerInfo)` → sends result through the relay
-- The `get_guide()` output already lists these tools (via `getAvailableTools()`)
+**The whole flow (example: agent sends a chat message):**
 
-**Key distinction:** MCP tools = things agents need during a turn (time-sensitive, in the flow). CLI tools = everything else (attestations, wallet management, plugin config). Chat is the only plugin that currently has an MCP tool — it's hardcoded as a core tool because every game needs it.
+**Via MCP** (agent calls the `chat` MCP tool):
+1. Agent calls `chat({ message: "rush the flag", scope: "team" })`
+2. MCP tool handler calls `GameClient.callPluginTool("basic-chat", "chat", { message, scope })`
+3. GameClient POSTs to `POST /api/player/tool` with `{ pluginId: "basic-chat", tool: "chat", args: { message, scope } }`
+4. Server looks up BasicChatPlugin, calls `plugin.handleCall("chat", args, callerInfo)`
+5. Plugin returns `{ relay: { type: "messaging", data: { body: message }, scope: "team", pluginId: "basic-chat" } }`
+6. Server sends the relay data through the typed relay (routes by scope to teammates)
+7. Server notifies waiting agents, returns updates envelope
+8. Teammates' next `wait_for_update` picks up the message via the pipeline
+
+**Via CLI** (agent runs a CLI command):
+1. Agent runs `coga tool basic-chat chat "rush the flag" team`
+2. CLI calls `GameClient.callPluginTool("basic-chat", "chat", { message: "rush the flag", scope: "team" })`
+3. Steps 3-8 are identical — same REST endpoint, same plugin handler, same relay
+
+**Both paths converge at step 3.** The MCP tool and CLI command are just different interfaces to the same `GameClient.callPluginTool()` call.
+
+**Key design points:**
+- `mcpExpose: true` on a `ToolDefinition` = agent sees it as an MCP tool (mid-turn, in the flow)
+- `mcpExpose: false` or omitted = CLI-only via `coga tool <pluginId> <toolName>` (between-game, setup)
+- MCP tool names are just the tool name (e.g. `chat`). CLI tools are namespaced: `coga tool basic-chat chat`
+- MCP name collisions between plugins error at init time
+- Plugin `handleCall()` returns `{ relay: { type, data, scope, pluginId } }` — the server sends it through the typed relay. No special handling per plugin.
 
 ### Why no MCP on the server
 
@@ -290,7 +307,10 @@ packages/server/src/             — Server entry point (wires engine + games + 
   game-session.ts                — CtL session helpers (typed state access, move submission, turn resolution)
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots
-  mcp-http.ts                    — Server MCP endpoint (BEING REPLACED with REST — see Client-Server Architecture)
+  mcp-http.ts                    — Token registry, turn waiters, message cursors (utility module — MCP endpoint disabled)
+  game-client.ts                 — GameClient copy for bot harness (shared with CLI, REST + pipeline)
+  api-client.ts                  — REST client copy for bot harness
+  pipeline.ts                    — Pipeline runner copy for bot harness
   relay.ts                       — On-chain gas relayer (registration, credits, settlement, EAS attestations)
   index.ts                       — Entry point with crash guards
 
@@ -304,6 +324,8 @@ packages/web/src/
 packages/cli/                    — Coordination CLI + MCP server (THE agent interface)
   src/index.ts                   — CLI entry point (coga command)
   src/mcp-server.ts              — MCP server for agents (coga serve --stdio). Wraps REST API + pipeline.
+  src/mcp-tools.ts               — Shared MCP tool definitions (core + plugin mcpExpose tools)
+  src/game-client.ts             — GameClient: REST API wrapper + pipeline processing + auth
   src/pipeline.ts                — Client-side plugin pipeline runner
   src/api-client.ts              — REST client for game server
   src/signing.ts                 — EIP-712 move signing with local wallet

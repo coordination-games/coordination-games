@@ -78,7 +78,7 @@ These are presentation and orchestration concerns. The game plugin is pure game 
 - Schema registry — types are informal strings
 - Dynamic MCP tool generation from phase declarations
 - Third-party plugin install flow
-- Generic bot harness — bots connecting via standard MCP endpoint (see docs/GENERIC_BOTS_SPEC.md)
+- Generic bot harness — in-process MCP via Agent SDK + GameClient (see docs/GENERIC_BOTS_SPEC.md)
 - Linting / strict TypeScript (Biome + typescript-eslint, ban `any`)
 
 ---

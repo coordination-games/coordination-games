@@ -113,9 +113,9 @@ No game-specific bot code needed. Your `get_guide()` output IS the bot's brain.
 
 ## Implementation Status
 
-- [x] **Refactor `claude-bot.ts`** — Game-generic, connects via real MCP HTTP endpoint with configurable URL (defaults to `http://localhost:${PORT}/mcp`). Uses `get_guide()` for game rules instead of hardcoded system prompts.
-- [x] **Update `lobby-runner.ts`** — Bots get pre-registered auth tokens via `createBotToken()`, connect via MCP HTTP endpoint during lobby and pre-game phases.
-- [x] **Update `mcp-http.ts`** — Added `createBotToken()` for internal bot auth. Bearer token pre-binding so bots don't need to call `signin()`.
-- [x] **Configurable server URL** — `GAME_SERVER_URL` env var or constructor parameter, passed through lobby-runner and api.ts.
+- [x] **Refactor `claude-bot.ts`** — Game-generic, uses Agent SDK `createSdkMcpServer()` + `tool()` with in-process MCP backed by GameClient (REST + pipeline). Uses `get_guide()` for game rules instead of hardcoded prompts.
+- [x] **Update `lobby-runner.ts`** — Bots get `createBotToken()` tokens, create GameClient instances, use Agent SDK query() with in-process MCP for lobby and pre-game phases.
+- [x] **Plugin tools for bots** — `createBotMcpServer()` accepts plugins, registers `mcpExpose: true` tools dynamically (e.g. chat from BasicChatPlugin).
+- [x] **GameClient shared code** — Bots use same GameClient + pipeline as CLI players. REST API is the single path.
 - [ ] **Add `heuristic-bot.ts`** — Simple random-move bot, no AI. For load testing and game loop verification.
 - [ ] **Test with a minimal game** — Create a trivial game (coin flip? rock-paper-scissors?) to verify bots work game-generically
