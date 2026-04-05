@@ -12,6 +12,8 @@ import GamesPage from './pages/GamesPage';
 import RegisterPage from './pages/RegisterPage';
 import './index.css';
 
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 const router = createBrowserRouter([
   // Standalone pages (no shared layout)
   { path: '/games', element: <GamesPage /> },
@@ -28,7 +30,7 @@ const router = createBrowserRouter([
       { path: '/replay/:id', element: <ReplayPage /> },
     ],
   },
-]);
+], { basename: base || undefined });
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
