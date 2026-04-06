@@ -13,7 +13,7 @@ import type {
   OathPlayerRanking,
 } from './types.js';
 
-import type { CoordinationGame, ActionResult } from '@coordination-games/engine';
+import type { CoordinationGame } from '@coordination-games/engine';
 
 import {
   createInitialState,
