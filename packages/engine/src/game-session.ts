@@ -1,27 +1,32 @@
 /**
- * GameSession — generic state holder for a live game.
+ * GameRoom — manages a live game instance.
  *
- * Works with any CoordinationGame implementation. Tracks:
- * - Current game state
- * - Move submissions per turn
- * - Turn history (state hashes for Merkle proofs)
- *
- * Does NOT track messages, cursors, or relay state — that's the relay's job.
+ * Single-threaded per room (mutex). One timer per room (deadline).
+ * Framework calls handleAction, game decides everything else.
  */
 
-import type { CoordinationGame } from './types.js';
+import type { CoordinationGame, ActionResult } from './types.js';
 
-export class GameSession<TState, TMove> {
+export class GameRoom<TConfig, TState, TAction, TOutcome> {
   private _state: TState;
   private _stateHistory: TState[] = [];
-  private _submittedMoves = new Map<string, TMove>();
+  private _timerId = 0;
+  private _currentTimer: ReturnType<typeof setTimeout> | null = null;
+  private _lock = false; // simple mutex (single-threaded JS, just prevents reentrant calls)
+  private _actionLog: { playerId: string | null; action: TAction; stateHash?: string }[] = [];
   readonly gameId: string;
+  private readonly game: CoordinationGame<TConfig, TState, TAction, TOutcome>;
+
+  // Callbacks the server wires up
+  onStateChange?: (room: GameRoom<TConfig, TState, TAction, TOutcome>) => void;
+  onGameOver?: (room: GameRoom<TConfig, TState, TAction, TOutcome>) => void;
 
   constructor(
-    private readonly game: CoordinationGame<unknown, TState, TMove, unknown>,
+    game: CoordinationGame<TConfig, TState, TAction, TOutcome>,
     initialState: TState,
     gameId: string,
   ) {
+    this.game = game;
     this._state = initialState;
     this._stateHistory = [initialState];
     this.gameId = gameId;
@@ -30,51 +35,101 @@ export class GameSession<TState, TMove> {
   // --- State accessors ---
 
   get state(): TState { return this._state; }
+  get actionLog() { return this._actionLog; }
+  get gamePlugin() { return this.game; }
 
-  get submittedMoves(): ReadonlyMap<string, TMove> { return this._submittedMoves; }
-
-  hasSubmitted(playerId: string): boolean {
-    return this._submittedMoves.has(playerId);
-  }
-
-  get submissionCount(): number {
-    return this._submittedMoves.size;
-  }
-
-  // --- Mutating operations ---
-
-  submitMove(playerId: string, move: TMove): { success: boolean; error?: string } {
-    if (!this.game.validateMove(this._state, playerId, move)) {
-      return { success: false, error: 'Invalid move' };
+  /**
+   * THE SINGLE ENTRY POINT — submit an action.
+   * Validates, applies, updates state, handles deadline, checks game over.
+   */
+  async handleAction(playerId: string | null, action: TAction): Promise<{ success: boolean; error?: string }> {
+    if (this._lock) {
+      return { success: false, error: 'Action already being processed' };
     }
-    this._submittedMoves.set(playerId, move);
-    return { success: true };
+    this._lock = true;
+    try {
+      if (!this.game.validateAction(this._state, playerId, action)) {
+        return { success: false, error: 'Invalid action' };
+      }
+
+      const result: ActionResult<TState, TAction> = this.game.applyAction(this._state, playerId, action);
+      this._state = result.state;
+      this._stateHistory.push(result.state);
+      this._actionLog.push({ playerId, action });
+
+      // Handle deadline
+      if (result.deadline !== undefined) {
+        this.setDeadline(result.deadline);
+      }
+
+      // Notify state change
+      this.onStateChange?.(this);
+
+      // Check game over
+      if (this.game.isOver(this._state)) {
+        this.setDeadline(null); // cancel timer
+        this.onGameOver?.(this);
+      }
+
+      return { success: true };
+    } finally {
+      this._lock = false;
+    }
   }
 
-  resolveTurn(): TState {
-    const newState = this.game.resolveTurn(this._state, this._submittedMoves);
-    this._state = newState;
-    this._stateHistory.push(newState);
-    this._submittedMoves.clear();
-    return newState;
+  /** Get visible state for a player (or spectator if null). */
+  getVisibleState(playerId: string | null): unknown {
+    return this.game.getVisibleState(this._state, playerId);
   }
 
+  /** Check if game is over. */
   isOver(): boolean {
     return this.game.isOver(this._state);
+  }
+
+  /** Get outcome (only valid when isOver). */
+  getOutcome(): TOutcome {
+    return this.game.getOutcome(this._state);
+  }
+
+  /** Get payouts (only valid when isOver). */
+  computePayouts(playerIds: string[]): Map<string, number> {
+    return this.game.computePayouts(this.getOutcome(), playerIds);
   }
 
   getStateHistory(): readonly TState[] {
     return this._stateHistory;
   }
 
+  /** Cancel any active timer. */
+  cancelTimer(): void {
+    this.setDeadline(null);
+  }
+
+  private setDeadline(deadline: { seconds: number; action: TAction } | null): void {
+    this._timerId++;
+    if (this._currentTimer) {
+      clearTimeout(this._currentTimer);
+      this._currentTimer = null;
+    }
+    if (!deadline) return;
+
+    const myId = this._timerId;
+    this._currentTimer = setTimeout(() => {
+      if (myId !== this._timerId) return; // stale
+      this._currentTimer = null;
+      this.handleAction(null, deadline.action);
+    }, deadline.seconds * 1000);
+  }
+
   // --- Static factory ---
 
-  static create<TConfig, TState, TMove, TOutcome>(
-    game: CoordinationGame<TConfig, TState, TMove, TOutcome>,
+  static create<TConfig, TState, TAction, TOutcome>(
+    game: CoordinationGame<TConfig, TState, TAction, TOutcome>,
     config: TConfig,
     gameId: string,
-  ): GameSession<TState, TMove> {
+  ): GameRoom<TConfig, TState, TAction, TOutcome> {
     const initialState = game.createInitialState(config);
-    return new GameSession(game, initialState, gameId);
+    return new GameRoom(game, initialState, gameId);
   }
 }

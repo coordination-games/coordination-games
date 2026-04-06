@@ -1,140 +1,92 @@
 /**
  * Core types for the Coordination Games framework.
  *
- * A game plugin implements CoordinationGame<TConfig, TState, TMove, TOutcome>.
- * The platform handles lobbies, auth, turn resolution, spectator feeds,
- * move signing, and on-chain settlement.
+ * A game plugin implements CoordinationGame<TConfig, TState, TAction, TOutcome>.
+ * The framework is a dumb pipe: action -> state -> broadcast -> maybe set timer.
+ * The game owns turns, phases, resolution, and visibility.
  */
 
 // ---------------------------------------------------------------------------
-// Ethereum / EIP-712 primitives
+// Ethereum primitives
 // ---------------------------------------------------------------------------
 
 /** An Ethereum address (0x-prefixed hex string). */
 export type Address = string;
 
-/** A single field in an EIP-712 type definition. */
-export interface EIP712Field {
-  name: string;
-  type: string;
-}
-
-/** EIP-712 type definitions — maps type names to their field arrays. */
-export type EIP712TypeDef = Record<string, EIP712Field[]>;
-
-/** EIP-712 domain separator. */
-export interface EIP712Domain {
-  name: string;
-  version: string;
-  chainId: number;
-  verifyingContract: Address;
-}
-
 // ---------------------------------------------------------------------------
-// Game plugin interface
+// Game plugin interface (v2 — action-based)
 // ---------------------------------------------------------------------------
 
 /**
- * The core game plugin interface. Each game (CtL, OATHBREAKER, etc.)
- * implements this interface. The platform handles everything else.
+ * Action result returned by applyAction.
+ * deadline: { seconds, action } -> set timer, fire action on expiry
+ * deadline: null -> cancel current timer
+ * deadline: undefined (omitted) -> leave timer unchanged
+ */
+export interface ActionResult<TState, TAction> {
+  state: TState;
+  deadline?: { seconds: number; action: TAction } | null;
+}
+
+/**
+ * v2 game plugin interface — action-based.
+ * Game owns turns, phases, resolution, visibility.
+ * Framework is a dumb pipe: action -> state -> broadcast -> maybe set timer.
  *
  * Hard requirements for all games:
- * 1. Turn-based — simultaneous moves within a turn, sequential turns
- * 2. Deterministic resolution — same inputs always produce same outputs
- * 3. Discrete entry — player joins a lobby, entry fee deducted, game starts
- * 4. Signed moves — every move is EIP-712 typed data signed by player's wallet
- * 5. Finite — games must have a termination condition
+ * 1. Deterministic — applyAction must produce the same output for the same input
+ * 2. Discrete entry — player joins a lobby, entry fee deducted, game starts
+ * 3. Finite — games must have a termination condition (isOver returns true)
  *
- * @template TConfig - Game configuration (map seed, team size, etc.)
- * @template TState - Full game state (board, units, scores, etc.)
- * @template TMove - A single player's move for one turn
+ * @template TConfig - Game configuration (map seed, team size, player IDs, etc.)
+ * @template TState - Full game state (board, units, scores, turn info, etc.)
+ * @template TAction - A single action (player move, system tick, timer expiry, etc.)
  * @template TOutcome - Game result (winner, scores, etc.)
  */
-export interface CoordinationGame<TConfig, TState, TMove, TOutcome> {
+export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Unique game type identifier, e.g. "capture-the-lobster", "oathbreaker" */
   readonly gameType: string;
 
   /** Semantic version for replay compatibility */
   readonly version: string;
 
-  /**
-   * EIP-712 type definition for this game's moves.
-   * gameId + turnNumber are always included by the platform wrapper.
-   * The rest is game-specific.
-   */
-  readonly moveSchema: EIP712TypeDef;
-
-  /**
-   * Create the initial game state from configuration.
-   * Must be deterministic given the same config.
-   */
+  /** Create initial game state from config (config includes playerIds). */
   createInitialState(config: TConfig): TState;
 
-  /**
-   * Validate whether a move is legal in the current state for a given player.
-   * Returns true if the move is valid.
-   */
-  validateMove(state: TState, playerId: string, move: TMove): boolean;
+  /** Can this player do this action right now? playerId null for system actions. */
+  validateAction(state: TState, playerId: string | null, action: TAction): boolean;
 
-  /**
-   * THE CORE LOOP — resolve a turn. MUST be deterministic.
-   * Given current state and all player moves, produce the next state.
-   */
-  resolveTurn(state: TState, moves: Map<string, TMove>): TState;
+  /** THE CORE — apply action, return new state + optional deadline. Must be deterministic. */
+  applyAction(state: TState, playerId: string | null, action: TAction): ActionResult<TState, TAction>;
+
+  /** What should this player see? null = spectator view. Game controls all visibility. */
+  getVisibleState(state: TState, playerId: string | null): unknown;
 
   /** Is the game over? */
   isOver(state: TState): boolean;
 
-  /** Get the game outcome. Only valid when isOver() returns true. */
+  /** Final outcome. Only valid when isOver() is true. */
   getOutcome(state: TState): TOutcome;
 
   /** Entry cost in credits per player. */
   readonly entryCost: number;
 
-  /**
-   * Compute credit payouts from the game outcome.
-   * Returns a map of playerId -> credit delta (positive = win, negative = loss).
-   * Must be zero-sum: all deltas must sum to zero.
-   */
+  /** Credit payouts from outcome. Must be zero-sum. */
   computePayouts(outcome: TOutcome, playerIds: string[]): Map<string, number>;
 
-  /** Lobby flow configuration (phases, matchmaking, queue type). */
+  /** Lobby configuration. */
   readonly lobby?: GameLobbyConfig;
 
-  /** Plugin IDs that must be installed to play this game. */
+  /** Required plugin IDs. */
   readonly requiredPlugins?: string[];
 
-  /** Plugin IDs that are recommended but not required. */
+  /** Recommended plugin IDs. */
   readonly recommendedPlugins?: string[];
 }
 
 // ---------------------------------------------------------------------------
-// Game state metadata (managed by the framework, not the plugin)
+// Game result for on-chain anchoring
 // ---------------------------------------------------------------------------
-
-/** Phases of a game room's lifecycle. */
-export type GameRoomPhase =
-  | 'lobby'       // Waiting for players
-  | 'pre_game'    // Team formation, class selection
-  | 'in_progress' // Game is running
-  | 'finished'    // Game is over
-  | 'settled';    // On-chain settlement complete
-
-/** A signed move submission from a player. */
-export interface SignedMove<TMove> {
-  playerId: string;
-  move: TMove;
-  signature?: string;  // EIP-712 signature (optional during transition)
-  turnNumber: number;
-  gameId: string;
-}
-
-/** Turn record stored by the framework for Merkle tree construction. */
-export interface TurnData<TMove> {
-  turnNumber: number;
-  moves: SignedMove<TMove>[];
-  stateHash: string;  // Hash of the state after resolution
-}
 
 /** Game result for on-chain anchoring. */
 export interface GameResult {
@@ -142,9 +94,9 @@ export interface GameResult {
   gameType: string;
   players: string[];    // Player IDs (agentIds)
   outcome: unknown;     // Game-specific outcome data
-  movesRoot: string;    // Merkle root of all turns
+  actionsRoot: string;  // Merkle root of all actions
   configHash: string;   // Hash of the game config
-  turnCount: number;
+  actionCount: number;
   timestamp: number;
 }
 
@@ -191,8 +143,6 @@ export interface FrameworkConfig {
   port: number;
   /** Registered game plugins */
   games: Map<string, CoordinationGame<any, any, any, any>>;
-  /** Turn timeout in milliseconds */
-  turnTimeoutMs?: number;
   /** Spectator delay in turns */
   spectatorDelay?: number;
 }

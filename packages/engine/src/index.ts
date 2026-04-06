@@ -5,6 +5,7 @@ export * from './types.js';
 // Merkle tree construction and verification
 export {
   buildMerkleTree,
+  buildActionMerkleTree,
   buildGameMerkleTree,
   generateProof,
   verifyProof,
@@ -28,22 +29,16 @@ export {
   PHASE_TOOLS,
 } from './mcp.js';
 
-// Generic game session
-export { GameSession } from './game-session.js';
+// Game room (v2 action-based)
+export { GameRoom } from './game-session.js';
 
 // Server-side framework
 export {
   GameFramework,
   AuthManager,
   BalanceTracker,
-  createGameRoom,
-  submitMove,
-  allMovesSubmitted,
-  resolveTurn,
   buildGameResult,
-  computePayouts,
   LobbyPipeline,
-  type GameRoom,
   type AuthConfig,
   type BalanceConfig,
 } from './server/index.js';

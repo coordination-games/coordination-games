@@ -1,12 +1,12 @@
 /**
- * Merkle tree construction for game move verification.
+ * Merkle tree construction for game action verification.
  *
- * Builds a binary Merkle tree from turn data (moves + signatures).
- * Used to produce the movesRoot anchored on-chain via GameAnchor.settleGame().
+ * Builds a binary Merkle tree from action data.
+ * Used to produce the actionsRoot anchored on-chain via GameAnchor.settleGame().
  *
  * Tree structure:
- * - Leaf = keccak256(abi.encodePacked(turnNumber, playerId, moveHash, signature))
- * - Internal nodes = keccak256(sort(left, right))  // sorted to make proofs order-independent
+ * - Leaf = sha256(actionIndex | playerId | actionData | stateHash)
+ * - Internal nodes = sha256(sort(left, right))  // sorted to make proofs order-independent
  */
 
 import crypto from 'node:crypto';
@@ -36,19 +36,19 @@ function hashPair(a: string, b: string): string {
 // ---------------------------------------------------------------------------
 
 export interface MerkleLeafData {
-  turnNumber: number;
-  playerId: string;
-  moveData: string;     // JSON-serialized move
-  signature?: string;   // EIP-712 signature (hex string)
+  actionIndex: number;       // sequential action number
+  playerId: string | null;   // null for system actions
+  actionData: string;        // JSON.stringify of the action
+  stateHash?: string;        // hash of resulting state (optional)
 }
 
-/** Encode a single move into a Merkle leaf hash. */
+/** Encode a single action into a Merkle leaf hash. */
 export function encodeLeaf(data: MerkleLeafData): string {
   const payload = [
-    String(data.turnNumber),
-    data.playerId,
-    data.moveData,
-    data.signature ?? 'unsigned',
+    String(data.actionIndex),
+    data.playerId ?? 'system',
+    data.actionData,
+    data.stateHash ?? 'none',
   ].join('|');
   return hashString(payload);
 }
@@ -154,8 +154,18 @@ export function verifyProof(root: string, proof: MerkleProof): boolean {
 }
 
 /**
- * Build a Merkle tree from turn data arrays.
- * Each turn may contain multiple player moves; each move becomes a leaf.
+ * Build a Merkle tree from an action log.
+ * Each action becomes a leaf in sequential order.
+ */
+export function buildActionMerkleTree(
+  actions: MerkleLeafData[],
+): MerkleTree {
+  const leaves: string[] = actions.map((action) => encodeLeaf(action));
+  return buildMerkleTree(leaves);
+}
+
+/**
+ * @deprecated Use buildActionMerkleTree instead. Kept for v1 compatibility during migration.
  */
 export function buildGameMerkleTree(
   turns: { turnNumber: number; moves: MerkleLeafData[] }[],

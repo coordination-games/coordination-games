@@ -1,5 +1,5 @@
 /**
- * Capture the Lobster — CoordinationGame plugin.
+ * Capture the Lobster — CoordinationGame plugin (v2 action-based).
  *
  * Implements the CoordinationGame interface using the pure game functions
  * from game.ts. State in, state out.
@@ -7,7 +7,7 @@
 
 import type {
   CoordinationGame,
-  EIP712TypeDef,
+  ActionResult,
   GameLobbyConfig,
 } from '@coordination-games/engine';
 
@@ -18,6 +18,8 @@ import {
   submitMove as gameSubmitMove,
   resolveTurn,
   isGameOver,
+  allMovesSubmitted,
+  getStateForAgent,
 } from './game.js';
 import { generateMap, MapConfig } from './map.js';
 import { Direction } from './hex.js';
@@ -44,7 +46,7 @@ export interface CtlPlayerConfig {
   unitClass: UnitClass;
 }
 
-/** A single player's move in CtL. */
+/** A single player's move in CtL (internal type, used by game.ts). */
 export interface CtlMove {
   path: Direction[];
 }
@@ -64,30 +66,27 @@ export interface CtlOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// v2 action type
+// ---------------------------------------------------------------------------
+
+/** Actions that can be applied to CtL game state. */
+export type CtlAction =
+  | { type: 'game_start' }
+  | { type: 'move'; agentId: string; path: Direction[] }
+  | { type: 'turn_timeout' };
+
+// ---------------------------------------------------------------------------
 // The plugin
 // ---------------------------------------------------------------------------
 
 export const CaptureTheLobsterPlugin: CoordinationGame<
   CtlConfig,
   CtlGameState,
-  CtlMove,
+  CtlAction,
   CtlOutcome
 > = {
   gameType: 'capture-the-lobster',
-  version: '0.1.0',
-
-  moveSchema: {
-    Move: [
-      { name: 'gameId', type: 'bytes32' },
-      { name: 'turnNumber', type: 'uint16' },
-      { name: 'units', type: 'UnitAction[]' },
-    ],
-    UnitAction: [
-      { name: 'unitId', type: 'string' },
-      { name: 'action', type: 'string' },
-      { name: 'direction', type: 'string' },
-    ],
-  } as EIP712TypeDef,
+  version: '0.2.0',
 
   createInitialState(config: CtlConfig): CtlGameState {
     const mapConfig: MapConfig = {
@@ -112,27 +111,85 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     );
   },
 
-  validateMove(state: CtlGameState, playerId: string, move: CtlMove): boolean {
-    return validateMoveForPlayer(state, playerId, move.path).valid;
+  validateAction(state: CtlGameState, playerId: string | null, action: CtlAction): boolean {
+    if (action.type === 'game_start') {
+      return playerId === null && state.phase === 'pre_game';
+    }
+    if (action.type === 'turn_timeout') {
+      return playerId === null && state.phase === 'in_progress';
+    }
+    if (action.type === 'move') {
+      if (playerId === null) return false;
+      return validateMoveForPlayer(state, action.agentId, action.path).valid;
+    }
+    return false;
   },
 
-  resolveTurn(state: CtlGameState, moves: Map<string, CtlMove>): CtlGameState {
-    let current = state;
-
-    for (const [playerId, move] of moves) {
-      const result = gameSubmitMove(current, playerId, move.path);
-      current = result.state;
+  applyAction(state: CtlGameState, playerId: string | null, action: CtlAction): ActionResult<CtlGameState, CtlAction> {
+    // game_start: set phase to in_progress, return deadline for first turn
+    if (action.type === 'game_start') {
+      const started: CtlGameState = { ...state, phase: 'in_progress' as const };
+      return {
+        state: started,
+        deadline: { seconds: state.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+      };
     }
 
-    // Submit empty moves for players who didn't submit
-    for (const unit of current.units) {
-      if (unit.alive && !new Map(current.moveSubmissions).has(unit.id)) {
-        const result = gameSubmitMove(current, unit.id, []);
-        current = result.state;
+    // turn_timeout: fill empty moves for alive units, resolve turn
+    if (action.type === 'turn_timeout') {
+      let current = state;
+      // Fill empty moves for alive units that haven't submitted
+      for (const unit of current.units) {
+        const submissions = new Map(current.moveSubmissions);
+        if (unit.alive && !submissions.has(unit.id)) {
+          const result = gameSubmitMove(current, unit.id, []);
+          current = result.state;
+        }
       }
+      // Resolve
+      const { state: resolved } = resolveTurn(current);
+      if (isGameOver(resolved)) {
+        return { state: resolved, deadline: null };
+      }
+      return {
+        state: resolved,
+        deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+      };
     }
 
-    return resolveTurn(current).state;
+    // move: submit move, check if all submitted, maybe resolve
+    if (action.type === 'move' && playerId !== null) {
+      const result = gameSubmitMove(state, action.agentId, action.path);
+      if (!result.success) return { state }; // invalid move, no state change
+
+      let current = result.state;
+
+      // Check if all alive units have submitted
+      if (allMovesSubmitted(current)) {
+        const { state: resolved } = resolveTurn(current);
+        if (isGameOver(resolved)) {
+          return { state: resolved, deadline: null };
+        }
+        return {
+          state: resolved,
+          deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+        };
+      }
+
+      return { state: current }; // no deadline change — timer keeps ticking
+    }
+
+    return { state };
+  },
+
+  getVisibleState(state: CtlGameState, playerId: string | null): unknown {
+    if (playerId === null) {
+      // Spectator view — return full state (server handles delay)
+      return state;
+    }
+    // Agent view — fog-filtered
+    const submitted = new Set(new Map(state.moveSubmissions).keys());
+    return getStateForAgent(state, playerId, submitted);
   },
 
   isOver(state: CtlGameState): boolean {

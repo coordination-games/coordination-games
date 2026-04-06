@@ -16,6 +16,7 @@
     "@anthropic-ai/sdk": "^0.80.0",
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
+    "@coordination-games/game-oathbreaker": "*",
     "@coordination-games/plugin-chat": "*",
     "@coordination-games/plugin-elo": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",

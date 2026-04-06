@@ -69,16 +69,16 @@ const CLASS_SELECTION_TOOLS: ToolDefinition[] = [
 const GAMEPLAY_TOOLS: ToolDefinition[] = [
   {
     name: 'get_state',
-    description: 'Get the current game state (fog-of-war filtered)',
+    description: 'Get the current game state (visibility-filtered)',
     inputSchema: { type: 'object', properties: {} },
   },
   {
-    name: 'submit_move',
-    description: 'Submit your move for this turn',
+    name: 'submit_action',
+    description: 'Submit an action for the current game state',
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'array', items: { type: 'string' } } },
-      required: ['path'],
+      properties: { action: { type: 'object' } },
+      required: ['action'],
     },
   },
 ];

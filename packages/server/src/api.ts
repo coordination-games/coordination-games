@@ -7,17 +7,14 @@ import crypto from 'node:crypto';
 
 import {
   Hex,
-  generateMap,
   TileType,
-  GameMap,
   getUnitVision,
   hexToString,
   CLASS_VISION,
   LobbyManager as EngineLobbyManager,
-  CtlOutcome,
 } from '@coordination-games/game-ctl';
 import {
-  type CtlSession,
+  type CtlGameRoom,
   type GameUnit,
   type FlagState,
   type GamePhase,
@@ -25,17 +22,13 @@ import {
   type UnitClass,
   type Direction,
   type GameConfig,
-  submitCtlMove,
-  allMovesSubmitted,
-  resolveCtlTurn,
-  getStateForAgent,
-  isGameOver,
-  createCtlSession,
-  getTurnHistory,
+  type CtlAction,
+  createCtlGameRoom,
   getMapRadiusForTeamSize,
   getTurnLimitForRadius,
   CaptureTheLobsterPlugin,
 } from './game-session.js';
+import type { CtlConfig } from '@coordination-games/game-ctl';
 import { EloTracker } from '@coordination-games/plugin-elo';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
@@ -62,7 +55,15 @@ import {
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
 import { GameRelay, type RelayMessage } from './typed-relay.js';
-import { buildGameMerkleTree, type MerkleLeafData } from '@coordination-games/engine';
+import { GameRoom, buildActionMerkleTree, type MerkleLeafData } from '@coordination-games/engine';
+import {
+  OathbreakerPlugin,
+  type OathConfig,
+  type OathState,
+  type OathAction,
+  type OathOutcome,
+  DEFAULT_OATH_CONFIG,
+} from '@coordination-games/game-oathbreaker';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -130,22 +131,17 @@ export interface ExternalSlot {
   connected: boolean;
 }
 
-export interface GameRoom {
-  game: CtlSession;
+export interface GameRoomData {
+  game: CtlGameRoom;
   spectators: Set<WebSocket>;
   stateHistory: SpectatorState[];   // indexed by turn
   spectatorDelay: number;           // turns of delay (default 5)
-  turnTimer: ReturnType<typeof setTimeout> | null;
-  deadlineTimer: ReturnType<typeof setTimeout> | null;
   botHandles: string[];             // handles of bot players in this room
   botMeta: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   botSessions: BotSession[];
   finished: boolean;
-  turnInProgress: boolean;
   // External agent slots
   externalSlots: Map<string, ExternalSlot>;  // agentId -> slot info
-  // Event-driven turn: resolve callback for early completion
-  turnResolve: (() => void) | null;
   turnTimeoutMs: number;
   /** Agent ID -> display name */
   handleMap: Record<string, string>;
@@ -158,64 +154,54 @@ export interface GameRoom {
   relay: GameRelay;
 }
 
+// Type alias for OATHBREAKER GameRoom
+export type OathGameRoom = GameRoom<OathConfig, OathState, OathAction, OathOutcome>;
+
+export interface OathRoomData {
+  game: OathGameRoom;
+  spectators: Set<WebSocket>;
+  finished: boolean;
+  externalSlots: Map<string, ExternalSlot>;
+  handleMap: Record<string, string>;
+  relay: GameRelay;
+}
+
 // ---------------------------------------------------------------------------
 // Game result helpers
 // ---------------------------------------------------------------------------
 
-function buildGameResultFromSession(
-  session: CtlSession,
+function buildGameResultFromRoom(
+  room: CtlGameRoom,
   gameId: string,
   playerIds: string[],
 ) {
-  const turnHistory = getTurnHistory(session);
-  const turns = turnHistory.map((record) => ({
-    turnNumber: record.turn,
-    moves: [...record.moves.entries()].map(([playerId, path]) => ({
-      turnNumber: record.turn,
-      playerId,
-      moveData: JSON.stringify(path),
-    } as MerkleLeafData)),
+  const leaves: MerkleLeafData[] = room.actionLog.map((entry, index) => ({
+    actionIndex: index,
+    playerId: entry.playerId,
+    actionData: JSON.stringify(entry.action),
   }));
-  const tree = buildGameMerkleTree(turns);
+  const tree = buildActionMerkleTree(leaves);
 
   return {
     gameId,
     gameType: 'capture-the-lobster',
     players: playerIds,
     outcome: {
-      winner: session.state.winner,
-      score: { ...session.state.score },
-      turnCount: session.state.turn,
+      winner: room.state.winner,
+      score: { ...room.state.score },
+      turnCount: room.state.turn,
     },
-    movesRoot: tree.root,
+    actionsRoot: tree.root,
     configHash: '',
-    turnCount: turnHistory.length,
+    actionCount: room.actionLog.length,
     timestamp: Date.now(),
   };
 }
 
-function computePayoutsFromSession(
-  session: CtlSession,
-  playerIds: string[],
-): Map<string, number> {
-  const outcome: CtlOutcome = {
-    winner: session.state.winner,
-    score: { ...session.state.score },
-    turnCount: session.state.turn,
-    playerStats: new Map(),
-  };
-
-  for (const unit of session.state.units) {
-    outcome.playerStats.set(unit.id, {
-      team: unit.team,
-      kills: 0,
-      deaths: 0,
-      flagCarries: 0,
-      flagCaptures: 0,
-    });
-  }
-
-  return CaptureTheLobsterPlugin.computePayouts(outcome, playerIds);
+/** Check if a player has submitted a move for the current turn (reads from game state). */
+function hasSubmitted(game: CtlGameRoom, agentId: string): boolean {
+  const submissions = new Map(game.state.moveSubmissions);
+  return submissions.has(agentId);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +218,7 @@ const BOT_DISPLAY_NAMES = [
 // Spectator state builder
 // ---------------------------------------------------------------------------
 
-function buildSpectatorState(game: CtlSession, handles: Record<string, string> = {}, relay?: GameRelay): SpectatorState {
+function buildSpectatorState(game: CtlGameRoom, handles: Record<string, string> = {}, relay?: GameRelay): SpectatorState {
   const map = { tiles: new Map(game.state.mapTiles), radius: game.state.mapRadius, bases: game.state.mapBases };
   const { units, flags, turn, phase, config, score } = game.state;
 
@@ -294,10 +280,19 @@ function buildSpectatorState(game: CtlSession, handles: Record<string, string> =
     tiles.push(tile);
   }
 
-  // Kills from most recent turn
-  const history = getTurnHistory(game);
-  const lastRecord = history.length > 0 ? history[history.length - 1] : null;
-  const kills = lastRecord?.kills ?? [];
+  // Kills — inferred from state history (compare alive status between turns)
+  const stateHistory = game.getStateHistory();
+  const kills: { killerId: string; victimId: string; reason: string }[] = [];
+  if (stateHistory.length >= 2) {
+    const prev = stateHistory[stateHistory.length - 2];
+    const curr = stateHistory[stateHistory.length - 1];
+    for (const unit of curr.units) {
+      const prevUnit = prev.units.find((u: any) => u.id === unit.id);
+      if (prevUnit && prevUnit.alive && !unit.alive) {
+        kills.push({ killerId: 'unknown', victimId: unit.id, reason: 'combat' });
+      }
+    }
+  }
 
   // Build flag status summaries
   function flagStatus(flagArr: FlagState[]): { status: 'at_base' | 'carried'; carrier?: string } {
@@ -370,7 +365,7 @@ function buildSpectatorState(game: CtlSession, handles: Record<string, string> =
 // Helper: delayed state for spectators
 // ---------------------------------------------------------------------------
 
-function getDelayedState(room: GameRoom): SpectatorState | null {
+function getDelayedState(room: GameRoomData): SpectatorState | null {
   const delayedTurn = room.game.state.turn - room.spectatorDelay;
   const idx = Math.max(0, delayedTurn);
   if (room.stateHistory.length === 0) return null;
@@ -403,7 +398,8 @@ export class GameServer {
   private wss: WebSocketServer;
   readonly elo: EloTracker;
 
-  readonly games: Map<string, GameRoom> = new Map();
+  readonly games: Map<string, GameRoomData> = new Map();
+  readonly oathGames: Map<string, OathRoomData> = new Map();
   readonly lobbies: Map<string, LobbyRoom> = new Map();
   private maxConcurrentGames: number = 1; // Beta limit — prevents credit drain
 
@@ -411,6 +407,8 @@ export class GameServer {
   private agentToGame: Map<string, string> = new Map();
   /** Maps external agentId -> lobbyId for lobby resolution */
   private agentToLobby: Map<string, string> = new Map();
+  /** Maps agentId -> game type for disambiguation */
+  private agentGameType: Map<string, 'capture-the-lobster' | 'oathbreaker'> = new Map();
 
   /** Server URL for bot connections (base URL — bots connect via coga subprocess) */
   private serverUrl: string;
@@ -446,22 +444,8 @@ export class GameServer {
   }
 
   // ---------------------------------------------------------------------------
-  // Event-driven turn: callback when any agent submits a move
+  // Event-driven turn: no longer needed — GameRoom handles it via handleAction
   // ---------------------------------------------------------------------------
-
-  private onMoveSubmitted(gameId: string, agentId: string): void {
-    const room = this.games.get(gameId);
-    if (!room || room.finished) return;
-
-    console.log(`[Turn] Move submitted by ${agentId} for game ${gameId}`);
-
-    // Check if all moves are in (both bots and external agents)
-    if (allMovesSubmitted(room.game) && room.turnResolve) {
-      console.log(`[Turn] All moves submitted for game ${gameId} — resolving early`);
-      room.turnResolve();
-      room.turnResolve = null;
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // REST routes
@@ -474,7 +458,7 @@ export class GameServer {
     router.get('/framework', (_req, res) => {
       res.json({
         version: '0.1.0',
-        games: ['capture-the-lobster'],
+        games: ['capture-the-lobster', 'oathbreaker'],
         status: 'active',
       });
     });
@@ -528,6 +512,13 @@ export class GameServer {
     router.post('/lobbies/create', (req, res) => {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
+      }
+      const gameType = req.body?.gameType ?? 'capture-the-lobster';
+      if (gameType === 'oathbreaker') {
+        const playerCount = Math.min(20, Math.max(4, Math.floor((req.body?.playerCount as number) || 4)));
+        const gameId = this.createOathbreakerGame(playerCount, []);
+        console.log(`[REST] Created OATHBREAKER game ${gameId} (${playerCount} players) via /lobbies/create`);
+        return res.status(201).json({ gameId, gameType: 'oathbreaker', playerCount });
       }
       const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
       const timeoutMs = (req.body?.timeoutMs as number) || 600000;
@@ -591,8 +582,9 @@ export class GameServer {
 
     // List active games
     router.get('/games', (_req, res) => {
-      const list = Array.from(this.games.entries()).map(([id, room]) => ({
+      const ctlList = Array.from(this.games.entries()).map(([id, room]) => ({
         id,
+        gameType: 'capture-the-lobster',
         turn: room.game.state.turn,
         maxTurns: room.game.state.config.turnLimit,
         phase: room.game.state.phase,
@@ -604,11 +596,31 @@ export class GameServer {
         spectators: room.spectators.size,
         externalAgents: room.externalSlots.size,
       }));
-      res.json(list);
+      const oathList = Array.from(this.oathGames.entries()).map(([id, room]) => {
+        const oathState = room.game.state as OathState;
+        return {
+          id,
+          gameType: 'oathbreaker',
+          round: oathState.round,
+          maxRounds: oathState.config.maxRounds,
+          phase: oathState.phase,
+          players: oathState.players.map(p => p.id),
+          spectators: room.spectators.size,
+          externalAgents: room.externalSlots.size,
+        };
+      });
+      res.json([...ctlList, ...oathList]);
     });
 
     // Game details
     router.get('/games/:id', (req, res) => {
+      // Check OATHBREAKER games first
+      const oathRoom = this.oathGames.get(req.params.id);
+      if (oathRoom) {
+        const spectatorView = oathRoom.game.getVisibleState(null);
+        return res.json({ gameType: 'oathbreaker', ...spectatorView as any });
+      }
+
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
@@ -619,6 +631,13 @@ export class GameServer {
 
     // Current spectator state (delayed)
     router.get('/games/:id/state', (req, res) => {
+      // Check OATHBREAKER games
+      const oathRoom = this.oathGames.get(req.params.id);
+      if (oathRoom) {
+        const spectatorView = oathRoom.game.getVisibleState(null);
+        return res.json({ gameType: 'oathbreaker', ...spectatorView as any });
+      }
+
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
@@ -709,27 +728,14 @@ export class GameServer {
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
       const game = room.game;
-      const turnHistory = getTurnHistory(game);
+      const actionLog = game.actionLog;
 
-      // Serialize turn history with moves for Merkle tree construction
-      const turns = turnHistory.map((turn: TurnRecord, idx: number) => {
-        const moves: { player: string; data: string; signature: string }[] = [];
-        for (const [unitId, directions] of turn.moves.entries()) {
-          moves.push({
-            player: unitId,
-            data: JSON.stringify(directions),
-            signature: (turn as any).signatures?.[unitId] || '0x',
-          });
-        }
-        // Sort by player for deterministic ordering
-        moves.sort((a, b) => a.player.localeCompare(b.player));
-
-        return {
-          turnNumber: idx + 1,
-          moves,
-          result: room.stateHistory[idx + 1] || null,
-        };
-      });
+      // Serialize action log for Merkle tree construction
+      const actions = actionLog.map((entry, idx) => ({
+        actionIndex: idx,
+        playerId: entry.playerId,
+        action: entry.action,
+      }));
 
       res.json({
         gameId: game.gameId,
@@ -738,7 +744,8 @@ export class GameServer {
           teamSize: game.state.config.teamSize,
           turnLimit: game.state.config.turnLimit,
         },
-        turns,
+        actions,
+        stateHistory: room.stateHistory,
         outcome: {
           winner: game.state.winner,
           score: game.state.score,
@@ -758,8 +765,8 @@ export class GameServer {
 
       try {
         const playerIds = room.game.state.units.map((u) => u.id);
-        const result = buildGameResultFromSession(room.game, req.params.id, playerIds);
-        const payouts = computePayoutsFromSession(room.game, playerIds);
+        const result = buildGameResultFromRoom(room.game, req.params.id, playerIds);
+        const payouts = room.game.computePayouts(playerIds);
         res.json({
           ...result,
           payouts: Object.fromEntries(payouts),
@@ -808,11 +815,23 @@ export class GameServer {
     const router = express.Router();
 
     // Resolver helpers (same logic as MCP callbacks)
-    const resolveGame: GameResolver = (agentId: string) => {
+    const resolveGame = (agentId: string): CtlGameRoom | null => {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
       const room = this.games.get(gameId);
       return room?.game ?? null;
+    };
+
+    const resolveOathGame = (agentId: string): OathGameRoom | null => {
+      const gameId = this.agentToGame.get(agentId);
+      if (!gameId) return null;
+      const room = this.oathGames.get(gameId);
+      return room?.game ?? null;
+    };
+
+    /** Check which game type an agent is in */
+    const getAgentGameType = (agentId: string): 'capture-the-lobster' | 'oathbreaker' | null => {
+      return this.agentGameType.get(agentId) ?? null;
     };
 
     const resolveLobby: LobbyResolver = (agentId: string) => {
@@ -825,8 +844,11 @@ export class GameServer {
     const resolveRelay: RelayResolver = (agentId: string) => {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
+      // Check both CtL and OATHBREAKER rooms
       const room = this.games.get(gameId);
-      return room?.relay ?? null;
+      if (room) return room.relay;
+      const oathRoom = this.oathGames.get(gameId);
+      return oathRoom?.relay ?? null;
     };
 
     /** Get the handle map for an agent (from their game room, or from global registry as fallback) */
@@ -835,6 +857,8 @@ export class GameServer {
       if (gameId) {
         const room = this.games.get(gameId);
         if (room) return room.handleMap;
+        const oathRoom = this.oathGames.get(gameId);
+        if (oathRoom) return oathRoom.handleMap;
       }
       // In lobby phase, build handles from lobby agents + global registry
       const lobbyId = this.agentToLobby.get(agentId);
@@ -1116,18 +1140,34 @@ export class GameServer {
     router.get('/state', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
 
+      // OATHBREAKER game
+      const oathGame = resolveOathGame(agentId);
+      if (oathGame) {
+        const state = oathGame.getVisibleState(agentId);
+        const relay = resolveRelay(agentId);
+        const relayMessages = relay?.receive(agentId) ?? [];
+        const gameId = this.agentToGame.get(agentId);
+        const room = gameId ? this.oathGames.get(gameId) : undefined;
+        const handles = room?.handleMap ?? {};
+        if ((oathGame.state as OathState).phase === 'finished') {
+          return res.json({ phase: 'finished', gameType: 'oathbreaker', gameOver: true, ...(state as any), relayMessages, handles });
+        }
+        return res.json({ phase: 'game', gameType: 'oathbreaker', ...(state as any), relayMessages, handles });
+      }
+
+      // CtL game
       const game = resolveGame(agentId);
       if (game) {
-        const state = getStateForAgent(game, agentId);
+        const state = game.getVisibleState(agentId);
         const relay = resolveRelay(agentId);
         const relayMessages = relay?.receive(agentId) ?? [];
         const gameId = this.agentToGame.get(agentId);
         const room = gameId ? this.games.get(gameId) : undefined;
         const handles = room?.handleMap ?? {};
         if (game.state.phase === 'finished') {
-          return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...state, relayMessages, handles });
+          return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...(state as any), relayMessages, handles });
         }
-        return res.json({ phase: 'game', ...state, relayMessages, handles });
+        return res.json({ phase: 'game', ...(state as any), relayMessages, handles });
       }
 
       const lobby = resolveLobby(agentId);
@@ -1151,24 +1191,75 @@ export class GameServer {
     router.get('/wait', requirePlayerAuth, async (req: any, res: any) => {
       const agentId = req.agentId as string;
 
+      const oathGame = resolveOathGame(agentId);
       const game = resolveGame(agentId);
       const lobby = resolveLobby(agentId);
 
-      // === Game phase ===
+      // === OATHBREAKER game phase ===
+      if (oathGame) {
+        const handles = getHandlesForAgent(agentId);
+        const oathState = oathGame.state as OathState;
+
+        if (oathState.phase === 'finished') {
+          const state = oathGame.getVisibleState(agentId) as any;
+          return res.json({ reason: 'game_over', gameType: 'oathbreaker', gameOver: true, ...state, handles });
+        }
+
+        if (hasAgentMissedTurn(agentId, oathState.round)) {
+          const state = oathGame.getVisibleState(agentId) as any;
+          setAgentLastTurn(agentId, oathState.round);
+          return res.json({ reason: 'round_changed', gameType: 'oathbreaker', ...state, handles });
+        }
+
+        // Pending relay updates? Return immediately
+        if (hasPendingUpdates(agentId, resolveGame, resolveLobby, resolveRelay)) {
+          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ reason: 'update', gameType: 'oathbreaker', ...updates, handles });
+        }
+
+        // Return current state (OATHBREAKER is async — agents can act at any time)
+        const state = oathGame.getVisibleState(agentId) as any;
+        if (state) {
+          // Block until state changes or timeout
+          const prevRound = oathState.round;
+          await Promise.race([
+            waitForNextTurn(oathGame.gameId, 25000),
+            waitForAgentUpdate(agentId, 25000),
+          ]);
+
+          const updatedOath = resolveOathGame(agentId);
+          if (!updatedOath) return res.json({ reason: 'game_ended', gameType: 'oathbreaker' });
+
+          const updatedState = updatedOath.state as OathState;
+          if (updatedState.phase === 'finished') {
+            const s = updatedOath.getVisibleState(agentId) as any;
+            return res.json({ reason: 'game_over', gameType: 'oathbreaker', gameOver: true, ...s, handles });
+          }
+
+          const s = updatedOath.getVisibleState(agentId) as any;
+          if (updatedState.round > prevRound) {
+            setAgentLastTurn(agentId, updatedState.round);
+            return res.json({ reason: 'round_changed', gameType: 'oathbreaker', ...s, handles });
+          }
+          return res.json({ reason: 'update', gameType: 'oathbreaker', ...s, handles });
+        }
+      }
+
+      // === CtL Game phase ===
       if (game) {
         const handles = getHandlesForAgent(agentId);
 
         if (game.state.phase === 'finished') {
-          const state = getStateForAgent(game, agentId);
+          const state = game.getVisibleState(agentId) as any;
           return res.json({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state, handles });
         }
 
         // If the turn advanced since agent last got full state, return full state
         if (hasAgentMissedTurn(agentId, game.state.turn)) {
-          const state = getStateForAgent(game, agentId);
+          const state = game.getVisibleState(agentId) as any;
           setAgentLastTurn(agentId, game.state.turn);
           buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ reason: 'turn_changed', moveSubmitted: game.hasSubmitted(agentId), ...state, handles });
+          return res.json({ reason: 'turn_changed', moveSubmitted: hasSubmitted(game, agentId), ...state, handles });
         }
 
         // Pending updates? Return immediately
@@ -1178,8 +1269,8 @@ export class GameServer {
         }
 
         // No move yet: return full state
-        if (!game.hasSubmitted(agentId)) {
-          const state = getStateForAgent(game, agentId);
+        if (!hasSubmitted(game, agentId)) {
+          const state = game.getVisibleState(agentId) as any;
           setAgentLastTurn(agentId, game.state.turn);
           return res.json({ reason: 'new_turn', moveSubmitted: false, ...state, handles });
         }
@@ -1195,12 +1286,12 @@ export class GameServer {
         if (!updatedGame) return res.json({ reason: 'game_ended' });
 
         if (updatedGame.state.phase === 'finished') {
-          const state = getStateForAgent(updatedGame, agentId);
+          const state = updatedGame.getVisibleState(agentId) as any;
           return res.json({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state, handles });
         }
 
         if (updatedGame.state.turn > prevTurn) {
-          const state = getStateForAgent(updatedGame, agentId);
+          const state = updatedGame.getVisibleState(agentId) as any;
           setAgentLastTurn(agentId, updatedGame.state.turn);
           return res.json({ reason: 'turn_changed', ...state, handles });
         }
@@ -1219,10 +1310,16 @@ export class GameServer {
         const prevPhase = lobby.phase;
         await waitForAgentUpdate(agentId, 25000);
 
-        // After waking, check if game started
+        // After waking, check if game started (CtL or OATHBREAKER)
+        const newOathGame = resolveOathGame(agentId);
+        if (newOathGame) {
+          const state = newOathGame.getVisibleState(agentId) as any;
+          const gameHandles = getHandlesForAgent(agentId);
+          return res.json({ reason: 'game_started', phase: 'game', gameType: 'oathbreaker', ...state, handles: gameHandles });
+        }
         const newGame = resolveGame(agentId);
         if (newGame) {
-          const state = getStateForAgent(newGame, agentId);
+          const state = newGame.getVisibleState(agentId) as any;
           const gameHandles = getHandlesForAgent(agentId);
           return res.json({ reason: 'game_started', phase: 'game', ...state, handles: gameHandles });
         }
@@ -1251,7 +1348,7 @@ export class GameServer {
     // ------------------------------------------------------------------
     // 7. POST /move — Submit a move
     // ------------------------------------------------------------------
-    router.post('/move', requirePlayerAuth, (req: any, res: any) => {
+    router.post('/move', requirePlayerAuth, async (req: any, res: any) => {
       const agentId = req.agentId as string;
       const { path, action, target, class: unitClass } = req.body ?? {};
 
@@ -1305,7 +1402,42 @@ export class GameServer {
         }
       }
 
-      // Gameplay move (direction path)
+      // OATHBREAKER game actions
+      const oathGame = resolveOathGame(agentId);
+      if (oathGame) {
+        const { amount, decision } = req.body ?? {};
+        const oathState = oathGame.state as OathState;
+
+        if (oathState.phase !== 'playing') {
+          return res.status(400).json({ error: `Cannot submit actions -- game phase is: ${oathState.phase}` });
+        }
+
+        // Determine action type from body fields
+        if (amount !== undefined) {
+          // propose_pledge
+          const oathAction: OathAction = { type: 'propose_pledge', amount: Number(amount) };
+          const result = await oathGame.handleAction(agentId, oathAction);
+          if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to propose pledge.' });
+          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ success: true, action: 'propose_pledge', amount: Number(amount), ...updates });
+        }
+
+        if (decision !== undefined) {
+          // submit_decision
+          if (decision !== 'C' && decision !== 'D') {
+            return res.status(400).json({ error: 'decision must be "C" (cooperate) or "D" (defect)' });
+          }
+          const oathAction: OathAction = { type: 'submit_decision', decision };
+          const result = await oathGame.handleAction(agentId, oathAction);
+          if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit decision.' });
+          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ success: true, action: 'submit_decision', decision, ...updates });
+        }
+
+        return res.status(400).json({ error: 'OATHBREAKER requires "amount" (propose_pledge) or "decision" (submit_decision, "C" or "D")' });
+      }
+
+      // CtL gameplay move (direction path)
       const game = resolveGame(agentId);
       if (!game) return res.status(400).json({ error: 'No game in progress.' });
       if (game.state.phase !== 'in_progress') return res.status(400).json({ error: `Cannot submit moves -- game phase is: ${game.state.phase}` });
@@ -1319,9 +1451,8 @@ export class GameServer {
       }
 
       const directions = movePath as Direction[];
-      const result = submitCtlMove(game, agentId, directions);
-      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit move.' });
-      this.onMoveSubmitted(game.gameId, agentId);
+      const actionResult = await game.handleAction(agentId, { type: 'move', agentId, path: directions });
+      if (!actionResult.success) return res.status(400).json({ error: actionResult.error ?? 'Failed to submit move.' });
       const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
       return res.json({ success: true, path: directions, ...updates });
     });
@@ -1364,16 +1495,46 @@ export class GameServer {
     });
 
     // ------------------------------------------------------------------
+    // 9b. POST /lobby/join-oath — Join an OATHBREAKER game (waiting room)
+    // ------------------------------------------------------------------
+    router.post('/lobby/join-oath', requirePlayerAuth, (req: any, res: any) => {
+      const agentId = req.agentId as string;
+      const agentName = req.agentName as string;
+      const { gameId } = req.body ?? {};
+      if (!gameId) return res.status(400).json({ error: 'gameId is required' });
+
+      const result = this.joinOathbreakerGame(gameId, agentId, agentName);
+      if (!result.success) return res.status(400).json({ error: result.error });
+
+      console.log(`[REST] Agent ${agentId} (${agentName}) joined OATHBREAKER game ${gameId}`);
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, agentId, gameId, gameType: 'oathbreaker', ...updates });
+    });
+
+    // ------------------------------------------------------------------
     // 10. POST /lobby/create — Create a lobby
     // ------------------------------------------------------------------
     router.post('/lobby/create', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
       const agentName = req.agentName as string;
+      const gameType = req.body?.gameType ?? 'capture-the-lobster';
 
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy -- a lobby or game is already running.' });
       }
 
+      if (gameType === 'oathbreaker') {
+        // OATHBREAKER lobby — FFA, no teams, configurable player count
+        const playerCount = Math.min(20, Math.max(4, Math.floor((req.body?.playerCount as number) || 4)));
+        const gameId = this.createOathbreakerGame(playerCount, [{ id: agentId, handle: agentName }]);
+
+        console.log(`[REST] Agent ${agentId} (${agentName}) created OATHBREAKER game ${gameId} (${playerCount} players, waiting for more)`);
+
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, gameId, gameType: 'oathbreaker', playerCount, ...updates });
+      }
+
+      // Default: CtL lobby
       const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
       const { lobbyId } = this.createLobbyGame(teamSize, 600000);
       const lobbyRoom = this.lobbies.get(lobbyId)!;
@@ -1518,10 +1679,27 @@ export class GameServer {
         const relayData = (result as any).relay;
         const scope = relayData.scope ?? 'all';
 
+        const oathGame = resolveOathGame(agentId);
         const game = resolveGame(agentId);
         const lobby = resolveLobby(agentId);
 
-        if (game) {
+        if (oathGame) {
+          // OATHBREAKER relay
+          const gameId = this.agentToGame.get(agentId)!;
+          const oathRoom = this.oathGames.get(gameId);
+          if (oathRoom) {
+            const oathState = oathGame.state as OathState;
+            oathRoom.relay.send(agentId, oathState.round, {
+              type: relayData.type,
+              data: relayData.data,
+              scope,
+              pluginId: relayData.pluginId ?? pluginId,
+            });
+            for (const player of oathState.players) {
+              if (player.id !== agentId) notifyAgent(player.id);
+            }
+          }
+        } else if (game) {
           const gameId = this.agentToGame.get(agentId)!;
           const room = this.games.get(gameId);
           if (room) {
@@ -1617,29 +1795,52 @@ export class GameServer {
       const gameMatch = url.pathname.match(/^\/ws\/game\/(.+)$/);
       if (gameMatch) {
         const gameId = gameMatch[1];
+
+        // Check CtL games first
         const room = this.games.get(gameId);
-        if (!room) {
-          socket.destroy();
+        if (room) {
+          this.wss.handleUpgrade(request, socket, head, (ws) => {
+            room.spectators.add(ws);
+
+            // Send current (delayed) state
+            const state = getDelayedState(room);
+            if (state) {
+              ws.send(JSON.stringify({ type: 'state_update', data: state }));
+            }
+
+            ws.on('close', () => {
+              room.spectators.delete(ws);
+            });
+
+            ws.on('error', () => {
+              room.spectators.delete(ws);
+            });
+          });
           return;
         }
 
-        this.wss.handleUpgrade(request, socket, head, (ws) => {
-          room.spectators.add(ws);
+        // Check OATHBREAKER games
+        const oathRoom = this.oathGames.get(gameId);
+        if (oathRoom) {
+          this.wss.handleUpgrade(request, socket, head, (ws) => {
+            oathRoom.spectators.add(ws);
 
-          // Send current (delayed) state
-          const state = getDelayedState(room);
-          if (state) {
-            ws.send(JSON.stringify({ type: 'state_update', data: state }));
-          }
+            // Send current spectator state
+            const spectatorView = oathRoom.game.getVisibleState(null);
+            ws.send(JSON.stringify({ type: 'state_update', data: { gameType: 'oathbreaker', ...spectatorView as any } }));
 
-          ws.on('close', () => {
-            room.spectators.delete(ws);
+            ws.on('close', () => {
+              oathRoom.spectators.delete(ws);
+            });
+
+            ws.on('error', () => {
+              oathRoom.spectators.delete(ws);
+            });
           });
+          return;
+        }
 
-          ws.on('error', () => {
-            room.spectators.delete(ws);
-          });
-        });
+        socket.destroy();
         return;
       }
 
@@ -1678,7 +1879,7 @@ export class GameServer {
   // Broadcast to spectators
   // ---------------------------------------------------------------------------
 
-  private broadcastState(room: GameRoom): void {
+  private broadcastState(room: GameRoomData): void {
     const state = getDelayedState(room);
     if (!state) return;
 
@@ -1706,6 +1907,9 @@ export class GameServer {
     for (const [, room] of this.games) {
       if (!room.finished) count++;
     }
+    for (const [, room] of this.oathGames) {
+      if (!room.finished) count++;
+    }
     // Count active lobbies (but not failed/finished ones)
     for (const [, room] of this.lobbies) {
       if (!room.state || room.state.phase === 'failed') continue;
@@ -1719,7 +1923,7 @@ export class GameServer {
     return count;
   }
 
-  createBotGame(teamSize: number = 4): { gameId: string; game: CtlSession } {
+  createBotGame(teamSize: number = 4): { gameId: string; game: CtlGameRoom } {
     const gameId = crypto.randomUUID();
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
@@ -1748,23 +1952,26 @@ export class GameServer {
     }
 
     const radius = getMapRadiusForTeamSize(teamSize);
-    const gameMap = generateMap({ radius, teamSize });
-    const game = createCtlSession(gameId, gameMap, players, {
+    const turnLimit = getTurnLimitForRadius(radius);
+    const ctlConfig: CtlConfig = {
+      mapSeed: gameId,
+      mapRadius: radius,
       teamSize,
-      turnLimit: getTurnLimitForRadius(radius),
-    });
+      turnLimit,
+      turnTimerSeconds: 30,
+      players: players.map(p => ({ id: p.id, team: p.team, unitClass: p.unitClass })),
+    };
+    const game = createCtlGameRoom(gameId, ctlConfig);
 
     // Take initial snapshot
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
     const initialState = buildSpectatorState(game, handleMap, relay);
 
-    const room: GameRoom = {
+    const room: GameRoomData = {
       game,
       spectators: new Set(),
       stateHistory: [initialState],
       spectatorDelay: 2,  // 2-turn delay for spectators
-      turnTimer: null,
-      deadlineTimer: null,
       botHandles,
       botMeta: players,
       botSessions: createBotSessions(
@@ -1774,9 +1981,7 @@ export class GameServer {
         [BasicChatPlugin],
       ),
       finished: false,
-      turnInProgress: false,
       externalSlots: new Map(),
-      turnResolve: null,
       turnTimeoutMs: 30000,
       handleMap,
       lobbyChat: [],
@@ -1787,173 +1992,241 @@ export class GameServer {
 
     this.games.set(gameId, room);
 
-    // Start the event-driven turn loop
-    this.startNextTurn(gameId);
+    // Wire callbacks and start the game
+    this.wireGameRoomCallbacks(gameId, room);
+    game.handleAction(null, { type: 'game_start' });
 
     return { gameId, game };
   }
 
   // ---------------------------------------------------------------------------
-  // Event-driven turn loop
+  // OATHBREAKER game creation
   // ---------------------------------------------------------------------------
 
   /**
-   * Start a new turn: kick off bots, set deadline timer, wait for all moves
-   * or deadline, then resolve and start next turn.
+   * Create an OATHBREAKER game room.
+   * Since OATHBREAKER is FFA with no lobby phases (no teams, no class selection),
+   * this creates the game directly and starts it immediately once enough players join.
+   *
+   * For now: creates a "waiting room" style game — the game_start action fires
+   * when all players have joined.
+   *
+   * @param targetPlayers Expected number of players
+   * @param initialPlayers Players to add immediately
+   * @returns The game ID
    */
-  private startNextTurn(gameId: string): void {
-    const room = this.games.get(gameId);
-    if (!room || room.finished) return;
+  createOathbreakerGame(
+    targetPlayers: number,
+    initialPlayers: { id: string; handle: string }[],
+  ): string {
+    const gameId = crypto.randomUUID();
+    const handleMap: Record<string, string> = {};
 
-    const { game } = room;
-
-    // Check if game is over
-    if (isGameOver(game)) {
-      this.finishGame(room);
-      return;
+    for (const p of initialPlayers) {
+      handleMap[p.id] = p.handle;
+      this.agentToGame.set(p.id, gameId);
+      this.agentGameType.set(p.id, 'oathbreaker');
     }
 
-    room.turnInProgress = true;
+    const oathConfig: OathConfig = {
+      ...DEFAULT_OATH_CONFIG,
+      playerIds: initialPlayers.map(p => p.id),
+      seed: gameId,
+    };
 
-    console.log(`[Turn] Starting turn ${game.state.turn} for game ${gameId}`);
+    // Create the game room (in 'waiting' phase — game_start has not been called yet)
+    const game = GameRoom.create(OathbreakerPlugin, oathConfig, gameId) as OathGameRoom;
 
-    // Create a promise that resolves when all moves are submitted
-    const allMovesPromise = new Promise<void>((resolve) => {
-      room.turnResolve = resolve;
-    });
+    // For FFA, all players share a pseudo-team 'FFA' (needed by GameRelay for routing)
+    const relay = new GameRelay(initialPlayers.map(p => ({ id: p.id, team: 'FFA' })));
 
-    // Kick off bots via coga subprocess (async)
-    const botPromise = this.runBots(room);
+    const room: OathRoomData = {
+      game,
+      spectators: new Set(),
+      finished: false,
+      externalSlots: new Map(initialPlayers.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
+      handleMap,
+      relay,
+    };
 
-    // Set deadline timer
-    const deadlinePromise = new Promise<void>((resolve) => {
-      room.deadlineTimer = setTimeout(() => {
-        console.log(`[Turn] Deadline hit for turn ${game.state.turn} in game ${gameId}`);
-        resolve();
-      }, room.turnTimeoutMs);
-    });
+    this.oathGames.set(gameId, room);
 
-    // Wait for either: all moves submitted, or deadline
-    Promise.race([
-      // All moves submitted (bots + external agents)
-      botPromise.then(() => {
-        // After bots finish, check if all moves are in
-        if (allMovesSubmitted(game)) {
-          // Clear the resolve so it doesn't fire again
-          room.turnResolve = null;
-          return;
-        }
-        // If not all in, wait for external agents or deadline
-        return allMovesPromise;
-      }),
-      deadlinePromise,
-    ]).then(() => {
-      this.resolveTurnAndContinue(gameId);
-    }).catch((err) => {
-      console.error(`[Turn] Error in turn loop for ${gameId}:`, err);
-      room.turnInProgress = false;
-    });
+    // Wire callbacks
+    this.wireOathGameRoomCallbacks(gameId, room);
+
+    // If we already have enough players, start immediately
+    if (initialPlayers.length >= targetPlayers) {
+      game.handleAction(null, { type: 'game_start' });
+      console.log(`[OATHBREAKER] Game ${gameId} started with ${initialPlayers.length} players`);
+    } else {
+      console.log(`[OATHBREAKER] Game ${gameId} waiting for players (${initialPlayers.length}/${targetPlayers})`);
+      // Store target so we can start when enough join
+      (room as any)._targetPlayers = targetPlayers;
+    }
+
+    return gameId;
   }
 
   /**
-   * Run bots for the current turn via the MCP HTTP endpoint.
+   * Join an existing OATHBREAKER game that hasn't started yet.
    */
-  private async runBots(room: GameRoom): Promise<void> {
-    const { game, botHandles } = room;
+  joinOathbreakerGame(gameId: string, agentId: string, handle: string): { success: boolean; error?: string } {
+    const room = this.oathGames.get(gameId);
+    if (!room) return { success: false, error: 'Game not found' };
 
-    // Build set of alive bot IDs
+    const oathState = room.game.state as OathState;
+    if (oathState.phase !== 'waiting') return { success: false, error: 'Game already started' };
+
+    // Add the player
+    room.handleMap[agentId] = handle;
+    room.externalSlots.set(agentId, { token: '', agentId, connected: true });
+    this.agentToGame.set(agentId, gameId);
+    this.agentGameType.set(agentId, 'oathbreaker');
+
+    // Recreate the game with the new player list
+    const existingPlayerIds = oathState.config.playerIds;
+    const newPlayerIds = [...existingPlayerIds, agentId];
+    const newConfig: OathConfig = {
+      ...oathState.config,
+      playerIds: newPlayerIds,
+    };
+
+    // Need to recreate since initial state is based on config.playerIds
+    const newGame = GameRoom.create(OathbreakerPlugin, newConfig, gameId) as OathGameRoom;
+    const newRelay = new GameRelay(newPlayerIds.map(id => ({ id, team: 'FFA' })));
+
+    room.game.cancelTimer();
+    (room as any).game = newGame;
+    (room as any).relay = newRelay;
+
+    // Re-wire callbacks
+    this.wireOathGameRoomCallbacks(gameId, room);
+
+    // Notify other players
+    for (const pid of existingPlayerIds) {
+      notifyAgent(pid);
+    }
+
+    // Check if we have enough players to start
+    const target = (room as any)._targetPlayers ?? 4;
+    if (newPlayerIds.length >= target) {
+      newGame.handleAction(null, { type: 'game_start' });
+      console.log(`[OATHBREAKER] Game ${gameId} started with ${newPlayerIds.length} players`);
+    } else {
+      console.log(`[OATHBREAKER] Game ${gameId}: ${newPlayerIds.length}/${target} players`);
+    }
+
+    return { success: true };
+  }
+
+  // ---------------------------------------------------------------------------
+  // GameRoom callback wiring — replaces the old turn loop
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Wire onStateChange and onGameOver callbacks for a GameRoom.
+   * The GameRoom handles deadline timers and turn resolution internally.
+   * The server just needs to broadcast state changes and handle game over.
+   */
+  private wireGameRoomCallbacks(gameId: string, room: GameRoomData): void {
+    const { game } = room;
+
+    game.onStateChange = () => {
+      // Notify external agents waiting via wait_for_update
+      notifyTurnResolved(gameId);
+
+      // Snapshot state for spectators
+      const state = buildSpectatorState(game, room.handleMap, room.relay);
+      room.stateHistory.push(state);
+
+      // Broadcast to spectators
+      this.broadcastState(room);
+
+      // Kick off bots if the turn just changed (they need to submit moves)
+      this.runBots(room);
+    };
+
+    game.onGameOver = () => {
+      this.finishGame(room);
+    };
+  }
+
+  /**
+   * Wire callbacks for an OATHBREAKER GameRoom.
+   */
+  private wireOathGameRoomCallbacks(gameId: string, room: OathRoomData): void {
+    const { game } = room;
+
+    game.onStateChange = () => {
+      notifyTurnResolved(gameId);
+
+      // Broadcast OATHBREAKER state to spectators via WebSocket
+      const oathState = game.state as OathState;
+      const spectatorView = game.getVisibleState(null);
+      const msg = JSON.stringify({ type: 'state_update', data: { gameType: 'oathbreaker', ...spectatorView as any } });
+      for (const ws of room.spectators) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(msg);
+        }
+      }
+
+      // Notify all players
+      for (const player of oathState.players) {
+        notifyAgent(player.id);
+      }
+    };
+
+    game.onGameOver = () => {
+      room.finished = true;
+      notifyTurnResolved(gameId);
+
+      const spectatorView = game.getVisibleState(null);
+      const msg = JSON.stringify({ type: 'game_over', data: { gameType: 'oathbreaker', ...spectatorView as any } });
+      for (const ws of room.spectators) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(msg);
+        }
+      }
+
+      const oathState = game.state as OathState;
+      for (const player of oathState.players) {
+        notifyAgent(player.id);
+      }
+
+      console.log(`[OATHBREAKER] Game ${gameId} finished. Round ${oathState.round}.`);
+    };
+  }
+
+  /**
+   * Run bots for the current turn. They submit moves via REST which calls handleAction.
+   */
+  private async runBots(room: GameRoomData): Promise<void> {
+    const { game, botHandles } = room;
+    if (room.finished || game.isOver()) return;
+
+    // Build set of alive bot IDs that haven't submitted
     const aliveBotIds = new Set<string>();
     for (const botId of botHandles) {
       const unit = game.state.units.find((u: { id: string }) => u.id === botId);
-      if (unit?.alive) aliveBotIds.add(botId);
+      if (unit?.alive && !hasSubmitted(game, botId)) aliveBotIds.add(botId);
     }
 
+    if (aliveBotIds.size === 0) return;
+
     // Claude bots use GameClient + Anthropic API directly
+    // They submit moves via REST which calls handleAction
     await Promise.race([
       runAllBotsTurn(room.botSessions, game.state.turn, aliveBotIds),
       new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
     ]);
-
-    // Submit empty moves for bots that didn't submit
-    for (const botId of botHandles) {
-      if (!game.hasSubmitted(botId)) {
-        const unit = game.state.units.find((u) => u.id === botId);
-        if (unit?.alive) submitCtlMove(game, botId, []);
-      }
-    }
-
-    // After bot moves, check if all moves are now in
-    if (allMovesSubmitted(game) && room.turnResolve) {
-      room.turnResolve();
-      room.turnResolve = null;
-    }
-  }
-
-  /**
-   * Resolve the current turn and start the next one.
-   */
-  private resolveTurnAndContinue(gameId: string): void {
-    const room = this.games.get(gameId);
-    if (!room || room.finished) return;
-
-    const { game } = room;
-
-    // Clear timers
-    if (room.deadlineTimer) {
-      clearTimeout(room.deadlineTimer);
-      room.deadlineTimer = null;
-    }
-    room.turnResolve = null;
-
-    // Force empty moves for any agent (bot or external) that hasn't submitted
-    const allPlayerIds = game.state.units.map((u) => u.id);
-    for (const playerId of allPlayerIds) {
-      if (!game.hasSubmitted(playerId)) {
-        const unit = game.state.units.find((u) => u.id === playerId);
-        if (unit?.alive) submitCtlMove(game, playerId, []);
-      }
-    }
-
-    // Resolve the turn
-    resolveCtlTurn(game);
-
-    // Notify any external agents waiting via wait_for_update
-    notifyTurnResolved(gameId);
-
-    // Snapshot current state
-    const state = buildSpectatorState(game, room.handleMap, room.relay);
-    room.stateHistory.push(state);
-
-    // Broadcast to spectators
-    this.broadcastState(room);
-
-    room.turnInProgress = false;
-
-    // Check if game is over
-    if (isGameOver(game)) {
-      this.finishGame(room);
-      return;
-    }
-
-    // Small delay before starting next turn (gives spectators time to see state)
-    const nextTurnDelay = 1000;
-    room.turnTimer = setTimeout(() => {
-      this.startNextTurn(gameId);
-    }, nextTurnDelay);
   }
 
   /**
    * Handle game over: clean up, broadcast final state.
    */
-  private finishGame(room: GameRoom): void {
+  private finishGame(room: GameRoomData): void {
     if (room.finished) return;
     room.finished = true;
-
-    // Clear timers
-    if (room.turnTimer) { clearTimeout(room.turnTimer); room.turnTimer = null; }
-    if (room.deadlineTimer) { clearTimeout(room.deadlineTimer); room.deadlineTimer = null; }
-    room.turnResolve = null;
-    room.turnInProgress = false;
 
     // Final broadcast
     const finalState = buildSpectatorState(room.game, room.handleMap, room.relay);
@@ -1988,12 +2261,12 @@ export class GameServer {
 
     console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.state.winner ?? 'draw'}`);
 
-    // Build game result with Merkle root for future on-chain anchoring
+    // Build game result with Merkle root for on-chain anchoring
     try {
       const playerIds = room.game.state.units.map((u) => u.id);
-      const result = buildGameResultFromSession(room.game, room.game.state.turn.toString(), playerIds);
-      const payouts = computePayoutsFromSession(room.game, playerIds);
-      console.log(`[Coordination] Game result built. Merkle root: ${result.movesRoot.slice(0, 16)}... Turns: ${result.turnCount}`);
+      const result = buildGameResultFromRoom(room.game, room.game.gameId, playerIds);
+      const payouts = room.game.computePayouts(playerIds);
+      console.log(`[Coordination] Game result built. Actions root: ${result.actionsRoot.slice(0, 16)}... Actions: ${result.actionCount}`);
       const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');
       console.log(`[Coordination] Payouts: ${payoutSummary}`);
     } catch (err) {
@@ -2114,22 +2387,25 @@ export class GameServer {
       players.filter(p => p.team === 'B').length,
     );
     const radius = getMapRadiusForTeamSize(teamSize);
-    const gameMap = generateMap({ radius, teamSize });
-    const game = createCtlSession(gameId, gameMap, players, {
+    const turnLimit = getTurnLimitForRadius(radius);
+    const ctlConfig: CtlConfig = {
+      mapSeed: gameId,
+      mapRadius: radius,
       teamSize,
-      turnLimit: getTurnLimitForRadius(radius),
-    });
+      turnLimit,
+      turnTimerSeconds: 30,
+      players: players.map(p => ({ id: p.id, team: p.team, unitClass: p.unitClass })),
+    };
+    const game = createCtlGameRoom(gameId, ctlConfig);
 
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
     const initialState = buildSpectatorState(game, handleMap, relay);
 
-    const room: GameRoom = {
+    const room: GameRoomData = {
       game,
       spectators: new Set(),
       stateHistory: [initialState],
       spectatorDelay: 2,  // 2-turn delay for spectators
-      turnTimer: null,
-      deadlineTimer: null,
       botHandles,
       botMeta: players,
       botSessions: createBotSessions(
@@ -2141,9 +2417,7 @@ export class GameServer {
         [BasicChatPlugin],
       ),
       finished: false,
-      turnInProgress: false,
       externalSlots,
-      turnResolve: null,
       turnTimeoutMs: 30000,
       handleMap,
       lobbyChat,
@@ -2154,6 +2428,9 @@ export class GameServer {
 
     this.games.set(gameId, room);
 
+    // Wire callbacks and start the game
+    this.wireGameRoomCallbacks(gameId, room);
+
     // Notify external agents that the game has started (wakes wait_for_update)
     for (const p of players) {
       if (p.id.startsWith('ext_')) {
@@ -2161,8 +2438,8 @@ export class GameServer {
       }
     }
 
-    // Start the event-driven turn loop
-    this.startNextTurn(gameId);
+    // Start the game (triggers first deadline)
+    game.handleAction(null, { type: 'game_start' });
 
     console.log(`Game ${gameId} created from lobby with ${players.length} players (${externalSlots.size} external)`);
   }
@@ -2185,8 +2462,7 @@ export class GameServer {
   // Graceful shutdown
   close(): void {
     for (const [, room] of this.games) {
-      if (room.turnTimer) clearTimeout(room.turnTimer);
-      if (room.deadlineTimer) clearTimeout(room.deadlineTimer);
+      room.game.cancelTimer();
       for (const ws of room.spectators) ws.close();
     }
     for (const [, lobbyRoom] of this.lobbies) {

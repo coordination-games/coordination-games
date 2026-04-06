@@ -13,8 +13,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { Direction, UnitClass, CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { LobbyManager as EngineLobbyManager } from '@coordination-games/game-ctl';
-import type { CtlSession } from './game-session.js';
-import { getStateForAgent, submitCtlMove, allMovesSubmitted } from './game-session.js';
+import type { CtlGameRoom } from './game-session.js';
 import crypto from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -122,7 +121,7 @@ const T = { token: z.string().optional().describe("Auth token from signin(). Pas
 // Per-agent MCP server factory
 // ---------------------------------------------------------------------------
 
-export type GameResolver = (agentId: string) => CtlSession | null;
+export type GameResolver = (agentId: string) => CtlGameRoom | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type RelayResolver = (agentId: string) => import('./typed-relay.js').GameRelay | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
@@ -374,7 +373,7 @@ export function buildUpdates(
   if (game) {
     updates.phase = game.state.phase === 'finished' ? 'finished' : 'game';
     updates.turn = game.state.turn;
-    updates.moveSubmitted = game.hasSubmitted(agentId);
+    updates.moveSubmitted = new Map(game.state.moveSubmissions).has(agentId);
     // Get new relay messages for this agent
     const relay = resolveRelay?.(agentId);
     if (relay) {
@@ -699,7 +698,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
 
       const game = resolveGame(aid());
       if (game) {
-        const state = getStateForAgent(game, aid());
+        const state = game.getVisibleState(aid()) as any;
         // Include relay messages for client-side pipeline processing
         const relay = resolveRelay?.(aid());
         const relayMessages = relay?.receive(aid()) ?? [];
@@ -855,18 +854,18 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       // === Game phase ===
       if (game) {
         if (game.state.phase === 'finished') {
-          const state = getStateForAgent(game, aid());
+          const state = game.getVisibleState(aid()) as any;
           return jsonResult({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state });
         }
 
         // If the turn advanced since agent last got full state, ALWAYS return full state
         // This prevents the agent from missing turn boundaries when woken by chat
         if (hasAgentMissedTurn(aid(), game.state.turn)) {
-          const state = getStateForAgent(game, aid());
+          const state = game.getVisibleState(aid()) as any;
           setAgentLastTurn(aid(), game.state.turn);
           // Consume any pending messages so they don't trigger again
           buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);
-          return jsonResult({ reason: 'turn_changed', moveSubmitted: game.hasSubmitted(aid()), ...state });
+          return jsonResult({ reason: 'turn_changed', moveSubmitted: new Map(game.state.moveSubmissions).has(aid()), ...state });
         }
 
         // Check for pending updates BEFORE blocking — if there are unseen messages, return immediately
@@ -876,8 +875,8 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         }
 
         // No move yet: return full state so agent can see the board and decide
-        if (!game.hasSubmitted(aid())) {
-          const state = getStateForAgent(game, aid());
+        if (!new Map(game.state.moveSubmissions).has(aid())) {
+          const state = game.getVisibleState(aid()) as any;
           setAgentLastTurn(aid(), game.state.turn);
           return jsonResult({ reason: 'new_turn', moveSubmitted: false, ...state });
         }
@@ -893,13 +892,13 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         if (!updatedGame) return jsonResult({ reason: 'game_ended' });
 
         if (updatedGame.state.phase === 'finished') {
-          const state = getStateForAgent(updatedGame, aid());
+          const state = updatedGame.getVisibleState(aid()) as any;
           return jsonResult({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state });
         }
 
         // Turn changed → full state
         if (updatedGame.state.turn > prevTurn) {
-          const state = getStateForAgent(updatedGame, aid());
+          const state = updatedGame.getVisibleState(aid()) as any;
           setAgentLastTurn(aid(), updatedGame.state.turn);
           return jsonResult({ reason: 'turn_changed', ...state });
         }
@@ -923,7 +922,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
         // After waking, check if game started (lobby → game transition)
         const newGame = resolveGame(aid());
         if (newGame) {
-          const state = getStateForAgent(newGame, aid());
+          const state = newGame.getVisibleState(aid()) as any;
           return jsonResult({ reason: 'game_started', phase: 'game', ...state });
         }
 
@@ -1023,7 +1022,7 @@ Before you can play, allow all Capture the Lobster tools. Without this, you'll b
       }
 
       const directions = path as Direction[];
-      const result = submitCtlMove(game, aid(), directions);
+      const result = await game.handleAction(aid(), { type: 'move', agentId: aid(), path: directions });
       if (!result.success) return errorResult(result.error ?? 'Failed to submit move.');
       if (onMoveSubmitted) onMoveSubmitted(game.gameId, aid());
       const updates = buildUpdates(aid(), resolveGame, resolveLobby, resolveRelay);

@@ -5,12 +5,17 @@ import { fetchGames } from '../api';
 
 interface Game {
   id: string;
+  gameType?: string;
   turn: number;
   maxTurns: number;
-  phase: 'in_progress' | 'finished' | 'starting';
+  phase: 'in_progress' | 'finished' | 'starting' | 'playing' | 'waiting';
   winner?: string;
   teamsA: number;
   teamsB: number;
+  // OATHBREAKER fields
+  round?: number;
+  maxRounds?: number;
+  playerCount?: number;
 }
 
 interface Lobby {
@@ -53,6 +58,8 @@ export default function LobbiesPage() {
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [creating, setCreating] = useState(false);
   const [teamSize, setTeamSize] = useState(2);
+  const [gameTab, setGameTab] = useState<'capture-the-lobster' | 'oathbreaker'>('capture-the-lobster');
+  const [oathPlayerCount, setOathPlayerCount] = useState(4);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -65,10 +72,17 @@ export default function LobbiesPage() {
         ]);
         if (!cancelled) {
           const mapped = (gamesData as any[]).map((g: any) => ({
-            id: g.id, turn: g.turn ?? 0, maxTurns: g.maxTurns ?? g.turnLimit ?? 30,
-            phase: g.phase ?? 'in_progress', winner: g.winner,
+            id: g.id,
+            gameType: g.gameType ?? 'capture-the-lobster',
+            turn: g.turn ?? g.round ?? 0,
+            maxTurns: g.maxTurns ?? g.turnLimit ?? g.maxRounds ?? 30,
+            phase: g.phase ?? 'in_progress',
+            winner: g.winner,
             teamsA: Array.isArray(g.teams?.A) ? g.teams.A.length : (g.teamsA ?? 0),
             teamsB: Array.isArray(g.teams?.B) ? g.teams.B.length : (g.teamsB ?? 0),
+            round: g.round,
+            maxRounds: g.maxRounds,
+            playerCount: Array.isArray(g.players) ? g.players.length : 0,
           }));
           setGames(mapped);
           setLobbies((lobbiesData as Lobby[]).filter(l => l.phase !== 'game' && l.phase !== 'finished'));
@@ -83,50 +97,105 @@ export default function LobbiesPage() {
   async function handleCreateLobby() {
     setCreating(true);
     try {
-      const res = await fetch('/api/lobbies/create', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamSize }),
-      });
-      if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
+      if (gameTab === 'oathbreaker') {
+        const res = await fetch('/api/lobbies/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
+        });
+        if (res.ok) { const data = await res.json(); navigate(`/game/${data.gameId}`); return; }
+      } else {
+        const res = await fetch('/api/lobbies/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ teamSize }),
+        });
+        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
+      }
     } catch {}
     setCreating(false);
   }
 
-  const activeGames = games.filter((g) => g.phase !== 'finished');
-  const finishedGames = games.filter((g) => g.phase === 'finished');
+  const filteredGames = games.filter(g => (g.gameType ?? 'capture-the-lobster') === gameTab);
+  const activeGames = filteredGames.filter((g) => g.phase !== 'finished');
+  const finishedGames = filteredGames.filter((g) => g.phase === 'finished');
 
   return (
     <div className="space-y-12">
-      {/* Create lobby controls */}
-      <div className="flex items-center justify-end gap-3">
+      {/* Game type tabs + create controls */}
+      <div className="flex flex-col gap-3">
+        {/* Tab selector */}
         <div className="flex items-center gap-2">
-          {[2, 3, 4, 5, 6].map((size) => (
-            <button
-              key={size}
-              onClick={() => setTeamSize(size)}
-              className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
-              style={teamSize === size
-                ? { background: 'rgba(212, 162, 78, 0.15)', color: 'var(--color-amber-glow)', border: '1px solid rgba(212, 162, 78, 0.4)' }
-                : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
-              }
-            >
-              {size}v{size}
-            </button>
-          ))}
+          <button
+            onClick={() => setGameTab('capture-the-lobster')}
+            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
+            style={gameTab === 'capture-the-lobster'
+              ? { background: 'rgba(58, 90, 42, 0.15)', color: 'var(--color-forest)', border: '1px solid rgba(58, 90, 42, 0.3)' }
+              : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+            }
+          >
+            Capture the Lobster
+          </button>
+          <button
+            onClick={() => setGameTab('oathbreaker')}
+            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
+            style={gameTab === 'oathbreaker'
+              ? { background: 'rgba(139, 32, 32, 0.12)', color: 'var(--color-blood)', border: '1px solid rgba(139, 32, 32, 0.3)' }
+              : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+            }
+          >
+            OATHBREAKER
+          </button>
         </div>
-        <motion.button
-          onClick={handleCreateLobby}
-          disabled={creating}
-          className="cursor-pointer font-heading rounded-lg px-5 py-2 text-sm font-semibold tracking-wider uppercase disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:brightness-110"
-          style={{ border: '1px solid rgba(184, 134, 11, 0.3)', background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)' }}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          {creating ? 'Creating...' : 'Create Lobby'}
-        </motion.button>
+
+        {/* Create controls */}
+        <div className="flex items-center justify-end gap-3">
+          {gameTab === 'capture-the-lobster' ? (
+            <div className="flex items-center gap-2">
+              {[2, 3, 4, 5, 6].map((size) => (
+                <button
+                  key={size}
+                  onClick={() => setTeamSize(size)}
+                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
+                  style={teamSize === size
+                    ? { background: 'rgba(212, 162, 78, 0.15)', color: 'var(--color-amber-glow)', border: '1px solid rgba(212, 162, 78, 0.4)' }
+                    : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+                  }
+                >
+                  {size}v{size}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>Players:</span>
+              {[4, 6, 8, 10, 12, 16, 20].map((count) => (
+                <button
+                  key={count}
+                  onClick={() => setOathPlayerCount(count)}
+                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
+                  style={oathPlayerCount === count
+                    ? { background: 'rgba(139, 32, 32, 0.15)', color: 'var(--color-blood-light, #c55)', border: '1px solid rgba(139, 32, 32, 0.4)' }
+                    : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+                  }
+                >
+                  {count}
+                </button>
+              ))}
+            </div>
+          )}
+          <motion.button
+            onClick={handleCreateLobby}
+            disabled={creating}
+            className="cursor-pointer font-heading rounded-lg px-5 py-2 text-sm font-semibold tracking-wider uppercase disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:brightness-110"
+            style={{ border: '1px solid rgba(184, 134, 11, 0.3)', background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)' }}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            {creating ? 'Creating...' : gameTab === 'oathbreaker' ? 'Create Game' : 'Create Lobby'}
+          </motion.button>
+        </div>
       </div>
 
-      {lobbies.length > 0 && (
+      {lobbies.length > 0 && gameTab === 'capture-the-lobster' && (
         <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           <SectionHeader title="Active Lobbies" count={lobbies.length} />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -238,6 +307,51 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
 }
 
 function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
+  // OATHBREAKER game card
+  if (game.gameType === 'oathbreaker') {
+    const round = game.round ?? game.turn ?? 0;
+    const maxRounds = game.maxRounds ?? game.maxTurns ?? 12;
+    const progress = maxRounds > 0 ? Math.round((round / maxRounds) * 100) : 0;
+    const isLive = game.phase === 'playing' || game.phase === 'in_progress';
+    return (
+      <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>{game.id}</span>
+          {phaseBadge(isLive ? 'in_progress' : game.phase === 'finished' ? 'finished' : 'starting')}
+        </div>
+        <div className="mb-3">
+          <div className="mb-1.5 flex justify-between text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>
+            <span>Round {round}/{maxRounds}</span>
+            <span>{progress}%</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full" style={{ background: 'rgba(42, 31, 14, 0.08)' }}>
+            <motion.div
+              className="h-1.5 rounded-full"
+              style={{
+                width: `${progress}%`,
+                background: isLive
+                  ? 'linear-gradient(90deg, var(--color-blood), #c55)'
+                  : 'linear-gradient(90deg, var(--color-ink-faint), var(--color-wood-light))',
+              }}
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.8, ease: 'easeOut' }}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>
+            OATHBREAKER
+          </span>
+          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+            {game.playerCount ?? '?'} players
+          </span>
+        </div>
+      </button>
+    );
+  }
+
+  // CtL game card (original)
   const progress = Math.round((game.turn / game.maxTurns) * 100);
   const isLive = game.phase === 'in_progress';
 
