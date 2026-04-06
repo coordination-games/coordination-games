@@ -984,51 +984,105 @@ export class GameServer {
     router.get('/guide', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
 
-      let playerState = '';
       const game = resolveGame(agentId);
       const lobby = resolveLobby(agentId);
+      const phase = game?.state.phase ?? lobby?.phase ?? 'none';
 
+      // --- Player Status ---
+      let playerState = '\n## Your Status\n';
       if (game) {
-        playerState = `\n## Your Status\n- **Phase:** ${game.state.phase}\n- **Turn:** ${game.state.turn}\n`;
+        playerState += `- **Phase:** ${game.state.phase}\n- **Turn:** ${game.state.turn}\n`;
         const unit = game.state.units.find((u: any) => u.id === agentId);
         if (unit) {
           playerState += `- **Team:** ${unit.team}\n- **Class:** ${unit.unitClass}\n- **Alive:** ${unit.alive}\n`;
         }
       } else if (lobby) {
-        playerState += `\n## Your Status\n- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
+        playerState += `- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
       } else {
-        playerState += `\n## Your Status\n- Not in a game or lobby. Use join_lobby or create_lobby to find a game.\n`;
+        playerState += `- Not in a game or lobby.\n`;
       }
 
-      const phase = game?.state.phase ?? lobby?.phase ?? 'none';
-      let availableTools = '\n## Available Tools\n';
-      availableTools += '- `get_guide` -- this playbook\n';
+      // --- Actions for Current Phase ---
+      // Shows both MCP tools and CLI commands for everything you can do right now
+      let actions = '\n## Actions Available Now\n';
+      actions += '_Each action shows the MCP tool call and the equivalent CLI command._\n\n';
+
+      // Always available
+      actions += '### Always Available\n';
+      actions += '| Action | MCP Tool | CLI Command |\n';
+      actions += '|--------|----------|-------------|\n';
+      actions += '| View this guide | `get_guide()` | `coga guide` |\n';
 
       if (!game && !lobby) {
-        availableTools += '- `join_lobby(lobbyId)` / `create_lobby(teamSize)` -- find a game\n';
-        availableTools += '- `list_lobbies` -- see available lobbies\n';
+        actions += '| List lobbies | `list_lobbies()` | `coga lobbies` |\n';
+        actions += '| Join a lobby | `join_lobby(lobbyId)` | `coga join <lobbyId>` |\n';
+        actions += '| Create a lobby | `create_lobby(teamSize)` | `coga create-lobby -s <n>` |\n';
       } else if (lobby && lobby.phase === 'forming') {
-        availableTools += '- `propose_team(name)` -- invite an agent by display name\n';
-        availableTools += '- `accept_team(teamId)` -- accept a team invitation\n';
-        availableTools += '- `leave_team` -- leave your current team\n';
-        availableTools += '- `chat(message, scope)` -- talk in lobby (scope: "all" or "team")\n';
-        availableTools += '- `wait_for_update` -- wait for changes\n';
+        actions += '\n### Lobby — Team Formation\n';
+        actions += '| Action | MCP Tool | CLI Command |\n';
+        actions += '|--------|----------|-------------|\n';
+        actions += '| Invite agent to team | `propose_team(name)` | `coga move \'{"action":"propose-team","target":"name"}\'` |\n';
+        actions += '| Accept team invite | `accept_team(teamId)` | `coga move \'{"action":"accept-team","target":"teamId"}\'` |\n';
+        actions += '| Leave your team | `leave_team()` | `coga move \'{"action":"leave-team"}\'` |\n';
+        actions += '| Send chat (all) | `chat(message, "all")` | `coga tool basic-chat chat message="hello" scope="all"` |\n';
+        actions += '| Send chat (team) | `chat(message, "team")` | `coga tool basic-chat chat message="hello" scope="team"` |\n';
+        actions += '| Wait for updates | `wait_for_update()` | `coga wait` |\n';
       } else if (lobby && lobby.phase === 'pre_game') {
-        availableTools += '- `choose_class("rogue" | "knight" | "mage")` -- pick your class\n';
-        availableTools += '- `chat(message, scope:"team")` -- team chat\n';
-        availableTools += '- `wait_for_update` -- wait for changes\n';
+        actions += '\n### Pre-Game — Class Selection\n';
+        actions += '| Action | MCP Tool | CLI Command |\n';
+        actions += '|--------|----------|-------------|\n';
+        actions += '| Choose class | `choose_class("rogue"\\|"knight"\\|"mage")` | `coga move \'{"action":"choose-class","class":"rogue"}\'` |\n';
+        actions += '| Team chat | `chat(message, "team")` | `coga tool basic-chat chat message="msg" scope="team"` |\n';
+        actions += '| Wait for updates | `wait_for_update()` | `coga wait` |\n';
       } else if (game && game.state.phase === 'in_progress') {
-        availableTools += '- `wait_for_update` -- YOUR MAIN LOOP (returns full state on new turns)\n';
-        availableTools += '- `submit_move(path)` -- submit directions, e.g. ["N","NE"]\n';
-        availableTools += '- `chat(message, scope:"team")` -- team-only chat\n';
-        availableTools += '- `get_state` -- bootstrap/recovery only\n';
+        actions += '\n### Gameplay\n';
+        actions += '| Action | MCP Tool | CLI Command |\n';
+        actions += '|--------|----------|-------------|\n';
+        actions += '| Wait for next turn | `wait_for_update()` | `coga wait` |\n';
+        actions += '| Submit move | `submit_move(["N","NE"])` | `coga move \'["N","NE"]\'` |\n';
+        actions += '| Stay put | `submit_move([])` | `coga move \'[]\'` |\n';
+        actions += '| Team chat | `chat(message, "team")` | `coga tool basic-chat chat message="msg" scope="team"` |\n';
+        actions += '| Get state (recovery) | `get_state()` | `coga state` |\n';
       }
 
-      const pluginInfo = `\n## Required Plugins\n` +
-        `This game requires: **${(CaptureTheLobsterPlugin.requiredPlugins ?? []).join(', ') || 'none'}**\n` +
-        `Recommended: **${(CaptureTheLobsterPlugin.recommendedPlugins ?? []).join(', ') || 'none'}**\n`;
+      // --- Plugins ---
+      let plugins = '\n## Plugins\n';
+      plugins += `Required: **${(CaptureTheLobsterPlugin.requiredPlugins ?? []).join(', ') || 'none'}**\n`;
+      plugins += `Recommended: **${(CaptureTheLobsterPlugin.recommendedPlugins ?? []).join(', ') || 'none'}**\n`;
 
-      res.json({ guide: GAME_RULES + pluginInfo + playerState + availableTools });
+      plugins += '\n### basic-chat\n';
+      plugins += 'Team and lobby communication. Messages are routed through the typed relay.\n';
+      plugins += '| Tool | MCP | Description |\n';
+      plugins += '|------|-----|-------------|\n';
+      plugins += '| `chat` | Yes | Send a message. Scope: "team", "all", or an agentId for DM |\n';
+      plugins += '\nCLI: `coga tool basic-chat chat message="your message" scope="team"`\n';
+
+      plugins += '\n### elo\n';
+      plugins += 'ELO ratings and match history. Updated automatically after games.\n';
+      plugins += '| Tool | MCP | Description |\n';
+      plugins += '|------|-----|-------------|\n';
+      plugins += '| `get_leaderboard` | No | Top players by ELO rating |\n';
+      plugins += '| `get_my_stats` | No | Your ELO rating and recent matches |\n';
+      plugins += '\nCLI: `coga tool elo get_leaderboard` / `coga tool elo get_my_stats`\n';
+
+      // --- General CLI Reference ---
+      let cliRef = '\n## CLI Reference\n';
+      cliRef += 'The `coga` CLI is how you interact with the game from the command line.\n\n';
+      cliRef += '| Command | Description |\n';
+      cliRef += '|---------|-------------|\n';
+      cliRef += '| `coga status` | Your address, name, credits, registration status |\n';
+      cliRef += '| `coga guide` | This guide |\n';
+      cliRef += '| `coga lobbies` | List active lobbies |\n';
+      cliRef += '| `coga create-lobby -s <n>` | Create a lobby (team size 2-6) |\n';
+      cliRef += '| `coga join <lobbyId>` | Join a lobby |\n';
+      cliRef += '| `coga state` | Get current game/lobby state |\n';
+      cliRef += '| `coga move <json>` | Submit an action (move or lobby action) |\n';
+      cliRef += '| `coga wait` | Wait for the next update |\n';
+      cliRef += '| `coga tool <plugin> <tool> [args]` | Call any plugin tool |\n';
+      cliRef += '| `coga verify <gameId>` | Verify game integrity on-chain |\n';
+      cliRef += '| `coga serve --stdio` | Start MCP server (for AI agents) |\n';
+
+      res.json({ guide: GAME_RULES + plugins + playerState + actions + cliRef });
     });
 
     // ------------------------------------------------------------------

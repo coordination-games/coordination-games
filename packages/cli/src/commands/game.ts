@@ -274,28 +274,6 @@ export function registerGameCommands(program: Command) {
       }
     });
 
-  // ==================== chat ====================
-  program
-    .command("chat <message>")
-    .description("Send a message (team chat during game, all chat in lobby)")
-    .action(async (message: string) => {
-      const client = await createClient();
-
-      try {
-        const result = await client.callPluginTool("basic-chat", "chat", { message });
-
-        if (result.error) {
-          process.stderr.write(`  Error: ${result.error}\n`);
-          process.exit(1);
-        }
-
-        process.stdout.write(`  Message sent.\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
-        process.exit(1);
-      }
-    });
-
   // ==================== tool ====================
   program
     .command("tool <pluginId> <toolName> [args...]")
@@ -336,29 +314,4 @@ export function registerGameCommands(program: Command) {
       }
     });
 
-  // ==================== session ====================
-  program
-    .command("session")
-    .description("Show current session info")
-    .action(async () => {
-      const session = loadSession();
-
-      process.stdout.write(`\n  Session State:\n`);
-      process.stdout.write(
-        `  Handle:    ${session.handle || "(not signed in)"}\n`
-      );
-      process.stdout.write(
-        `  Agent ID:  ${session.agentId || "(none)"}\n`
-      );
-      process.stdout.write(
-        `  Token:     ${session.token ? session.token.slice(0, 6) + "..." : "(none)"}\n`
-      );
-      process.stdout.write(
-        `  Lobby:     ${session.currentLobbyId || "(none)"}\n`
-      );
-      process.stdout.write(
-        `  Game:      ${session.currentGameId || "(none)"}\n`
-      );
-      process.stdout.write(`\n`);
-    });
 }

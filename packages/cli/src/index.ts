@@ -5,7 +5,6 @@ import { registerNameCommands } from "./commands/names.js";
 import { registerWalletCommands } from "./commands/wallet.js";
 import { registerServeCommand } from "./commands/serve.js";
 import { registerGameCommands } from "./commands/game.js";
-import { registerTrustCommands } from "./commands/trust.js";
 import { registerVerifyCommand } from "./commands/verify.js";
 
 // Injected at build time by esbuild --define
@@ -30,9 +29,6 @@ registerWalletCommands(program);
 
 // Gameplay commands
 registerGameCommands(program);
-
-// Trust & reputation (EAS/TrustGraph)
-registerTrustCommands(program);
 
 // Game verification (Merkle tree)
 registerVerifyCommand(program);
