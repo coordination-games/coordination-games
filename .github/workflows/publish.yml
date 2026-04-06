@@ -37,6 +37,14 @@ jobs:
         run: npx tsc --skipLibCheck
         working-directory: packages/games/capture-the-lobster
 
+      - name: Build chat plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/basic-chat
+
+      - name: Build elo plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/elo
+
       - name: Build CLI
         run: npm run build
 
