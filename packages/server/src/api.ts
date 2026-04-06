@@ -1002,8 +1002,14 @@ export class GameServer {
         playerState += `- Not in a game or lobby.\n`;
       }
 
-      // --- Actions for Current Phase ---
-      let actions = '\n## Actions Available Now\n';
+      // --- Actions vs Moves ---
+      let actions = '\n## How coga move Works\n\n';
+      actions += 'The `coga move` command sends two different types of data depending on context:\n\n';
+      actions += '- **Lobby actions** (universal, same for all games): `{"action":"propose-team","target":"..."}` — structured objects that operate on the lobby (form teams, pick classes)\n';
+      actions += '- **Game moves** (game-specific): the raw move data for whatever game you\'re playing. Each game defines its own move format.\n\n';
+      actions += 'For **Capture the Lobster**, game moves are a plain JSON array of directions: `["N","NE"]`\n\n';
+
+      actions += '## Actions Available Now\n';
 
       if (!game && !lobby) {
         actions += 'You are not in a game or lobby.\n\n';
@@ -1048,12 +1054,10 @@ export class GameServer {
       } else if (game && game.state.phase === 'in_progress') {
         actions += '### Gameplay\n\n';
         actions += 'Your main loop: `wait` → read state → `move` → repeat.\n\n';
-        actions += '**IMPORTANT: During gameplay, moves are a plain JSON array of directions — NOT an action object.**\n';
-        actions += 'Do NOT use `{"action":"submit-move",...}`. Just pass the direction array directly.\n\n';
         actions += '```\n';
         actions += '# Wait for the next turn (returns full board state)\n';
         actions += 'coga wait\n\n';
-        actions += '# Submit your move — JUST a JSON array of directions, nothing else\n';
+        actions += '# Submit your move (direction array, up to your speed)\n';
         actions += 'coga move \'["N","NE"]\'\n';
         actions += 'coga move \'["S"]\'\n';
         actions += 'coga move \'[]\'\t\t\t# stay put\n\n';
