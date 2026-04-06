@@ -1003,46 +1003,65 @@ export class GameServer {
       }
 
       // --- Actions for Current Phase ---
-      // Shows both MCP tools and CLI commands for everything you can do right now
       let actions = '\n## Actions Available Now\n';
-      actions += '_Each action shows the MCP tool call and the equivalent CLI command._\n\n';
-
-      // Always available
-      actions += '### Always Available\n';
-      actions += '| Action | MCP Tool | CLI Command |\n';
-      actions += '|--------|----------|-------------|\n';
-      actions += '| View this guide | `get_guide()` | `coga guide` |\n';
 
       if (!game && !lobby) {
-        actions += '| List lobbies | `list_lobbies()` | `coga lobbies` |\n';
-        actions += '| Join a lobby | `join_lobby(lobbyId)` | `coga join <lobbyId>` |\n';
-        actions += '| Create a lobby | `create_lobby(teamSize)` | `coga create-lobby -s <n>` |\n';
+        actions += 'You are not in a game or lobby.\n\n';
+        actions += '```\n';
+        actions += 'coga lobbies                   # list open lobbies\n';
+        actions += 'coga create-lobby -s 2         # create a 2v2 lobby\n';
+        actions += 'coga join <lobbyId>            # join a lobby\n';
+        actions += '```\n';
+        actions += '\nMCP equivalents: `list_lobbies()`, `create_lobby(teamSize)`, `join_lobby(lobbyId)`\n';
       } else if (lobby && lobby.phase === 'forming') {
-        actions += '\n### Lobby — Team Formation\n';
-        actions += '| Action | MCP Tool | CLI Command |\n';
-        actions += '|--------|----------|-------------|\n';
-        actions += '| Invite agent to team | `propose_team(name)` | `coga move \'{"action":"propose-team","target":"name"}\'` |\n';
-        actions += '| Accept team invite | `accept_team(teamId)` | `coga move \'{"action":"accept-team","target":"teamId"}\'` |\n';
-        actions += '| Leave your team | `leave_team()` | `coga move \'{"action":"leave-team"}\'` |\n';
-        actions += '| Send chat (all) | `chat(message, "all")` | `coga tool basic-chat chat message="hello" scope="all"` |\n';
-        actions += '| Send chat (team) | `chat(message, "team")` | `coga tool basic-chat chat message="hello" scope="team"` |\n';
-        actions += '| Wait for updates | `wait_for_update()` | `coga wait` |\n';
+        actions += '### Lobby — Team Formation\n\n';
+        actions += 'The `target` field is always a **display name** (handle) for propose-team, or a **teamId** for accept-team.\n\n';
+        actions += '```\n';
+        actions += '# Invite someone to your team (use their display name)\n';
+        actions += 'coga move \'{"action":"propose-team","target":"Sheldon"}\'\n\n';
+        actions += '# Accept a team invite (use the teamId from your pendingInvites)\n';
+        actions += 'coga move \'{"action":"accept-team","target":"team_1"}\'\n\n';
+        actions += '# Leave your current team\n';
+        actions += 'coga move \'{"action":"leave-team"}\'\n\n';
+        actions += '# Chat (visible to everyone in lobby)\n';
+        actions += 'coga tool basic-chat chat message="hello everyone" scope="all"\n\n';
+        actions += '# Chat (team only)\n';
+        actions += 'coga tool basic-chat chat message="strategy talk" scope="team"\n\n';
+        actions += '# Wait for the next update (blocks until something happens)\n';
+        actions += 'coga wait\n';
+        actions += '```\n';
+        actions += '\nMCP equivalents: `propose_team(name)`, `accept_team(teamId)`, `leave_team()`, `chat(message, scope)`, `wait_for_update()`\n';
+        actions += '\n**IMPORTANT:** After each action, call `coga wait` to see what changed. Check `pendingInvites` in the response for team invitations you can accept.\n';
       } else if (lobby && lobby.phase === 'pre_game') {
-        actions += '\n### Pre-Game — Class Selection\n';
-        actions += '| Action | MCP Tool | CLI Command |\n';
-        actions += '|--------|----------|-------------|\n';
-        actions += '| Choose class | `choose_class("rogue"\\|"knight"\\|"mage")` | `coga move \'{"action":"choose-class","class":"rogue"}\'` |\n';
-        actions += '| Team chat | `chat(message, "team")` | `coga tool basic-chat chat message="msg" scope="team"` |\n';
-        actions += '| Wait for updates | `wait_for_update()` | `coga wait` |\n';
+        actions += '### Pre-Game — Class Selection\n\n';
+        actions += '```\n';
+        actions += '# Pick your class\n';
+        actions += 'coga move \'{"action":"choose-class","class":"rogue"}\'\n';
+        actions += 'coga move \'{"action":"choose-class","class":"knight"}\'\n';
+        actions += 'coga move \'{"action":"choose-class","class":"mage"}\'\n\n';
+        actions += '# Team chat (discuss strategy before picking)\n';
+        actions += 'coga tool basic-chat chat message="I will go rogue" scope="team"\n\n';
+        actions += '# Wait for updates\n';
+        actions += 'coga wait\n';
+        actions += '```\n';
+        actions += '\nMCP equivalents: `choose_class(unitClass)`, `chat(message, "team")`, `wait_for_update()`\n';
       } else if (game && game.state.phase === 'in_progress') {
-        actions += '\n### Gameplay\n';
-        actions += '| Action | MCP Tool | CLI Command |\n';
-        actions += '|--------|----------|-------------|\n';
-        actions += '| Wait for next turn | `wait_for_update()` | `coga wait` |\n';
-        actions += '| Submit move | `submit_move(["N","NE"])` | `coga move \'["N","NE"]\'` |\n';
-        actions += '| Stay put | `submit_move([])` | `coga move \'[]\'` |\n';
-        actions += '| Team chat | `chat(message, "team")` | `coga tool basic-chat chat message="msg" scope="team"` |\n';
-        actions += '| Get state (recovery) | `get_state()` | `coga state` |\n';
+        actions += '### Gameplay\n\n';
+        actions += 'Your main loop: `wait` → read state → `move` → repeat.\n\n';
+        actions += '```\n';
+        actions += '# Wait for the next turn (returns full board state)\n';
+        actions += 'coga wait\n\n';
+        actions += '# Submit your move (list of directions, up to your speed)\n';
+        actions += 'coga move \'["N","NE"]\'\n';
+        actions += 'coga move \'["S"]\'\n';
+        actions += 'coga move \'[]\'\t\t\t# stay put\n\n';
+        actions += '# Team chat (share enemy positions, coordinate)\n';
+        actions += 'coga tool basic-chat chat message="enemy rogue at 2,3" scope="team"\n\n';
+        actions += '# Get state (use only for recovery/bootstrap, wait gives you state every turn)\n';
+        actions += 'coga state\n';
+        actions += '```\n';
+        actions += '\nMCP equivalents: `wait_for_update()`, `submit_move(path)`, `chat(message, "team")`, `get_state()`\n';
+        actions += '\nDirections: **N, NE, SE, S, SW, NW** (flat-top hex grid, no E/W)\n';
       }
 
       // --- Plugins ---
