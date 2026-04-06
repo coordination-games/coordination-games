@@ -1,13 +1,36 @@
 import { Command } from "commander";
 import { loadConfig, loadSession, saveSession } from "../config.js";
 import { GameClient } from "../game-client.js";
+import { ApiClient } from "../api-client.js";
 import { loadKey } from "../keys.js";
+
+/**
+ * Resolve the player's registered name. Checks session cache first,
+ * then fetches from the relay status endpoint and caches for next time.
+ */
+async function resolveName(wallet: { address: string; privateKey: string }, serverUrl: string): Promise<string> {
+  const session = loadSession();
+  if (session.handle) return session.handle;
+
+  // Fetch name from server
+  try {
+    const api = new ApiClient(serverUrl);
+    const data = await api.get(`/api/relay/status/${wallet.address}`);
+    if (data.registered && data.name) {
+      session.handle = data.name;
+      saveSession(session);
+      return data.name;
+    }
+  } catch {}
+
+  return wallet.address.slice(0, 10);
+}
 
 /**
  * Create a GameClient that auto-authenticates using the local wallet.
  * All CLI commands use this instead of the old McpClient + requireToken() flow.
  */
-function createClient(): GameClient {
+async function createClient(): Promise<GameClient> {
   const config = loadConfig();
   const wallet = loadKey();
   if (!wallet) {
@@ -18,7 +41,7 @@ function createClient(): GameClient {
   }
 
   const session = loadSession();
-  const name = session.handle || wallet.address.slice(0, 10);
+  const name = await resolveName(wallet, config.serverUrl);
 
   return new GameClient(config.serverUrl, {
     privateKey: wallet.privateKey,
@@ -28,48 +51,12 @@ function createClient(): GameClient {
 }
 
 export function registerGameCommands(program: Command) {
-  // ==================== signin (wallet-based auth) ====================
-  program
-    .command("signin [handle]")
-    .description("Authenticate with the game server using your local wallet")
-    .action(async (handle?: string) => {
-      const config = loadConfig();
-      const wallet = loadKey();
-      if (!wallet) {
-        process.stderr.write(`\n  No wallet found. Run 'coga init' to create one.\n\n`);
-        process.exit(1);
-        return;
-      }
-
-      const name = handle || wallet.address.slice(0, 10);
-      const client = new GameClient(config.serverUrl, {
-        privateKey: wallet.privateKey,
-        name,
-      });
-
-      try {
-        await client.authenticate(wallet.privateKey);
-        const token = client.getToken();
-        process.stdout.write(`\n  Authenticated as "${name}"\n`);
-        process.stdout.write(`  Address: ${wallet.address}\n`);
-        process.stdout.write(`  Token: ${token}\n\n`);
-
-        const session = loadSession();
-        session.token = token ?? undefined;
-        session.handle = name;
-        saveSession(session);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
-        process.exit(1);
-      }
-    });
-
   // ==================== lobbies ====================
   program
     .command("lobbies")
     .description("List available game lobbies")
     .action(async () => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         const lobbies = await client.listLobbies();
@@ -105,7 +92,7 @@ export function registerGameCommands(program: Command) {
     .option("-s, --size <n>", "Team size (2-6)", "2")
     .option("-g, --game <name>", "Game plugin name", "capture-the-lobster")
     .action(async (opts) => {
-      const client = createClient();
+      const client = await createClient();
       const teamSize = Math.min(6, Math.max(2, parseInt(opts.size, 10) || 2));
 
       try {
@@ -134,7 +121,7 @@ export function registerGameCommands(program: Command) {
     .command("join <lobbyId>")
     .description("Join a game lobby")
     .action(async (lobbyId: string) => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         const result = await client.joinLobby(lobbyId);
@@ -164,7 +151,7 @@ export function registerGameCommands(program: Command) {
     .command("guide [game]")
     .description("Dynamic playbook — game rules, your plugins, available actions")
     .action(async (_game?: string) => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         const result = await client.getGuide();
@@ -187,7 +174,7 @@ export function registerGameCommands(program: Command) {
     .command("state")
     .description("Get current game/lobby state (processed through your plugin pipeline)")
     .action(async () => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         const result = await client.getState();
@@ -218,7 +205,7 @@ export function registerGameCommands(program: Command) {
       'Submit an action for the current phase. During gameplay: \'["N","NE"]\' (directions). During lobby phases: \'{"action":"propose-team","target":"agent123"}\''
     )
     .action(async (dataStr: string) => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         let moveData: any;
@@ -262,7 +249,7 @@ export function registerGameCommands(program: Command) {
     .command("wait")
     .description("Wait for the next game update (long-poll)")
     .action(async () => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         process.stdout.write("  Waiting for update...\n");
@@ -292,7 +279,7 @@ export function registerGameCommands(program: Command) {
     .command("chat <message>")
     .description("Send a message (team chat during game, all chat in lobby)")
     .action(async (message: string) => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         const result = await client.callPluginTool("basic-chat", "chat", { message });
@@ -314,7 +301,7 @@ export function registerGameCommands(program: Command) {
     .command("tool <pluginId> <toolName> [args...]")
     .description("Invoke a plugin tool (e.g. coga tool basic-chat chat 'hello')")
     .action(async (pluginId: string, toolName: string, args: string[]) => {
-      const client = createClient();
+      const client = await createClient();
 
       try {
         // Parse args as key=value pairs or positional args

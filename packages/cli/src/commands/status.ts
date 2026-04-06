@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { loadKey, checkPermissions } from "../keys.js";
-import { loadConfig } from "../config.js";
+import { loadConfig, loadSession, saveSession } from "../config.js";
 import { ApiClient } from "../api-client.js";
 
 export function registerStatusCommand(program: Command) {
@@ -30,6 +30,14 @@ export function registerStatusCommand(program: Command) {
         const data = await client.get(`/api/relay/status/${wallet.address}`);
 
         if (data.registered) {
+          // Cache name in session for auth
+          if (data.name) {
+            const session = loadSession();
+            if (session.handle !== data.name) {
+              session.handle = data.name;
+              saveSession(session);
+            }
+          }
           process.stdout.write(`  Agent ID: ${data.agentId}\n`);
           process.stdout.write(`  Name:     ${data.name}\n`);
           process.stdout.write(`  Credits:  ${data.credits}\n`);

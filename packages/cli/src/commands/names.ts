@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { loadKey, getOrCreateKey } from "../keys.js";
-import { loadConfig } from "../config.js";
+import { loadConfig, loadSession, saveSession } from "../config.js";
 import { ApiClient } from "../api-client.js";
 import { signPermit } from "../signing.js";
 
@@ -106,6 +106,11 @@ export function registerNameCommands(program: Command) {
           r: permitSig.r,
           s: permitSig.s,
         });
+
+        // Save handle to session so auth uses the registered name
+        const session = loadSession();
+        session.handle = result.name || name;
+        saveSession(session);
 
         process.stdout.write(`\n  Registered!\n`);
         process.stdout.write(`  Name:     ${result.name}\n`);

@@ -35,14 +35,33 @@ export function registerServeCommand(program: Command) {
       } else {
         // Normal mode: use local wallet from ~/.coordination/keys/
         const { loadKey } = await import("../keys.js");
-        const { loadConfig } = await import("../config.js");
+        const { loadConfig, loadSession, saveSession } = await import("../config.js");
+        const { ApiClient } = await import("../api-client.js");
         const wallet = loadKey();
         const config = loadConfig();
+        const serverUrl = opts.serverUrl || config.serverUrl;
+
+        // Resolve registered name (check session cache, then server)
+        let name: string | undefined;
+        const session = loadSession();
+        if (session.handle) {
+          name = session.handle;
+        } else if (wallet) {
+          try {
+            const api = new ApiClient(serverUrl);
+            const data = await api.get(`/api/relay/status/${wallet.address}`);
+            if (data.registered && data.name) {
+              name = data.name;
+              session.handle = data.name;
+              saveSession(session);
+            }
+          } catch {}
+        }
 
         await startMcpServer(mode, {
-          serverUrl: opts.serverUrl || config.serverUrl,
+          serverUrl,
           privateKey: wallet?.privateKey,
-          name: undefined, // derived from wallet address during auth
+          name,
           botMode: false,
           httpPort,
         });
