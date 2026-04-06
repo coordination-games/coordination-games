@@ -1048,10 +1048,12 @@ export class GameServer {
       } else if (game && game.state.phase === 'in_progress') {
         actions += '### Gameplay\n\n';
         actions += 'Your main loop: `wait` → read state → `move` → repeat.\n\n';
+        actions += '**IMPORTANT: During gameplay, moves are a plain JSON array of directions — NOT an action object.**\n';
+        actions += 'Do NOT use `{"action":"submit-move",...}`. Just pass the direction array directly.\n\n';
         actions += '```\n';
         actions += '# Wait for the next turn (returns full board state)\n';
         actions += 'coga wait\n\n';
-        actions += '# Submit your move (list of directions, up to your speed)\n';
+        actions += '# Submit your move — JUST a JSON array of directions, nothing else\n';
         actions += 'coga move \'["N","NE"]\'\n';
         actions += 'coga move \'["S"]\'\n';
         actions += 'coga move \'[]\'\t\t\t# stay put\n\n';

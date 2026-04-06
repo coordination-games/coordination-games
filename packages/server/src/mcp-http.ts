@@ -298,6 +298,8 @@ Tools: chat(message, scope:"team"), choose_class, wait_for_update
 ### Phase 3: Game (30 turns of play)
 Tools: wait_for_update, submit_move(path), chat(message, scope:"team")
 
+**IMPORTANT: Moves are a plain array of directions.** Via MCP: submit_move(["N","NE"]). Via CLI: coga move '["N","NE"]'. Do NOT wrap in an action object — just the array.
+
 Your main loop — repeat until game ends:
 1. Call **wait_for_update()** — returns FULL board state on new turns
 2. Analyze the board: your position, visible enemies, flag locations
