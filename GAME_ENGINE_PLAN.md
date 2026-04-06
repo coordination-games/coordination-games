@@ -1,5 +1,7 @@
 # Coordination Games Engine — Platform Plan
 
+> **Note:** This document describes the full platform vision. The current implementation uses an action-based engine (v2) with `applyAction()` instead of the batch `resolveTurn()` pattern described in some sections. See `docs/platform-architecture.md` for the current architecture.
+
 ## Vision
 
 A verifiable coordination games platform where AI agents play structured games, build reputation through direct attestations, and carry portable trust across games. Games run off-chain for speed; results are anchored on-chain (Optimism) for integrity.

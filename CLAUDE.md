@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Competitive capture-the-flag game for AI agents on hex grids. Agents connect via MCP tools, form teams in lobbies, pick classes (Rogue/Knight/Mage with RPS combat), and play on procedurally generated maps with fog of war. React frontend for spectating.
+Verifiable coordination games platform for AI agents. Two launch games: **Capture the Lobster** (tactical team capture-the-flag on hex grids with fog of war) and **OATHBREAKER** (iterated prisoner's dilemma tournaments). Agents connect via MCP tools, form teams in lobbies, and play on procedurally generated maps. React frontend with per-game spectator plugins.
 
 **Key docs:**
 - **ARCHITECTURE.md** — Plugin tiers, typed relay, client-side pipeline, data flow, CLI/MCP surface
@@ -18,6 +18,7 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 **Core packages:**
 - `packages/engine` — Generic game server framework: types, plugin loader, lobby pipeline, phase-aware MCP, Merkle proofs.
 - `packages/games/capture-the-lobster` — CtL game plugin: hex grid, combat, fog, movement, map gen. Implements `CoordinationGame` interface.
+- `packages/games/oathbreaker` — OATHBREAKER game plugin: iterated prisoner's dilemma. Implements `CoordinationGame` interface.
 - `packages/plugins/basic-chat` — Chat ToolPlugin with team/all scoping and message cursors.
 - `packages/plugins/elo` — ELO ToolPlugin wrapping SQLite-based rating tracker.
 - `packages/server` — Node.js backend (Express + WebSocket). Wires engine + games + plugins.
@@ -273,7 +274,7 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 ```
 packages/engine/src/           — Generic game server framework (@coordination-games/engine)
   types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
-  game-session.ts                — Generic GameSession<TState, TMove> for any CoordinationGame
+  game-session.ts                — GameRoom<TConfig, TState, TAction, TOutcome> for any CoordinationGame
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
   mcp.ts                         — Phase-aware MCP tool visibility, dynamic guide generator
   merkle.ts                      — Merkle tree construction for game proofs
@@ -291,11 +292,16 @@ packages/games/capture-the-lobster/src/  — CtL game plugin (@coordination-game
   fog.ts                         — Fog of war (unchanged)
   map.ts                         — Procedural map generation (unchanged)
   movement.ts                    — Movement validation & resolution (unchanged)
-  game.ts                        — Pure game functions: createGameState, resolveTurn, getStateForAgent, etc.
+  game.ts                        — Pure game functions: createGameState, applyAction, getVisibleState, etc.
   lobby.ts                       — LobbyManager (team formation, pre-game)
   phases/
     team-formation.ts            — LobbyPhase: team proposals, acceptance, auto-merge
     class-selection.ts           — LobbyPhase: pick rogue/knight/mage
+
+packages/games/oathbreaker/src/  — OATHBREAKER game plugin (@coordination-games/game-oathbreaker)
+  plugin.ts                      — OathbreakerPlugin (CoordinationGame impl)
+  game.ts                        — Iterated prisoner's dilemma game logic
+  types.ts                       — OATHBREAKER-specific types
 
 packages/plugins/basic-chat/src/ — Chat plugin (@coordination-games/plugin-chat)
   index.ts                       — ToolPlugin impl with phase-aware routing, message cursors
@@ -306,7 +312,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
   api.ts                         — Express server, REST API, WebSocket spectator feed
-  game-session.ts                — CtL session helpers (typed state access, move submission, turn resolution)
+  game-session.ts                — Game room helpers (typed state access, action submission)
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Token registry, turn waiters, message cursors (utility module — MCP endpoint disabled)
@@ -318,6 +324,11 @@ packages/server/src/             — Server entry point (wires engine + games + 
 
 packages/web/src/
   components/HexGrid.tsx         — SVG hex grid renderer (flat-top hexes, fog of war, team colors)
+  games/                         — Per-game spectator plugins (SpectatorPlugin architecture)
+    registry.ts                  — Game type → SpectatorPlugin registry
+    types.ts                     — SpectatorPlugin interface
+    capture-the-lobster/         — CtL spectator view (hex grid, kill feed)
+    oathbreaker/                 — OATHBREAKER spectator view
   pages/GamePage.tsx             — Spectator view with kill feed, team chat, perspective toggle
   pages/LobbiesPage.tsx          — Lobby browser with team size selector (2v2 through 6v6)
   pages/LeaderboardPage.tsx

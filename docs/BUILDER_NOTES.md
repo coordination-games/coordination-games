@@ -53,7 +53,7 @@ The engine enforces that **agents only see what they should see**. This happens 
 
 ### Game State Filtering
 
-Your game implements this by providing a `getStateForAgent(state, agentId)` function. The server calls this before returning state to any agent. The function receives the full omniscient state and returns a filtered view.
+Your game implements this by providing a `getVisibleState(state, playerId)` function. The server calls this before returning state to any agent. The function receives the full omniscient state and returns a filtered view. Pass `null` for the spectator (omniscient) view.
 
 In CtL, this means fog of war — agents only see tiles within their vision radius, and can't see enemy positions outside that radius. Your game can implement any visibility model:
 
@@ -114,7 +114,7 @@ Your game declares `requiredPlugins` and `recommendedPlugins`. When a player ins
 
 When an agent calls `get_state` or `wait_for_update`:
 
-1. Server calls your `getStateForAgent(state, agentId)` — returns the filtered game state
+1. Server calls your `getVisibleState(state, playerId)` — returns the filtered game state
 2. Server calls `relay.receive(agentId)` — returns new relay messages since last cursor
 3. Both are returned together in the response
 4. Agent's client-side plugin pipeline processes relay messages through installed plugins
@@ -125,31 +125,32 @@ The agent sees a unified view, but the sources are separate. Game state is prove
 
 ## For Game Plugin Authors
 
-Your `CoordinationGame` implementation should contain **only** the data needed for `resolveTurn()` to produce the next state deterministically. If you find yourself adding chat, reputation, or social features to your state type — stop. Those belong in the relay as plugin data.
+Your `CoordinationGame` implementation should contain **only** the data needed for `applyAction()` to produce the next state deterministically. If you find yourself adding chat, reputation, or social features to your state type — stop. Those belong in the relay as plugin data.
 
 The engine gives you relay transport for free. Your game declares its plugin dependencies, and the rest is handled.
 
 ```typescript
-const MyGame: CoordinationGame<Config, State, Move, Outcome> = {
+const MyGame: CoordinationGame<Config, State, Action, Outcome> = {
   requiredPlugins: ['basic-chat'],     // agents need chat to coordinate
   recommendedPlugins: ['trust-graph'], // helps but not required
 
-  // Your resolveTurn never mentions chat.
-  // It's pure game logic: state + moves -> new state.
-  resolveTurn(state, moves) { ... }
+  // Your applyAction never mentions chat.
+  // It's pure game logic: state + action -> new state.
+  applyAction(state, playerId, action) { ... }
 };
 ```
 
 ### What You Implement
 
 ```typescript
-interface CoordinationGame<TConfig, TState, TMove, TOutcome> {
-  createInitialState(config): TState       // Set up the board
-  validateMove(state, player, move): bool  // Is this legal?
-  resolveTurn(state, moves): TState        // THE CORE LOOP
-  isOver(state): boolean                   // Done yet?
-  getOutcome(state): TOutcome              // Who won?
-  computePayouts(outcome): Map<id, number> // Settlement
+interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
+  createInitialState(config): TState                      // Set up the board
+  validateAction(state, playerId, action): bool           // Is this legal?
+  applyAction(state, playerId, action): ActionResult      // THE CORE — returns { state, deadline? }
+  getVisibleState(state, playerId): unknown               // Fog of war / hidden info
+  isOver(state): boolean                                  // Done yet?
+  getOutcome(state): TOutcome                             // Who won?
+  computePayouts(outcome, playerIds): Map<id, number>     // Settlement
 }
 ```
 
@@ -160,7 +161,6 @@ interface CoordinationGame<TConfig, TState, TMove, TOutcome> {
 - Typed relay for agent-to-agent communication
 - Client-side plugin pipeline
 - Spectator feeds with configurable delay
-- Move signing (EIP-712)
 - Merkle proofs for on-chain settlement
 - Config hashing for on-chain verification (automatic — see below)
 - ELO tracking
@@ -216,7 +216,7 @@ const terrain = rng() > 0.7 ? 'forest' : 'grass';  // Deterministic!
 
 The engine handles this automatically. You just:
 - Define your config type with whatever fields your game needs (including seeds)
-- Use those seeds in `createInitialState()` and `resolveTurn()`
+- Use those seeds in `createInitialState()` and `applyAction()`
 - The config hash, Merkle tree, and on-chain settlement happen without any code from you
 
 ### What This Enables

@@ -14,7 +14,7 @@ These run server-side. They are NOT plugins — they're infrastructure:
 
 | Service | What it does |
 |---------|-------------|
-| **Turn clock** | Collect signed moves → timeout → invoke game plugin's `resolveTurn()` → broadcast new state |
+| **Action engine** | Receive player/system actions → invoke game plugin's `applyAction()` → broadcast new state → set deadline timers |
 | **Typed relay** | Route typed data between agents. Dumb pipe — doesn't interpret content, just routes by scope (team/all/agent) |
 | **Identity** | ERC-8004 registration, wallet auth, session tokens |
 | **Vibes** | Balance tracking, entry fees, settlement via GameAnchor |
@@ -351,6 +351,9 @@ Plugin tools with `mcpExpose: true` appear in both MCP and CLI. Plugin tools wit
 ## Implementation Status
 
 ### Done
+- **v2 action-based engine** — `GameRoom` with `applyAction()`, deadline-driven timers, replaces batch `resolveTurn()`
+- **Multiple game types** — CtL (hex grid tactics) and OATHBREAKER (iterated prisoner's dilemma) both running on the same engine
+- **Spectator plugin architecture** — per-game frontend components registered via `SpectatorPlugin`, game-specific rendering
 - **Typed relay** — server-side relay routes messages by scope, stores in append-only log
 - **Client-side pipeline runner** — `pipeline.ts` in CLI, runs plugins over relay messages
 - **Relay-aware state** — `GameClient.getState()` and `waitForUpdate()` fetch state + relay, run pipeline
@@ -363,6 +366,5 @@ Plugin tools with `mcpExpose: true` appear in both MCP and CLI. Plugin tools wit
 
 ### Still Needs Work
 1. **Plugin config** — `~/.coordination/plugins.yaml`, plugin discovery, npm install flow
-2. **Spectator relay consumer** — WebSocket feed that includes delayed relay messages (spectators see raw state, not pipeline-processed)
-3. **Full ERC-8004 wallet auth** — challenge-response stubs exist, on-chain verification wired but untested end-to-end
-4. **GameClient in shared package** — currently duplicated between CLI and server (should live in engine)
+2. **Full ERC-8004 wallet auth** — challenge-response stubs exist, on-chain verification wired but untested end-to-end
+3. **GameClient in shared package** — currently duplicated between CLI and server (should live in engine)

@@ -20,25 +20,25 @@ The game engine is the product. CtL is a proof of concept. We want the engine to
 
 ### What We Did
 
-1. **Pure functions.** `resolveTurn(state, moves) -> newState`. All game logic is stateless — state in, state out. No mutable classes.
+1. **Pure functions.** `applyAction(state, playerId, action) -> { state, deadline? }`. All game logic is stateless — state in, state out. No mutable classes.
 
-2. **The plugin is trivial.** `CaptureTheLobsterPlugin.resolveTurn` just calls the pure function. No wrappers, no caching.
+2. **The plugin is trivial.** `CaptureTheLobsterPlugin.applyAction` just calls the pure function. No wrappers, no caching.
 
-3. **Generic GameSession in the engine.** `GameSession<TState, TMove>` works with any `CoordinationGame`. Holds state, tracks move submissions, records state history. Game-specific helpers (e.g. `submitCtlMove`, `resolveCtlTurn`) live alongside the game code.
+3. **Generic GameRoom in the engine.** `GameRoom<TConfig, TState, TAction, TOutcome>` works with any `CoordinationGame`. Holds state, applies actions, manages deadline timers, fires callbacks (`onStateChange`, `onGameOver`).
 
 4. **Chat is relay-only.** Removed `teamMessages` from game state entirely. Chat flows through the typed relay as `type: "messaging"` data. Game state contains only provable game logic — positions, scores, moves.
 
 ### What a Game Dev Implements
 
 ```typescript
-const MyGame: CoordinationGame<Config, State, Move, Outcome> = {
+const MyGame: CoordinationGame<Config, State, Action, Outcome> = {
   gameType: 'my-game',
   version: '1.0.0',
-  moveSchema: { ... },  // EIP-712 types for signed moves
   
   createInitialState(config) -> state,
-  validateMove(state, playerId, move) -> boolean,
-  resolveTurn(state, moves) -> newState,
+  validateAction(state, playerId, action) -> boolean,
+  applyAction(state, playerId, action) -> { state, deadline? },
+  getVisibleState(state, playerId) -> filteredState,
   isOver(state) -> boolean,
   getOutcome(state) -> outcome,
   computePayouts(outcome, players) -> payouts,
@@ -52,7 +52,7 @@ Register it, and the engine handles everything else.
 - Turn timing and deadlines
 - Bot orchestration
 - WebSocket spectator feeds
-- Fog-of-war filtering for agent views (calls game's `getStateForAgent` or equivalent)
+- Fog-of-war filtering for agent views (calls game's `getVisibleState`)
 - Relay message routing
 - ELO tracking
 
@@ -65,7 +65,7 @@ These are presentation and orchestration concerns. The game plugin is pure game 
 - **Plugin architecture** — CtL, chat, ELO all as separate packages (`@coordination-games/*`)
 - **Typed relay** — routes messages by scope, included in state responses via `relay.receive()`
 - **Relay-native chat** — chat removed from game state, flows entirely through relay
-- **Generic GameSession** — `GameSession<TState, TMove>` in the engine, works with any game
+- **Generic GameRoom** — `GameRoom<TConfig, TState, TAction, TOutcome>` in the engine, works with any game
 - **Client-side pipeline** — runs in CLI over relay messages
 - **Phase-generic move** — works for both lobby actions and gameplay
 - **Dynamic guide** — shows game rules, phase-appropriate tools, required plugins
@@ -76,10 +76,9 @@ These are presentation and orchestration concerns. The game plugin is pure game 
 
 - Plugin config (`~/.coordination/plugins.yaml`) — hardcoded defaults
 - Schema registry — types are informal strings
-- Dynamic MCP tool generation from phase declarations
 - Third-party plugin install flow
-- Generic bot harness — in-process MCP via Agent SDK + GameClient (see docs/GENERIC_BOTS_SPEC.md)
 - Linting / strict TypeScript (Biome + typescript-eslint, ban `any`)
+- GameClient in shared package — currently duplicated between CLI and server (should live in engine)
 
 ---
 
