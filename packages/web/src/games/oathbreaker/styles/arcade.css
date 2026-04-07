@@ -184,3 +184,42 @@
   border-color: #3b82f6;
   animation: pulseBorder 2s ease-in-out infinite;
 }
+
+/* ---- Battle layout: responsive ---- */
+
+/* Mobile: stacked (arena on top, chat below) */
+.battle-content {
+  flex-direction: column !important;
+}
+
+.battle-content > div:first-child {
+  flex: 0 0 auto !important;
+}
+
+.battle-chat {
+  border-left: none !important;
+  border-top: 2px solid #333;
+  flex: 1 !important;
+  min-height: 0;
+}
+
+/* Wider mobile (>480px): bigger sprites */
+@media (min-width: 480px) {
+  .arena-bg {
+    min-height: 300px !important;
+  }
+}
+
+/* Desktop (>640px): side-by-side */
+@media (min-width: 640px) {
+  .battle-content {
+    flex-direction: row !important;
+  }
+
+  .battle-chat {
+    width: 320px;
+    flex-shrink: 0;
+    border-top: none;
+    border-left: 2px solid #333 !important;
+  }
+}

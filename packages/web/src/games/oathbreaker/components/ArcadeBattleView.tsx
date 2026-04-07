@@ -256,48 +256,184 @@ export function ArcadeBattleView({
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [battleChat.length]);
 
+  // Chat panel (reused in both layouts)
+  const chatPanel = (
+    <div style={{
+      flex: 1,
+      background: 'rgba(0,0,0,0.85)',
+      display: 'flex', flexDirection: 'column',
+      minHeight: 0, overflow: 'hidden',
+    }}>
+      {/* Pledge status */}
+      <div style={{ flexShrink: 0 }}>
+        {pairing.agreedPledge !== null ? (
+          <OathBanner text={`⚔ OATH SWORN — ${pairing.agreedPledge} PTS ⚔`} glow />
+        ) : pairing.phase === 'pledging' ? (
+          <div style={{ display: 'flex', padding: '6px 12px', gap: 12, fontSize: 7, flexWrap: 'wrap' }}>
+            <span className="pixel-text" style={{ color: '#60a5fa' }}>
+              {name1}: {pairing.proposal1 !== null ? `${pairing.proposal1} pts` : '...'}
+            </span>
+            <span className="pixel-text" style={{ color: '#f87171' }}>
+              {name2}: {pairing.proposal2 !== null ? `${pairing.proposal2} pts` : '...'}
+            </span>
+          </div>
+        ) : null}
+
+        {(pairing.phase === 'deciding' || pairing.phase === 'decided') && (
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 16, padding: '4px 12px', flexWrap: 'wrap' }}>
+            <span className="pixel-text" style={{
+              fontSize: 7, color: pairing.player1HasDecided ? '#4ade80' : '#9ca3af',
+            }}>
+              {name1}: {pairing.player1HasDecided ? 'SEALED' : 'DECIDING...'}
+            </span>
+            <span className="pixel-text" style={{
+              fontSize: 7, color: pairing.player2HasDecided ? '#4ade80' : '#9ca3af',
+            }}>
+              {name2}: {pairing.player2HasDecided ? 'SEALED' : 'DECIDING...'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Chat header */}
+      <div className="pixel-text" style={{
+        fontSize: 7, color: '#6b7280', padding: '6px 12px 2px',
+        letterSpacing: 1.5, flexShrink: 0,
+      }}>
+        NEGOTIATION
+      </div>
+
+      {/* Chat messages */}
+      <div ref={chatRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 12px', minHeight: 0 }}>
+        {battleChat.map((msg, i) => {
+          const isP1 = msg.from === p1.id;
+          const senderName = isP1 ? name1 : name2;
+          const color = isP1 ? '#60a5fa' : '#f87171';
+          return (
+            <div key={i} style={{ marginBottom: 3, fontSize: 12, lineHeight: 1.4 }}>
+              <span style={{ color, fontWeight: 'bold' }}>{senderName}:</span>{' '}
+              <span style={{ color: '#d1d5db' }}>{msg.message}</span>
+            </div>
+          );
+        })}
+        {battleChat.length === 0 && (
+          <div style={{ color: '#6b7280', fontSize: 11, fontStyle: 'italic', padding: '8px 0' }}>
+            Awaiting negotiation...
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Arena panel (reused in both layouts)
+  const arenaPanel = (
+    <div className={`arena-bg ${reveal.shakeClass}`} style={{
+      backgroundImage: `url(${bgUrl})`,
+      display: 'flex', flexDirection: 'column',
+      position: 'relative',
+      minHeight: 250,
+    }}>
+      {reveal.phase === 'darken' && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 5,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <span className="pixel-text oath-glow" style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}>
+            FATES SEALED...
+          </span>
+        </div>
+      )}
+
+      {reveal.showDelta && latestResult && (
+        <>
+          <DollarDelta delta={latestResult.delta1} side="left" />
+          <DollarDelta delta={latestResult.delta2} side="right" />
+        </>
+      )}
+
+      {(reveal.phase === 'reveal' || reveal.phase === 'aftermath') && latestResult && (
+        <div style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}>
+          <OutcomeBanner outcome={latestResult.outcome} />
+        </div>
+      )}
+
+      {/* Fighters — scale 5, fill the arena */}
+      <div style={{
+        flex: 1,
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        gap: '20%',
+        paddingBottom: 8,
+        position: 'relative', zIndex: 2,
+      }}>
+        <div className={reveal.phase === 'reveal' && reveal.p1Pose === 'victory' ? 'golden-glow' : ''}>
+          <CharacterSprite
+            character={char1?.characterName ?? 'buchu'}
+            pose={reveal.p1Pose}
+            faceRight={true}
+            scale={5}
+            tint={char1?.tint}
+          />
+        </div>
+        <div className={reveal.phase === 'reveal' && reveal.p2Pose === 'victory' ? 'golden-glow' : ''}>
+          <CharacterSprite
+            character={char2?.characterName ?? 'star'}
+            pose={reveal.p2Pose}
+            faceRight={false}
+            scale={5}
+            tint={char2?.tint}
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className={`arcade-screen ${reveal.flashClass}`} style={{
       display: 'flex', flexDirection: 'column', height: '100%',
-      maxWidth: 480, margin: '0 auto', // mobile-first: cap width, center on desktop
     }}>
-      {/* Compact HUD: back + round on one line, title removed for space */}
+      {/* HUD — full width, always on top */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '6px 12px', background: 'rgba(0,0,0,0.8)', zIndex: 10,
-        borderBottom: '2px solid #333',
+        padding: '8px 16px', background: 'rgba(0,0,0,0.8)', zIndex: 10,
+        borderBottom: '2px solid #333', flexShrink: 0,
       }}>
         <button onClick={onBack} className="pixel-text" style={{
-          background: 'transparent', border: '1px solid #444', padding: '3px 8px',
+          background: 'transparent', border: '1px solid #444', padding: '4px 10px',
           color: '#9ca3af', fontSize: 7, cursor: 'pointer',
         }}>
           ← BACK
         </button>
-        <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{
-          height: 20, imageRendering: 'pixelated',
-        }} />
+        <div style={{ textAlign: 'center' }}>
+          <div className="pixel-text" style={{ fontSize: 10, color: '#e9d852', letterSpacing: 3 }}>
+            OATHBREAKER
+          </div>
+          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{
+            height: 24, imageRendering: 'pixelated', display: 'block', margin: '2px auto 0',
+          }} />
+        </div>
         <span className="pixel-text" style={{ fontSize: 7, color: '#e5e7eb' }}>
-          RND {currentRound}/{maxRounds}
+          ROUND {currentRound}/{maxRounds}
         </span>
       </div>
 
-      {/* Fighter names + health bars */}
+      {/* Fighter stats — full width */}
       <div style={{
-        display: 'flex', gap: 8, padding: '6px 12px',
-        background: 'rgba(0,0,0,0.7)', zIndex: 10,
+        display: 'flex', gap: 16, padding: '8px 16px',
+        background: 'rgba(0,0,0,0.7)', zIndex: 10, flexShrink: 0,
       }}>
         <div style={{ flex: 1 }}>
-          <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 3 }}>{name1}</div>
+          <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 4 }}>{name1}</div>
           <HealthBar dollarValue={p1.dollarValue} breakEvenDelta={p1.breakEvenDelta} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p1.oathsKept}/{p1.oathsKept + p1.oathsBroken}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, padding: '0 8px' }}>
           <PhaseBadge pairing={pairing} />
         </div>
         <div style={{ flex: 1, textAlign: 'right' }}>
-          <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 3 }}>{name2}</div>
+          <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 4 }}>{name2}</div>
           <HealthBar dollarValue={p2.dollarValue} breakEvenDelta={p2.breakEvenDelta} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p2.oathsKept}/{p2.oathsKept + p2.oathsBroken}
@@ -305,139 +441,20 @@ export function ArcadeBattleView({
         </div>
       </div>
 
-      {/* Arena — compact, sprites fill it */}
-      <div className={`arena-bg ${reveal.shakeClass}`} style={{
-        height: 200,
-        flexShrink: 0,
-        backgroundImage: `url(${bgUrl})`,
-        display: 'flex', flexDirection: 'column',
-        position: 'relative',
+      {/* Main content: side-by-side on desktop (>640px), stacked on mobile */}
+      <div className="battle-content" style={{
+        flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden',
       }}>
-        {reveal.phase === 'darken' && (
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: 'rgba(0,0,0,0.6)', zIndex: 5,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <span className="pixel-text oath-glow" style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}>
-              FATES SEALED...
-            </span>
-          </div>
-        )}
-
-        {reveal.showDelta && latestResult && (
-          <>
-            <DollarDelta delta={latestResult.delta1} side="left" />
-            <DollarDelta delta={latestResult.delta2} side="right" />
-          </>
-        )}
-
-        {(reveal.phase === 'reveal' || reveal.phase === 'aftermath') && latestResult && (
-          <div style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}>
-            <OutcomeBanner outcome={latestResult.outcome} />
-          </div>
-        )}
-
-        {/* Fighters — scale 5 to fill the compact arena */}
-        <div style={{
-          flex: 1,
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-          gap: 80,
-          paddingBottom: 4,
-          position: 'relative', zIndex: 2,
-        }}>
-          <div className={reveal.phase === 'reveal' && reveal.p1Pose === 'victory' ? 'golden-glow' : ''}>
-            <CharacterSprite
-              character={char1?.characterName ?? 'buchu'}
-              pose={reveal.p1Pose}
-              faceRight={true}
-              scale={5}
-              tint={char1?.tint}
-            />
-          </div>
-          <div className={reveal.phase === 'reveal' && reveal.p2Pose === 'victory' ? 'golden-glow' : ''}>
-            <CharacterSprite
-              character={char2?.characterName ?? 'star'}
-              pose={reveal.p2Pose}
-              faceRight={false}
-              scale={5}
-              tint={char2?.tint}
-            />
-          </div>
+        {/* Arena */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          {arenaPanel}
         </div>
-      </div>
-
-      {/* Chat / Negotiation — fills remaining space */}
-      <div style={{
-        flex: 1,
-        background: 'rgba(0,0,0,0.85)',
-        borderTop: '2px solid #333',
-        display: 'flex', flexDirection: 'column',
-        minHeight: 0,
-        overflow: 'hidden',
-      }}>
-        {/* Pledge status bar */}
-        <div style={{ flexShrink: 0 }}>
-          {pairing.agreedPledge !== null ? (
-            <OathBanner text={`⚔ OATH SWORN — ${pairing.agreedPledge} PTS ⚔`} glow />
-          ) : pairing.phase === 'pledging' ? (
-            <div style={{ display: 'flex', padding: '6px 12px', gap: 12, fontSize: 7 }}>
-              <span className="pixel-text" style={{ color: '#60a5fa' }}>
-                {name1}: {pairing.proposal1 !== null ? `${pairing.proposal1} pts` : '...'}
-              </span>
-              <span className="pixel-text" style={{ color: '#f87171' }}>
-                {name2}: {pairing.proposal2 !== null ? `${pairing.proposal2} pts` : '...'}
-              </span>
-            </div>
-          ) : null}
-
-          {(pairing.phase === 'deciding' || pairing.phase === 'decided') && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 16, padding: '4px 12px' }}>
-              <span className="pixel-text" style={{
-                fontSize: 7,
-                color: pairing.player1HasDecided ? '#4ade80' : '#9ca3af',
-              }}>
-                {name1}: {pairing.player1HasDecided ? 'SEALED' : 'DECIDING...'}
-              </span>
-              <span className="pixel-text" style={{
-                fontSize: 7,
-                color: pairing.player2HasDecided ? '#4ade80' : '#9ca3af',
-              }}>
-                {name2}: {pairing.player2HasDecided ? 'SEALED' : 'DECIDING...'}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Chat header */}
-        <div className="pixel-text" style={{
-          fontSize: 7, color: '#6b7280', padding: '6px 12px 2px',
-          letterSpacing: 1.5, flexShrink: 0,
+        {/* Chat — beside arena on desktop, below on mobile */}
+        <div className="battle-chat" style={{
+          display: 'flex', flexDirection: 'column', minHeight: 0,
+          borderLeft: '2px solid #333',
         }}>
-          NEGOTIATION
-        </div>
-
-        {/* Chat messages — scrollable, fills remaining space */}
-        <div ref={chatRef} style={{
-          flex: 1, overflowY: 'auto', padding: '4px 12px',
-          minHeight: 0,
-        }}>
-          {battleChat.map((msg, i) => {
-            const isP1 = msg.from === p1.id;
-            const senderName = isP1 ? name1 : name2;
-            const color = isP1 ? '#60a5fa' : '#f87171';
-            return (
-              <div key={i} style={{ marginBottom: 3, fontSize: 12, lineHeight: 1.4 }}>
-                <span style={{ color, fontWeight: 'bold' }}>{senderName}:</span>{' '}
-                <span style={{ color: '#d1d5db' }}>{msg.message}</span>
-              </div>
-            );
-          })}
-          {battleChat.length === 0 && (
-            <div style={{ color: '#6b7280', fontSize: 11, fontStyle: 'italic', padding: '8px 0' }}>
-              Awaiting negotiation...
-            </div>
-          )}
+          {chatPanel}
         </div>
       </div>
     </div>
