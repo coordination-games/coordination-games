@@ -89,9 +89,26 @@ export function createRelayRouter(): express.Router | null {
   const credits = new ethers.Contract(config.creditsAddress, creditsAbi, relayerWallet);
   const gameAnchor = new ethers.Contract(config.gameAnchorAddress, gameAnchorAbi, relayerWallet);
   const usdc = new ethers.Contract(config.usdcAddress, usdcAbi, provider);
+  const usdcWrite = new ethers.Contract(config.usdcAddress, usdcAbi, relayerWallet);
   const erc8004 = new ethers.Contract(config.erc8004Address, erc8004Abi, provider);
 
   const router = express.Router();
+
+  // ---------------------------------------------------------------------------
+  // Simulate-then-send: dry-run every tx via staticCall before broadcasting.
+  // Catches reverts before spending gas.
+  // ---------------------------------------------------------------------------
+  async function simulateAndSend(
+    contract: ethers.Contract,
+    method: string,
+    args: any[],
+  ): Promise<ethers.TransactionReceipt> {
+    // staticCall runs the tx against the node without broadcasting
+    await contract[method].staticCall(...args);
+    // If we get here, simulation succeeded — send for real
+    const tx = await contract[method](...args);
+    return tx.wait();
+  }
 
   console.log(`[relay] On-chain relay enabled`);
   console.log(`[relay] Relayer address: ${relayerWallet.address}`);
@@ -113,30 +130,18 @@ export function createRelayRouter(): express.Router | null {
         return res.status(400).json({ error: 'Missing address' });
       }
 
-      let tx;
+      let receipt;
       if (existingAgentId !== undefined && existingAgentId !== null) {
-        tx = await registry.registerExisting(
-          userAddress,
-          name,
-          BigInt(existingAgentId),
-          BigInt(permitDeadline || 0),
-          v || 0,
-          r || ethers.ZeroHash,
-          s || ethers.ZeroHash,
-        );
+        receipt = await simulateAndSend(registry, 'registerExisting', [
+          userAddress, name, BigInt(existingAgentId),
+          BigInt(permitDeadline || 0), v || 0, r || ethers.ZeroHash, s || ethers.ZeroHash,
+        ]);
       } else {
-        tx = await registry.registerNew(
-          userAddress,
-          name,
-          agentURI || '',
-          BigInt(permitDeadline || 0),
-          v || 0,
-          r || ethers.ZeroHash,
-          s || ethers.ZeroHash,
-        );
+        receipt = await simulateAndSend(registry, 'registerNew', [
+          userAddress, name, agentURI || '',
+          BigInt(permitDeadline || 0), v || 0, r || ethers.ZeroHash, s || ethers.ZeroHash,
+        ]);
       }
-
-      const receipt = await tx.wait();
 
       // Parse Registered event to get agentId
       const registeredEvent = receipt.logs.find((log: any) => {
@@ -187,8 +192,7 @@ export function createRelayRouter(): express.Router | null {
       }
 
       // The caller should have signed a USDC permit for the credits contract
-      const tx = await credits.mint(BigInt(agentId), BigInt(usdcAmount));
-      const receipt = await tx.wait();
+      const receipt = await simulateAndSend(credits, 'mint', [BigInt(agentId), BigInt(usdcAmount)]);
 
       const bal = await credits.balances(BigInt(agentId));
 
@@ -204,6 +208,37 @@ export function createRelayRouter(): express.Router | null {
   });
 
   // =========================================================================
+  // GET /faucet/:address — mint 1000 test USDC to any address (testnet only)
+  // =========================================================================
+  router.get('/faucet/:address', async (req, res) => {
+    try {
+      const { address } = req.params;
+
+      if (!ethers.isAddress(address)) {
+        return res.status(400).json({ error: 'Invalid address' });
+      }
+
+      // Always 1000 USDC (6 decimals)
+      const mintAmount = BigInt(1000_000000);
+
+      const receipt = await simulateAndSend(usdcWrite, 'mint', [address, mintAmount]);
+
+      const bal = await usdc.balanceOf(address);
+
+      res.json({
+        success: true,
+        txHash: receipt.hash,
+        address,
+        minted: '1000.00',
+        balance: (Number(bal) / 1e6).toFixed(2),
+      });
+    } catch (err: any) {
+      console.error('[relay] faucet error:', err.message);
+      res.status(500).json({ error: err.reason || err.message });
+    }
+  });
+
+  // =========================================================================
   // POST /burn-request — request a burn (starts cooldown)
   // =========================================================================
   router.post('/burn-request', async (req, res) => {
@@ -214,8 +249,7 @@ export function createRelayRouter(): express.Router | null {
         return res.status(400).json({ error: 'Missing agentId or amount' });
       }
 
-      const tx = await credits.requestBurn(BigInt(agentId), BigInt(amount));
-      const receipt = await tx.wait();
+      const receipt = await simulateAndSend(credits, 'requestBurn', [BigInt(agentId), BigInt(amount)]);
 
       // Read pending burn info
       const pending = await credits.pendingBurns(BigInt(agentId));
@@ -243,8 +277,7 @@ export function createRelayRouter(): express.Router | null {
         return res.status(400).json({ error: 'Missing agentId' });
       }
 
-      const tx = await credits.executeBurn(BigInt(agentId));
-      const receipt = await tx.wait();
+      const receipt = await simulateAndSend(credits, 'executeBurn', [BigInt(agentId)]);
 
       const bal = await credits.balances(BigInt(agentId));
 
@@ -284,8 +317,7 @@ export function createRelayRouter(): express.Router | null {
 
       const deltasBI = deltas.map((d: any) => BigInt(d));
 
-      const tx = await gameAnchor.settleGame(result, deltasBI);
-      const receipt = await tx.wait();
+      const receipt = await simulateAndSend(gameAnchor, 'settleGame', [result, deltasBI]);
 
       res.json({
         success: true,
@@ -465,8 +497,7 @@ export function createRelayRouter(): express.Router | null {
         },
       };
 
-      const tx = await eas.attest(attestRequest);
-      const receipt = await tx.wait();
+      const receipt = await simulateAndSend(eas, 'attest', [attestRequest]);
 
       // Extract attestation UID from receipt logs
       let attestationUid = null;
@@ -559,8 +590,7 @@ export function createRelayRouter(): express.Router | null {
         },
       };
 
-      const tx = await eas.revoke(revokeRequest);
-      const receipt = await tx.wait();
+      const receipt = await simulateAndSend(eas, 'revoke', [revokeRequest]);
 
       console.log(`[relay] EAS revocation from ${attester} for attestation ${attestationUid}`);
 
