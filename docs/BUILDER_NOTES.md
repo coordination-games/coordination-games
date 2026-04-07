@@ -148,6 +148,10 @@ const MyGame: CoordinationGame<Config, State, Action, Outcome> = {
   version: '1.0.0',
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['trust-graph'],
+  createConfig(players, seed, options) {
+    // Build your game's config from players + seed + options (teamSize, etc.)
+    return { players, seed, ...options };
+  },
   applyAction(state, playerId, action) { ... },
   // ...all other required methods
 };
@@ -163,6 +167,9 @@ interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   // --- Identity ---
   readonly gameType: string;                               // Unique ID, e.g. "my-game"
   readonly version: string;                                // Semantic version for replay compat
+
+  // --- Config creation ---
+  createConfig(players, seed, options?): TConfig            // Build config from players + seed (server calls this)
 
   // --- Core game logic ---
   createInitialState(config): TState                       // Set up the board
@@ -212,6 +219,7 @@ Set `progressIncrement: true` on the action that resolves a turn/round. Don't se
 The server handles all of this from the plugin interface alone — no game-specific server code:
 
 - **Game registration** — call `registerGame()` and the server discovers your game, creates lobbies, serves `GET /framework` listings
+- **Config creation** — the server calls your `createConfig(players, seed, options)` to build game configs. The server has ZERO game-specific imports — all config knowledge lives in your plugin.
 - **Lobbies and waiting rooms** — games with `numTeams > 1` get a `LobbyRunner` with team formation phases; games with `numTeams <= 1` get a `WaitingRoom` that auto-promotes to a game when enough players join
 - **Typed action passthrough** — agents send fully typed actions, server forwards them directly to your `handleAction()`. No action parsing or game-specific deserialization in the server.
 - **Turn clock with deadlines** — set `deadline` in `ActionResult`, engine fires the action on expiry

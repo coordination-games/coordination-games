@@ -273,7 +273,7 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 
 ```
 packages/engine/src/           — Generic game server framework (@coordination-games/engine)
-  types.ts                       — All shared types (CoordinationGame w/ buildSpectatorView/guide/getSummary/getPlayerStatus, ToolPlugin, LobbyPhase, ActionResult w/ progressIncrement, SpectatorContext, etc.)
+  types.ts                       — All shared types (CoordinationGame w/ createConfig/buildSpectatorView/guide/getSummary/getPlayerStatus, GameSetup, ToolPlugin, LobbyPhase, ActionResult w/ progressIncrement, SpectatorContext, etc.)
   game-session.ts                — GameRoom<TConfig, TState, TAction, TOutcome> with progress tracking, state snapshots, playerIds, getSpectatorView() calling plugin.buildSpectatorView()
   registry.ts                    — Game plugin registry: registerGame(), getGame(), getRegisteredGames(), getAllGames()
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
@@ -312,8 +312,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   tracker.ts                     — ELO rating system with SQLite. recordGameResult() takes computePayouts output for generic per-game ELO updates.
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
-  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). One GameRoomData type, one games map.
-  game-session.ts                — Game room helpers (typed state access, action submission)
+  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). Config creation via plugin.createConfig() — zero game-specific imports except LobbyManager (deferred). One GameRoomData type, one games map.
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Token registry, turn waiters, message cursors (utility module — MCP endpoint disabled)
