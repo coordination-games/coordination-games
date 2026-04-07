@@ -150,11 +150,11 @@ export function registerGameCommands(program: Command) {
   program
     .command("guide [game]")
     .description("Dynamic playbook — game rules, your plugins, available actions")
-    .action(async (_game?: string) => {
+    .action(async (game?: string) => {
       const client = await createClient();
 
       try {
-        const result = await client.getGuide();
+        const result = await client.getGuide(game);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);

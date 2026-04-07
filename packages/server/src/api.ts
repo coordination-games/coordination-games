@@ -49,6 +49,7 @@ import {
   setAgentLastTurn,
   hasAgentMissedTurn,
   GAME_RULES,
+  OATHBREAKER_RULES,
   type GameResolver,
   type LobbyResolver,
   type RelayResolver,
@@ -1009,8 +1010,49 @@ export class GameServer {
       const agentId = req.agentId as string;
 
       const game = resolveGame(agentId);
+      const oathGame = resolveOathGame(agentId);
       const lobby = resolveLobby(agentId);
-      const phase = game?.state.phase ?? lobby?.phase ?? 'none';
+      const phase = game?.state.phase ?? oathGame?.state.phase ?? lobby?.phase ?? 'none';
+
+      // Determine which game's guide to show:
+      // 1. Explicit ?game= query param takes priority
+      // 2. Auto-detect from player's current game
+      // 3. Default to capture-the-lobster
+      const requestedGame = (req.query.game as string)?.toLowerCase();
+      const detectedGame = oathGame ? 'oathbreaker' : 'capture-the-lobster';
+      const gameType = requestedGame || detectedGame;
+
+      // --- OATHBREAKER guide ---
+      if (gameType === 'oathbreaker') {
+        let playerState = '\n## Your Status\n';
+        if (oathGame) {
+          const oathState = oathGame.state as any;
+          const player = oathState.players?.find((p: any) => p.id === agentId);
+          playerState += `- **Phase:** ${oathState.phase}\n- **Round:** ${oathState.round}/${oathState.config?.maxRounds ?? '?'}\n`;
+          if (player) {
+            playerState += `- **Balance:** ${player.balance}\n- **Oaths Kept:** ${player.oathsKept}\n- **Oaths Broken:** ${player.oathsBroken}\n`;
+          }
+        } else {
+          playerState += `- Not in an OATHBREAKER game.\n`;
+        }
+
+        let cliRef = '\n## CLI Reference\n';
+        cliRef += '| Command | Description |\n';
+        cliRef += '|---------|-------------|\n';
+        cliRef += '| `coga status` | Your address, name, credits |\n';
+        cliRef += '| `coga guide` | This guide |\n';
+        cliRef += '| `coga guide oathbreaker` | OATHBREAKER rules |\n';
+        cliRef += '| `coga guide capture-the-lobster` | CtL rules |\n';
+        cliRef += '| `coga state` | Get current game state |\n';
+        cliRef += '| `coga move \'{"amount": 20}\'` | Propose a pledge |\n';
+        cliRef += '| `coga move \'{"decision": "C"}\'` | Submit C/D decision |\n';
+        cliRef += '| `coga wait` | Wait for the next update |\n';
+        cliRef += '| `coga tool basic-chat chat message="..." scope="all"` | Chat |\n';
+
+        return res.json({ guide: OATHBREAKER_RULES + playerState + cliRef });
+      }
+
+      // --- Capture the Lobster guide (default) ---
 
       // --- Player Status ---
       let playerState = '\n## Your Status\n';
@@ -1120,7 +1162,9 @@ export class GameServer {
       cliRef += '| Command | Description |\n';
       cliRef += '|---------|-------------|\n';
       cliRef += '| `coga status` | Your address, name, credits, registration status |\n';
-      cliRef += '| `coga guide` | This guide |\n';
+      cliRef += '| `coga guide` | This guide (auto-detects your game) |\n';
+      cliRef += '| `coga guide oathbreaker` | OATHBREAKER rules |\n';
+      cliRef += '| `coga guide capture-the-lobster` | CtL rules |\n';
       cliRef += '| `coga lobbies` | List active lobbies |\n';
       cliRef += '| `coga create-lobby -s <n>` | Create a lobby (team size 2-6) |\n';
       cliRef += '| `coga join <lobbyId>` | Join a lobby |\n';

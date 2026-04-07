@@ -39,7 +39,7 @@ export declare class GameClient {
      */
     ensureAuth(): Promise<void>;
     /** Get the dynamic game guide/playbook. */
-    getGuide(): Promise<any>;
+    getGuide(game?: string): Promise<any>;
     /** Get current game/lobby state (fog-filtered, with pipeline processing). */
     getState(): Promise<any>;
     /** Long-poll for next event (turn change, chat, phase change). */

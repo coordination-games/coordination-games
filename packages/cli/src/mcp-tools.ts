@@ -35,11 +35,11 @@ export function registerGameTools(
 
   server.tool(
     'get_guide',
-    'Get the game rules, your current status, and available tools',
-    {},
-    async () => {
+    'Get the game rules, your current status, and available tools. Pass game name to get a specific guide.',
+    { game: { type: 'string', description: 'Game name: "capture-the-lobster" or "oathbreaker". Auto-detects if omitted.' } },
+    async (args: any) => {
       try {
-        const result = await client.getGuide();
+        const result = await client.getGuide(args.game);
         return jsonResult(result);
       } catch (err: any) {
         return jsonError(err);

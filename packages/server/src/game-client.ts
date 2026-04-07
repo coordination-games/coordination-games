@@ -105,9 +105,10 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /** Get the dynamic game guide/playbook. */
-  async getGuide(): Promise<any> {
+  async getGuide(game?: string): Promise<any> {
     await this.ensureAuth();
-    return this.api.get('/api/player/guide');
+    const query = game ? `?game=${encodeURIComponent(game)}` : '';
+    return this.api.get(`/api/player/guide${query}`);
   }
 
   /** Get current game/lobby state (fog-filtered, with pipeline processing). */
