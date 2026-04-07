@@ -127,7 +127,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
         height: 'calc(100vh - 5rem)',
       }}>
         <div style={{ textAlign: 'center' }}>
-          <div className="pixel-text" style={{ fontSize: 14, color: '#eab308', letterSpacing: 4, marginBottom: 16 }}>
+          <div className="pixel-text" style={{ fontSize: 14, color: '#d4a017', letterSpacing: 4, marginBottom: 16 }}>
             OATHBREAKER
           </div>
           <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />

@@ -146,8 +146,8 @@ export function ArcadeOverview({
         borderBottom: '2px solid #1f2937', marginBottom: 16,
       }}>
         <div className="pixel-text" style={{
-          fontSize: 16, color: '#eab308', letterSpacing: 6,
-          textShadow: '0 0 12px rgba(234, 179, 8, 0.4)',
+          fontSize: 16, color: '#d4a017', letterSpacing: 6,
+          textShadow: '0 0 12px rgba(212, 160, 23, 0.5)',
         }}>
           OATHBREAKER
         </div>
