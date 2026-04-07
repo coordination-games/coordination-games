@@ -172,7 +172,7 @@ export function createGameState(
 
   return {
     turn: 0,
-    phase: 'in_progress',
+    phase: 'pre_game',
     units,
     flags,
     score: { A: 0, B: 0 },

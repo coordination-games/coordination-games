@@ -150,7 +150,9 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
     this._currentTimer = setTimeout(() => {
       if (myId !== this._timerId) return; // stale
       this._currentTimer = null;
-      this.handleAction(null, deadline.action).catch(() => {});
+      this.handleAction(null, deadline.action).catch((err) => {
+        console.error(`[GameRoom ${this.gameId}] Deadline action failed:`, err);
+      });
     }, deadline.seconds * 1000);
   }
 
