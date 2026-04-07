@@ -309,10 +309,10 @@ packages/plugins/basic-chat/src/ — Chat plugin (@coordination-games/plugin-cha
 
 packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   index.ts                       — ToolPlugin wrapper around EloTracker
-  tracker.ts                     — ELO rating system with SQLite
+  tracker.ts                     — ELO rating system with SQLite. recordGameResult() takes computePayouts output for generic per-game ELO updates.
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
-  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Generic resolveGameRoom(), action passthrough, spectator broadcast via plugin.buildSpectatorView(). One GameRoomData type, one games map.
+  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). One GameRoomData type, one games map.
   game-session.ts                — Game room helpers (typed state access, action submission)
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots

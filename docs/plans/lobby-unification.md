@@ -11,12 +11,13 @@ The plan was executed in four commits (not three as originally planned):
 3. **Commit 3 (lobby UI components):** Componentized into `PlayerList`, `ChatPanel`, `TimerBar`, `FillBotsPanel`, `JoinInstructions`, `TeamPanel`. `LobbyPage` auto-detects game type and renders appropriate components. `PreGamePanel` was not needed yet (deferred until a game needs it).
 4. **Commit 4 (documentation):** Updated BUILDER_NOTES.md, CLAUDE.md, and this file.
 
-**Phase 2 follow-up (4 commits, 2026-04-07):** Made the server nearly fully game-agnostic with a plugin registry:
+**Phase 2 follow-up (5 commits, 2026-04-07):** Made the server fully game-agnostic with a plugin registry:
 
 5. **Commit 5 (plugin registry + action passthrough):** Games self-register via `registerGame()` at module level. Server discovers games from registry (`getRegisteredGames()`). Generic `resolveGameRoom()`. Action passthrough for typed actions. `GET /framework` uses `getRegisteredGames()`. New file: `packages/engine/src/registry.ts`.
 6. **Commit 6 (buildSpectatorView as required plugin method):** Each game implements `buildSpectatorView(state, prevState, context)` to build its own spectator presentation. Engine calls it with delayed state + `SpectatorContext` (handles + relay messages filtered by `progressCounter`). Server no longer maintains `stateHistory` cache — `buildSpectatorState()` killed.
 7. **Commit 7 (playerIds on GameRoom):** `GameRoom.create(plugin, config, gameId, playerIds)`. Generic settlement uses `game.playerIds`. Merkle tree and payouts are game-agnostic.
 8. **Commit 8 (guide + summary on plugins + cleanup):** `plugin.guide` for rules text, `plugin.getPlayerStatus()` for player-specific status, `plugin.getSummary()` for game listings. Generic lobby creation reads from `plugin.lobby.matchmaking` config. `OathGameRoom` type alias killed. All stale comments removed.
+9. **Commit 9 (generic ELO, kill typed resolvers, kill legacy action parsing):** ELO recording now uses `computePayouts()` output via `recordGameResult()` — works for any game, no game-specific ELO code. Typed resolvers (`resolveGame`/`resolveOathGame`) replaced by single `resolveGameRoom()`. Legacy action parsing removed — server does typed passthrough only, agents send full typed actions. Server has near-zero game-specific type imports.
 
 **Deviations from Phase 1 plan (now resolved by Phase 2):**
 - `buildSpectatorState()` was fully replaced by `buildSpectatorView()` as a required method on `CoordinationGame`.
