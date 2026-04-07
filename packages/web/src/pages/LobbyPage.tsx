@@ -1,10 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, FillBotsPanel, JoinInstructions, TeamPanel } from '../components/lobby';
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
 
 interface LobbyAgent { id: string; handle: string; team: string | null; }
 interface PreGamePlayer { id: string; team: 'A' | 'B'; unitClass: string | null; ready: boolean; }
 interface ChatMessage { from: string; message: string; timestamp: number; }
-interface LobbyState {
+
+// CtL lobby state (from /ws/lobby/:id)
+interface CtlLobbyState {
   lobbyId: string;
   phase: 'forming' | 'pre_game' | 'starting' | 'game' | 'failed';
   agents: LobbyAgent[];
@@ -18,35 +25,19 @@ interface LobbyState {
   timeRemainingSeconds?: number;
 }
 
-function AgentCard({ agent }: { agent: LobbyAgent }) {
-  return (
-    <div className="rounded-lg px-3 py-2 text-sm parchment" style={{ borderColor: agent.team ? 'rgba(184, 134, 11, 0.3)' : undefined }}>
-      <div className="font-semibold" style={{ color: 'var(--color-ink)' }}>{agent.handle}</div>
-      <div className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>{agent.id}</div>
-      {agent.team && <div className="mt-1 text-xs font-heading" style={{ color: 'var(--color-amber)' }}>{agent.team}</div>}
-    </div>
-  );
+// OATHBREAKER waiting room state (from /ws/game/:id)
+interface OathWaitingState {
+  gameType: 'oathbreaker';
+  phase: 'waiting';
+  targetPlayers: number;
+  players: { id: string; handle: string }[];
 }
 
-function TeamPanel({ teamId, team, agents }: { teamId: string; team: { members: string[]; invites: string[] }; agents: LobbyAgent[]; }) {
-  return (
-    <div className="rounded-lg parchment-strong p-3">
-      <h4 className="mb-2 text-sm font-heading font-semibold" style={{ color: 'var(--color-amber)' }}>{teamId}</h4>
-      <div className="flex flex-wrap gap-2">
-        {team.members.map((id) => {
-          const agent = agents.find((a) => a.id === id);
-          return <span key={id} className="rounded px-2 py-1 text-xs font-mono" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-light)' }}>{agent?.handle ?? id}</span>;
-        })}
-        {team.invites.map((id) => {
-          const agent = agents.find((a) => a.id === id);
-          return <span key={id} className="rounded px-2 py-1 text-xs font-mono italic" style={{ background: 'rgba(184, 134, 11, 0.06)', color: 'var(--color-amber-dim)', borderStyle: 'dashed', border: '1px dashed rgba(184, 134, 11, 0.3)' }}>{agent?.handle ?? id} (invited)</span>;
-        })}
-      </div>
-    </div>
-  );
-}
+// ---------------------------------------------------------------------------
+// CtL-specific: PreGamePanel (class selection — only used for CtL)
+// ---------------------------------------------------------------------------
 
-function PreGamePanel({ preGame, agents }: { preGame: NonNullable<LobbyState['preGame']>; agents: LobbyAgent[]; }) {
+function PreGamePanel({ preGame, agents }: { preGame: NonNullable<CtlLobbyState['preGame']>; agents: LobbyAgent[]; }) {
   const classColors: Record<string, string> = { rogue: 'var(--color-forest)', knight: '#3a6aaa', mage: '#7a4aaa' };
   const teamA = preGame.players.filter((p) => p.team === 'A');
   const teamB = preGame.players.filter((p) => p.team === 'B');
@@ -98,57 +89,24 @@ function PreGamePanel({ preGame, agents }: { preGame: NonNullable<LobbyState['pr
   );
 }
 
-function AutoScrollChat({ children, deps }: { children: React.ReactNode; deps: number }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const shouldAutoScroll = useRef(true);
-
-  const handleScroll = () => {
-    const el = containerRef.current;
-    if (!el) return;
-    shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-  };
-
-  useEffect(() => {
-    if (shouldAutoScroll.current && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [deps]);
-
-  return (
-    <div ref={containerRef} onScroll={handleScroll} className="overflow-y-auto max-h-64">
-      {children}
-    </div>
-  );
-}
-
-function ChatLog({ messages, agents }: { messages: ChatMessage[]; agents: LobbyAgent[] }) {
-  return (
-    <AutoScrollChat deps={messages.length}>
-      <div className="flex flex-col gap-1">
-        {messages.length === 0 && <p className="text-xs italic" style={{ color: 'var(--color-ink-faint)' }}>No messages yet...</p>}
-        {messages.map((m, i) => {
-          const agent = agents.find((a) => a.id === m.from);
-          return (
-            <div key={i} className="text-xs">
-              <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agent?.handle ?? m.from}:</span>{' '}
-              <span style={{ color: 'var(--color-ink-light)' }}>{m.message}</span>
-            </div>
-          );
-        })}
-      </div>
-    </AutoScrollChat>
-  );
-}
+// ---------------------------------------------------------------------------
+// Phase badge (shared)
+// ---------------------------------------------------------------------------
 
 function phaseBadge(phase: string) {
   const styles: Record<string, { bg: string; color: string; border: string }> = {
     forming: { bg: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: 'rgba(184, 134, 11, 0.2)' },
+    waiting: { bg: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: 'rgba(184, 134, 11, 0.2)' },
     pre_game: { bg: 'rgba(58, 106, 170, 0.08)', color: '#3a6aaa', border: 'rgba(58, 106, 170, 0.2)' },
     starting: { bg: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: 'rgba(58, 90, 42, 0.2)' },
     game: { bg: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: 'rgba(58, 90, 42, 0.2)' },
+    playing: { bg: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: 'rgba(58, 90, 42, 0.2)' },
     failed: { bg: 'rgba(139, 32, 32, 0.08)', color: 'var(--color-blood)', border: 'rgba(139, 32, 32, 0.2)' },
   };
-  const labels: Record<string, string> = { forming: 'Forming Teams', pre_game: 'Class Selection', starting: 'Starting...', game: 'Game Started', failed: 'Failed' };
+  const labels: Record<string, string> = {
+    forming: 'Forming Teams', waiting: 'Waiting for Players', pre_game: 'Class Selection',
+    starting: 'Starting...', game: 'Game Started', playing: 'Game Started', failed: 'Failed',
+  };
   const s = styles[phase] ?? styles.forming;
 
   return (
@@ -158,21 +116,127 @@ function phaseBadge(phase: string) {
   );
 }
 
-export default function LobbyPage() {
-  const { id } = useParams<{ id: string }>();
+// ---------------------------------------------------------------------------
+// OATHBREAKER Waiting Room View
+// ---------------------------------------------------------------------------
+
+function OathWaitingView({ id }: { id: string }) {
   const navigate = useNavigate();
-  const [state, setState] = useState<LobbyState | null>(null);
+  const [state, setState] = useState<OathWaitingState | null>(null);
   const [connected, setConnected] = useState(false);
-  const [addingBot, setAddingBot] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [gameStarted, setGameStarted] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    // Connect to /ws/game/:id (waiting rooms use the game WS path)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/game/${id}`);
+    wsRef.current = ws;
+    ws.onopen = () => setConnected(true);
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'state_update' && msg.data) {
+          const d = msg.data;
+          if (d.phase === 'waiting') {
+            setState(d);
+          } else {
+            // Game has started — the waiting room was promoted
+            setGameStarted(id);
+          }
+        }
+        // Also handle game_started message if server sends one
+        if (msg.type === 'game_started' || msg.type === 'game_update') {
+          setGameStarted(id);
+        }
+      } catch {}
+    };
+    ws.onerror = () => {};
+    ws.onclose = () => setConnected(false);
+    return () => { ws.close(); wsRef.current = null; };
+  }, [id]);
+
+  // Redirect when game starts
+  useEffect(() => {
+    if (gameStarted) {
+      const t = setTimeout(() => navigate(`/game/${gameStarted}`), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [gameStarted, navigate]);
+
+  if (!state && !gameStarted) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <div className="text-center">
+          <p className="text-lg font-heading mb-2" style={{ color: 'var(--color-blood)' }}>OATHBREAKER</p>
+          <p style={{ color: 'var(--color-ink-faint)' }}>{connected ? 'Waiting for room data...' : `Connecting to waiting room ${id}...`}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameStarted) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6">
+        <div className="rounded-lg p-4 text-center" style={{ background: 'rgba(58, 90, 42, 0.08)', border: '1px solid rgba(58, 90, 42, 0.2)' }}>
+          <p className="font-heading font-semibold" style={{ color: 'var(--color-forest)' }}>Game started! Redirecting...</p>
+          <button onClick={() => navigate(`/game/${gameStarted}`)} className="mt-2 rounded font-heading px-4 py-1 text-sm font-medium text-white" style={{ background: 'var(--color-forest)' }}>Go to Game Now</button>
+        </div>
+      </div>
+    );
+  }
+
+  const agents = (state!.players || []).map(p => ({ id: p.id, handle: p.handle, team: null }));
+  const isFull = agents.length >= state!.targetPlayers;
+  const hasExternalAgents = agents.some(a => a.id?.startsWith('ext_'));
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="font-heading text-xl font-bold" style={{ color: 'var(--color-ink)' }}>Waiting Room</h1>
+          <span className="font-heading text-sm font-medium" style={{ color: 'var(--color-blood)' }}>OATHBREAKER</span>
+          <span className="font-mono text-sm" style={{ color: 'var(--color-ink-faint)' }}>{id}</span>
+          {phaseBadge('waiting')}
+          <span className="text-sm" style={{ color: 'var(--color-ink-light)' }}>{agents.length} / {state!.targetPlayers} players</span>
+        </div>
+        {!connected && <span className="text-xs" style={{ color: 'var(--color-amber)' }}>disconnected</span>}
+      </div>
+
+      {/* Join instructions */}
+      <JoinInstructions lobbyId={id} />
+
+      {/* Fill bots */}
+      <FillBotsPanel lobbyId={id} isFull={isFull} agentCount={agents.length} hasExternalAgents={hasExternalAgents} />
+
+      {/* Player list */}
+      <PlayerList agents={agents} />
+
+      {/* Status message */}
+      {isFull && (
+        <div className="rounded-lg p-4 text-center" style={{ background: 'rgba(58, 90, 42, 0.08)', border: '1px solid rgba(58, 90, 42, 0.2)' }}>
+          <p className="font-heading font-semibold" style={{ color: 'var(--color-forest)' }}>All players joined! Starting game...</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CtL Lobby View (original, refactored to use extracted components)
+// ---------------------------------------------------------------------------
+
+function CtlLobbyView({ id }: { id: string }) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<CtlLobbyState | null>(null);
+  const [connected, setConnected] = useState(false);
   const [noTimeout, setNoTimeout] = useState(false);
   const [lobbyTimer, setLobbyTimer] = useState<number | null>(null);
   const serverTimeRef = useRef<{ value: number; at: number }>({ value: 0, at: Date.now() });
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (!id) return;
     fetch(`/api/lobbies/${id}`).then(r => r.json()).then(d => { if (d?.lobbyId) setState(d); }).catch(() => {});
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/lobby/${id}`);
@@ -184,12 +248,10 @@ export default function LobbyPage() {
     return () => { ws.close(); wsRef.current = null; };
   }, [id]);
 
-  // Sync noTimeout from server state
   useEffect(() => {
     if (state?.noTimeout) setNoTimeout(true);
   }, [state?.noTimeout]);
 
-  // Sync server time into ref whenever state updates
   useEffect(() => {
     if (state?.phase === 'pre_game' && state.preGame) {
       serverTimeRef.current = { value: state.preGame.timeRemainingSeconds, at: Date.now() };
@@ -198,7 +260,6 @@ export default function LobbyPage() {
     }
   }, [state?.timeRemainingSeconds, state?.preGame?.timeRemainingSeconds, state?.phase]);
 
-  // Timer tick — counts down locally between server updates
   useEffect(() => {
     if (noTimeout || !state || (state.phase !== 'forming' && state.phase !== 'pre_game')) {
       setLobbyTimer(null);
@@ -221,45 +282,20 @@ export default function LobbyPage() {
   }, [state?.phase, state?.gameId, navigate]);
 
   async function handleNoTimeout() {
-    if (!id || noTimeout) return;
+    if (noTimeout) return;
     try { const r = await fetch(`/api/lobbies/${id}/no-timeout`, { method: 'POST' }); if (r.ok) setNoTimeout(true); } catch {}
   }
 
-  async function handleFillBots() {
-    if (!id) return;
-    // Warn if no external agents have joined yet
-    const hasExternalAgents = state?.agents.some((a: any) => a.id?.startsWith('ext_'));
-    if (!hasExternalAgents) {
-      if (!confirm('Are you sure? No agents have joined yet.')) return;
-    }
-    if (!adminPassword) { alert('Enter admin password first'); return; }
-    setAddingBot(true);
-    try {
-      const r = await fetch(`/api/lobbies/${id}/fill-bots`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: adminPassword }) });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Failed to fill bots'); }
-    } catch {}
-    setAddingBot(false);
-  }
-
   async function handleCloseLobby() {
-    if (!id) return;
     if (!confirm('Close this lobby? All agents will be disconnected.')) return;
     try { await fetch(`/api/lobbies/${id}`, { method: 'DELETE' }); navigate('/lobbies'); } catch {}
-  }
-
-  function handleCopyInstall() {
-    navigator.clipboard.writeText('claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster').then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
-  }
-
-  function handleCopyJoinPrompt() {
-    navigator.clipboard.writeText(`Join lobby ${id} on Capture the Lobster and play, please!`).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   }
 
   if (!state) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
         <div className="text-center">
-          <div className="text-4xl mb-4">🦞</div>
+          <div className="text-4xl mb-4">{'\u{1F99E}'}</div>
           <p style={{ color: 'var(--color-ink-faint)' }}>{connected ? 'Waiting for lobby data...' : `Connecting to lobby ${id}...`}</p>
         </div>
       </div>
@@ -267,6 +303,8 @@ export default function LobbyPage() {
   }
 
   const teamEntries = Object.entries(state.teams);
+  const isFull = state.agents.length >= (state.teamSize || 2) * 2;
+  const hasExternalAgents = state.agents.some((a: any) => a.id?.startsWith('ext_'));
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -281,70 +319,22 @@ export default function LobbyPage() {
         {!connected && <span className="text-xs" style={{ color: 'var(--color-amber)' }}>disconnected</span>}
       </div>
 
-      {/* Timer bar — visible in forming and pre_game */}
+      {/* Timer bar */}
       {(state.phase === 'forming' || state.phase === 'pre_game') && (
-        <div className="rounded-lg parchment-strong p-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-heading text-2xl font-bold tabular-nums" style={{ color: noTimeout ? 'var(--color-ink-faint)' : (lobbyTimer !== null && lobbyTimer < 30 ? 'var(--color-blood)' : 'var(--color-amber)') }}>
-              {noTimeout ? '--:--' : lobbyTimer !== null ? `${Math.floor(lobbyTimer / 60)}:${String(lobbyTimer % 60).padStart(2, '0')}` : '--:--'}
-            </span>
-            <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-              {noTimeout ? 'No time limit' : state.phase === 'pre_game' ? 'to pick classes' : 'until lobby closes'}
-            </span>
-            <button onClick={handleNoTimeout} disabled={noTimeout}
-              className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95 disabled:cursor-default"
-              style={{
-                background: noTimeout ? 'rgba(184, 134, 11, 0.1)' : 'transparent',
-                color: noTimeout ? 'var(--color-amber)' : 'var(--color-ink-light)',
-                border: `1px solid ${noTimeout ? 'rgba(184, 134, 11, 0.3)' : 'rgba(42, 31, 14, 0.15)'}`,
-              }}>
-              {noTimeout ? 'Paused' : 'Pause timer'}
-            </button>
-          </div>
-          <button onClick={handleCloseLobby}
-            className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95"
-            style={{ background: 'transparent', color: 'var(--color-blood)', border: '1px solid rgba(139, 32, 32, 0.2)' }}>
-            Close Lobby
-          </button>
-        </div>
+        <TimerBar
+          timeRemaining={lobbyTimer}
+          noTimeout={noTimeout}
+          phase={state.phase}
+          onPauseTimer={handleNoTimeout}
+          onCloseLobby={handleCloseLobby}
+        />
       )}
 
       {/* Forming phase: Join instructions + dev tools */}
       {state.phase === 'forming' && (
         <div className="space-y-4">
-
-          {/* Join instructions */}
-          <div className="rounded-lg parchment-strong p-4">
-            <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Join with Your Agent</h3>
-            <p className="mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>1. Install the plugin (one time):</p>
-            <div onClick={handleCopyInstall} className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95" title="Click to copy"
-              style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-light)', border: '1px solid rgba(42, 31, 14, 0.08)' }}>
-              claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster
-            </div>
-            <p className="mt-3 mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>2. Tell your agent:</p>
-            <div onClick={handleCopyJoinPrompt} className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95" title="Click to copy"
-              style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.15)' }}>
-              "Join lobby {state.lobbyId} on Capture the Lobster and play, please!"
-            </div>
-            <p className="mt-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>{copied ? 'Copied!' : 'Click to copy'}</p>
-          </div>
-
-          {/* Dev bots panel */}
-          <div className="rounded-lg p-3 flex items-center gap-3" style={{ background: 'rgba(42, 31, 14, 0.03)', border: '1px dashed rgba(42, 31, 14, 0.12)' }}>
-            <input
-              type="password"
-              placeholder="Admin password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              className="rounded px-3 py-1.5 text-xs font-mono w-36"
-              style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.15)', color: 'var(--color-ink)' }}
-            />
-            <button onClick={handleFillBots} disabled={addingBot || !adminPassword || state.agents.length >= (state.teamSize || 2) * 2}
-              className="cursor-pointer font-heading rounded px-4 py-1.5 text-xs font-medium transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ background: 'var(--color-wood)', color: 'var(--color-parchment)', border: '1px solid var(--color-wood-light)' }}>
-              {addingBot ? 'Filling...' : `Fill with bots`}
-            </button>
-          </div>
+          <JoinInstructions lobbyId={state.lobbyId} />
+          <FillBotsPanel lobbyId={state.lobbyId} isFull={isFull} agentCount={state.agents.length} hasExternalAgents={hasExternalAgents} />
         </div>
       )}
 
@@ -373,12 +363,7 @@ export default function LobbyPage() {
       {/* Agents & Teams */}
       {(state.phase === 'forming' || state.phase === 'pre_game') && (
         <div className="grid gap-6 md:grid-cols-2">
-          <div>
-            <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Agents ({state.agents.length})</h3>
-            <div className="grid gap-2 grid-cols-2">
-              {state.agents.map((a) => <AgentCard key={a.id} agent={a} />)}
-            </div>
-          </div>
+          <PlayerList agents={state.agents} />
           <div>
             <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Teams ({teamEntries.length})</h3>
             {teamEntries.length === 0
@@ -390,10 +375,73 @@ export default function LobbyPage() {
       )}
 
       {/* Chat */}
-      <div className="rounded-lg parchment-strong p-4">
-        <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Lobby Chat</h3>
-        <ChatLog messages={state.chat} agents={state.agents} />
-      </div>
+      <ChatPanel messages={state.chat} agents={state.agents} />
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// LobbyPage — routes to CtL lobby or OATHBREAKER waiting room
+// ---------------------------------------------------------------------------
+
+export default function LobbyPage() {
+  const { id } = useParams<{ id: string }>();
+  const [mode, setMode] = useState<'loading' | 'ctl' | 'oathbreaker'>('loading');
+
+  useEffect(() => {
+    if (!id) return;
+
+    // Try CtL lobby first
+    fetch(`/api/lobbies/${id}`)
+      .then(r => {
+        if (r.ok) return r.json();
+        throw new Error('not a lobby');
+      })
+      .then(d => {
+        if (d?.lobbyId) {
+          setMode('ctl');
+          return;
+        }
+        throw new Error('not a lobby');
+      })
+      .catch(() => {
+        // Try as a game/waiting room
+        fetch(`/api/games/${id}`)
+          .then(r => {
+            if (r.ok) return r.json();
+            throw new Error('not found');
+          })
+          .then(d => {
+            if (d?.gameType === 'oathbreaker' && d?.phase === 'waiting') {
+              setMode('oathbreaker');
+            } else {
+              // It's an active game or unknown — fall back to CtL lobby view
+              // (which will show the "connecting" state)
+              setMode('ctl');
+            }
+          })
+          .catch(() => {
+            // Default to CtL lobby view
+            setMode('ctl');
+          });
+      });
+  }, [id]);
+
+  if (!id) return null;
+
+  if (mode === 'loading') {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <div className="text-center">
+          <p style={{ color: 'var(--color-ink-faint)' }}>Loading lobby {id}...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'oathbreaker') {
+    return <OathWaitingView id={id} />;
+  }
+
+  return <CtlLobbyView id={id} />;
 }

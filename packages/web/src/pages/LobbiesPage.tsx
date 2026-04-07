@@ -102,7 +102,7 @@ export default function LobbiesPage() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
         });
-        if (res.ok) { const data = await res.json(); navigate(`/game/${data.gameId}`); return; }
+        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.gameId}`); return; }
       } else {
         const res = await fetch('/api/lobbies/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -115,7 +115,8 @@ export default function LobbiesPage() {
   }
 
   const filteredGames = games.filter(g => (g.gameType ?? 'capture-the-lobster') === gameTab);
-  const activeGames = filteredGames.filter((g) => g.phase !== 'finished');
+  const waitingRooms = filteredGames.filter(g => g.phase === 'waiting');
+  const activeGames = filteredGames.filter((g) => g.phase !== 'finished' && g.phase !== 'waiting');
   const finishedGames = filteredGames.filter((g) => g.phase === 'finished');
 
   return (
@@ -202,6 +203,19 @@ export default function LobbiesPage() {
             {lobbies.map((lobby, i) => (
               <motion.div key={lobby.lobbyId} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, duration: 0.4 }}>
                 <LobbyCard lobby={lobby} onClick={() => navigate(`/lobby/${lobby.lobbyId}`)} />
+              </motion.div>
+            ))}
+          </div>
+        </motion.section>
+      )}
+
+      {waitingRooms.length > 0 && gameTab === 'oathbreaker' && (
+        <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <SectionHeader title="Waiting Rooms" count={waitingRooms.length} />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {waitingRooms.map((room, i) => (
+              <motion.div key={room.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, duration: 0.4 }}>
+                <WaitingRoomCard room={room} onClick={() => navigate(`/lobby/${room.id}`)} />
               </motion.div>
             ))}
           </div>
@@ -301,6 +315,34 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
             {agent.handle || agent.id}
           </span>
         ))}
+      </div>
+    </button>
+  );
+}
+
+function WaitingRoomCard({ room, onClick }: { room: Game; onClick: () => void }) {
+  const playerCount = room.playerCount ?? 0;
+  const targetPlayers = room.maxTurns; // maxTurns maps to maxRounds which maps from targetPlayers in the list
+
+  return (
+    <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>{room.id}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.2)' }}>
+          <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-amber)' }} />
+          Waiting
+        </span>
+      </div>
+      <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
+        <span className="font-semibold" style={{ color: 'var(--color-blood)' }}>{playerCount}</span> players joined
+      </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>
+          OATHBREAKER
+        </span>
+        <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+          waiting for players
+        </span>
       </div>
     </button>
   );
