@@ -154,7 +154,7 @@ Current beta defaults (in `api.ts`):
 - Map radius: scales with team size (2v2→5, 6v6→9) via `getMapRadiusForTeamSize()`
 - Team size: 2v2 through 6v6 (configurable via lobby creation)
 - Turn limit: scales with radius via `getTurnLimitForRadius()` (20 + radius*2)
-- Spectator delay: 0 (no delay for testing)
+- Spectator delay: per-game plugin setting (progress-based via `spectatorDelay` on `CoordinationGame`)
 - Bot turn interval: 8 seconds (Claude bots)
 - Lobby timeout: 2 minutes (configurable)
 
@@ -273,8 +273,8 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 
 ```
 packages/engine/src/           — Generic game server framework (@coordination-games/engine)
-  types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, Message, etc.)
-  game-session.ts                — GameRoom<TConfig, TState, TAction, TOutcome> for any CoordinationGame
+  types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, ActionResult w/ progressIncrement, etc.)
+  game-session.ts                — GameRoom<TConfig, TState, TAction, TOutcome> with progress tracking, state snapshots, getSpectatorView(delay)
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
   mcp.ts                         — Phase-aware MCP tool visibility, dynamic guide generator
   merkle.ts                      — Merkle tree construction for game proofs
@@ -311,7 +311,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   tracker.ts                     — ELO rating system with SQLite
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
-  api.ts                         — Express server, REST API, WebSocket spectator feed
+  api.ts                         — Express server, REST API, WebSocket spectator feed. One GameRoomData type, one games map, unified wireCallbacks/spectator broadcast/bot scheduling.
   game-session.ts                — Game room helpers (typed state access, action submission)
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots
@@ -324,12 +324,21 @@ packages/server/src/             — Server entry point (wires engine + games + 
 
 packages/web/src/
   components/HexGrid.tsx         — SVG hex grid renderer (flat-top hexes, fog of war, team colors)
+  components/lobby/              — Reusable lobby building blocks
+    PlayerList.tsx               — Agent list (works for FFA or teams)
+    ChatPanel.tsx                — Lobby chat
+    TimerBar.tsx                 — Countdown + pause/extend
+    FillBotsPanel.tsx            — Admin password + fill button
+    JoinInstructions.tsx         — Install + join copy-paste
+    TeamPanel.tsx                — Team display (only rendered when numTeams > 1)
+    index.ts                     — Re-exports all lobby components
   games/                         — Per-game spectator plugins (SpectatorPlugin architecture)
     registry.ts                  — Game type → SpectatorPlugin registry
     types.ts                     — SpectatorPlugin interface
     capture-the-lobster/         — CtL spectator view (hex grid, kill feed)
     oathbreaker/                 — OATHBREAKER spectator view
   pages/GamePage.tsx             — Spectator view with kill feed, team chat, perspective toggle
+  pages/LobbyPage.tsx            — Lobby page, auto-detects game type, renders building-block components
   pages/LobbiesPage.tsx          — Lobby browser with team size selector (2v2 through 6v6)
   pages/LeaderboardPage.tsx
   pages/ReplayPage.tsx
