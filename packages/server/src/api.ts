@@ -1847,14 +1847,17 @@ export class GameServer {
     const { game } = room;
 
     game.onStateChange = () => {
-      // Notify waiting agents
+      // Notify waiting agents (game-wide)
       notifyTurnResolved(gameId);
 
       // Broadcast spectator view (with delay from plugin)
       this.broadcastSpectatorState(room);
 
-      // Notify all external agents
+      // Notify all players — both external agents and internal players
       for (const [agentId] of room.externalSlots) {
+        notifyAgent(agentId);
+      }
+      for (const agentId of game.playerIds) {
         notifyAgent(agentId);
       }
 
@@ -1871,12 +1874,13 @@ export class GameServer {
    * Run bots generically — uses plugin.getPlayersNeedingAction to determine which bots need to act.
    */
   private runBotsGeneric(room: GameRoomData, gameId: string): void {
-    if (room.botSessions.length === 0) return;
+    if (room.botSessions.length === 0) { console.log(`[Bots] ${gameId}: no bot sessions`); return; }
     if (room.finished || room.game.isOver()) return;
-    if (!room.plugin.getPlayersNeedingAction) return;
+    if (!room.plugin.getPlayersNeedingAction) { console.log(`[Bots] ${gameId}: no getPlayersNeedingAction`); return; }
 
     const needsAction = new Set<string>(room.plugin.getPlayersNeedingAction(room.game.state));
     const activeBots = room.botSessions.filter(bot => needsAction.has(bot.id));
+    console.log(`[Bots] ${gameId}: needsAction=${[...needsAction].join(',')}, botIds=${room.botSessions.map(b=>b.id).join(',')}, active=${activeBots.length}`);
     if (activeBots.length === 0) return;
 
     // Run bots with timeout
