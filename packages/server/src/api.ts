@@ -541,56 +541,52 @@ export class GameServer {
       res.status(201).json({ lobbyId, teamSize });
     });
 
-    // Fill remaining lobby slots with bots (requires admin password since bots use API credits)
+    // Fill remaining lobby/waiting-room slots with bots (requires admin password since bots use API credits)
     router.post('/lobbies/:id/fill-bots', (req, res) => {
       const adminPassword = process.env.ADMIN_PASSWORD;
       if (adminPassword && req.body?.password !== adminPassword) {
         return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
       }
-      const lobbyRoom = this.lobbies.get(req.params.id);
-      if (!lobbyRoom) {
-        return res.status(404).json({ error: 'Lobby not found' });
-      }
-      if (lobbyRoom.state?.phase && lobbyRoom.state.phase !== 'forming') {
-        return res.status(400).json({ error: 'Lobby is no longer in forming phase' });
-      }
-      const totalSlots = (lobbyRoom.runner as any).teamSize * 2;
-      const currentAgents = lobbyRoom.runner.lobby.agents.size;
-      const slotsToFill = totalSlots - currentAgents;
-      if (slotsToFill <= 0) {
-        return res.status(400).json({ error: 'Lobby is already full' });
-      }
-      const added: { agentId: string; handle: string }[] = [];
-      for (let i = 0; i < slotsToFill; i++) {
-        added.push(lobbyRoom.runner.addBot());
-      }
-      res.status(201).json({ added, filledSlots: added.length });
-    });
 
-    // Fill remaining OATHBREAKER waiting room slots with bots
-    router.post('/games/:id/fill-bots', (req, res) => {
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      if (adminPassword && req.body?.password !== adminPassword) {
-        return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
+      // Try CtL lobby first
+      const lobbyRoom = this.lobbies.get(req.params.id);
+      if (lobbyRoom) {
+        if (lobbyRoom.state?.phase && lobbyRoom.state.phase !== 'forming') {
+          return res.status(400).json({ error: 'Lobby is no longer in forming phase' });
+        }
+        const totalSlots = (lobbyRoom.runner as any).teamSize * 2;
+        const currentAgents = lobbyRoom.runner.lobby.agents.size;
+        const slotsToFill = totalSlots - currentAgents;
+        if (slotsToFill <= 0) {
+          return res.status(400).json({ error: 'Lobby is already full' });
+        }
+        const added: { agentId: string; handle: string }[] = [];
+        for (let i = 0; i < slotsToFill; i++) {
+          added.push(lobbyRoom.runner.addBot());
+        }
+        return res.status(201).json({ added, filledSlots: added.length });
       }
+
+      // Try OATHBREAKER waiting room
       const waitingRoom = this.waitingRooms.get(req.params.id);
-      if (!waitingRoom) {
-        return res.status(404).json({ error: 'Waiting room not found' });
+      if (waitingRoom) {
+        const currentCount = waitingRoom.players.length;
+        const slotsToFill = waitingRoom.targetPlayers - currentCount;
+        if (slotsToFill <= 0) {
+          return res.status(400).json({ error: 'Waiting room is already full' });
+        }
+        const botNames = ['Pinchy', 'Clawdia', 'Sheldon', 'Snappy', 'Bubbles', 'Coral', 'Neptune', 'Triton', 'Marina', 'Squidward', 'Barnacle', 'Anchovy'];
+        const added: { agentId: string; handle: string }[] = [];
+        for (let i = 0; i < slotsToFill; i++) {
+          const handle = botNames[(currentCount + i) % botNames.length];
+          const agentId = `bot_oath_${currentCount + i}`;
+          this.joinOathbreakerWaitingRoom(req.params.id, agentId, handle);
+          added.push({ agentId, handle });
+        }
+        return res.status(201).json({ added, filledSlots: added.length });
       }
-      const currentCount = waitingRoom.players.length;
-      const slotsToFill = waitingRoom.targetPlayers - currentCount;
-      if (slotsToFill <= 0) {
-        return res.status(400).json({ error: 'Waiting room is already full' });
-      }
-      const botNames = ['Pinchy', 'Clawdia', 'Sheldon', 'Snappy', 'Bubbles', 'Coral', 'Neptune', 'Triton', 'Marina', 'Squidward', 'Barnacle', 'Anchovy'];
-      const added: { agentId: string; handle: string }[] = [];
-      for (let i = 0; i < slotsToFill; i++) {
-        const handle = botNames[(currentCount + i) % botNames.length];
-        const agentId = `bot_oath_${currentCount + i}`;
-        this.joinOathbreakerWaitingRoom(req.params.id, agentId, handle);
-        added.push({ agentId, handle });
-      }
-      res.status(201).json({ added, filledSlots: added.length });
+
+      return res.status(404).json({ error: 'Lobby not found' });
     });
 
     // Disable lobby timeout (keep lobby open indefinitely)
@@ -1603,61 +1599,58 @@ export class GameServer {
     // (No dedicated /chat endpoint — chat goes through /tool as basic-chat:chat)
 
     // ------------------------------------------------------------------
-    // 9. POST /lobby/join — Join a lobby
+    // 9. POST /lobby/join — Join a lobby or OATHBREAKER waiting room
     // ------------------------------------------------------------------
     router.post('/lobby/join', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
       const agentName = req.agentName as string;
-      const { lobbyId } = req.body ?? {};
+      const lobbyId = req.body?.lobbyId ?? req.body?.gameId;
       if (!lobbyId) return res.status(400).json({ error: 'lobbyId is required' });
 
+      // Try CtL lobby first
       const lobbyRoom = this.lobbies.get(lobbyId);
-      if (!lobbyRoom) return res.status(404).json({ error: 'Lobby not found' });
+      if (lobbyRoom) {
+        // Track the slot
+        lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
+        this.agentToLobby.set(agentId, lobbyId);
 
-      // Track the slot
-      lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
-      this.agentToLobby.set(agentId, lobbyId);
-
-      // Add agent to the lobby manager
-      if (lobbyRoom.lobbyManager) {
-        lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
-      }
-
-      console.log(`[REST] Agent ${agentId} (${agentName}) joined lobby ${lobbyId}`);
-      lobbyRoom.runner.emitState();
-
-      // Notify other agents
-      if (lobbyRoom.lobbyManager) {
-        for (const [id] of lobbyRoom.lobbyManager.agents) {
-          if (id !== agentId) notifyAgent(id);
+        // Add agent to the lobby manager
+        if (lobbyRoom.lobbyManager) {
+          lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
         }
-      }
 
-      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-      return res.json({ success: true, agentId, lobbyId, ...updates });
-    });
+        console.log(`[REST] Agent ${agentId} (${agentName}) joined lobby ${lobbyId}`);
+        lobbyRoom.runner.emitState();
 
-    // ------------------------------------------------------------------
-    // 9b. POST /lobby/join-oath — Join an OATHBREAKER waiting room
-    // ------------------------------------------------------------------
-    router.post('/lobby/join-oath', requirePlayerAuth, (req: any, res: any) => {
-      const agentId = req.agentId as string;
-      const agentName = req.agentName as string;
-      const { gameId } = req.body ?? {};
-      if (!gameId) return res.status(400).json({ error: 'gameId is required' });
+        // Notify other agents
+        if (lobbyRoom.lobbyManager) {
+          for (const [id] of lobbyRoom.lobbyManager.agents) {
+            if (id !== agentId) notifyAgent(id);
+          }
+        }
 
-      const result = this.joinOathbreakerWaitingRoom(gameId, agentId, agentName);
-      if (!result.success) return res.status(400).json({ error: result.error });
-
-      console.log(`[REST] Agent ${agentId} (${agentName}) joined OATHBREAKER waiting room ${gameId}`);
-
-      // If the waiting room promoted to a game, resolve game state
-      if (result.gameStarted) {
         const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, agentId, gameId: result.gameId, gameType: 'oathbreaker', phase: 'playing', ...updates });
+        return res.json({ success: true, agentId, lobbyId, ...updates });
       }
 
-      return res.json({ success: true, agentId, gameId, gameType: 'oathbreaker', phase: 'waiting' });
+      // Try OATHBREAKER waiting room
+      const waitingRoom = this.waitingRooms.get(lobbyId);
+      if (waitingRoom) {
+        const result = this.joinOathbreakerWaitingRoom(lobbyId, agentId, agentName);
+        if (!result.success) return res.status(400).json({ error: result.error });
+
+        console.log(`[REST] Agent ${agentId} (${agentName}) joined OATHBREAKER waiting room ${lobbyId}`);
+
+        // If the waiting room promoted to a game, resolve game state
+        if (result.gameStarted) {
+          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ success: true, agentId, gameId: result.gameId, gameType: 'oathbreaker', phase: 'playing', ...updates });
+        }
+
+        return res.json({ success: true, agentId, gameId: lobbyId, gameType: 'oathbreaker', phase: 'waiting' });
+      }
+
+      return res.status(404).json({ error: 'Lobby not found' });
     });
 
     // ------------------------------------------------------------------

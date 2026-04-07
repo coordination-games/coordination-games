@@ -156,15 +156,10 @@ export class GameClient {
     return this.api.get('/api/lobbies');
   }
 
-  /** Join an existing lobby or OATHBREAKER game. */
+  /** Join an existing lobby or OATHBREAKER waiting room. */
   async joinLobby(lobbyId: string): Promise<any> {
     await this.ensureAuth();
-    // Try CtL lobby first, fall back to OATHBREAKER game join
-    const result = await this.api.post('/api/player/lobby/join', { lobbyId });
-    if (result.error && result.error.includes('not found')) {
-      return this.api.post('/api/player/lobby/join-oath', { gameId: lobbyId });
-    }
-    return result;
+    return this.api.post('/api/player/lobby/join', { lobbyId });
   }
 
   /** Create a new lobby (auto-joins the creator). */
