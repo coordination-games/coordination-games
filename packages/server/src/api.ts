@@ -46,7 +46,6 @@ import { createRelayRouter } from './relay.js';
 import { GameRelay } from './typed-relay.js';
 import { GameRoom, buildActionMerkleTree, type MerkleLeafData, getRegisteredGames, getGame } from '@coordination-games/engine';
 import {
-  OathbreakerPlugin,
   type OathConfig,
   type OathState,
   type OathAction,
@@ -57,8 +56,6 @@ import {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-// SpectatorState and SpectatorTile types are now in @coordination-games/game-ctl (plugin.ts)
 
 export interface ExternalSlot {
   token: string;
@@ -86,9 +83,6 @@ export interface GameRoomData {
   botMeta?: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   turnTimeoutMs?: number;
 }
-
-// Type alias for OATHBREAKER GameRoom (convenience, used in casts)
-export type OathGameRoom = GameRoom<OathConfig, OathState, OathAction, OathOutcome>;
 
 // ---------------------------------------------------------------------------
 // Game result helpers
@@ -135,10 +129,6 @@ const BOT_DISPLAY_NAMES = [
   'Marina', 'Squidward', 'Barnacle', 'Anchovy',
 ];
 
-// buildSpectatorState and getSpectatorViewForRoom are now on the game plugins
-// (CaptureTheLobsterPlugin.buildSpectatorView, OathbreakerPlugin.buildSpectatorView)
-// and accessed via GameRoom.getSpectatorView(delay, context)
-
 // ---------------------------------------------------------------------------
 // Lobby room for spectators
 // ---------------------------------------------------------------------------
@@ -164,9 +154,6 @@ export interface WaitingRoom {
   spectators: Set<WebSocket>;
   createdAt: number;
 }
-
-/** @deprecated Use WaitingRoom instead */
-export type OathWaitingRoom = WaitingRoom;
 
 // ---------------------------------------------------------------------------
 // GameServer
@@ -218,14 +205,7 @@ export class GameServer {
     this.setupRoutes();
     this.setupWebSocket();
 
-    // MCP endpoint removed — all game operations go through REST at /api/player/*
-    // Bots use GameClient + direct Anthropic API (no MCP, no subprocesses).
-    // mcp-http.ts is kept as a utility module for token registry, waiters, etc.
   }
-
-  // ---------------------------------------------------------------------------
-  // Event-driven turn: no longer needed — GameRoom handles it via handleAction
-  // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
   // REST routes
@@ -389,8 +369,6 @@ export class GameServer {
       res.json({ ok: true });
     });
 
-    // (Removed: /api/register — registration now happens via the MCP register tool)
-
     // List active games (generic — uses plugin.getSummary when available)
     router.get('/games', (_req, res) => {
       const list: any[] = Array.from(this.games.entries()).map(([id, room]) => ({
@@ -437,9 +415,10 @@ export class GameServer {
 
       const state = this.getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      const extra = room.gameType === 'oathbreaker'
-        ? { gameType: 'oathbreaker' }
-        : { lobbyChat: room.lobbyChat, preGameChatA: room.preGameChatA, preGameChatB: room.preGameChatB };
+      const extra: Record<string, any> = { gameType: room.gameType };
+      if (room.lobbyChat?.length) extra.lobbyChat = room.lobbyChat;
+      if (room.preGameChatA?.length) extra.preGameChatA = room.preGameChatA;
+      if (room.preGameChatB?.length) extra.preGameChatB = room.preGameChatB;
       res.json({ ...extra, ...state as any });
     });
 
@@ -450,7 +429,7 @@ export class GameServer {
 
       const state = this.getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+      const extra = { gameType: room.gameType };
       res.json({ ...extra, ...state as any });
     });
 
@@ -647,12 +626,12 @@ export class GameServer {
       return room.game as CtlGameRoom;
     };
 
-    const resolveOathGame = (agentId: string): OathGameRoom | null => {
+    const resolveOathGame = (agentId: string): GameRoom<OathConfig, OathState, OathAction, OathOutcome> | null => {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
       const room = this.games.get(gameId);
       if (!room || room.gameType !== 'oathbreaker') return null;
-      return room.game as OathGameRoom;
+      return room.game as GameRoom<OathConfig, OathState, OathAction, OathOutcome>;
     };
 
     const resolveLobby: LobbyResolver = (agentId: string) => {
@@ -1593,7 +1572,7 @@ export class GameServer {
             // Send current state (uses delayed view for CtL, immediate for OATHBREAKER)
             const state = this.getSpectatorViewForRoom(room);
             if (state) {
-              const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+              const extra = { gameType: room.gameType };
               ws.send(JSON.stringify({ type: 'state_update', data: { ...extra, ...state as any } }));
             }
 
@@ -1697,7 +1676,7 @@ export class GameServer {
     const delayedProgress = Math.max(0, room.game.progressCounter - delay);
     const relayMessages = room.relay.getSpectatorMessages(delayedProgress);
 
-    const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+    const extra = { gameType: room.gameType };
     const stateWithRelay = { ...extra, ...state as any, relayMessages };
 
     const msg = JSON.stringify({ type: 'state_update', data: stateWithRelay });
@@ -1849,14 +1828,6 @@ export class GameServer {
     return roomId;
   }
 
-  /** @deprecated Use createWaitingRoom instead */
-  createOathbreakerWaitingRoom(
-    targetPlayers: number,
-    initialPlayers: { id: string; handle: string }[],
-  ): string {
-    return this.createWaitingRoom('oathbreaker', targetPlayers, initialPlayers);
-  }
-
   /**
    * Join a waiting room.
    */
@@ -1898,15 +1869,6 @@ export class GameServer {
     }
 
     return { success: true };
-  }
-
-  /** @deprecated Use joinWaitingRoom instead */
-  joinOathbreakerWaitingRoom(
-    roomId: string,
-    agentId: string,
-    handle: string,
-  ): { success: boolean; error?: string; gameStarted?: boolean; gameId?: string } {
-    return this.joinWaitingRoom(roomId, agentId, handle);
   }
 
   /**
@@ -2071,7 +2033,7 @@ export class GameServer {
     const finalCtx = { handles: room.handleMap, relayMessages: allRelayMessages };
     const spectatorView = room.game.getSpectatorView(0, finalCtx);
     if (spectatorView) {
-      const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+      const extra = { gameType: room.gameType };
       const msg = JSON.stringify({ type: 'game_over', data: { ...extra, ...spectatorView as any } });
       for (const ws of room.spectators) {
         if (ws.readyState === WebSocket.OPEN) {
@@ -2088,7 +2050,8 @@ export class GameServer {
       notifyAgent(agentId);
     }
 
-    // Record ELO (CtL-specific — uses team/unitClass from units)
+    // TODO: Genericize ELO recording — needs EloTracker interface to accept game-agnostic results
+    // Currently CtL-specific because recordMatch() requires team/unitClass from units
     if (room.gameType === 'capture-the-lobster') {
       try {
         const players = room.game.state.units.map((u: any) => {
@@ -2319,7 +2282,6 @@ export class GameServer {
       lobbyRoom.runner.abort();
       for (const ws of lobbyRoom.spectators) ws.close();
     }
-    // MCP sessions removed — auth is via REST now
     this.wss.close();
     this.server.close();
     this.elo.close();
