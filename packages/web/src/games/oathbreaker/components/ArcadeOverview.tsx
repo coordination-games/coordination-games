@@ -154,6 +154,9 @@ export function ArcadeOverview({
         <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
           誓約破り
         </div>
+        <div className="pixel-text" style={{ fontSize: 6, color: '#4b5563', marginTop: 2 }}>
+          Seiyaku-yaburi
+        </div>
         <div className="pixel-text" style={{ fontSize: 7, color: '#4b5563', marginTop: 8 }}>
           {phase === 'finished' ? 'TOURNAMENT COMPLETE' : `ROUND ${currentRound} / ${maxRounds}`}
           {'  ·  '}

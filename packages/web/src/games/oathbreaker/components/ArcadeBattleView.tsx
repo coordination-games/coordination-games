@@ -275,6 +275,7 @@ export function ArcadeBattleView({
             OATHBREAKER
           </div>
           <div style={{ fontSize: 9, color: '#6b7280', marginTop: 2 }}>誓約破り</div>
+          <div className="pixel-text" style={{ fontSize: 5, color: '#4b5563' }}>Seiyaku-yaburi</div>
         </div>
         <span className="pixel-text" style={{ fontSize: 7, color: '#6b7280' }}>
           ROUND {currentRound}/{maxRounds}
