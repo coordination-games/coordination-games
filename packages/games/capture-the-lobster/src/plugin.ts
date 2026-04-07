@@ -149,11 +149,12 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       // Resolve
       const { state: resolved } = resolveTurn(current);
       if (isGameOver(resolved)) {
-        return { state: resolved, deadline: null };
+        return { state: resolved, deadline: null, progressIncrement: true };
       }
       return {
         state: resolved,
         deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+        progressIncrement: true,
       };
     }
 
@@ -168,11 +169,12 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       if (allMovesSubmitted(current)) {
         const { state: resolved } = resolveTurn(current);
         if (isGameOver(resolved)) {
-          return { state: resolved, deadline: null };
+          return { state: resolved, deadline: null, progressIncrement: true };
         }
         return {
           state: resolved,
           deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+          progressIncrement: true,
         };
       }
 
@@ -221,6 +223,16 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       turnCount: state.turn,
       playerStats,
     };
+  },
+
+  spectatorDelay: 2,
+
+  getPlayersNeedingAction(state: CtlGameState): string[] {
+    if (state.phase !== 'in_progress') return [];
+    const submitted = new Set(new Map(state.moveSubmissions).keys());
+    return state.units
+      .filter(u => u.alive && !submitted.has(u.id))
+      .map(u => u.id);
   },
 
   entryCost: 10,

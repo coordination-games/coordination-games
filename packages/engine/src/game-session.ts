@@ -10,6 +10,8 @@ import type { CoordinationGame, ActionResult } from './types.js';
 export class GameRoom<TConfig, TState, TAction, TOutcome> {
   private _state: TState;
   private _stateHistory: TState[] = [];
+  private _progressCounter: number = 0;
+  private _progressSnapshots: number[] = [];
   private _timerId = 0;
   private _currentTimer: ReturnType<typeof setTimeout> | null = null;
   private _lock = false; // simple mutex (single-threaded JS, just prevents reentrant calls)
@@ -29,6 +31,7 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
     this.game = game;
     this._state = initialState;
     this._stateHistory = [initialState];
+    this._progressSnapshots = [0]; // initial state is progress point 0
     this.gameId = gameId;
   }
 
@@ -37,6 +40,17 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
   get state(): TState { return this._state; }
   get actionLog() { return this._actionLog; }
   get gamePlugin() { return this.game; }
+  get progressCounter(): number { return this._progressCounter; }
+
+  /** Get spectator view with delay (in progress units, not raw actions). */
+  getSpectatorView(delay: number = 0): unknown {
+    if (delay <= 0 || this._progressSnapshots.length === 0) {
+      return this.game.getVisibleState(this._state, null);
+    }
+    const targetProgress = Math.max(0, this._progressSnapshots.length - 1 - delay);
+    const historyIndex = this._progressSnapshots[targetProgress];
+    return this.game.getVisibleState(this._stateHistory[historyIndex], null);
+  }
 
   /**
    * THE SINGLE ENTRY POINT — submit an action.
@@ -56,6 +70,12 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
       this._state = result.state;
       this._stateHistory.push(result.state);
       this._actionLog.push({ playerId, action });
+
+      // Track progress increments (turn/round resolution)
+      if (result.progressIncrement) {
+        this._progressCounter++;
+        this._progressSnapshots.push(this._stateHistory.length - 1);
+      }
 
       // Handle deadline
       if (result.deadline !== undefined) {

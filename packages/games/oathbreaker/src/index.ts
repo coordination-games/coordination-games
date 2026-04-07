@@ -1,4 +1,4 @@
-export { OathbreakerPlugin, createOathbreakerGame } from './plugin.js';
+export { OathbreakerPlugin } from './plugin.js';
 export {
   cooperationBonus,
   dollarValue,

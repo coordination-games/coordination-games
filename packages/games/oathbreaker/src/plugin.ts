@@ -30,6 +30,23 @@ export const OathbreakerPlugin = {
   version: '0.3.0',
 
   entryCost: 1,
+  spectatorDelay: 0,
+
+  getPlayersNeedingAction(state: OathState): string[] {
+    if (state.phase !== 'playing') return [];
+    const needed: string[] = [];
+    for (const pairing of state.pairings) {
+      if (pairing.phase === 'decided') continue;
+      if (pairing.phase === 'pledging') {
+        if (pairing.proposal1 === null) needed.push(pairing.player1);
+        if (pairing.proposal2 === null) needed.push(pairing.player2);
+      } else if (pairing.phase === 'deciding') {
+        if (pairing.decision1 === null) needed.push(pairing.player1);
+        if (pairing.decision2 === null) needed.push(pairing.player2);
+      }
+    }
+    return needed;
+  },
 
   lobby: {
     queueType: 'open' as const,
@@ -99,10 +116,3 @@ export const OathbreakerPlugin = {
   },
 };
 
-export function createOathbreakerGame(
-  config: OathConfig,
-): OathState {
-  const state = createInitialState(config);
-  state.totalDollarsInvested = config.playerIds.length * OathbreakerPlugin.entryCost;
-  return state;
-}

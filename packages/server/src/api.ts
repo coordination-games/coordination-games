@@ -133,39 +133,30 @@ export interface ExternalSlot {
 }
 
 export interface GameRoomData {
-  game: CtlGameRoom;
-  spectators: Set<WebSocket>;
-  stateHistory: SpectatorState[];   // indexed by turn
-  spectatorDelay: number;           // turns of delay (default 5)
-  botHandles: string[];             // handles of bot players in this room
-  botMeta: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
-  botSessions: BotSession[];
-  finished: boolean;
-  // External agent slots
-  externalSlots: Map<string, ExternalSlot>;  // agentId -> slot info
-  turnTimeoutMs: number;
-  /** Agent ID -> display name */
-  handleMap: Record<string, string>;
-  /** Chat from the lobby phase (preserved for spectators) */
-  lobbyChat: { from: string; message: string; timestamp: number }[];
-  /** Pre-game team chat (preserved for spectators) */
-  preGameChatA: { from: string; message: string; timestamp: number }[];
-  preGameChatB: { from: string; message: string; timestamp: number }[];
-  /** Typed relay for plugin data between agents */
-  relay: GameRelay;
-}
-
-// Type alias for OATHBREAKER GameRoom
-export type OathGameRoom = GameRoom<OathConfig, OathState, OathAction, OathOutcome>;
-
-export interface OathRoomData {
-  game: OathGameRoom;
+  gameType: string;                              // 'capture-the-lobster' | 'oathbreaker' | ...
+  plugin: any;                                   // The CoordinationGame plugin (for getVisibleState etc.)
+  game: GameRoom<any, any, any, any>;            // Engine game room
   spectators: Set<WebSocket>;
   finished: boolean;
   externalSlots: Map<string, ExternalSlot>;
   handleMap: Record<string, string>;
   relay: GameRelay;
+  botSessions: BotSession[];
+  /** Chat from the lobby phase (preserved for spectators) */
+  lobbyChat: { from: string; message: string; timestamp: number }[];
+  /** Pre-game team chat (preserved for spectators) */
+  preGameChatA: { from: string; message: string; timestamp: number }[];
+  preGameChatB: { from: string; message: string; timestamp: number }[];
+  // Legacy CtL fields (will be removed when bot scheduling is genericized)
+  stateHistory?: SpectatorState[];               // indexed by turn (CtL only)
+  spectatorDelay?: number;                       // turns of delay (CtL only)
+  botHandles?: string[];                         // handles of bot players in this room
+  botMeta?: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
+  turnTimeoutMs?: number;
 }
+
+// Type alias for OATHBREAKER GameRoom (convenience, used in casts)
+export type OathGameRoom = GameRoom<OathConfig, OathState, OathAction, OathOutcome>;
 
 // ---------------------------------------------------------------------------
 // Game result helpers
@@ -219,9 +210,14 @@ const BOT_DISPLAY_NAMES = [
 // Spectator state builder
 // ---------------------------------------------------------------------------
 
-function buildSpectatorState(game: CtlGameRoom, handles: Record<string, string> = {}, relay?: GameRelay): SpectatorState {
-  const map = { tiles: new Map(game.state.mapTiles), radius: game.state.mapRadius, bases: game.state.mapBases };
-  const { units, flags, turn, phase, config, score } = game.state;
+function buildSpectatorState(
+  state: any,
+  prevState: any | null,
+  handles: Record<string, string> = {},
+  relay?: GameRelay,
+): SpectatorState {
+  const map = { tiles: new Map<string, string>(state.mapTiles), radius: state.mapRadius, bases: state.mapBases };
+  const { units, flags, turn, phase, config, score } = state;
 
   // Build full tile array (no fog — spectators see everything)
   const tiles: SpectatorTile[] = [];
@@ -281,14 +277,11 @@ function buildSpectatorState(game: CtlGameRoom, handles: Record<string, string> 
     tiles.push(tile);
   }
 
-  // Kills — inferred from state history (compare alive status between turns)
-  const stateHistory = game.getStateHistory();
+  // Kills — inferred by comparing alive status with previous state
   const kills: { killerId: string; victimId: string; reason: string }[] = [];
-  if (stateHistory.length >= 2) {
-    const prev = stateHistory[stateHistory.length - 2];
-    const curr = stateHistory[stateHistory.length - 1];
-    for (const unit of curr.units) {
-      const prevUnit = prev.units.find((u: any) => u.id === unit.id);
+  if (prevState) {
+    for (const unit of units) {
+      const prevUnit = prevState.units.find((u: any) => u.id === unit.id);
       if (prevUnit && prevUnit.alive && !unit.alive) {
         kills.push({ killerId: 'unknown', victimId: unit.id, reason: 'combat' });
       }
@@ -351,7 +344,7 @@ function buildSpectatorState(game: CtlGameRoom, handles: Record<string, string> 
     flagA: flagStatus(flags.A),
     flagB: flagStatus(flags.B),
     score: { A: score.A, B: score.B },
-    winner: game.state.winner ?? null,
+    winner: state.winner ?? null,
     mapRadius: map.radius,
     visibleA: [...visibleA],
     visibleB: [...visibleB],
@@ -363,17 +356,25 @@ function buildSpectatorState(game: CtlGameRoom, handles: Record<string, string> 
 }
 
 // ---------------------------------------------------------------------------
-// Helper: delayed state for spectators
+// Helper: build spectator view for any game type (with delay)
 // ---------------------------------------------------------------------------
 
-function getDelayedState(room: GameRoomData): SpectatorState | null {
-  const delayedTurn = room.game.state.turn - room.spectatorDelay;
-  const idx = Math.max(0, delayedTurn);
-  if (room.stateHistory.length === 0) return null;
-  if (idx >= room.stateHistory.length) {
-    return room.stateHistory[room.stateHistory.length - 1];
+/**
+ * Get the spectator view for a game room, using the plugin's spectator delay.
+ * For CtL: builds the SpectatorState format from the delayed raw state (via stateHistory cache).
+ * For OATHBREAKER (and other games): uses engine's getSpectatorView directly.
+ */
+function getSpectatorViewForRoom(room: GameRoomData): any {
+  if (room.gameType === 'capture-the-lobster') {
+    // CtL uses pre-built SpectatorState cache (indexed by progress)
+    if (!room.stateHistory || room.stateHistory.length === 0) return null;
+    const delay = room.plugin.spectatorDelay ?? 0;
+    const idx = Math.max(0, room.stateHistory.length - 1 - delay);
+    return room.stateHistory[idx];
   }
-  return room.stateHistory[idx];
+  // Generic path: use engine's built-in delayed spectator view
+  const delay = room.plugin.spectatorDelay ?? 0;
+  return room.game.getSpectatorView(delay);
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +391,19 @@ export interface LobbyRoom {
 }
 
 // ---------------------------------------------------------------------------
+// OATHBREAKER waiting room (pre-game player collection)
+// ---------------------------------------------------------------------------
+
+export interface OathWaitingRoom {
+  id: string;
+  gameType: 'oathbreaker';
+  targetPlayers: number;
+  players: { id: string; handle: string }[];
+  spectators: Set<WebSocket>;
+  createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
 // GameServer
 // ---------------------------------------------------------------------------
 
@@ -400,16 +414,16 @@ export class GameServer {
   readonly elo: EloTracker;
 
   readonly games: Map<string, GameRoomData> = new Map();
-  readonly oathGames: Map<string, OathRoomData> = new Map();
   readonly lobbies: Map<string, LobbyRoom> = new Map();
+  readonly waitingRooms: Map<string, OathWaitingRoom> = new Map();
   private maxConcurrentGames: number = 1; // Beta limit — prevents credit drain
 
   /** Maps external agentId -> gameId for game resolution */
   private agentToGame: Map<string, string> = new Map();
   /** Maps external agentId -> lobbyId for lobby resolution */
   private agentToLobby: Map<string, string> = new Map();
-  /** Maps agentId -> game type for disambiguation */
-  private agentGameType: Map<string, 'capture-the-lobster' | 'oathbreaker'> = new Map();
+  /** Maps external agentId -> waiting room ID */
+  private agentToWaitingRoom: Map<string, string> = new Map();
 
   /** Server URL for bot connections (base URL — bots connect via coga subprocess) */
   private serverUrl: string;
@@ -517,9 +531,9 @@ export class GameServer {
       const gameType = req.body?.gameType ?? 'capture-the-lobster';
       if (gameType === 'oathbreaker') {
         const playerCount = Math.min(20, Math.max(4, Math.floor((req.body?.playerCount as number) || 4)));
-        const gameId = this.createOathbreakerGame(playerCount, []);
-        console.log(`[REST] Created OATHBREAKER game ${gameId} (${playerCount} players) via /lobbies/create`);
-        return res.status(201).json({ gameId, gameType: 'oathbreaker', playerCount });
+        const roomId = this.createOathbreakerWaitingRoom(playerCount, []);
+        console.log(`[REST] Created OATHBREAKER waiting room ${roomId} (${playerCount} players) via /lobbies/create`);
+        return res.status(201).json({ gameId: roomId, gameType: 'oathbreaker', playerCount, phase: 'waiting' });
       }
       const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
       const timeoutMs = (req.body?.timeoutMs as number) || 600000;
@@ -549,6 +563,32 @@ export class GameServer {
       const added: { agentId: string; handle: string }[] = [];
       for (let i = 0; i < slotsToFill; i++) {
         added.push(lobbyRoom.runner.addBot());
+      }
+      res.status(201).json({ added, filledSlots: added.length });
+    });
+
+    // Fill remaining OATHBREAKER waiting room slots with bots
+    router.post('/games/:id/fill-bots', (req, res) => {
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      if (adminPassword && req.body?.password !== adminPassword) {
+        return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
+      }
+      const waitingRoom = this.waitingRooms.get(req.params.id);
+      if (!waitingRoom) {
+        return res.status(404).json({ error: 'Waiting room not found' });
+      }
+      const currentCount = waitingRoom.players.length;
+      const slotsToFill = waitingRoom.targetPlayers - currentCount;
+      if (slotsToFill <= 0) {
+        return res.status(400).json({ error: 'Waiting room is already full' });
+      }
+      const botNames = ['Pinchy', 'Clawdia', 'Sheldon', 'Snappy', 'Bubbles', 'Coral', 'Neptune', 'Triton', 'Marina', 'Squidward', 'Barnacle', 'Anchovy'];
+      const added: { agentId: string; handle: string }[] = [];
+      for (let i = 0; i < slotsToFill; i++) {
+        const handle = botNames[(currentCount + i) % botNames.length];
+        const agentId = `bot_oath_${currentCount + i}`;
+        this.joinOathbreakerWaitingRoom(req.params.id, agentId, handle);
+        added.push({ agentId, handle });
       }
       res.status(201).json({ added, filledSlots: added.length });
     });
@@ -583,68 +623,88 @@ export class GameServer {
 
     // List active games
     router.get('/games', (_req, res) => {
-      const ctlList = Array.from(this.games.entries()).map(([id, room]) => ({
-        id,
-        gameType: 'capture-the-lobster',
-        turn: room.game.state.turn,
-        maxTurns: room.game.state.config.turnLimit,
-        phase: room.game.state.phase,
-        winner: room.game.state.winner,
-        teams: {
-          A: room.game.state.units.filter((u) => u.team === 'A').map((u) => u.id),
-          B: room.game.state.units.filter((u) => u.team === 'B').map((u) => u.id),
-        },
-        spectators: room.spectators.size,
-        externalAgents: room.externalSlots.size,
-      }));
-      const oathList = Array.from(this.oathGames.entries()).map(([id, room]) => {
-        const oathState = room.game.state as OathState;
+      const list = Array.from(this.games.entries()).map(([id, room]) => {
+        if (room.gameType === 'oathbreaker') {
+          const oathState = room.game.state as OathState;
+          return {
+            id,
+            gameType: 'oathbreaker',
+            round: oathState.round,
+            maxRounds: oathState.config.maxRounds,
+            phase: oathState.phase,
+            players: oathState.players.map(p => p.id),
+            spectators: room.spectators.size,
+            externalAgents: room.externalSlots.size,
+          };
+        }
         return {
           id,
-          gameType: 'oathbreaker',
-          round: oathState.round,
-          maxRounds: oathState.config.maxRounds,
-          phase: oathState.phase,
-          players: oathState.players.map(p => p.id),
+          gameType: 'capture-the-lobster',
+          turn: room.game.state.turn,
+          maxTurns: room.game.state.config.turnLimit,
+          phase: room.game.state.phase,
+          winner: room.game.state.winner,
+          teams: {
+            A: room.game.state.units.filter((u: any) => u.team === 'A').map((u: any) => u.id),
+            B: room.game.state.units.filter((u: any) => u.team === 'B').map((u: any) => u.id),
+          },
           spectators: room.spectators.size,
           externalAgents: room.externalSlots.size,
         };
       });
-      res.json([...ctlList, ...oathList]);
+
+      // Include waiting rooms as games with phase 'waiting'
+      for (const [id, wr] of this.waitingRooms) {
+        list.push({
+          id,
+          gameType: 'oathbreaker',
+          round: 0,
+          maxRounds: DEFAULT_OATH_CONFIG.maxRounds,
+          phase: 'waiting',
+          players: wr.players.map(p => p.id),
+          spectators: wr.spectators.size,
+          externalAgents: wr.players.length,
+        });
+      }
+
+      res.json(list);
     });
 
-    // Game details
+    // Game details (also checks waiting rooms)
     router.get('/games/:id', (req, res) => {
-      // Check OATHBREAKER games first
-      const oathRoom = this.oathGames.get(req.params.id);
-      if (oathRoom) {
-        const spectatorView = oathRoom.game.getVisibleState(null);
-        return res.json({ gameType: 'oathbreaker', ...spectatorView as any });
+      // Check waiting rooms first
+      const waitingRoom = this.waitingRooms.get(req.params.id);
+      if (waitingRoom) {
+        return res.json({
+          gameType: 'oathbreaker',
+          targetPlayers: waitingRoom.targetPlayers,
+          phase: 'waiting',
+          round: 0,
+          maxRounds: DEFAULT_OATH_CONFIG.maxRounds,
+          players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+        });
       }
 
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      const state = getDelayedState(room);
+      const state = getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      res.json({ ...state, lobbyChat: room.lobbyChat, preGameChatA: room.preGameChatA, preGameChatB: room.preGameChatB });
+      const extra = room.gameType === 'oathbreaker'
+        ? { gameType: 'oathbreaker' }
+        : { lobbyChat: room.lobbyChat, preGameChatA: room.preGameChatA, preGameChatB: room.preGameChatB };
+      res.json({ ...extra, ...state as any });
     });
 
     // Current spectator state (delayed)
     router.get('/games/:id/state', (req, res) => {
-      // Check OATHBREAKER games
-      const oathRoom = this.oathGames.get(req.params.id);
-      if (oathRoom) {
-        const spectatorView = oathRoom.game.getVisibleState(null);
-        return res.json({ gameType: 'oathbreaker', ...spectatorView as any });
-      }
-
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      const state = getDelayedState(room);
+      const state = getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      res.json(state);
+      const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+      res.json({ ...extra, ...state as any });
     });
 
     // Send a relay message (for external agents via REST — internal bots use relay directly)
@@ -669,7 +729,7 @@ export class GameServer {
       }
 
       // Broadcast state update to spectators
-      this.broadcastState(room);
+      this.broadcastSpectatorState(room);
 
       // Notify other agents
       for (const unit of room.game.state.units) {
@@ -820,19 +880,16 @@ export class GameServer {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
       const room = this.games.get(gameId);
-      return room?.game ?? null;
+      if (!room || room.gameType !== 'capture-the-lobster') return null;
+      return room.game as CtlGameRoom;
     };
 
     const resolveOathGame = (agentId: string): OathGameRoom | null => {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
-      const room = this.oathGames.get(gameId);
-      return room?.game ?? null;
-    };
-
-    /** Check which game type an agent is in */
-    const getAgentGameType = (agentId: string): 'capture-the-lobster' | 'oathbreaker' | null => {
-      return this.agentGameType.get(agentId) ?? null;
+      const room = this.games.get(gameId);
+      if (!room || room.gameType !== 'oathbreaker') return null;
+      return room.game as OathGameRoom;
     };
 
     const resolveLobby: LobbyResolver = (agentId: string) => {
@@ -845,11 +902,14 @@ export class GameServer {
     const resolveRelay: RelayResolver = (agentId: string) => {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
-      // Check both CtL and OATHBREAKER rooms
       const room = this.games.get(gameId);
-      if (room) return room.relay;
-      const oathRoom = this.oathGames.get(gameId);
-      return oathRoom?.relay ?? null;
+      return room?.relay ?? null;
+    };
+
+    const resolveWaitingRoom = (agentId: string): OathWaitingRoom | null => {
+      const roomId = this.agentToWaitingRoom.get(agentId);
+      if (!roomId) return null;
+      return this.waitingRooms.get(roomId) ?? null;
     };
 
     /** Get the handle map for an agent (from their game room, or from global registry as fallback) */
@@ -858,8 +918,6 @@ export class GameServer {
       if (gameId) {
         const room = this.games.get(gameId);
         if (room) return room.handleMap;
-        const oathRoom = this.oathGames.get(gameId);
-        if (oathRoom) return oathRoom.handleMap;
       }
       // In lobby phase, build handles from lobby agents + global registry
       const lobbyId = this.agentToLobby.get(agentId);
@@ -1191,7 +1249,7 @@ export class GameServer {
         const relay = resolveRelay(agentId);
         const relayMessages = relay?.receive(agentId) ?? [];
         const gameId = this.agentToGame.get(agentId);
-        const room = gameId ? this.oathGames.get(gameId) : undefined;
+        const room = gameId ? this.games.get(gameId) : undefined;
         const handles = room?.handleMap ?? {};
         if ((oathGame.state as OathState).phase === 'finished') {
           return res.json({ phase: 'finished', gameType: 'oathbreaker', gameOver: true, ...(state as any), relayMessages, handles });
@@ -1212,6 +1270,19 @@ export class GameServer {
           return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...(state as any), relayMessages, handles });
         }
         return res.json({ phase: 'game', ...(state as any), relayMessages, handles });
+      }
+
+      // OATHBREAKER waiting room
+      const waitingRoom = resolveWaitingRoom(agentId);
+      if (waitingRoom) {
+        return res.json({
+          phase: 'waiting',
+          gameType: 'oathbreaker',
+          gameId: waitingRoom.id,
+          targetPlayers: waitingRoom.targetPlayers,
+          currentPlayers: waitingRoom.players.length,
+          players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+        });
       }
 
       const lobby = resolveLobby(agentId);
@@ -1386,6 +1457,34 @@ export class GameServer {
         return res.json({ reason: 'update', ...updates });
       }
 
+      // === OATHBREAKER waiting room ===
+      const waitingRoom = resolveWaitingRoom(agentId);
+      if (waitingRoom) {
+        // Long-poll: wait until game starts or more players join
+        await waitForAgentUpdate(agentId, 25000);
+
+        // After waking, check if game started (waiting room promoted to game)
+        const newOathGame = resolveOathGame(agentId);
+        if (newOathGame) {
+          const state = newOathGame.getVisibleState(agentId) as any;
+          const gameHandles = getHandlesForAgent(agentId);
+          return res.json({ reason: 'game_started', phase: 'game', gameType: 'oathbreaker', ...state, handles: gameHandles });
+        }
+
+        // Still in waiting room — return current state
+        const updatedRoom = resolveWaitingRoom(agentId);
+        if (!updatedRoom) return res.json({ reason: 'waiting_room_closed' });
+        return res.json({
+          reason: 'update',
+          phase: 'waiting',
+          gameType: 'oathbreaker',
+          gameId: updatedRoom.id,
+          targetPlayers: updatedRoom.targetPlayers,
+          currentPlayers: updatedRoom.players.length,
+          players: updatedRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+        });
+      }
+
       return res.status(404).json({ error: 'No active lobby or game. Join a lobby first.' });
     });
 
@@ -1539,7 +1638,7 @@ export class GameServer {
     });
 
     // ------------------------------------------------------------------
-    // 9b. POST /lobby/join-oath — Join an OATHBREAKER game (waiting room)
+    // 9b. POST /lobby/join-oath — Join an OATHBREAKER waiting room
     // ------------------------------------------------------------------
     router.post('/lobby/join-oath', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
@@ -1547,12 +1646,18 @@ export class GameServer {
       const { gameId } = req.body ?? {};
       if (!gameId) return res.status(400).json({ error: 'gameId is required' });
 
-      const result = this.joinOathbreakerGame(gameId, agentId, agentName);
+      const result = this.joinOathbreakerWaitingRoom(gameId, agentId, agentName);
       if (!result.success) return res.status(400).json({ error: result.error });
 
-      console.log(`[REST] Agent ${agentId} (${agentName}) joined OATHBREAKER game ${gameId}`);
-      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-      return res.json({ success: true, agentId, gameId, gameType: 'oathbreaker', ...updates });
+      console.log(`[REST] Agent ${agentId} (${agentName}) joined OATHBREAKER waiting room ${gameId}`);
+
+      // If the waiting room promoted to a game, resolve game state
+      if (result.gameStarted) {
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, agentId, gameId: result.gameId, gameType: 'oathbreaker', phase: 'playing', ...updates });
+      }
+
+      return res.json({ success: true, agentId, gameId, gameType: 'oathbreaker', phase: 'waiting' });
     });
 
     // ------------------------------------------------------------------
@@ -1570,12 +1675,11 @@ export class GameServer {
       if (gameType === 'oathbreaker') {
         // OATHBREAKER lobby — FFA, no teams, configurable player count
         const playerCount = Math.min(20, Math.max(4, Math.floor((req.body?.playerCount as number) || 4)));
-        const gameId = this.createOathbreakerGame(playerCount, [{ id: agentId, handle: agentName }]);
+        const roomId = this.createOathbreakerWaitingRoom(playerCount, [{ id: agentId, handle: agentName }]);
 
-        console.log(`[REST] Agent ${agentId} (${agentName}) created OATHBREAKER game ${gameId} (${playerCount} players, waiting for more)`);
+        console.log(`[REST] Agent ${agentId} (${agentName}) created OATHBREAKER waiting room ${roomId} (${playerCount} players)`);
 
-        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, gameId, gameType: 'oathbreaker', playerCount, ...updates });
+        return res.json({ success: true, gameId: roomId, gameType: 'oathbreaker', playerCount, phase: 'waiting' });
       }
 
       // Default: CtL lobby
@@ -1730,7 +1834,7 @@ export class GameServer {
         if (oathGame) {
           // OATHBREAKER relay
           const gameId = this.agentToGame.get(agentId)!;
-          const oathRoom = this.oathGames.get(gameId);
+          const oathRoom = this.games.get(gameId);
           if (oathRoom) {
             const oathState = oathGame.state as OathState;
             oathRoom.relay.send(agentId, oathState.round, {
@@ -1753,7 +1857,7 @@ export class GameServer {
               scope,
               pluginId: relayData.pluginId ?? pluginId,
             });
-            this.broadcastState(room);
+            this.broadcastSpectatorState(room);
             for (const unit of game.state.units) {
               if (unit.id !== agentId) notifyAgent(unit.id);
             }
@@ -1840,16 +1944,16 @@ export class GameServer {
       if (gameMatch) {
         const gameId = gameMatch[1];
 
-        // Check CtL games first
         const room = this.games.get(gameId);
         if (room) {
           this.wss.handleUpgrade(request, socket, head, (ws) => {
             room.spectators.add(ws);
 
-            // Send current (delayed) state
-            const state = getDelayedState(room);
+            // Send current state (uses delayed view for CtL, immediate for OATHBREAKER)
+            const state = getSpectatorViewForRoom(room);
             if (state) {
-              ws.send(JSON.stringify({ type: 'state_update', data: state }));
+              const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+              ws.send(JSON.stringify({ type: 'state_update', data: { ...extra, ...state as any } }));
             }
 
             ws.on('close', () => {
@@ -1863,22 +1967,29 @@ export class GameServer {
           return;
         }
 
-        // Check OATHBREAKER games
-        const oathRoom = this.oathGames.get(gameId);
-        if (oathRoom) {
+        // Check waiting rooms (OATHBREAKER pre-game)
+        const waitingRoom = this.waitingRooms.get(gameId);
+        if (waitingRoom) {
           this.wss.handleUpgrade(request, socket, head, (ws) => {
-            oathRoom.spectators.add(ws);
+            waitingRoom.spectators.add(ws);
 
-            // Send current spectator state
-            const spectatorView = oathRoom.game.getVisibleState(null);
-            ws.send(JSON.stringify({ type: 'state_update', data: { gameType: 'oathbreaker', ...spectatorView as any } }));
+            // Send current waiting room state
+            ws.send(JSON.stringify({
+              type: 'state_update',
+              data: {
+                gameType: 'oathbreaker',
+                phase: 'waiting',
+                targetPlayers: waitingRoom.targetPlayers,
+                players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+              },
+            }));
 
             ws.on('close', () => {
-              oathRoom.spectators.delete(ws);
+              waitingRoom.spectators.delete(ws);
             });
 
             ws.on('error', () => {
-              oathRoom.spectators.delete(ws);
+              waitingRoom.spectators.delete(ws);
             });
           });
           return;
@@ -1920,17 +2031,23 @@ export class GameServer {
   }
 
   // ---------------------------------------------------------------------------
-  // Broadcast to spectators
+  // Broadcast spectator state (unified for all game types)
   // ---------------------------------------------------------------------------
 
-  private broadcastState(room: GameRoomData): void {
-    const state = getDelayedState(room);
+  private broadcastSpectatorState(room: GameRoomData): void {
+    const state = getSpectatorViewForRoom(room);
     if (!state) return;
 
-    // Include delayed relay messages for spectators (they see everything, with delay)
-    const delayedTurn = room.game.state.turn - room.spectatorDelay;
-    const relayMessages = room.relay.getSpectatorMessages(Math.max(0, delayedTurn));
-    const stateWithRelay = { ...state, relayMessages };
+    // Include relay messages for spectators (delayed for CtL, immediate for others)
+    const delay = room.plugin.spectatorDelay ?? 0;
+    const currentProgress = room.gameType === 'capture-the-lobster'
+      ? room.game.state.turn
+      : (room.game.state as any).round ?? 0;
+    const delayedProgress = Math.max(0, currentProgress - delay);
+    const relayMessages = room.relay.getSpectatorMessages(delayedProgress);
+
+    const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+    const stateWithRelay = { ...extra, ...state as any, relayMessages };
 
     const msg = JSON.stringify({ type: 'state_update', data: stateWithRelay });
     for (const ws of room.spectators) {
@@ -1951,9 +2068,6 @@ export class GameServer {
     for (const [, room] of this.games) {
       if (!room.finished) count++;
     }
-    for (const [, room] of this.oathGames) {
-      if (!room.finished) count++;
-    }
     // Count active lobbies (but not failed/finished ones)
     for (const [, room] of this.lobbies) {
       if (!room.state || room.state.phase === 'failed') continue;
@@ -1964,6 +2078,8 @@ export class GameServer {
       }
       count++;
     }
+    // Count active waiting rooms
+    count += this.waitingRooms.size;
     return count;
   }
 
@@ -2009,312 +2125,341 @@ export class GameServer {
 
     // Take initial snapshot
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
-    const initialState = buildSpectatorState(game, handleMap, relay);
+    const initialState = buildSpectatorState(game.state, null, handleMap, relay);
 
     const room: GameRoomData = {
+      gameType: 'capture-the-lobster',
+      plugin: CaptureTheLobsterPlugin,
       game,
       spectators: new Set(),
-      stateHistory: [initialState],
-      spectatorDelay: 2,  // 2-turn delay for spectators
-      botHandles,
-      botMeta: players,
+      finished: false,
+      externalSlots: new Map(),
+      handleMap,
+      relay,
       botSessions: createBotSessions(
         players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
         this.serverUrl,
         (id, handle) => createBotToken(id, handle),
         [BasicChatPlugin],
       ),
-      finished: false,
-      externalSlots: new Map(),
-      turnTimeoutMs: 30000,
-      handleMap,
       lobbyChat: [],
       preGameChatA: [],
       preGameChatB: [],
-      relay,
+      // Legacy CtL fields
+      stateHistory: [initialState],
+      spectatorDelay: 2,
+      botHandles,
+      botMeta: players,
+      turnTimeoutMs: 30000,
     };
 
     this.games.set(gameId, room);
 
     // Wire callbacks and start the game
-    this.wireGameRoomCallbacks(gameId, room);
+    this.wireCallbacks(gameId, room);
     game.handleAction(null, { type: 'game_start' });
 
     return { gameId, game };
   }
 
   // ---------------------------------------------------------------------------
-  // OATHBREAKER game creation
+  // OATHBREAKER waiting room + game creation
   // ---------------------------------------------------------------------------
 
   /**
-   * Create an OATHBREAKER game room.
-   * Since OATHBREAKER is FFA with no lobby phases (no teams, no class selection),
-   * this creates the game directly and starts it immediately once enough players join.
-   *
-   * For now: creates a "waiting room" style game — the game_start action fires
-   * when all players have joined.
-   *
-   * @param targetPlayers Expected number of players
-   * @param initialPlayers Players to add immediately
-   * @returns The game ID
+   * Create an OATHBREAKER waiting room.
+   * Players collect here before the game is created. When enough players join,
+   * the waiting room promotes to a real game with game_start fired immediately.
    */
-  createOathbreakerGame(
+  createOathbreakerWaitingRoom(
     targetPlayers: number,
     initialPlayers: { id: string; handle: string }[],
   ): string {
-    const gameId = crypto.randomUUID();
-    const handleMap: Record<string, string> = {};
+    const roomId = crypto.randomUUID();
+
+    const waitingRoom: OathWaitingRoom = {
+      id: roomId,
+      gameType: 'oathbreaker',
+      targetPlayers,
+      players: [...initialPlayers],
+      spectators: new Set(),
+      createdAt: Date.now(),
+    };
+
+    this.waitingRooms.set(roomId, waitingRoom);
 
     for (const p of initialPlayers) {
-      handleMap[p.id] = p.handle;
-      this.agentToGame.set(p.id, gameId);
-      this.agentGameType.set(p.id, 'oathbreaker');
+      this.agentToWaitingRoom.set(p.id, roomId);
     }
 
-    const oathConfig: OathConfig = {
-      ...DEFAULT_OATH_CONFIG,
-      playerIds: initialPlayers.map(p => p.id),
-      seed: gameId,
-    };
+    console.log(`[OATHBREAKER] Waiting room ${roomId} created (${initialPlayers.length}/${targetPlayers} players)`);
 
-    // Create the game room (in 'waiting' phase — game_start has not been called yet)
-    const game = GameRoom.create(OathbreakerPlugin, oathConfig, gameId) as OathGameRoom;
-
-    // For FFA, all players share a pseudo-team 'FFA' (needed by GameRelay for routing)
-    const relay = new GameRelay(initialPlayers.map(p => ({ id: p.id, team: 'FFA' })));
-
-    const room: OathRoomData = {
-      game,
-      spectators: new Set(),
-      finished: false,
-      externalSlots: new Map(initialPlayers.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
-      handleMap,
-      relay,
-    };
-
-    this.oathGames.set(gameId, room);
-
-    // Wire callbacks
-    this.wireOathGameRoomCallbacks(gameId, room);
-
-    // If we already have enough players, start immediately
+    // Check if we already have enough players
     if (initialPlayers.length >= targetPlayers) {
-      game.handleAction(null, { type: 'game_start' });
-      console.log(`[OATHBREAKER] Game ${gameId} started with ${initialPlayers.length} players`);
-    } else {
-      console.log(`[OATHBREAKER] Game ${gameId} waiting for players (${initialPlayers.length}/${targetPlayers})`);
-      // Store target so we can start when enough join
-      (room as any)._targetPlayers = targetPlayers;
+      this.promoteWaitingRoom(roomId);
     }
 
-    return gameId;
+    return roomId;
   }
 
   /**
-   * Join an existing OATHBREAKER game that hasn't started yet.
+   * Join an OATHBREAKER waiting room.
    */
-  joinOathbreakerGame(gameId: string, agentId: string, handle: string): { success: boolean; error?: string } {
-    const room = this.oathGames.get(gameId);
-    if (!room) return { success: false, error: 'Game not found' };
+  joinOathbreakerWaitingRoom(
+    roomId: string,
+    agentId: string,
+    handle: string,
+  ): { success: boolean; error?: string; gameStarted?: boolean; gameId?: string } {
+    const waitingRoom = this.waitingRooms.get(roomId);
+    if (!waitingRoom) return { success: false, error: 'Waiting room not found' };
 
-    const oathState = room.game.state as OathState;
-    if (oathState.phase !== 'waiting') return { success: false, error: 'Game already started' };
-
-    // Add the player
-    room.handleMap[agentId] = handle;
-    room.externalSlots.set(agentId, { token: '', agentId, connected: true });
-    this.agentToGame.set(agentId, gameId);
-    this.agentGameType.set(agentId, 'oathbreaker');
-
-    // Recreate the game with the new player list
-    const existingPlayerIds = oathState.config.playerIds;
-    const newPlayerIds = [...existingPlayerIds, agentId];
-    const newConfig: OathConfig = {
-      ...oathState.config,
-      playerIds: newPlayerIds,
-    };
-
-    // Need to recreate since initial state is based on config.playerIds
-    const newGame = GameRoom.create(OathbreakerPlugin, newConfig, gameId) as OathGameRoom;
-    const newRelay = new GameRelay(newPlayerIds.map(id => ({ id, team: 'FFA' })));
-
-    room.game.cancelTimer();
-    (room as any).game = newGame;
-    (room as any).relay = newRelay;
-
-    // Re-wire callbacks
-    this.wireOathGameRoomCallbacks(gameId, room);
-
-    // Notify other players
-    for (const pid of existingPlayerIds) {
-      notifyAgent(pid);
+    // Check if already in the room
+    if (waitingRoom.players.some(p => p.id === agentId)) {
+      return { success: false, error: 'Already in this waiting room' };
     }
 
+    // Check if room is full
+    if (waitingRoom.players.length >= waitingRoom.targetPlayers) {
+      return { success: false, error: 'Waiting room is full' };
+    }
+
+    waitingRoom.players.push({ id: agentId, handle });
+    this.agentToWaitingRoom.set(agentId, roomId);
+
+    // Notify existing players that someone joined
+    for (const p of waitingRoom.players) {
+      if (p.id !== agentId) notifyAgent(p.id);
+    }
+
+    // Broadcast to spectators
+    this.broadcastWaitingRoomState(waitingRoom);
+
+    console.log(`[OATHBREAKER] ${handle} (${agentId}) joined waiting room ${roomId} (${waitingRoom.players.length}/${waitingRoom.targetPlayers})`);
+
     // Check if we have enough players to start
-    const target = (room as any)._targetPlayers ?? 4;
-    if (newPlayerIds.length >= target) {
-      newGame.handleAction(null, { type: 'game_start' });
-      console.log(`[OATHBREAKER] Game ${gameId} started with ${newPlayerIds.length} players`);
-    } else {
-      console.log(`[OATHBREAKER] Game ${gameId}: ${newPlayerIds.length}/${target} players`);
+    if (waitingRoom.players.length >= waitingRoom.targetPlayers) {
+      const gameId = this.promoteWaitingRoom(roomId);
+      return { success: true, gameStarted: true, gameId };
     }
 
     return { success: true };
   }
 
-  // ---------------------------------------------------------------------------
-  // GameRoom callback wiring — replaces the old turn loop
-  // ---------------------------------------------------------------------------
-
   /**
-   * Wire onStateChange and onGameOver callbacks for a GameRoom.
-   * The GameRoom handles deadline timers and turn resolution internally.
-   * The server just needs to broadcast state changes and handle game over.
+   * Promote a waiting room to a real OATHBREAKER game.
+   * Creates the GameRoom, fires game_start, cleans up the waiting room.
    */
-  private wireGameRoomCallbacks(gameId: string, room: GameRoomData): void {
-    const { game } = room;
+  private promoteWaitingRoom(roomId: string): string {
+    const waitingRoom = this.waitingRooms.get(roomId)!;
+    const players = waitingRoom.players;
+    const gameId = roomId; // Reuse the ID so spectator WebSocket connections carry over
 
-    game.onStateChange = () => {
-      // Notify external agents waiting via wait_for_update
-      notifyTurnResolved(gameId);
-
-      // Snapshot state for spectators
-      const state = buildSpectatorState(game, room.handleMap, room.relay);
-      room.stateHistory.push(state);
-
-      // Broadcast to spectators
-      this.broadcastState(room);
-
-      // Kick off bots if the turn just changed (they need to submit moves)
-      this.runBots(room);
-    };
-
-    game.onGameOver = () => {
-      this.finishGame(room);
-    };
-  }
-
-  /**
-   * Wire callbacks for an OATHBREAKER GameRoom.
-   */
-  private wireOathGameRoomCallbacks(gameId: string, room: OathRoomData): void {
-    const { game } = room;
-
-    game.onStateChange = () => {
-      notifyTurnResolved(gameId);
-
-      // Broadcast OATHBREAKER state to spectators via WebSocket
-      const oathState = game.state as OathState;
-      const spectatorView = game.getVisibleState(null);
-      const msg = JSON.stringify({ type: 'state_update', data: { gameType: 'oathbreaker', ...spectatorView as any } });
-      for (const ws of room.spectators) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(msg);
-        }
-      }
-
-      // Notify all players
-      for (const player of oathState.players) {
-        notifyAgent(player.id);
-      }
-    };
-
-    game.onGameOver = () => {
-      room.finished = true;
-      notifyTurnResolved(gameId);
-
-      const spectatorView = game.getVisibleState(null);
-      const msg = JSON.stringify({ type: 'game_over', data: { gameType: 'oathbreaker', ...spectatorView as any } });
-      for (const ws of room.spectators) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(msg);
-        }
-      }
-
-      const oathState = game.state as OathState;
-      for (const player of oathState.players) {
-        notifyAgent(player.id);
-      }
-
-      console.log(`[OATHBREAKER] Game ${gameId} finished. Round ${oathState.round}.`);
-    };
-  }
-
-  /**
-   * Run bots for the current turn. They submit moves via REST which calls handleAction.
-   */
-  private async runBots(room: GameRoomData): Promise<void> {
-    const { game, botHandles } = room;
-    if (room.finished || game.isOver()) return;
-
-    // Build set of alive bot IDs that haven't submitted
-    const aliveBotIds = new Set<string>();
-    for (const botId of botHandles) {
-      const unit = game.state.units.find((u: { id: string }) => u.id === botId);
-      if (unit?.alive && !hasSubmitted(game, botId)) aliveBotIds.add(botId);
+    const handleMap: Record<string, string> = {};
+    for (const p of players) {
+      handleMap[p.id] = p.handle;
+      // Move agent mapping from waiting room to game
+      this.agentToWaitingRoom.delete(p.id);
+      this.agentToGame.set(p.id, gameId);
     }
 
-    if (aliveBotIds.size === 0) return;
+    const oathConfig: OathConfig = {
+      ...DEFAULT_OATH_CONFIG,
+      playerIds: players.map(p => p.id),
+      seed: gameId,
+    };
 
-    // Claude bots use GameClient + Anthropic API directly
-    // They submit moves via REST which calls handleAction
-    await Promise.race([
-      runAllBotsTurn(room.botSessions, game.state.turn, aliveBotIds),
-      new Promise<void>((resolve) => setTimeout(resolve, room.turnTimeoutMs - 2000)),
-    ]);
+    const game = GameRoom.create(OathbreakerPlugin, oathConfig, gameId) as OathGameRoom;
+    const relay = new GameRelay(players.map(p => ({ id: p.id, team: 'FFA' })));
+
+    const room: GameRoomData = {
+      gameType: 'oathbreaker',
+      plugin: OathbreakerPlugin,
+      game,
+      spectators: waitingRoom.spectators, // Transfer spectators from waiting room
+      finished: false,
+      externalSlots: new Map(players.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
+      handleMap,
+      relay,
+      botSessions: [],
+      lobbyChat: [],
+      preGameChatA: [],
+      preGameChatB: [],
+    };
+
+    this.games.set(gameId, room);
+
+    // Remove the waiting room
+    this.waitingRooms.delete(roomId);
+
+    // Wire callbacks and start immediately
+    this.wireCallbacks(gameId, room);
+    game.handleAction(null, { type: 'game_start' });
+
+    // Notify all players that the game has started
+    for (const p of players) {
+      notifyAgent(p.id);
+    }
+
+    console.log(`[OATHBREAKER] Waiting room ${roomId} promoted to game ${gameId} with ${players.length} players`);
+    return gameId;
   }
 
   /**
-   * Handle game over: clean up, broadcast final state.
+   * Broadcast waiting room state to WebSocket spectators.
    */
-  private finishGame(room: GameRoomData): void {
-    if (room.finished) return;
-    room.finished = true;
-
-    // Final broadcast
-    const finalState = buildSpectatorState(room.game, room.handleMap, room.relay);
-    room.stateHistory.push(finalState);
-    const msg = JSON.stringify({ type: 'game_over', data: finalState });
-    for (const ws of room.spectators) {
+  private broadcastWaitingRoomState(waitingRoom: OathWaitingRoom): void {
+    const data = {
+      type: 'state_update',
+      data: {
+        gameType: 'oathbreaker',
+        phase: 'waiting',
+        targetPlayers: waitingRoom.targetPlayers,
+        players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+      },
+    };
+    const msg = JSON.stringify(data);
+    for (const ws of waitingRoom.spectators) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(msg);
       }
     }
+  }
 
-    // Wake up any external agents waiting on wait_for_update
-    notifyTurnResolved(room.game.gameId);
+  // ---------------------------------------------------------------------------
+  // Unified GameRoom callback wiring (all game types)
+  // ---------------------------------------------------------------------------
 
-    // Record ELO for all human/bot players
-    try {
-      const players = room.game.state.units.map((u) => {
-        const handle = room.handleMap[u.id] ?? getAgentName(u.id);
-        const dbPlayer = this.elo.getOrCreatePlayer(handle);
-        return { id: dbPlayer.id, team: u.team as 'A' | 'B', unitClass: u.unitClass };
-      });
-      this.elo.recordMatch(
-        room.game.gameId,
-        (room.game.state as any).mapSeed ?? room.game.gameId,
-        room.game.state.turn,
-        room.game.state.winner as 'A' | 'B' | null,
-        players,
-      );
-    } catch (err) {
-      console.error('[ELO] Failed to record match:', err);
+  /**
+   * Wire onStateChange and onGameOver callbacks for any GameRoom.
+   * The GameRoom handles deadline timers and turn resolution internally.
+   * The server just needs to broadcast state changes, schedule bots, and handle game over.
+   */
+  private wireCallbacks(gameId: string, room: GameRoomData): void {
+    const { game } = room;
+
+    game.onStateChange = () => {
+      // Notify waiting agents
+      notifyTurnResolved(gameId);
+
+      // For CtL: snapshot spectator state into cache (frontend expects SpectatorState format)
+      if (room.gameType === 'capture-the-lobster' && room.stateHistory) {
+        const history = game.getStateHistory();
+        const prevState = history.length >= 2 ? history[history.length - 2] : null;
+        const spectatorState = buildSpectatorState(game.state, prevState, room.handleMap, room.relay);
+        room.stateHistory.push(spectatorState);
+      }
+
+      // Broadcast spectator view (with delay from plugin)
+      this.broadcastSpectatorState(room);
+
+      // Notify all external agents
+      for (const [agentId] of room.externalSlots) {
+        notifyAgent(agentId);
+      }
+
+      // Run bots if the plugin defines getPlayersNeedingAction
+      this.runBotsGeneric(room, gameId);
+    };
+
+    game.onGameOver = () => {
+      this.finishGameGeneric(gameId, room);
+    };
+  }
+
+  /**
+   * Run bots generically — uses plugin.getPlayersNeedingAction to determine which bots need to act.
+   */
+  private runBotsGeneric(room: GameRoomData, gameId: string): void {
+    if (room.botSessions.length === 0) return;
+    if (room.finished || room.game.isOver()) return;
+    if (!room.plugin.getPlayersNeedingAction) return;
+
+    const needsAction = new Set<string>(room.plugin.getPlayersNeedingAction(room.game.state));
+    const activeBots = room.botSessions.filter(bot => needsAction.has(bot.id));
+    if (activeBots.length === 0) return;
+
+    // Run bots with timeout
+    const timeoutMs = (room.turnTimeoutMs ?? 30000) - 2000;
+    const turn = room.game.progressCounter;
+
+    Promise.race([
+      runAllBotsTurn(activeBots, turn, needsAction),
+      new Promise<void>((resolve) => setTimeout(resolve, Math.max(5000, timeoutMs))),
+    ]).catch(err => console.error(`[Bots] Error in game ${gameId}:`, err));
+  }
+
+  /**
+   * Handle game over generically — works for all game types.
+   * Broadcasts final state, records ELO (if applicable), builds game result.
+   */
+  private finishGameGeneric(gameId: string, room: GameRoomData): void {
+    if (room.finished) return;
+    room.finished = true;
+
+    // For CtL: build final spectator state snapshot
+    if (room.gameType === 'capture-the-lobster' && room.stateHistory) {
+      const history = room.game.getStateHistory();
+      const prevState = history.length >= 2 ? history[history.length - 2] : null;
+      const finalState = buildSpectatorState(room.game.state, prevState, room.handleMap, room.relay);
+      room.stateHistory.push(finalState);
     }
 
-    console.log(`[Game] Game ${room.game.gameId} finished. Winner: ${room.game.state.winner ?? 'draw'}`);
+    // Final spectator broadcast (no delay — show the ending)
+    const spectatorView = room.gameType === 'capture-the-lobster'
+      ? room.stateHistory?.[room.stateHistory.length - 1]
+      : room.game.getVisibleState(null);
+    if (spectatorView) {
+      const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
+      const msg = JSON.stringify({ type: 'game_over', data: { ...extra, ...spectatorView as any } });
+      for (const ws of room.spectators) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(msg);
+        }
+      }
+    }
 
-    // Build game result with Merkle root for on-chain anchoring
-    try {
-      const playerIds = room.game.state.units.map((u) => u.id);
-      const result = buildGameResultFromRoom(room.game, room.game.gameId, playerIds);
-      const payouts = room.game.computePayouts(playerIds);
-      console.log(`[Coordination] Game result built. Actions root: ${result.actionsRoot.slice(0, 16)}... Actions: ${result.actionCount}`);
-      const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');
-      console.log(`[Coordination] Payouts: ${payoutSummary}`);
-    } catch (err) {
-      console.error('[Coordination] Failed to build game result:', err);
+    // Wake up any external agents waiting on wait_for_update
+    notifyTurnResolved(gameId);
+
+    // Notify all external agents
+    for (const [agentId] of room.externalSlots) {
+      notifyAgent(agentId);
+    }
+
+    // Record ELO (CtL-specific — uses team/unitClass from units)
+    if (room.gameType === 'capture-the-lobster') {
+      try {
+        const players = room.game.state.units.map((u: any) => {
+          const handle = room.handleMap[u.id] ?? getAgentName(u.id);
+          const dbPlayer = this.elo.getOrCreatePlayer(handle);
+          return { id: dbPlayer.id, team: u.team as 'A' | 'B', unitClass: u.unitClass };
+        });
+        this.elo.recordMatch(
+          room.game.gameId,
+          (room.game.state as any).mapSeed ?? room.game.gameId,
+          room.game.state.turn,
+          room.game.state.winner as 'A' | 'B' | null,
+          players,
+        );
+      } catch (err) {
+        console.error('[ELO] Failed to record match:', err);
+      }
+    }
+
+    console.log(`[Game] Game ${gameId} (${room.gameType}) finished.`);
+
+    // Build game result with Merkle root for on-chain anchoring (if applicable)
+    if (room.gameType === 'capture-the-lobster') {
+      try {
+        const playerIds = room.game.state.units.map((u: any) => u.id);
+        const result = buildGameResultFromRoom(room.game, gameId, playerIds);
+        const payouts = room.game.computePayouts(playerIds);
+        console.log(`[Coordination] Game result built. Actions root: ${result.actionsRoot.slice(0, 16)}... Actions: ${result.actionCount}`);
+        const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');
+        console.log(`[Coordination] Payouts: ${payoutSummary}`);
+      } catch (err) {
+        console.error('[Coordination] Failed to build game result:', err);
+      }
     }
   }
 
@@ -2443,15 +2588,17 @@ export class GameServer {
     const game = createCtlGameRoom(gameId, ctlConfig);
 
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
-    const initialState = buildSpectatorState(game, handleMap, relay);
+    const initialState = buildSpectatorState(game.state, null, handleMap, relay);
 
     const room: GameRoomData = {
+      gameType: 'capture-the-lobster',
+      plugin: CaptureTheLobsterPlugin,
       game,
       spectators: new Set(),
-      stateHistory: [initialState],
-      spectatorDelay: 2,  // 2-turn delay for spectators
-      botHandles,
-      botMeta: players,
+      finished: false,
+      externalSlots,
+      handleMap,
+      relay,
       botSessions: createBotSessions(
         players.filter((p) => !p.id.startsWith('ext_')).map(p => ({
           id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team,
@@ -2460,20 +2607,21 @@ export class GameServer {
         (id, handle) => createBotToken(id, handle),
         [BasicChatPlugin],
       ),
-      finished: false,
-      externalSlots,
-      turnTimeoutMs: 30000,
-      handleMap,
       lobbyChat,
       preGameChatA,
       preGameChatB,
-      relay,
+      // Legacy CtL fields
+      stateHistory: [initialState],
+      spectatorDelay: 2,
+      botHandles,
+      botMeta: players,
+      turnTimeoutMs: 30000,
     };
 
     this.games.set(gameId, room);
 
     // Wire callbacks and start the game
-    this.wireGameRoomCallbacks(gameId, room);
+    this.wireCallbacks(gameId, room);
 
     // Notify external agents that the game has started (wakes wait_for_update)
     for (const p of players) {

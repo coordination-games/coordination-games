@@ -229,3 +229,98 @@ The engine handles this automatically. You just:
 ### Example: How CtL Does It
 
 CtL includes `mapSeed` in its config. The seed feeds a `mulberry32` PRNG that determines terrain placement, forest walls, and spawn positions. The map is fully deterministic — given the same seed and team size, the exact same map is generated every time. Since the config (including seed) is hashed and stored on-chain, anyone can verify the map was generated fairly.
+
+---
+
+## Lobbies, Games, and the Unification Rule
+
+**Your game does NOT manage its own waiting room.** The engine's lobby pipeline handles all pre-game orchestration — matchmaking, player collection, team formation, pre-game phases. Your game starts when the lobby hands it a configured set of players.
+
+### The Anti-Pattern (Don't Do This)
+
+When OATHBREAKER was first integrated, it bypassed the lobby entirely:
+- Baked a `phase: 'waiting'` into its own game state
+- Required separate server endpoints (`/lobby/join-oath`, `/games/:id/fill-bots`)
+- Stored games in a separate `oathGames` map with a different room type
+- Had its own join flow, its own bot-filling logic, its own spectator routing
+
+This broke every generic feature: the lobby UI didn't show it, fill-bots didn't work, the CLI needed game-specific fallback logic. Every new game would've required forking every endpoint.
+
+### The Correct Pattern
+
+Your game declares its lobby config. The engine does the rest.
+
+```typescript
+const MyGame: CoordinationGame<Config, State, Action, Outcome> = {
+  lobby: {
+    queueType: 'open',
+    phases: [],                            // No pre-game phases? Empty array.
+    matchmaking: {
+      minPlayers: 4,
+      maxPlayers: 20,
+      teamSize: 1,                         // FFA
+      numTeams: 0,                         // No fixed teams
+      queueTimeoutMs: 300000,
+    },
+  },
+  // ...
+};
+```
+
+With `phases: []`, the lobby simply collects players until `minPlayers` is reached, then starts the game. No team formation, no class selection — just matchmaking. The same endpoints, same UI, same fill-bots button, same bot harness.
+
+CtL declares two phases:
+```typescript
+phases: [
+  { phaseId: 'team-formation', config: {} },
+  { phaseId: 'class-selection', config: {} },
+],
+```
+
+The lobby runs each phase in sequence, each with its own timeout and UI. The phases are defined by the game plugin — the engine just executes them. A future game might declare `phases: [{ phaseId: 'draft', config: { draftType: 'snake' } }]` for a hero draft.
+
+### What the Lobby Gives You
+
+All games, regardless of complexity, get:
+- **Player collection** with min/max enforcement
+- **Fill-bots** button in the UI (admin password protected)
+- **Timeout** with pause/extend controls
+- **WebSocket spectator feed** for the waiting room
+- **Join instructions** with copy-paste commands
+- **CLI `join` command** that works for any game type
+- **Generic UI components** — PlayerList, ChatPanel, TimerBar render for any game
+
+### What Your Game Provides to the Lobby
+
+If your game has pre-game phases (team formation, class selection, drafting, etc.), you implement `LobbyPhase`:
+
+```typescript
+export interface LobbyPhase<TPhaseState = any> {
+  readonly id: string;           // 'class-selection', 'hero-draft', etc.
+  readonly name: string;         // Human-readable for UI
+  readonly timeout: number;      // Seconds before auto-resolve
+  run(ctx: PhaseContext): Promise<PhaseResult>;
+}
+```
+
+The `PhaseResult` returns grouped players and metadata (e.g. class picks, draft results). This metadata flows into your game's `createInitialState()` via the config.
+
+### Lobby UI is Component-Based
+
+The lobby page renders building-block components based on what the game needs:
+
+| Component | When it shows | Source |
+|---|---|---|
+| PlayerList | Always | Lobby state (agents list) |
+| ChatPanel | Always | Relay messages (basic-chat plugin) |
+| TimerBar | Always | Lobby timeout config |
+| FillBotsPanel | Always (admin) | Admin password check |
+| JoinInstructions | Forming phase | Static + lobby ID |
+| TeamPanel | `numTeams > 1` | Lobby state (teams map) |
+| PreGamePanel | Game has pre-game phases | Phase state from LobbyPhase |
+
+A game with `phases: []` and `numTeams: 0` gets just the basics: player list, chat, timer, fill-bots. A game with teams and class selection gets the full experience. The UI reads the lobby config and renders accordingly — no game-specific lobby pages.
+
+### The Rule
+
+> **One `games` map. One room type. One set of endpoints.** If adding a new game requires new server endpoints, new storage structures, or new UI pages — the abstraction is wrong. Fix the abstraction, don't fork the code.

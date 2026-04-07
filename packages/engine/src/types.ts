@@ -26,6 +26,7 @@ export type Address = string;
 export interface ActionResult<TState, TAction> {
   state: TState;
   deadline?: { seconds: number; action: TAction } | null;
+  progressIncrement?: boolean;  // true = this action advanced the game clock (turn/round resolved)
 }
 
 /**
@@ -76,6 +77,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
 
   /** Lobby configuration. */
   readonly lobby?: GameLobbyConfig;
+
+  /** Delay in progress units (turns for CtL, rounds for OATHBREAKER). Default 0. */
+  spectatorDelay?: number;
+
+  /** IDs of players that need to submit an action in the current state. */
+  getPlayersNeedingAction?(state: TState): string[];
 
   /** Required plugin IDs. */
   readonly requiredPlugins?: string[];

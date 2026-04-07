@@ -261,6 +261,7 @@ function advanceOrFinish(resolvedState: OathState): ActionResult<OathState, Oath
     return {
       state: { ...resolvedState, phase: 'finished' },
       deadline: null,
+      progressIncrement: true,
     };
   }
 
@@ -272,6 +273,7 @@ function advanceOrFinish(resolvedState: OathState): ActionResult<OathState, Oath
       seconds: resolvedState.config.turnTimerSeconds,
       action: { type: 'round_timeout' },
     },
+    progressIncrement: true,
   };
 }
 

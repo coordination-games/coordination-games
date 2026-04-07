@@ -39,7 +39,7 @@ interface OathPairingResult {
 interface OathSpectatorState {
   round: number;
   maxRounds: number;
-  phase: 'waiting' | 'playing' | 'finished';
+  phase: 'playing' | 'finished';
   players: OathPlayer[];
   pairings: OathSpectatorPairing[];
   roundResults: OathPairingResult[][];
@@ -56,7 +56,7 @@ function mapServerState(raw: any): OathSpectatorState | null {
   return {
     round: data.round ?? 0,
     maxRounds: data.maxRounds ?? 12,
-    phase: data.phase ?? 'waiting',
+    phase: data.phase ?? 'playing',
     players: data.players,
     pairings: data.pairings ?? [],
     roundResults: data.roundResults ?? [],
@@ -806,18 +806,6 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
               letterSpacing: 1,
             }}>
               FINISHED
-            </span>
-          )}
-          {state.phase === 'waiting' && (
-            <span style={{
-              fontSize: 10,
-              fontWeight: 600,
-              padding: '2px 8px',
-              borderRadius: 4,
-              background: 'rgba(107, 114, 128, 0.15)',
-              color: '#6b7280',
-            }}>
-              WAITING
             </span>
           )}
         </div>
