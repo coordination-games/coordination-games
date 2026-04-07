@@ -257,74 +257,66 @@ export function ArcadeBattleView({
   }, [battleChat.length]);
 
   return (
-    <div className={`arcade-screen ${reveal.flashClass}`} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* HUD */}
+    <div className={`arcade-screen ${reveal.flashClass}`} style={{
+      display: 'flex', flexDirection: 'column', height: '100%',
+      maxWidth: 480, margin: '0 auto', // mobile-first: cap width, center on desktop
+    }}>
+      {/* Compact HUD: back + round on one line, title removed for space */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '8px 16px', background: 'rgba(0,0,0,0.8)', zIndex: 10,
+        padding: '6px 12px', background: 'rgba(0,0,0,0.8)', zIndex: 10,
         borderBottom: '2px solid #333',
       }}>
         <button onClick={onBack} className="pixel-text" style={{
-          background: 'transparent', border: '1px solid #444', padding: '4px 10px',
+          background: 'transparent', border: '1px solid #444', padding: '3px 8px',
           color: '#9ca3af', fontSize: 7, cursor: 'pointer',
         }}>
           ← BACK
         </button>
-        <div style={{ textAlign: 'center' }}>
-          <div className="pixel-text" style={{ fontSize: 10, color: '#e9d852', letterSpacing: 3 }}>
-            OATHBREAKER
-          </div>
-          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{ height: 28, imageRendering: 'pixelated', display: 'block', margin: '2px auto 0' }} />
-          <div className="pixel-text" style={{ fontSize: 6, color: '#d1d5db', marginTop: 2, letterSpacing: 2 }}>Seiyaku-yaburi</div>
-        </div>
+        <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{
+          height: 20, imageRendering: 'pixelated',
+        }} />
         <span className="pixel-text" style={{ fontSize: 7, color: '#e5e7eb' }}>
-          ROUND {currentRound}/{maxRounds}
+          RND {currentRound}/{maxRounds}
         </span>
       </div>
 
-      {/* Fighter stats bar */}
+      {/* Fighter names + health bars */}
       <div style={{
-        display: 'flex', gap: 16, padding: '8px 16px',
+        display: 'flex', gap: 8, padding: '6px 12px',
         background: 'rgba(0,0,0,0.7)', zIndex: 10,
       }}>
-        {/* P1 stats */}
         <div style={{ flex: 1 }}>
-          <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 4 }}>{name1}</div>
+          <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 3 }}>{name1}</div>
           <HealthBar dollarValue={p1.dollarValue} breakEvenDelta={p1.breakEvenDelta} />
-          <div className="pixel-text" style={{ fontSize: 6, color: '#6b7280', marginTop: 2 }}>
+          <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p1.oathsKept}/{p1.oathsKept + p1.oathsBroken}
           </div>
         </div>
-
-        {/* VS */}
-        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, padding: '0 8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
           <PhaseBadge pairing={pairing} />
         </div>
-
-        {/* P2 stats */}
         <div style={{ flex: 1, textAlign: 'right' }}>
-          <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 4 }}>{name2}</div>
+          <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 3 }}>{name2}</div>
           <HealthBar dollarValue={p2.dollarValue} breakEvenDelta={p2.breakEvenDelta} />
-          <div className="pixel-text" style={{ fontSize: 6, color: '#6b7280', marginTop: 2 }}>
+          <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p2.oathsKept}/{p2.oathsKept + p2.oathsBroken}
           </div>
         </div>
       </div>
 
-      {/* Arena — compact height, sprites fill it */}
+      {/* Arena — compact, sprites fill it */}
       <div className={`arena-bg ${reveal.shakeClass}`} style={{
-        height: 220,
+        height: 200,
         flexShrink: 0,
         backgroundImage: `url(${bgUrl})`,
         display: 'flex', flexDirection: 'column',
         position: 'relative',
       }}>
-        {/* Darken overlay during reveal */}
         {reveal.phase === 'darken' && (
           <div style={{
             position: 'absolute', inset: 0,
-            background: 'rgba(0,0,0,0.6)',
-            zIndex: 5,
+            background: 'rgba(0,0,0,0.6)', zIndex: 5,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <span className="pixel-text oath-glow" style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}>
@@ -333,7 +325,6 @@ export function ArcadeBattleView({
           </div>
         )}
 
-        {/* Dollar deltas */}
         {reveal.showDelta && latestResult && (
           <>
             <DollarDelta delta={latestResult.delta1} side="left" />
@@ -341,103 +332,109 @@ export function ArcadeBattleView({
           </>
         )}
 
-        {/* Outcome banner */}
         {(reveal.phase === 'reveal' || reveal.phase === 'aftermath') && latestResult && (
-          <div style={{ position: 'absolute', top: '15%', left: 0, right: 0, zIndex: 10 }}>
+          <div style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}>
             <OutcomeBanner outcome={latestResult.outcome} />
           </div>
         )}
 
-        {/* Fighters */}
+        {/* Fighters — scale 5 to fill the compact arena */}
         <div style={{
           flex: 1,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-          gap: '10%',
-          paddingBottom: 8,
+          gap: 80,
+          paddingBottom: 4,
           position: 'relative', zIndex: 2,
         }}>
-          {/* P1 — left side, faces right (toward center) */}
           <div className={reveal.phase === 'reveal' && reveal.p1Pose === 'victory' ? 'golden-glow' : ''}>
             <CharacterSprite
               character={char1?.characterName ?? 'buchu'}
               pose={reveal.p1Pose}
               faceRight={true}
-              scale={4}
+              scale={5}
               tint={char1?.tint}
             />
           </div>
-
-          {/* P2 — right side, faces left (toward center) */}
           <div className={reveal.phase === 'reveal' && reveal.p2Pose === 'victory' ? 'golden-glow' : ''}>
             <CharacterSprite
               character={char2?.characterName ?? 'star'}
               pose={reveal.p2Pose}
               faceRight={false}
-              scale={4}
+              scale={5}
               tint={char2?.tint}
             />
           </div>
         </div>
       </div>
 
-      {/* Chat / Negotiation panel */}
+      {/* Chat / Negotiation — fills remaining space */}
       <div style={{
+        flex: 1,
         background: 'rgba(0,0,0,0.85)',
         borderTop: '2px solid #333',
-        maxHeight: 200,
-        overflow: 'hidden',
         display: 'flex', flexDirection: 'column',
+        minHeight: 0,
+        overflow: 'hidden',
       }}>
-        {/* Pledge status */}
-        {pairing.agreedPledge !== null ? (
-          <OathBanner text={`⚔ OATH SWORN — ${pairing.agreedPledge} POINTS ⚔`} glow />
-        ) : pairing.phase === 'pledging' ? (
-          <div style={{ display: 'flex', padding: '6px 16px', gap: 16, fontSize: 7 }}>
-            <span className="pixel-text" style={{ color: '#60a5fa' }}>
-              {name1}: {pairing.proposal1 !== null ? `${pairing.proposal1} pts` : '...'}
-            </span>
-            <span className="pixel-text" style={{ color: '#f87171' }}>
-              {name2}: {pairing.proposal2 !== null ? `${pairing.proposal2} pts` : '...'}
-            </span>
-          </div>
-        ) : null}
+        {/* Pledge status bar */}
+        <div style={{ flexShrink: 0 }}>
+          {pairing.agreedPledge !== null ? (
+            <OathBanner text={`⚔ OATH SWORN — ${pairing.agreedPledge} PTS ⚔`} glow />
+          ) : pairing.phase === 'pledging' ? (
+            <div style={{ display: 'flex', padding: '6px 12px', gap: 12, fontSize: 7 }}>
+              <span className="pixel-text" style={{ color: '#60a5fa' }}>
+                {name1}: {pairing.proposal1 !== null ? `${pairing.proposal1} pts` : '...'}
+              </span>
+              <span className="pixel-text" style={{ color: '#f87171' }}>
+                {name2}: {pairing.proposal2 !== null ? `${pairing.proposal2} pts` : '...'}
+              </span>
+            </div>
+          ) : null}
 
-        {/* Decision indicators */}
-        {pairing.phase === 'deciding' || pairing.phase === 'decided' ? (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, padding: '4px 16px' }}>
-            <span className="pixel-text" style={{
-              fontSize: 7,
-              color: pairing.player1HasDecided ? '#4ade80' : '#4b5563',
-            }}>
-              {name1}: {pairing.player1HasDecided ? '🔒 SEALED' : '⏳ DECIDING'}
-            </span>
-            <span className="pixel-text" style={{
-              fontSize: 7,
-              color: pairing.player2HasDecided ? '#4ade80' : '#4b5563',
-            }}>
-              {name2}: {pairing.player2HasDecided ? '🔒 SEALED' : '⏳ DECIDING'}
-            </span>
-          </div>
-        ) : null}
+          {(pairing.phase === 'deciding' || pairing.phase === 'decided') && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 16, padding: '4px 12px' }}>
+              <span className="pixel-text" style={{
+                fontSize: 7,
+                color: pairing.player1HasDecided ? '#4ade80' : '#9ca3af',
+              }}>
+                {name1}: {pairing.player1HasDecided ? 'SEALED' : 'DECIDING...'}
+              </span>
+              <span className="pixel-text" style={{
+                fontSize: 7,
+                color: pairing.player2HasDecided ? '#4ade80' : '#9ca3af',
+              }}>
+                {name2}: {pairing.player2HasDecided ? 'SEALED' : 'DECIDING...'}
+              </span>
+            </div>
+          )}
+        </div>
 
-        {/* Chat messages */}
+        {/* Chat header */}
+        <div className="pixel-text" style={{
+          fontSize: 7, color: '#6b7280', padding: '6px 12px 2px',
+          letterSpacing: 1.5, flexShrink: 0,
+        }}>
+          NEGOTIATION
+        </div>
+
+        {/* Chat messages — scrollable, fills remaining space */}
         <div ref={chatRef} style={{
-          flex: 1, overflowY: 'auto', padding: '4px 16px',
-          maxHeight: 120,
+          flex: 1, overflowY: 'auto', padding: '4px 12px',
+          minHeight: 0,
         }}>
           {battleChat.map((msg, i) => {
             const isP1 = msg.from === p1.id;
             const senderName = isP1 ? name1 : name2;
             const color = isP1 ? '#60a5fa' : '#f87171';
             return (
-              <div key={i} style={{ marginBottom: 2, fontSize: 11, lineHeight: 1.4 }}>
+              <div key={i} style={{ marginBottom: 3, fontSize: 12, lineHeight: 1.4 }}>
                 <span style={{ color, fontWeight: 'bold' }}>{senderName}:</span>{' '}
                 <span style={{ color: '#d1d5db' }}>{msg.message}</span>
               </div>
             );
           })}
           {battleChat.length === 0 && (
-            <div style={{ color: '#4b5563', fontSize: 10, fontStyle: 'italic', padding: 4 }}>
+            <div style={{ color: '#6b7280', fontSize: 11, fontStyle: 'italic', padding: '8px 0' }}>
               Awaiting negotiation...
             </div>
           )}
