@@ -1,0 +1,186 @@
+/* OATHBREAKER Arcade Styles */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+/* ---- Base ---- */
+
+.arcade-screen {
+  font-family: 'Press Start 2P', monospace;
+  background: #0a0a0f;
+  color: #e5e7eb;
+  position: relative;
+  overflow: hidden;
+  min-height: 100%;
+}
+
+.arcade-screen * {
+  box-sizing: border-box;
+}
+
+.pixel-text {
+  font-family: 'Press Start 2P', monospace;
+}
+
+/* ---- CRT Scanlines ---- */
+
+.arcade-screen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    transparent 0px, transparent 1px,
+    rgba(0, 0, 0, 0.08) 1px, rgba(0, 0, 0, 0.08) 2px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* ---- Animations ---- */
+
+@keyframes screenShake {
+  0%, 100% { transform: translate(0); }
+  10% { transform: translate(-4px, 2px); }
+  20% { transform: translate(4px, -2px); }
+  30% { transform: translate(-3px, 4px); }
+  40% { transform: translate(3px, -1px); }
+  50% { transform: translate(-2px, 3px); }
+  60% { transform: translate(2px, -3px); }
+  70% { transform: translate(-1px, 2px); }
+  80% { transform: translate(1px, -1px); }
+  90% { transform: translate(-1px, 1px); }
+}
+
+@keyframes goldenGlow {
+  0% { filter: brightness(1); }
+  50% { filter: brightness(1.5) sepia(0.3); }
+  100% { filter: brightness(1); }
+}
+
+@keyframes floatUp {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-60px); }
+}
+
+@keyframes redFlash {
+  0% { background-color: transparent; }
+  50% { background-color: rgba(255, 0, 0, 0.25); }
+  100% { background-color: transparent; }
+}
+
+@keyframes pulseBorder {
+  0%, 100% { border-color: rgba(59, 130, 246, 0.3); }
+  50% { border-color: rgba(59, 130, 246, 0.8); }
+}
+
+@keyframes oathGlow {
+  0%, 100% { text-shadow: 0 0 4px rgba(234, 179, 8, 0.4); }
+  50% { text-shadow: 0 0 12px rgba(234, 179, 8, 0.9), 0 0 24px rgba(234, 179, 8, 0.4); }
+}
+
+@keyframes fadeInUp {
+  0% { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes darkenScreen {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+/* ---- Animation classes ---- */
+
+.shake {
+  animation: screenShake 0.5s ease-in-out;
+}
+
+.golden-glow {
+  animation: goldenGlow 1.5s ease-in-out;
+}
+
+.float-up {
+  animation: floatUp 2s ease-out forwards;
+}
+
+.red-flash {
+  animation: redFlash 0.5s ease-in-out;
+}
+
+.pulse-border {
+  animation: pulseBorder 2s ease-in-out infinite;
+}
+
+.oath-glow {
+  animation: oathGlow 2s ease-in-out infinite;
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+/* ---- Health bar ---- */
+
+.retro-health-bar {
+  height: 12px;
+  background: #1a1a2e;
+  border: 2px solid #333;
+  position: relative;
+  image-rendering: pixelated;
+}
+
+.retro-health-bar .fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transition: width 0.8s ease;
+}
+
+.retro-health-bar .center-line {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: #666;
+  z-index: 2;
+}
+
+/* ---- Battle arena ---- */
+
+.arena-bg {
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+.arena-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.5) 0%,
+    rgba(0, 0, 0, 0.3) 40%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+}
+
+/* ---- Card grid (overview) ---- */
+
+.arcade-card {
+  background: #111827;
+  border: 2px solid #1f2937;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  image-rendering: pixelated;
+}
+
+.arcade-card:hover {
+  border-color: #3b82f6;
+  background: #1e293b;
+}
+
+.arcade-card.active {
+  border-color: #3b82f6;
+  animation: pulseBorder 2s ease-in-out infinite;
+}
