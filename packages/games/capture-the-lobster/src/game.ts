@@ -91,6 +91,8 @@ export interface CtlGameState {
   };
   /** Current turn's move submissions (cleared after resolution) */
   moveSubmissions: [string, Direction[]][];
+  /** Kills from the last resolved turn (for spectator view) */
+  lastKills: { killerId: string; victimId: string; reason: string }[];
 }
 
 /** Compute turn limit based on map radius */
@@ -182,6 +184,7 @@ export function createGameState(
     mapRadius: map.radius,
     mapBases: map.bases as any,
     moveSubmissions: [],
+    lastKills: [],
   };
 }
 
@@ -442,6 +445,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     mapRadius: state.mapRadius,
     mapBases: state.mapBases,
     moveSubmissions: [], // cleared after resolution
+    lastKills: combatResult.kills,
   };
 
   return { state: newState, record };

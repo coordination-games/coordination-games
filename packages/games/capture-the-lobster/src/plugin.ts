@@ -208,16 +208,12 @@ function buildCtlSpectatorView(
     tiles.push(tile);
   }
 
-  // Kills -- inferred by comparing alive status with previous state
-  const kills: { killerId: string; victimId: string; reason: string }[] = [];
-  if (prevState) {
-    for (const unit of units) {
-      const prevUnit = prevState.units.find((u: GameUnit) => u.id === unit.id);
-      if (prevUnit && prevUnit.alive && !unit.alive) {
-        kills.push({ killerId: 'unknown', victimId: unit.id, reason: 'combat' });
-      }
-    }
-  }
+  // Kills from the last resolved turn (stored in state by resolveTurn)
+  const kills = (state.lastKills ?? []).map((k: any) => ({
+    killerId: k.killerId,
+    victimId: k.victimId,
+    reason: k.reason,
+  }));
 
   // Build flag status summaries
   function flagStatus(flagArr: FlagState[]): { status: 'at_base' | 'carried'; carrier?: string } {

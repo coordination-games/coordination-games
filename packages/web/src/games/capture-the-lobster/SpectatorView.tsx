@@ -285,7 +285,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         if (mapped) {
           setCtlState(mapped);
           if (mapped.kills.length > 0) {
-            setAllKills((prev) => [...prev, ...mapped.kills]);
+            setAllKills((prev) => {
+              const existing = new Set(prev.map(k => `${k.turn}:${k.victimId}`));
+              const newKills = mapped.kills.filter(k => !existing.has(`${k.turn}:${k.victimId}`));
+              return newKills.length > 0 ? [...prev, ...newKills] : prev;
+            });
           }
         }
       } catch {
