@@ -23,7 +23,7 @@ function extractChat(data: any): ChatMessage[] {
   for (const msg of relay) {
     if (msg.type === 'messaging' && msg.data?.body) {
       msgs.push({
-        from: msg.from ?? msg.data?.from ?? 'unknown',
+        from: msg.sender ?? msg.from ?? msg.data?.from ?? 'unknown',
         message: msg.data.body,
         timestamp: msg.timestamp ?? 0,
       });

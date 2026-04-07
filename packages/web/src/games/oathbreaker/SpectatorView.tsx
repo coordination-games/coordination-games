@@ -78,7 +78,9 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   const [state, setState] = useState<OathSpectatorState | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedPairing, setSelectedPairing] = useState<OathSpectatorPairing | null>(null);
+  // Track the player we're "following" — we resolve their current pairing each round.
+  // Persists across round transitions until the user manually returns to overview.
+  const [followedPlayerId, setFollowedPlayerId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   // Fetch initial state + connect WebSocket (game state only — handles/chat come from props)
@@ -141,13 +143,25 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     );
   }
 
-  // Update selected pairing from live state (pairings refresh each round)
-  const livePairing = selectedPairing
+  // Resolve the followed player to their CURRENT pairing each round.
+  // Pairings change round-to-round, so we look up by player ID, not by pairing identity.
+  // Orient the pairing so the followed player is always on the left (player1).
+  const rawPairing = followedPlayerId
     ? state.pairings.find(
-        p => (p.player1 === selectedPairing.player1 && p.player2 === selectedPairing.player2) ||
-             (p.player1 === selectedPairing.player2 && p.player2 === selectedPairing.player1)
+        p => p.player1 === followedPlayerId || p.player2 === followedPlayerId
       ) ?? null
     : null;
+  const livePairing = rawPairing && rawPairing.player2 === followedPlayerId
+    ? {
+        ...rawPairing,
+        player1: rawPairing.player2,
+        player2: rawPairing.player1,
+        proposal1: rawPairing.proposal2,
+        proposal2: rawPairing.proposal1,
+        player1HasDecided: rawPairing.player2HasDecided,
+        player2HasDecided: rawPairing.player1HasDecided,
+      }
+    : rawPairing;
 
   // Battle view
   if (livePairing) {
@@ -165,7 +179,8 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
           roundResults={state.roundResults}
           currentRound={state.round}
           maxRounds={state.maxRounds}
-          onBack={() => setSelectedPairing(null)}
+          followedPlayerId={followedPlayerId}
+          onBack={() => setFollowedPlayerId(null)}
         />
       </div>
     );
@@ -185,7 +200,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
         currentRound={state.round}
         maxRounds={state.maxRounds}
         phase={state.phase}
-        onSelectPairing={(pairing) => setSelectedPairing(pairing)}
+        onSelectPlayer={(playerId) => setFollowedPlayerId(playerId)}
       />
     </div>
   );

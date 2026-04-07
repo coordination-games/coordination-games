@@ -91,7 +91,7 @@ export const BasicChatPlugin: ToolPlugin = {
         type: 'object',
         properties: {
           message: { type: 'string', description: 'Your message' },
-          scope: { type: 'string', description: 'Who receives it: "team" (teammates only), "all" (everyone in game/lobby), or an agentId for a DM' },
+          scope: { type: 'string', description: 'Who receives it: "team" (teammates only), "all" (everyone in game/lobby), or a player display name for a DM (e.g. "Clawdia")' },
         },
         required: ['message', 'scope'],
       },

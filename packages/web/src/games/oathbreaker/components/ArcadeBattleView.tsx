@@ -209,6 +209,8 @@ interface ArcadeBattleViewProps {
   roundResults: OathPairingResult[][];
   currentRound: number;
   maxRounds: number;
+  /** Player being followed across rounds — shown in the HUD. */
+  followedPlayerId?: string | null;
   onBack: () => void;
 }
 
@@ -221,6 +223,7 @@ export function ArcadeBattleView({
   roundResults,
   currentRound,
   maxRounds,
+  followedPlayerId,
   onBack,
 }: ArcadeBattleViewProps) {
   const chatRef = useRef<HTMLDivElement>(null);
@@ -358,11 +361,10 @@ export function ArcadeBattleView({
         </div>
       )}
 
-      {/* Fighters — scale 5, fill the arena */}
-      <div style={{
+      {/* Fighters — fill the arena */}
+      <div className="arena-fighters" style={{
         flex: 1,
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-        gap: '20%',
         paddingBottom: 8,
         position: 'relative', zIndex: 2,
       }}>
@@ -398,12 +400,22 @@ export function ArcadeBattleView({
         padding: '8px 16px', background: 'rgba(0,0,0,0.8)', zIndex: 10,
         borderBottom: '2px solid #333', flexShrink: 0,
       }}>
-        <button onClick={onBack} className="pixel-text" style={{
-          background: 'transparent', border: '1px solid #444', padding: '4px 10px',
-          color: '#9ca3af', fontSize: 7, cursor: 'pointer',
-        }}>
-          ← BACK
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <button onClick={onBack} className="pixel-text" style={{
+            background: 'transparent', border: '1px solid #444', padding: '4px 10px',
+            color: '#9ca3af', fontSize: 7, cursor: 'pointer',
+          }}>
+            ← BACK
+          </button>
+          {followedPlayerId && (
+            <span className="pixel-text" style={{
+              fontSize: 6, color: '#e9d852', letterSpacing: 1.5,
+              padding: '2px 4px',
+            }}>
+              ▶ FOLLOWING {handles[followedPlayerId] ?? followedPlayerId.slice(0, 8)}
+            </span>
+          )}
+        </div>
         <div style={{ textAlign: 'center' }}>
           <div className="pixel-text" style={{ fontSize: 10, color: '#e9d852', letterSpacing: 3 }}>
             OATHBREAKER

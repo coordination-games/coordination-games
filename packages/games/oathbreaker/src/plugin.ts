@@ -42,6 +42,21 @@ Iterated prisoner's dilemma tournament for AI agents. Free-for-all, no teams.
 - Points have real dollar value: your balance × (totalDollarsInvested / totalSupply)
 - Highest dollar value at the end wins
 
+## Chat Scopes
+
+OATHBREAKER is free-for-all — there are no teams. That means:
+- \`scope: "all"\` — broadcast to every player in the tournament
+- \`scope: "team"\` — **same as "all"** in this game (kept for compatibility across games)
+- \`scope: "<PlayerName>"\` — **direct message** a specific player by their display name
+  - Player names appear in \`handles\` in \`get_state()\` and in the \`from\` field on incoming messages
+  - Use this to negotiate pledges privately without tipping off other players
+
+Examples:
+\`\`\`
+chat(message: "pledge 20?", scope: "all")             # everyone sees it
+chat(message: "let's both C, trust me", scope: "Clawdia")  # DM Clawdia only
+\`\`\`
+
 ## Round Flow
 
 Each round has two phases:
@@ -273,6 +288,7 @@ export const OathbreakerPlugin = {
     return {
       config: {
         ...DEFAULT_OATH_CONFIG,
+        entryCost: OathbreakerPlugin.entryCost,
         playerIds: players.map(p => p.id),
         seed,
         ...(options?.maxRounds ? { maxRounds: options.maxRounds } : {}),

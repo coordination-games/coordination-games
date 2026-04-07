@@ -1342,10 +1342,30 @@ export class GameServer {
       // The plugin decides scope — the server just routes. No interpretation.
       if (result && (result as any).relay) {
         const relayData = (result as any).relay;
-        const scope = relayData.scope ?? 'all';
+        let scope = relayData.scope ?? 'all';
 
         const resolvedForRelay = resolveGameRoom(agentId);
         const lobby = resolveLobby(agentId);
+
+        // DM scope resolution: if the scope isn't 'team'/'all' and isn't already
+        // a known agentId, try to look it up as a display name. Agents see handles,
+        // not internal IDs, so this lets them DM by name.
+        if (scope !== 'team' && scope !== 'all' && typeof scope === 'string') {
+          const isKnownAgentId = resolvedForRelay
+            ? (resolvedForRelay.room.handleMap?.[scope] !== undefined)
+            : false;
+          if (!isKnownAgentId) {
+            const byHandle = handleRegistry.get(scope) ?? handleRegistry.get(scope.trim());
+            if (byHandle) {
+              scope = byHandle;
+            } else if (resolvedForRelay) {
+              // Try case-insensitive handle lookup within the current game
+              const match = Object.entries(resolvedForRelay.room.handleMap ?? {})
+                .find(([, handle]) => handle.toLowerCase() === String(scope).toLowerCase());
+              if (match) scope = match[0];
+            }
+          }
+        }
 
         if (resolvedForRelay) {
           const { room: relayRoom, game: relayGame } = resolvedForRelay;
@@ -1940,7 +1960,7 @@ export class GameServer {
 
     console.log(`[Game] Game ${gameId} (${room.gameType}) finished.`);
 
-    // Build game result with Merkle root for on-chain anchoring
+    // Build game result with Merkle root for on-chain anchoring + auto-settle
     const playerIds = [...room.game.playerIds];
     if (playerIds.length > 0) {
       try {
@@ -1949,6 +1969,22 @@ export class GameServer {
         console.log(`[Coordination] Game result built. Actions root: ${result.actionsRoot.slice(0, 16)}... Actions: ${result.actionCount}`);
         const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');
         console.log(`[Coordination] Payouts: ${payoutSummary}`);
+
+        // Auto-settle on-chain (fire-and-forget — don't block game over)
+        const deltas = playerIds.map(id => payouts.get(id) ?? 0);
+        fetch(`${this.serverUrl}/api/relay/settle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameResult: result, deltas }),
+        }).then(r => r.json()).then(res => {
+          if (res.success) {
+            console.log(`[Coordination] Game ${gameId} settled on-chain. TX: ${res.txHash}`);
+          } else {
+            console.log(`[Coordination] On-chain settlement failed: ${res.error ?? 'unknown'}`);
+          }
+        }).catch(() => {
+          // Relay not configured — this is expected in dev mode
+        });
       } catch (err) {
         console.error('[Coordination] Failed to build game result:', err);
       }

@@ -119,7 +119,7 @@ interface ArcadeOverviewProps {
   currentRound: number;
   maxRounds: number;
   phase: string;
-  onSelectPairing: (pairing: OathSpectatorPairing) => void;
+  onSelectPlayer: (playerId: string) => void;
 }
 
 export function ArcadeOverview({
@@ -130,7 +130,7 @@ export function ArcadeOverview({
   currentRound,
   maxRounds,
   phase,
-  onSelectPairing,
+  onSelectPlayer,
 }: ArcadeOverviewProps) {
   // Sort by dollar value descending
   const sorted = [...players].sort((a, b) => b.dollarValue - a.dollarValue);
@@ -179,9 +179,7 @@ export function ArcadeOverview({
               handles={handles}
               characters={characters}
               pairing={pairing}
-              onClick={() => {
-                if (pairing) onSelectPairing(pairing);
-              }}
+              onClick={() => onSelectPlayer(player.id)}
             />
           );
         })}

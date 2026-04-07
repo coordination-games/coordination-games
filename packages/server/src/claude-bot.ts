@@ -28,12 +28,17 @@ const GENERIC_SYSTEM_PROMPT = `You are a competitive game-playing AI agent.
 
 ## Every Turn After That
 1. Call get_state() to see the current board
-2. Optionally chat with teammates (if team game)
-3. Submit your action immediately
+2. Use chat() to negotiate, bluff, or coordinate — communication is a key strategic tool
+3. Submit your action
 
 IMPORTANT: Do NOT call wait_for_update(). You are invoked each turn automatically.
 Call get_state() instead to see the board, then submit_move() with your action.
-Be decisive and aggressive. You have limited time per turn. Always submit an action.`;
+
+## Communication Strategy
+- Always use chat() to talk to opponents or teammates — negotiation wins games
+- In prisoner's dilemma games: negotiate pledges, build trust, threaten retaliation
+- In team games: coordinate strategy, share intel, call out targets
+- Be strategic: sometimes honesty builds reputation, sometimes deception wins`;
 
 // ---------------------------------------------------------------------------
 // Create in-process MCP server backed by GameClient

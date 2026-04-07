@@ -96,7 +96,7 @@ export function createInitialState(
     phase: 'waiting',
     players,
     pairings: [],
-    totalDollarsInvested: 0,
+    totalDollarsInvested: playerIds.length * config.entryCost,
     totalSupply,
     totalPrinted: 0,
     totalBurned: 0,

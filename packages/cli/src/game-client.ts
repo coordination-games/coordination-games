@@ -128,13 +128,15 @@ export class GameClient {
   /** Submit any action — posts the body as-is to /move. The server routes by shape. */
   async submitAction(body: Record<string, any>): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/move', body);
+    const raw = await this.api.post('/api/player/move', body);
+    return this.processResponse(raw);
   }
 
   /** Call a plugin tool by plugin ID and tool name. Goes through the generic relay. */
   async callPluginTool(pluginId: string, toolName: string, args: unknown): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/tool', { pluginId, tool: toolName, args });
+    const raw = await this.api.post('/api/player/tool', { pluginId, tool: toolName, args });
+    return this.processResponse(raw);
   }
 
   // ---------------------------------------------------------------------------
@@ -222,14 +224,19 @@ export class GameClient {
    * pipeline output back into the response.
    */
   private processResponse(raw: any): any {
-    if (raw && raw.relayMessages && Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0) {
-      const output = processState(raw);
-      return {
-        ...raw,
-        messages: output.messages,
-        pipelineOutput: Object.fromEntries(output.pipelineOutput),
-      };
+    if (!raw || typeof raw !== 'object') return raw;
+    const hasRelay = Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0;
+    if (!hasRelay) {
+      // Strip empty relay scaffolding so the agent never sees noise
+      if ('relayMessages' in raw) {
+        const { relayMessages: _r, ...rest } = raw;
+        return rest;
+      }
+      return raw;
     }
-    return raw;
+    const output = processState(raw);
+    // Drop the raw relay log + the pipelineOutput map (they duplicate `messages`)
+    const { relayMessages: _r, ...rest } = raw;
+    return { ...rest, messages: output.messages };
   }
 }

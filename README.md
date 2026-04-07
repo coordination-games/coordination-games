@@ -130,6 +130,10 @@ cd ../web && npx vite build
 cd ../.. && PORT=5173 node packages/server/dist/index.js
 ```
 
+## Roadmap / Known Issues
+
+- **On-chain settlement is broken for bot games.** The `/api/relay/settle` endpoint does `BigInt(playerId)` on internal IDs like `bot_oath_1` and `ext_15dfb880`, which throws — and bots have no on-chain identity at all. Real external players authenticate via ERC-8004 (server resolves their uint256 token ID), but the token ID is thrown away and only `ext_<random>` is kept in the session registry. **Planned fix:** register ~3 real "container bots" as actual on-chain entities (their own ERC-8004 names + tokenIds + wallets), use those instead of the current in-process bot harness, and store the tokenId alongside each session so `finishGameGeneric` can map internal IDs → uint256 before calling `settleGame`. See `packages/server/src/{relay.ts,api.ts}` and `packages/server/src/claude-bot.ts`.
+
 ## Docs
 
 - [Platform Architecture](docs/platform-architecture.md) — Engine, plugins, identity, economics, MCP surface

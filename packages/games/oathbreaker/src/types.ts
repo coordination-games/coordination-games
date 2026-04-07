@@ -70,6 +70,8 @@ export interface OathConfig {
   turnTimerSeconds: number;
   /** Random seed for deterministic pairing order. */
   seed: string;
+  /** Entry cost in dollars per player (from plugin.entryCost). */
+  entryCost: number;
   /** Player IDs (populated when game starts from lobby). */
   playerIds: string[];
 }
@@ -84,6 +86,7 @@ export const DEFAULT_OATH_CONFIG: OathConfig = {
   yieldRate: 10,
   scalingK: 0.75,
   turnTimerSeconds: 60,
+  entryCost: 1,
   seed: 'oathbreaker',
   playerIds: [],
 };
