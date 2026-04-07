@@ -19,6 +19,8 @@ The plan was executed in four commits (not three as originally planned):
 8. **Commit 8 (guide + summary on plugins + cleanup):** `plugin.guide` for rules text, `plugin.getPlayerStatus()` for player-specific status, `plugin.getSummary()` for game listings. Generic lobby creation reads from `plugin.lobby.matchmaking` config. `OathGameRoom` type alias killed. All stale comments removed.
 9. **Commit 9 (generic ELO, kill typed resolvers, kill legacy action parsing):** ELO recording now uses `computePayouts()` output via `recordGameResult()` — works for any game, no game-specific ELO code. Typed resolvers (`resolveGame`/`resolveOathGame`) replaced by single `resolveGameRoom()`. Legacy action parsing removed — server does typed passthrough only, agents send full typed actions. Server has near-zero game-specific type imports.
 
+10. **Commit 10 (lobby unification — WaitingRoom merged into Lobby):** Killed `WaitingRoom` type, merged into unified `Lobby` type with optional `LobbyRunner`. One `this.lobbies` map, one set of endpoints. Simple lobbies (no phases) collect players and auto-promote when full. Frontend uses one lobby view for all game types.
+
 **Deviations from Phase 1 plan (now resolved by Phase 2):**
 - `buildSpectatorState()` was fully replaced by `buildSpectatorView()` as a required method on `CoordinationGame`.
 - `OathGameRoom` type alias was killed in Phase 2 cleanup.

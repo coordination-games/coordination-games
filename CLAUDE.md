@@ -312,7 +312,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   tracker.ts                     — ELO rating system with SQLite. recordGameResult() takes computePayouts output for generic per-game ELO updates.
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
-  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). Config creation via plugin.createConfig() — zero game-specific imports except LobbyManager (deferred). One GameRoomData type, one games map.
+  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Unified Lobby type (WaitingRoom merged into Lobby — games with phases get a LobbyRunner, games without phases get a simple lobby that collects players and promotes when full). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). Config creation via plugin.createConfig() — zero game-specific imports except LobbyManager (deferred). One GameRoomData type, one games map, one lobbies map.
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots
   mcp-http.ts                    — Token registry, turn waiters, message cursors (utility module — MCP endpoint disabled)
@@ -338,7 +338,7 @@ packages/web/src/
     capture-the-lobster/         — CtL spectator view (hex grid, kill feed)
     oathbreaker/                 — OATHBREAKER spectator view
   pages/GamePage.tsx             — Spectator view with kill feed, team chat, perspective toggle
-  pages/LobbyPage.tsx            — Lobby page, auto-detects game type, renders building-block components
+  pages/LobbyPage.tsx            — Unified lobby page for all game types, renders building-block components based on lobby config (teams, phases, etc.)
   pages/LobbiesPage.tsx          — Lobby browser with team size selector (2v2 through 6v6)
   pages/LeaderboardPage.tsx
   pages/ReplayPage.tsx

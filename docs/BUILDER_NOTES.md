@@ -220,7 +220,7 @@ The server handles all of this from the plugin interface alone — no game-speci
 
 - **Game registration** — call `registerGame()` and the server discovers your game, creates lobbies, serves `GET /framework` listings
 - **Config creation** — the server calls your `createConfig(players, seed, options)` to build game configs. The server has ZERO game-specific imports — all config knowledge lives in your plugin.
-- **Lobbies and waiting rooms** — games with `numTeams > 1` get a `LobbyRunner` with team formation phases; games with `numTeams <= 1` get a `WaitingRoom` that auto-promotes to a game when enough players join
+- **Lobbies** — all games use a unified Lobby type. Games with pre-game phases get a `LobbyRunner`; games without phases get a simple lobby that auto-promotes to a game when enough players join. Same endpoints, same UI.
 - **Typed action passthrough** — agents send fully typed actions, server forwards them directly to your `handleAction()`. No action parsing or game-specific deserialization in the server.
 - **Turn clock with deadlines** — set `deadline` in `ActionResult`, engine fires the action on expiry
 - **Typed relay** for agent-to-agent communication (chat, trust, vision)
@@ -337,14 +337,14 @@ const MyGame: CoordinationGame<Config, State, Action, Outcome> = {
 
 With `phases: []`, the lobby simply collects players until `minPlayers` is reached, then starts the game. No team formation, no class selection — just matchmaking. The same endpoints, same UI, same fill-bots button, same bot harness.
 
-### WaitingRoom vs LobbyRunner
+### All Games Use Lobbies
 
-The server picks the orchestration strategy based on `numTeams` in your matchmaking config:
+There is one unified Lobby type. Every game goes through the same lobby endpoints, same UI, same infrastructure. The server picks the orchestration strategy based on whether your game has pre-game phases:
 
-- **`numTeams <= 1` (FFA or solo)** — uses a `WaitingRoom`. Simple player collection: agents join, wait, game auto-starts when `targetPlayers` is reached. OATHBREAKER uses this.
-- **`numTeams > 1` (teams)** — uses a `LobbyRunner`. Runs pre-game phases (team formation, class selection, etc.) with bot sessions, negotiation rounds, and timeouts. CtL uses this.
+- **Games with phases** (e.g. CtL with team formation + class selection) — get a `LobbyRunner` that executes phases in sequence with bot sessions, negotiation rounds, and timeouts.
+- **Games without phases** (`phases: []`, e.g. OATHBREAKER) — get a simple lobby that collects players and auto-promotes to a game when `targetPlayers` is reached. No LobbyRunner needed.
 
-Your game doesn't choose which one to use — the server reads `lobby.matchmaking` and picks automatically. Games with `numTeams: 0` and `phases: []` get the simplest possible experience: join, wait for players, play.
+Your game doesn't choose which path to use — the server reads `lobby.matchmaking` and picks automatically. Games with `phases: []` get the simplest possible experience: join, wait for players, play. Same endpoints, same UI, same fill-bots button.
 
 CtL declares two phases:
 ```typescript
@@ -359,7 +359,7 @@ The lobby runs each phase in sequence, each with its own timeout and UI. The pha
 ### What the Lobby Gives You
 
 All games, regardless of complexity, get:
-- **Player collection** with min/max enforcement — games with `phases: []` use a server-side `WaitingRoom` that collects players and auto-promotes to a game when `targetPlayers` is reached
+- **Player collection** with min/max enforcement — games with `phases: []` use a simple lobby that collects players and auto-promotes to a game when `targetPlayers` is reached
 - **Fill-bots** button in the UI (admin password protected)
 - **Timeout** with pause/extend controls
 - **WebSocket spectator feed** for the waiting room
