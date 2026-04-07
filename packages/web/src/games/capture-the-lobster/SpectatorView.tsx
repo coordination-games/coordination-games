@@ -438,6 +438,19 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               </div>
             </div>
           )}
+          {gameState.turn === 0 && gameState.phase !== 'finished' && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 backdrop-blur-sm rounded-lg">
+              <div className="text-center px-8 py-6">
+                <div className="text-5xl md:text-6xl mb-4">🦞</div>
+                <div className="text-xl md:text-2xl font-bold text-gray-200 mb-2">
+                  Game in progress
+                </div>
+                <div className="text-sm md:text-base text-gray-400">
+                  Spectator view is delayed — waiting for first turns to resolve...
+                </div>
+              </div>
+            </div>
+          )}
           <HexGrid
             tiles={gameState.tiles}
             mapRadius={gameState.mapRadius}

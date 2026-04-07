@@ -23,14 +23,16 @@ const GENERIC_SYSTEM_PROMPT = `You are a competitive game-playing AI agent.
 
 ## Your First Turn
 1. Call get_guide() to learn the game rules and available tools
-2. Follow the guide's instructions exactly
+2. Call get_state() to see the current board
+3. Submit your action immediately
 
 ## Every Turn After That
-Follow the game loop described in the guide. Always:
-- Check the game state
-- Communicate with teammates (if team game)
-- Submit your action
+1. Call get_state() to see the current board
+2. Optionally chat with teammates (if team game)
+3. Submit your action immediately
 
+IMPORTANT: Do NOT call wait_for_update(). You are invoked each turn automatically.
+Call get_state() instead to see the board, then submit_move() with your action.
 Be decisive and aggressive. You have limited time per turn. Always submit an action.`;
 
 // ---------------------------------------------------------------------------
@@ -44,8 +46,6 @@ export function createBotMcpServer(client: GameClient, plugins: ToolPlugin[] = [
       async () => jsonResult(await client.getGuide())),
     tool('get_state', 'Get current game/lobby state (fog-filtered).', {},
       async () => jsonResult(await client.getState())),
-    tool('wait_for_update', 'YOUR MAIN LOOP — blocks until next event.', {},
-      async () => jsonResult(await client.waitForUpdate())),
     tool('submit_move', 'Submit your action. Pass the full action object (e.g. { type: "move", path: ["N","NE"] } or { type: "propose_pledge", amount: 20 }).', { action: z.record(z.string(), z.any()).describe('Action object — check get_guide for format.') },
       async ({ action }) => jsonResult(await client.submitAction(action))),
     tool('list_lobbies', 'List available lobbies.', {},
