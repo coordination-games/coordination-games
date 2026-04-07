@@ -274,7 +274,7 @@ export function ArcadeBattleView({
           <div className="pixel-text" style={{ fontSize: 10, color: '#e9d852', letterSpacing: 3 }}>
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 28, marginTop: 2, imageRendering: 'pixelated', display: 'block', margin: '2px auto 0' }} />
+          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{ height: 28, imageRendering: 'pixelated', display: 'block', margin: '2px auto 0' }} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#d1d5db', marginTop: 2, letterSpacing: 2 }}>Seiyaku-yaburi</div>
         </div>
         <span className="pixel-text" style={{ fontSize: 7, color: '#e5e7eb' }}>

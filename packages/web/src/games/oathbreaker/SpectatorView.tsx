@@ -130,7 +130,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
           <div className="pixel-text" style={{ fontSize: 14, color: '#e9d852', letterSpacing: 4, marginBottom: 16 }}>
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />
+          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />
           <div className="pixel-text" style={{ fontSize: 9, color: '#d1d5db', marginBottom: 8, letterSpacing: 3 }}>Seiyaku-yaburi</div>
           <p className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb' }}>
             {error ? error : connected ? 'WAITING FOR GAME DATA...' : 'CONNECTING...'}

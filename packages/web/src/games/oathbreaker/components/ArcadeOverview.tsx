@@ -151,7 +151,7 @@ export function ArcadeOverview({
         }}>
           OATHBREAKER
         </div>
-        <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 120, marginTop: 8, imageRendering: 'pixelated', display: 'block', margin: '8px auto 0' }} />
+        <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{ height: 120, imageRendering: 'pixelated', display: 'block', margin: '8px auto 0' }} />
         <div className="pixel-text" style={{ fontSize: 10, color: '#d1d5db', marginTop: 6, letterSpacing: 3 }}>
           Seiyaku-yaburi
         </div>
