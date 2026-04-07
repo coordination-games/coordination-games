@@ -169,6 +169,75 @@ export class EloTracker {
     transaction();
   }
 
+  /**
+   * Record a game result generically using payouts.
+   * Players with positive payouts = winners, negative = losers, zero = draw.
+   * Works for any game type without needing team/class info.
+   */
+  recordGameResult(
+    matchId: string,
+    players: { handle: string; payout: number }[],
+  ): void {
+    if (players.length < 2) return;
+
+    // Resolve/create all players first
+    const dbPlayers = players.map(p => ({
+      ...p,
+      db: this.getOrCreatePlayer(p.handle),
+    }));
+
+    // Split into winners and losers by payout sign
+    const winners = dbPlayers.filter(p => p.payout > 0);
+    const losers = dbPlayers.filter(p => p.payout < 0);
+    const drawers = dbPlayers.filter(p => p.payout === 0);
+
+    // Determine overall result type
+    const isAllDraw = winners.length === 0 && losers.length === 0;
+
+    const avgElo = (group: typeof dbPlayers) => {
+      if (group.length === 0) return 1200;
+      return group.reduce((sum, p) => sum + p.db.elo, 0) / group.length;
+    };
+
+    const winnerElo = avgElo(winners.length > 0 ? winners : dbPlayers);
+    const loserElo = avgElo(losers.length > 0 ? losers : dbPlayers);
+
+    const transaction = this.db.transaction(() => {
+      // Insert match record (use generic fields — team/class are optional)
+      this.db.prepare(
+        'INSERT INTO matches (id, map_seed, turns, winner_team, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(matchId, matchId, 0, isAllDraw ? null : 'W', new Date().toISOString(), new Date().toISOString());
+
+      for (const p of dbPlayers) {
+        let result: 'win' | 'loss' | 'draw';
+        if (isAllDraw || p.payout === 0) {
+          result = 'draw';
+        } else if (p.payout > 0) {
+          result = 'win';
+        } else {
+          result = 'loss';
+        }
+
+        const myGroupElo = result === 'win' ? winnerElo : result === 'loss' ? loserElo : avgElo(dbPlayers);
+        const oppGroupElo = result === 'win' ? loserElo : result === 'loss' ? winnerElo : avgElo(dbPlayers);
+
+        const delta = EloTracker.calculateEloChange(myGroupElo, oppGroupElo, result);
+        const newElo = p.db.elo + delta;
+        const won = result === 'win' ? 1 : 0;
+
+        this.db.prepare(
+          'INSERT INTO match_players (match_id, player_id, team, class, elo_before, elo_after) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(matchId, p.db.id, result === 'win' ? 'W' : result === 'loss' ? 'L' : 'D', 'unknown', p.db.elo, newElo);
+
+        this.db.prepare(
+          'UPDATE players SET elo = ?, games_played = games_played + 1, wins = wins + ? WHERE id = ?'
+        ).run(newElo, won, p.db.id);
+      }
+    });
+
+    transaction();
+  }
+
   getLeaderboard(limit: number = 50, offset: number = 0): Player[] {
     const rows = this.db.prepare(
       'SELECT * FROM players ORDER BY elo DESC LIMIT ? OFFSET ?'

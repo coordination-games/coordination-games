@@ -9,10 +9,7 @@ import {
   LobbyManager as EngineLobbyManager,
 } from '@coordination-games/game-ctl';
 import {
-  type CtlGameRoom,
   type UnitClass,
-  type Direction,
-  type CtlAction,
   createCtlGameRoom,
   getMapRadiusForTeamSize,
   getTurnLimitForRadius,
@@ -45,13 +42,7 @@ import {
 import { createRelayRouter } from './relay.js';
 import { GameRelay } from './typed-relay.js';
 import { GameRoom, buildActionMerkleTree, type MerkleLeafData, getRegisteredGames, getGame } from '@coordination-games/engine';
-import {
-  type OathConfig,
-  type OathState,
-  type OathAction,
-  type OathOutcome,
-  DEFAULT_OATH_CONFIG,
-} from '@coordination-games/game-oathbreaker';
+import { DEFAULT_OATH_CONFIG } from '@coordination-games/game-oathbreaker';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,9 +69,7 @@ export interface GameRoomData {
   /** Pre-game team chat (preserved for spectators) */
   preGameChatA: { from: string; message: string; timestamp: number }[];
   preGameChatB: { from: string; message: string; timestamp: number }[];
-  // Legacy CtL fields (will be removed when bot scheduling is genericized)
   botHandles?: string[];                         // handles of bot players in this room
-  botMeta?: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   turnTimeoutMs?: number;
 }
 
@@ -113,10 +102,11 @@ function buildGameResultFromRoom(
   };
 }
 
-/** Check if a player has submitted a move for the current turn (reads from game state). */
-function hasSubmitted(game: CtlGameRoom, agentId: string): boolean {
-  const submissions = new Map(game.state.moveSubmissions);
-  return submissions.has(agentId);
+/** Check if a player has submitted their action for the current progress point. Uses plugin's getPlayersNeedingAction. */
+function hasSubmitted(game: GameRoom<any, any, any, any>, plugin: any, agentId: string): boolean {
+  if (!plugin.getPlayersNeedingAction) return false;
+  const needsAction = plugin.getPlayersNeedingAction(game.state) as string[];
+  return !needsAction.includes(agentId);
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +292,7 @@ export class GameServer {
         return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
       }
 
-      // Try CtL lobby first
+      // Try lobby first
       const lobbyRoom = this.lobbies.get(req.params.id);
       if (lobbyRoom) {
         if (lobbyRoom.state?.phase && lobbyRoom.state.phase !== 'forming') {
@@ -401,11 +391,9 @@ export class GameServer {
       const waitingRoom = this.waitingRooms.get(req.params.id);
       if (waitingRoom) {
         return res.json({
-          gameType: 'oathbreaker',
+          gameType: waitingRoom.gameType,
           targetPlayers: waitingRoom.targetPlayers,
           phase: 'waiting',
-          round: 0,
-          maxRounds: DEFAULT_OATH_CONFIG.maxRounds,
           players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
         });
       }
@@ -492,7 +480,7 @@ export class GameServer {
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      if (room.game.state.phase !== 'finished') {
+      if (!room.game.isOver()) {
         return res.status(400).json({ error: 'Game is still in progress' });
       }
 
@@ -504,12 +492,12 @@ export class GameServer {
         const messagesUpTo = allMessages.filter(m => m.turn <= i);
         return room.plugin.buildSpectatorView(state, prevState, { handles: room.handleMap, relayMessages: messagesUpTo });
       });
+      const outcome = room.game.isOver() ? room.game.getOutcome() : null;
       res.json({
         gameId: room.game.gameId,
+        gameType: room.gameType,
         turns,
-        winner: room.game.state.winner,
-        score: room.game.state.score,
-        mapRadius: room.game.state.mapRadius,
+        outcome,
       });
     });
 
@@ -534,18 +522,10 @@ export class GameServer {
 
       res.json({
         gameId: game.gameId,
-        config: {
-          mapRadius: game.state.mapRadius,
-          teamSize: game.state.config.teamSize,
-          turnLimit: game.state.config.turnLimit,
-        },
+        gameType: room.gameType,
         actions,
         stateHistory: room.game.getStateHistory(),
-        outcome: {
-          winner: game.state.winner,
-          score: game.state.score,
-          phase: game.state.phase,
-        },
+        outcome: room.game.isOver() ? room.game.getOutcome() : null,
       });
     });
 
@@ -617,21 +597,10 @@ export class GameServer {
       return { room, game: room.game };
     };
 
-    // Legacy typed resolvers (kept for callers that need game-type-specific state access)
-    const resolveGame = (agentId: string): CtlGameRoom | null => {
-      const gameId = this.agentToGame.get(agentId);
-      if (!gameId) return null;
-      const room = this.games.get(gameId);
-      if (!room || room.gameType !== 'capture-the-lobster') return null;
-      return room.game as CtlGameRoom;
-    };
-
-    const resolveOathGame = (agentId: string): GameRoom<OathConfig, OathState, OathAction, OathOutcome> | null => {
-      const gameId = this.agentToGame.get(agentId);
-      if (!gameId) return null;
-      const room = this.games.get(gameId);
-      if (!room || room.gameType !== 'oathbreaker') return null;
-      return room.game as GameRoom<OathConfig, OathState, OathAction, OathOutcome>;
+    // Generic game resolver for buildUpdates/hasPendingUpdates
+    const resolveGame: GameResolver = (agentId: string): GameRoom<any, any, any, any> | null => {
+      const result = resolveGameRoom(agentId);
+      return result?.game ?? null;
     };
 
     const resolveLobby: LobbyResolver = (agentId: string) => {
@@ -675,8 +644,6 @@ export class GameServer {
       }
       return {};
     };
-
-    const VALID_DIRECTIONS: Direction[] = ['N', 'NE', 'SE', 'S', 'SW', 'NW'];
 
     // Auth middleware: validates Bearer token, attaches agentId to req
     const requirePlayerAuth = (req: any, res: any, next: any) => {
@@ -885,12 +852,12 @@ export class GameServer {
         return res.json({ phase: 'game', ...gameTypeExtra, ...(state as any), relayMessages, handles });
       }
 
-      // OATHBREAKER waiting room
+      // Waiting room (FFA games)
       const waitingRoom = resolveWaitingRoom(agentId);
       if (waitingRoom) {
         return res.json({
           phase: 'waiting',
-          gameType: 'oathbreaker',
+          gameType: waitingRoom.gameType,
           gameId: waitingRoom.id,
           targetPlayers: waitingRoom.targetPlayers,
           currentPlayers: waitingRoom.players.length,
@@ -920,113 +887,65 @@ export class GameServer {
       const agentId = req.agentId as string;
 
       const resolved = resolveGameRoom(agentId);
-      const oathGame = resolveOathGame(agentId);
-      const game = resolveGame(agentId);
       const lobby = resolveLobby(agentId);
 
-      // === OATHBREAKER game phase ===
-      if (oathGame) {
+      // === Active game (any type) ===
+      if (resolved) {
+        const { room, game } = resolved;
         const handles = getHandlesForAgent(agentId);
-        const oathState = oathGame.state as OathState;
+        const gameTypeExtra = { gameType: room.gameType };
 
-        if (oathState.phase === 'finished') {
-          const state = oathGame.getVisibleState(agentId) as any;
-          return res.json({ reason: 'game_over', gameType: 'oathbreaker', gameOver: true, ...state, handles });
+        if (game.isOver()) {
+          const state = game.getVisibleState(agentId) as any;
+          return res.json({ reason: 'game_over', gameOver: true, ...gameTypeExtra, ...state, handles });
         }
 
-        if (hasAgentMissedTurn(agentId, oathState.round)) {
-          const state = oathGame.getVisibleState(agentId) as any;
-          setAgentLastTurn(agentId, oathState.round);
-          return res.json({ reason: 'round_changed', gameType: 'oathbreaker', ...state, handles });
+        // If progress advanced since agent last polled, return full state
+        if (hasAgentMissedTurn(agentId, game.progressCounter)) {
+          const state = game.getVisibleState(agentId) as any;
+          setAgentLastTurn(agentId, game.progressCounter);
+          buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+          return res.json({ reason: 'turn_changed', moveSubmitted: hasSubmitted(game, room.plugin, agentId), ...gameTypeExtra, ...state, handles });
         }
 
         // Pending relay updates? Return immediately
         if (hasPendingUpdates(agentId, resolveGame, resolveLobby, resolveRelay)) {
           const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ reason: 'update', gameType: 'oathbreaker', ...updates, handles });
+          return res.json({ reason: 'update', ...gameTypeExtra, ...updates, handles });
         }
 
-        // Return current state (OATHBREAKER is async — agents can act at any time)
-        const state = oathGame.getVisibleState(agentId) as any;
-        if (state) {
-          // Block until state changes or timeout
-          const prevRound = oathState.round;
-          await Promise.race([
-            waitForNextTurn(oathGame.gameId, 25000),
-            waitForAgentUpdate(agentId, 25000),
-          ]);
-
-          const updatedOath = resolveOathGame(agentId);
-          if (!updatedOath) return res.json({ reason: 'game_ended', gameType: 'oathbreaker' });
-
-          const updatedState = updatedOath.state as OathState;
-          if (updatedState.phase === 'finished') {
-            const s = updatedOath.getVisibleState(agentId) as any;
-            return res.json({ reason: 'game_over', gameType: 'oathbreaker', gameOver: true, ...s, handles });
-          }
-
-          const s = updatedOath.getVisibleState(agentId) as any;
-          if (updatedState.round > prevRound) {
-            setAgentLastTurn(agentId, updatedState.round);
-            return res.json({ reason: 'round_changed', gameType: 'oathbreaker', ...s, handles });
-          }
-          return res.json({ reason: 'update', gameType: 'oathbreaker', ...s, handles });
-        }
-      }
-
-      // === CtL Game phase ===
-      if (game) {
-        const handles = getHandlesForAgent(agentId);
-
-        if (game.state.phase === 'finished') {
+        // Agent hasn't acted yet: return full state
+        if (!hasSubmitted(game, room.plugin, agentId)) {
           const state = game.getVisibleState(agentId) as any;
-          return res.json({ reason: 'game_over', gameOver: true, winner: game.state.winner, ...state, handles });
+          setAgentLastTurn(agentId, game.progressCounter);
+          return res.json({ reason: 'new_turn', moveSubmitted: false, ...gameTypeExtra, ...state, handles });
         }
 
-        // If the turn advanced since agent last got full state, return full state
-        if (hasAgentMissedTurn(agentId, game.state.turn)) {
-          const state = game.getVisibleState(agentId) as any;
-          setAgentLastTurn(agentId, game.state.turn);
-          buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ reason: 'turn_changed', moveSubmitted: hasSubmitted(game, agentId), ...state, handles });
-        }
-
-        // Pending updates? Return immediately
-        if (hasPendingUpdates(agentId, resolveGame, resolveLobby, resolveRelay)) {
-          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ reason: 'update', ...updates, handles });
-        }
-
-        // No move yet: return full state
-        if (!hasSubmitted(game, agentId)) {
-          const state = game.getVisibleState(agentId) as any;
-          setAgentLastTurn(agentId, game.state.turn);
-          return res.json({ reason: 'new_turn', moveSubmitted: false, ...state, handles });
-        }
-
-        // Move submitted — block until turn resolution, chat, or timeout
-        const prevTurn = game.state.turn;
+        // Action submitted — block until progress advances, relay update, or timeout
+        const prevProgress = game.progressCounter;
         await Promise.race([
           waitForNextTurn(game.gameId, 25000),
           waitForAgentUpdate(agentId, 25000),
         ]);
 
-        const updatedGame = resolveGame(agentId);
-        if (!updatedGame) return res.json({ reason: 'game_ended' });
+        const updatedResolved = resolveGameRoom(agentId);
+        if (!updatedResolved) return res.json({ reason: 'game_ended', ...gameTypeExtra });
 
-        if (updatedGame.state.phase === 'finished') {
+        const { room: updatedRoom, game: updatedGame } = updatedResolved;
+
+        if (updatedGame.isOver()) {
           const state = updatedGame.getVisibleState(agentId) as any;
-          return res.json({ reason: 'game_over', gameOver: true, winner: updatedGame.state.winner, ...state, handles });
+          return res.json({ reason: 'game_over', gameOver: true, ...gameTypeExtra, ...state, handles });
         }
 
-        if (updatedGame.state.turn > prevTurn) {
+        if (updatedGame.progressCounter > prevProgress) {
           const state = updatedGame.getVisibleState(agentId) as any;
-          setAgentLastTurn(agentId, updatedGame.state.turn);
-          return res.json({ reason: 'turn_changed', ...state, handles });
+          setAgentLastTurn(agentId, updatedGame.progressCounter);
+          return res.json({ reason: 'turn_changed', ...gameTypeExtra, ...state, handles });
         }
 
         const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ reason: 'update', ...updates, handles });
+        return res.json({ reason: 'update', ...gameTypeExtra, ...updates, handles });
       }
 
       // === Lobby phase ===
@@ -1039,18 +958,13 @@ export class GameServer {
         const prevPhase = lobby.phase;
         await waitForAgentUpdate(agentId, 25000);
 
-        // After waking, check if game started (CtL or OATHBREAKER)
-        const newOathGame = resolveOathGame(agentId);
-        if (newOathGame) {
-          const state = newOathGame.getVisibleState(agentId) as any;
-          const gameHandles = getHandlesForAgent(agentId);
-          return res.json({ reason: 'game_started', phase: 'game', gameType: 'oathbreaker', ...state, handles: gameHandles });
-        }
-        const newGame = resolveGame(agentId);
-        if (newGame) {
+        // After waking, check if game started (any type)
+        const newGameResolved = resolveGameRoom(agentId);
+        if (newGameResolved) {
+          const { room: newRoom, game: newGame } = newGameResolved;
           const state = newGame.getVisibleState(agentId) as any;
           const gameHandles = getHandlesForAgent(agentId);
-          return res.json({ reason: 'game_started', phase: 'game', ...state, handles: gameHandles });
+          return res.json({ reason: 'game_started', phase: 'game', gameType: newRoom.gameType, ...state, handles: gameHandles });
         }
 
         const updatedLobby = resolveLobby(agentId);
@@ -1071,18 +985,19 @@ export class GameServer {
         return res.json({ reason: 'update', ...updates });
       }
 
-      // === OATHBREAKER waiting room ===
+      // === Waiting room (FFA games) ===
       const waitingRoom = resolveWaitingRoom(agentId);
       if (waitingRoom) {
         // Long-poll: wait until game starts or more players join
         await waitForAgentUpdate(agentId, 25000);
 
         // After waking, check if game started (waiting room promoted to game)
-        const newOathGame = resolveOathGame(agentId);
-        if (newOathGame) {
-          const state = newOathGame.getVisibleState(agentId) as any;
+        const newGameResolved = resolveGameRoom(agentId);
+        if (newGameResolved) {
+          const { room: newRoom, game: newGame } = newGameResolved;
+          const state = newGame.getVisibleState(agentId) as any;
           const gameHandles = getHandlesForAgent(agentId);
-          return res.json({ reason: 'game_started', phase: 'game', gameType: 'oathbreaker', ...state, handles: gameHandles });
+          return res.json({ reason: 'game_started', phase: 'game', gameType: newRoom.gameType, ...state, handles: gameHandles });
         }
 
         // Still in waiting room — return current state
@@ -1091,7 +1006,7 @@ export class GameServer {
         return res.json({
           reason: 'update',
           phase: 'waiting',
-          gameType: 'oathbreaker',
+          gameType: updatedRoom.gameType,
           gameId: updatedRoom.id,
           targetPlayers: updatedRoom.targetPlayers,
           currentPlayers: updatedRoom.players.length,
@@ -1159,83 +1074,30 @@ export class GameServer {
         }
       }
 
-      // Generic game action passthrough
+      // Generic game action passthrough — requires `type` field
       const resolved = resolveGameRoom(agentId);
       if (!resolved) return res.status(400).json({ error: 'No game in progress.' });
-      const { room: gameRoom, game: gameInstance } = resolved;
+      const { game: gameInstance } = resolved;
 
-      // If the body contains a `type` field, treat it as a full typed action (generic path).
-      // The server injects agentId where needed for security (agents can't impersonate others).
-      if (req.body?.type) {
-        const gameAction = { ...req.body };
-        // Inject agentId for action types that reference the acting player
-        if (gameAction.agentId !== undefined) {
-          gameAction.agentId = agentId;
-        }
-        const result = await gameInstance.handleAction(agentId, gameAction);
-        if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit action.' });
-        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, ...updates });
+      if (!req.body?.type) {
+        return res.status(400).json({ error: 'Game actions require a "type" field. Send a full typed action (e.g. { type: "move", path: [...] }).' });
       }
 
-      // Legacy OATHBREAKER action parsing (amount/decision fields without type)
-      if (gameRoom.gameType === 'oathbreaker') {
-        const { amount, decision } = req.body ?? {};
-        const oathState = gameInstance.state as OathState;
-
-        if (oathState.phase !== 'playing') {
-          return res.status(400).json({ error: `Cannot submit actions -- game phase is: ${oathState.phase}` });
-        }
-
-        if (amount !== undefined) {
-          const oathAction: OathAction = { type: 'propose_pledge', amount: Number(amount) };
-          const result = await gameInstance.handleAction(agentId, oathAction);
-          if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to propose pledge.' });
-          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ success: true, action: 'propose_pledge', amount: Number(amount), ...updates });
-        }
-
-        if (decision !== undefined) {
-          if (decision !== 'C' && decision !== 'D') {
-            return res.status(400).json({ error: 'decision must be "C" (cooperate) or "D" (defect)' });
-          }
-          const oathAction: OathAction = { type: 'submit_decision', decision };
-          const result = await gameInstance.handleAction(agentId, oathAction);
-          if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit decision.' });
-          const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ success: true, action: 'submit_decision', decision, ...updates });
-        }
-
-        return res.status(400).json({ error: 'OATHBREAKER requires "amount" (propose_pledge) or "decision" (submit_decision, "C" or "D"), or a full typed action with "type" field' });
+      const gameAction = { ...req.body };
+      // Inject agentId for action types that reference the acting player
+      if (gameAction.agentId !== undefined) {
+        gameAction.agentId = agentId;
       }
-
-      // Legacy CtL move parsing (path field without type)
-      if (gameRoom.gameType === 'capture-the-lobster') {
-        if (gameInstance.state.phase !== 'in_progress') return res.status(400).json({ error: `Cannot submit moves -- game phase is: ${gameInstance.state.phase}` });
-
-        const movePath = path ?? [];
-        if (!Array.isArray(movePath)) return res.status(400).json({ error: 'path must be an array of direction strings' });
-        for (const dir of movePath) {
-          if (!VALID_DIRECTIONS.includes(dir as Direction)) {
-            return res.status(400).json({ error: `Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}` });
-          }
-        }
-
-        const directions = movePath as Direction[];
-        const actionResult = await gameInstance.handleAction(agentId, { type: 'move', agentId, path: directions });
-        if (!actionResult.success) return res.status(400).json({ error: actionResult.error ?? 'Failed to submit move.' });
-        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-        return res.json({ success: true, path: directions, ...updates });
-      }
-
-      // Unknown game type — require full typed action
-      return res.status(400).json({ error: 'Unknown game type. Send a full typed action with a "type" field.' });
+      const result = await gameInstance.handleAction(agentId, gameAction);
+      if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit action.' });
+      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+      return res.json({ success: true, ...updates });
     });
 
     // (No dedicated /chat endpoint — chat goes through /tool as basic-chat:chat)
 
     // ------------------------------------------------------------------
-    // 9. POST /lobby/join — Join a lobby or OATHBREAKER waiting room
+    // 9. POST /lobby/join — Join a lobby or waiting room
     // ------------------------------------------------------------------
     router.post('/lobby/join', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
@@ -1243,7 +1105,7 @@ export class GameServer {
       const lobbyId = req.body?.lobbyId ?? req.body?.gameId;
       if (!lobbyId) return res.status(400).json({ error: 'lobbyId is required' });
 
-      // Try CtL lobby first
+      // Try lobby first
       const lobbyRoom = this.lobbies.get(lobbyId);
       if (lobbyRoom) {
         // Track the slot
@@ -1587,7 +1449,7 @@ export class GameServer {
           return;
         }
 
-        // Check waiting rooms (OATHBREAKER pre-game)
+        // Check waiting rooms (FFA pre-game)
         const waitingRoom = this.waitingRooms.get(gameId);
         if (waitingRoom) {
           this.wss.handleUpgrade(request, socket, head, (ws) => {
@@ -1597,7 +1459,7 @@ export class GameServer {
             ws.send(JSON.stringify({
               type: 'state_update',
               data: {
-                gameType: 'oathbreaker',
+                gameType: waitingRoom.gameType,
                 phase: 'waiting',
                 targetPlayers: waitingRoom.targetPlayers,
                 players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
@@ -1713,7 +1575,7 @@ export class GameServer {
     return count;
   }
 
-  createBotGame(teamSize: number = 4): { gameId: string; game: CtlGameRoom } {
+  createBotGame(teamSize: number = 4): { gameId: string; game: GameRoom<any, any, any, any> } {
     const gameId = crypto.randomUUID();
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
@@ -1774,7 +1636,6 @@ export class GameServer {
       preGameChatA: [],
       preGameChatB: [],
       botHandles,
-      botMeta: players,
       turnTimeoutMs: 30000,
     };
 
@@ -2050,25 +1911,19 @@ export class GameServer {
       notifyAgent(agentId);
     }
 
-    // TODO: Genericize ELO recording — needs EloTracker interface to accept game-agnostic results
-    // Currently CtL-specific because recordMatch() requires team/unitClass from units
-    if (room.gameType === 'capture-the-lobster') {
-      try {
-        const players = room.game.state.units.map((u: any) => {
-          const handle = room.handleMap[u.id] ?? getAgentName(u.id);
-          const dbPlayer = this.elo.getOrCreatePlayer(handle);
-          return { id: dbPlayer.id, team: u.team as 'A' | 'B', unitClass: u.unitClass };
-        });
-        this.elo.recordMatch(
-          room.game.gameId,
-          (room.game.state as any).mapSeed ?? room.game.gameId,
-          room.game.state.turn,
-          room.game.state.winner as 'A' | 'B' | null,
-          players,
-        );
-      } catch (err) {
-        console.error('[ELO] Failed to record match:', err);
+    // Generic ELO recording — uses computePayouts to determine winners/losers
+    try {
+      const playerIds = [...room.game.playerIds];
+      if (playerIds.length >= 2) {
+        const payouts = room.game.computePayouts(playerIds);
+        const eloPlayers = playerIds.map(id => ({
+          handle: room.handleMap[id] ?? getAgentName(id),
+          payout: payouts.get(id) ?? 0,
+        }));
+        this.elo.recordGameResult(room.game.gameId, eloPlayers);
       }
+    } catch (err) {
+      console.error('[ELO] Failed to record match:', err);
     }
 
     console.log(`[Game] Game ${gameId} (${room.gameType}) finished.`);
@@ -2235,7 +2090,6 @@ export class GameServer {
       preGameChatA,
       preGameChatB,
       botHandles,
-      botMeta: players,
       turnTimeoutMs: 30000,
     };
 

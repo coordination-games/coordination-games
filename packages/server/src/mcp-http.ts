@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { Direction, UnitClass, CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { LobbyManager as EngineLobbyManager } from '@coordination-games/game-ctl';
 import type { CtlGameRoom } from './game-session.js';
+import { GameRoom } from '@coordination-games/engine';
 import crypto from 'node:crypto';
 
 // ---------------------------------------------------------------------------
@@ -121,7 +122,7 @@ const T = { token: z.string().optional().describe("Auth token from signin(). Pas
 // Per-agent MCP server factory
 // ---------------------------------------------------------------------------
 
-export type GameResolver = (agentId: string) => CtlGameRoom | null;
+export type GameResolver = (agentId: string) => GameRoom<any, any, any, any> | null;
 export type LobbyResolver = (agentId: string) => EngineLobbyManager | null;
 export type RelayResolver = (agentId: string) => import('./typed-relay.js').GameRelay | null;
 export type MoveCallback = (gameId: string, agentId: string) => void;
@@ -491,17 +492,20 @@ export function buildUpdates(
 
   const game = resolveGame(agentId);
   if (game) {
-    updates.phase = game.state.phase === 'finished' ? 'finished' : 'game';
-    updates.turn = game.state.turn;
-    updates.moveSubmitted = new Map(game.state.moveSubmissions).has(agentId);
+    const isOver = game.isOver();
+    updates.phase = isOver ? 'finished' : 'game';
+    updates.turn = game.progressCounter;
+    // Use getPlayersNeedingAction if available, otherwise assume not submitted
+    const needsAction = game.gamePlugin.getPlayersNeedingAction?.(game.state) ?? [];
+    updates.moveSubmitted = !needsAction.includes(agentId);
     // Get new relay messages for this agent
     const relay = resolveRelay?.(agentId);
     if (relay) {
       updates.relayMessages = relay.receive(agentId);
     }
-    if (game.state.phase === 'finished') {
+    if (isOver) {
       updates.gameOver = true;
-      updates.winner = game.state.winner;
+      updates.outcome = game.getOutcome();
     }
     return updates;
   }
