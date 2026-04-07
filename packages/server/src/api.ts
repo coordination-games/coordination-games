@@ -1760,16 +1760,28 @@ export class GameServer {
     const game = GameRoom.create(plugin, setup.config, gameId, setup.players.map(p => p.id));
     const relay = new GameRelay(setup.players);
 
+    // Create bot sessions for bot players (IDs starting with 'bot_')
+    const botPlayers = players.filter(p => p.id.startsWith('bot_'));
+    const externalPlayers = players.filter(p => !p.id.startsWith('bot_'));
+    const botSessions = botPlayers.length > 0
+      ? createBotSessions(
+          botPlayers.map(p => ({ id: p.id, handle: p.handle, team: '' })),
+          this.serverUrl,
+          (id, handle) => createBotToken(id, handle),
+          [BasicChatPlugin],
+        )
+      : [];
+
     const room: GameRoomData = {
       gameType,
       plugin,
       game,
       spectators: lobby.spectators, // Transfer spectators from lobby
       finished: false,
-      externalSlots: new Map(players.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
+      externalSlots: new Map(externalPlayers.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
       handleMap,
       relay,
-      botSessions: [],
+      botSessions,
       lobbyChat: [],
       preGameChatA: [],
       preGameChatB: [],
