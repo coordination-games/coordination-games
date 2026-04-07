@@ -124,9 +124,9 @@ export async function runClaudeBotTurn(
   const mcpServer = createBotMcpServer(bot.client, bot.plugins);
   const serverName = 'game-server';
 
-  const prompt = turn === 1
-    ? `Game starting! You are ${bot.handle} (${bot.id}, Team ${bot.team}). Call get_guide() first to learn the rules, then follow them.`
-    : `Turn ${turn}. Follow your game loop: check state, communicate, submit your action.`;
+  const prompt = !bot.guideLoaded
+    ? `Game starting! You are ${bot.handle} (${bot.id}, Team ${bot.team}). Call get_guide() first to learn the rules, then get_state() and submit your action.`
+    : `Turn ${turn}. Call get_state() to see the board, then submit_move() with your action. Be fast.`;
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), 30000);
@@ -142,7 +142,7 @@ export async function runClaudeBotTurn(
         tools: [],
         mcpServers: { [serverName]: mcpServer },
         allowedTools: [`mcp__${serverName}__*`],
-        maxTurns: 8,
+        maxTurns: 16,
         abortController,
         cwd: '/tmp',
         ...(bot.sessionId ? { resume: bot.sessionId } : { persistSession: true }),
@@ -152,6 +152,19 @@ export async function runClaudeBotTurn(
     for await (const message of q) {
       if ('session_id' in message && (message as any).session_id && !bot.sessionId) {
         bot.sessionId = (message as any).session_id;
+      }
+      // Debug: log bot messages with content
+      const m = message as any;
+      if (m.type === 'assistant' && m.message?.content) {
+        for (const block of m.message.content) {
+          if (block.type === 'tool_use') {
+            console.log(`[Bot ${bot.id}] TOOL: ${block.name}(${JSON.stringify(block.input).substring(0, 200)})`);
+          } else if (block.type === 'text' && block.text) {
+            console.log(`[Bot ${bot.id}] TEXT: ${block.text.substring(0, 150)}`);
+          }
+        }
+      } else if (m.type === 'result') {
+        console.log(`[Bot ${bot.id}] RESULT: ${JSON.stringify(m).substring(0, 200)}`);
       }
     }
 

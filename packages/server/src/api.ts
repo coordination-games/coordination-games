@@ -2056,11 +2056,10 @@ export class GameServer {
     const externalSlots = new Map<string, ExternalSlot>();
     const handleMap: Record<string, string> = { ...handles };
 
-    // Separate bot handles from external agent handles
+    // Map all players to this game and separate bot/external slots
     for (const p of players) {
+      this.agentToGame.set(p.id, gameId);
       if (p.id.startsWith('ext_')) {
-        // External agent — track their game
-        this.agentToGame.set(p.id, gameId);
         externalSlots.set(p.id, {
           token: '',
           agentId: p.id,
