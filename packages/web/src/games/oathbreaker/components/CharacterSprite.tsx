@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { getSpritePath, type Pose } from '../utils/spriteMap';
+import { getSpritePath, getFacesRight, type Pose } from '../utils/spriteMap';
 
 interface CharacterSpriteProps {
   character: string;
   pose: Pose;
-  mirror?: boolean;
+  /** Which direction the sprite should face in the scene */
+  faceRight?: boolean;
   scale?: number;
   tint?: string | null;
   className?: string;
@@ -13,13 +14,17 @@ interface CharacterSpriteProps {
 export function CharacterSprite({
   character,
   pose,
-  mirror = false,
+  faceRight = true,
   scale = 4,
   tint = null,
   className,
 }: CharacterSpriteProps) {
   const [loaded, setLoaded] = useState(false);
   const src = getSpritePath(character, pose);
+
+  // Determine if we need to flip: if natural direction differs from desired
+  const naturallyFacesRight = getFacesRight(character);
+  const needsFlip = faceRight !== naturallyFacesRight;
 
   useEffect(() => {
     setLoaded(false);
@@ -33,7 +38,7 @@ export function CharacterSprite({
       className={className}
       style={{
         display: 'inline-block',
-        transform: `scale(${mirror ? -scale : scale}, ${scale})`,
+        transform: `scale(${needsFlip ? -scale : scale}, ${scale})`,
         transformOrigin: 'center bottom',
         imageRendering: 'pixelated',
         filter: tint ?? undefined,

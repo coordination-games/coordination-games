@@ -274,10 +274,10 @@ export function ArcadeBattleView({
           <div className="pixel-text" style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}>
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 24, marginTop: 2, imageRendering: 'auto' }} />
-          <div className="pixel-text" style={{ fontSize: 5, color: '#9ca3af', marginTop: 1 }}>Seiyaku-yaburi</div>
+          <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 40, marginTop: 2, imageRendering: 'auto' }} />
+          <div className="pixel-text" style={{ fontSize: 7, color: '#d1d5db', marginTop: 2, letterSpacing: 2 }}>Seiyaku-yaburi</div>
         </div>
-        <span className="pixel-text" style={{ fontSize: 7, color: '#6b7280' }}>
+        <span className="pixel-text" style={{ fontSize: 7, color: '#e5e7eb' }}>
           ROUND {currentRound}/{maxRounds}
         </span>
       </div>
@@ -356,22 +356,23 @@ export function ArcadeBattleView({
           paddingBottom: 16,
           position: 'relative', zIndex: 2,
         }}>
-          {/* P1 — left, mirrored to face right (sprites naturally face left) */}
+          {/* P1 — left side, faces right (toward center) */}
           <div className={reveal.phase === 'reveal' && reveal.p1Pose === 'victory' ? 'golden-glow' : ''}>
             <CharacterSprite
               character={char1?.characterName ?? 'buchu'}
               pose={reveal.p1Pose}
-              mirror
+              faceRight={true}
               scale={4}
               tint={char1?.tint}
             />
           </div>
 
-          {/* P2 — right, natural left-facing (toward center) */}
+          {/* P2 — right side, faces left (toward center) */}
           <div className={reveal.phase === 'reveal' && reveal.p2Pose === 'victory' ? 'golden-glow' : ''}>
             <CharacterSprite
               character={char2?.characterName ?? 'star'}
               pose={reveal.p2Pose}
+              faceRight={false}
               scale={4}
               tint={char2?.tint}
             />

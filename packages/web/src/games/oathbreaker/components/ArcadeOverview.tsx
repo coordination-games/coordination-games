@@ -85,7 +85,7 @@ function AgentCard({
               fontSize: 6,
               padding: '2px 6px',
               background: inBattle ? 'rgba(59, 130, 246, 0.15)' : 'rgba(107, 114, 128, 0.1)',
-              color: inBattle ? '#60a5fa' : '#4b5563',
+              color: inBattle ? '#60a5fa' : '#9ca3af',
             }}>
               {status}
             </span>
@@ -95,7 +95,7 @@ function AgentCard({
 
           <div className="pixel-text" style={{
             display: 'flex', justifyContent: 'space-between',
-            marginTop: 4, fontSize: 6, color: '#6b7280',
+            marginTop: 4, fontSize: 6, color: '#d1d5db',
           }}>
             <span>
               OATHS: <span style={{ color: '#4ade80' }}>{player.oathsKept}</span>
@@ -151,11 +151,11 @@ export function ArcadeOverview({
         }}>
           OATHBREAKER
         </div>
-        <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 36, marginTop: 6, imageRendering: 'auto', display: 'block', margin: '6px auto 0' }} />
-        <div className="pixel-text" style={{ fontSize: 7, color: '#9ca3af', marginTop: 4, letterSpacing: 2 }}>
+        <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 64, marginTop: 8, imageRendering: 'auto', display: 'block', margin: '8px auto 0' }} />
+        <div className="pixel-text" style={{ fontSize: 10, color: '#d1d5db', marginTop: 6, letterSpacing: 3 }}>
           Seiyaku-yaburi
         </div>
-        <div className="pixel-text" style={{ fontSize: 7, color: '#4b5563', marginTop: 8 }}>
+        <div className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb', marginTop: 10 }}>
           {phase === 'finished' ? 'TOURNAMENT COMPLETE' : `ROUND ${currentRound} / ${maxRounds}`}
           {'  ·  '}
           {players.length} WARRIORS

@@ -6,21 +6,27 @@ export type Pose = 'idle' | 'attack' | 'hit' | 'victory';
 export interface CharacterDef {
   name: string;
   displayName: string;
-  /** Base path relative to /assets/oathbreaker/characters/ */
   baseName: string;
+  /** True if the sprite naturally faces right in the PNG */
+  facesRight: boolean;
 }
 
 export const CHARACTERS: CharacterDef[] = [
-  { name: 'buchu', displayName: 'Buchu', baseName: 'buchu' },
-  { name: 'star', displayName: 'Star', baseName: 'star' },
-  { name: 'oolong', displayName: 'Oolong', baseName: 'oolong' },
-  { name: 'nuncha', displayName: 'Nuncha', baseName: 'nuncha' },
-  { name: 'fan', displayName: 'Fan', baseName: 'fan' },
-  { name: 'chain', displayName: 'Chain', baseName: 'chain' },
-  { name: 'sword', displayName: 'Sword', baseName: 'sword' },
-  { name: 'tonfun', displayName: 'Tonfun', baseName: 'tonfun' },
-  { name: 'blues', displayName: 'Blues', baseName: 'blues' },
+  { name: 'buchu', displayName: 'Buchu', baseName: 'buchu', facesRight: true },
+  { name: 'star', displayName: 'Star', baseName: 'star', facesRight: false },
+  { name: 'oolong', displayName: 'Oolong', baseName: 'oolong', facesRight: true },
+  { name: 'nuncha', displayName: 'Nuncha', baseName: 'nuncha', facesRight: true },
+  { name: 'fan', displayName: 'Fan', baseName: 'fan', facesRight: false },
+  { name: 'chain', displayName: 'Chain', baseName: 'chain', facesRight: false },
+  { name: 'sword', displayName: 'Sword', baseName: 'sword', facesRight: false },
+  { name: 'tonfun', displayName: 'Tonfun', baseName: 'tonfun', facesRight: true },
+  { name: 'blues', displayName: 'Blues', baseName: 'blues', facesRight: false },
 ];
+
+/** Look up a character's natural facing direction */
+export function getFacesRight(characterName: string): boolean {
+  return CHARACTERS.find(c => c.name === characterName)?.facesRight ?? true;
+}
 
 export function getSpritePath(character: string, pose: Pose): string {
   return `/assets/oathbreaker/characters/${character}-${pose}.png`;
