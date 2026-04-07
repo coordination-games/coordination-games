@@ -156,16 +156,26 @@ export class GameClient {
     return this.api.get('/api/lobbies');
   }
 
-  /** Join an existing lobby. */
+  /** Join an existing lobby or OATHBREAKER game. */
   async joinLobby(lobbyId: string): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/lobby/join', { lobbyId });
+    // Try CtL lobby first, fall back to OATHBREAKER game join
+    const result = await this.api.post('/api/player/lobby/join', { lobbyId });
+    if (result.error && result.error.includes('not found')) {
+      return this.api.post('/api/player/lobby/join-oath', { gameId: lobbyId });
+    }
+    return result;
   }
 
   /** Create a new lobby (auto-joins the creator). */
-  async createLobby(teamSize?: number): Promise<any> {
+  async createLobby(gameType?: string, size?: number): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/lobby/create', { teamSize });
+    if (gameType === 'oathbreaker') {
+      const playerCount = Math.min(20, Math.max(4, size || 4));
+      return this.api.post('/api/player/lobby/create', { gameType, playerCount });
+    }
+    const teamSize = Math.min(6, Math.max(2, size || 2));
+    return this.api.post('/api/player/lobby/create', { gameType, teamSize });
   }
 
   // ---------------------------------------------------------------------------

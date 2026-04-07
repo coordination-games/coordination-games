@@ -89,27 +89,36 @@ export function registerGameCommands(program: Command) {
   program
     .command("create-lobby")
     .description("Create a new game lobby")
-    .option("-s, --size <n>", "Team size (2-6)", "2")
-    .option("-g, --game <name>", "Game plugin name", "capture-the-lobster")
+    .option("-s, --size <n>", "Team size (2-6) for CtL, player count (4-20) for OATHBREAKER", "2")
+    .option("-g, --game <name>", "Game type: capture-the-lobster or oathbreaker", "capture-the-lobster")
     .action(async (opts) => {
       const client = await createClient();
-      const teamSize = Math.min(6, Math.max(2, parseInt(opts.size, 10) || 2));
+      const gameType = opts.game;
+      const size = parseInt(opts.size, 10) || 2;
 
       try {
-        const result = await client.createLobby(teamSize);
+        const result = await client.createLobby(gameType, size);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
           process.exit(1);
         }
 
-        const lobbyId = result.lobbyId;
-        process.stdout.write(`\n  Lobby created: ${lobbyId}\n`);
-        process.stdout.write(`  Team size: ${teamSize}v${teamSize}\n\n`);
-
-        const session = loadSession();
-        session.currentLobbyId = lobbyId;
-        saveSession(session);
+        if (gameType === 'oathbreaker') {
+          process.stdout.write(`\n  OATHBREAKER game created: ${result.gameId}\n`);
+          process.stdout.write(`  Players: ${result.playerCount}\n\n`);
+          const session = loadSession();
+          session.currentGameId = result.gameId;
+          saveSession(session);
+        } else {
+          const lobbyId = result.lobbyId;
+          const teamSize = Math.min(6, Math.max(2, size));
+          process.stdout.write(`\n  Lobby created: ${lobbyId}\n`);
+          process.stdout.write(`  Team size: ${teamSize}v${teamSize}\n\n`);
+          const session = loadSession();
+          session.currentLobbyId = lobbyId;
+          saveSession(session);
+        }
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);

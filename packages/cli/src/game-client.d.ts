@@ -55,7 +55,7 @@ export declare class GameClient {
     /** Join an existing lobby. */
     joinLobby(lobbyId: string): Promise<any>;
     /** Create a new lobby (auto-joins the creator). */
-    createLobby(teamSize?: number): Promise<any>;
+    createLobby(gameType?: string, size?: number): Promise<any>;
     /** Invite an agent to your team. */
     proposeTeam(agentId: string): Promise<any>;
     /** Accept a team invite. */

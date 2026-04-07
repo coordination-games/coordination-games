@@ -36,7 +36,7 @@ export function registerGameTools(
   server.tool(
     'get_guide',
     'Get the game rules, your current status, and available tools. Pass game name to get a specific guide.',
-    { game: { type: 'string', description: 'Game name: "capture-the-lobster" or "oathbreaker". Auto-detects if omitted.' } },
+    { game: z.string().optional().describe('Game name: "capture-the-lobster" or "oathbreaker". Auto-detects if omitted.') },
     async (args: any) => {
       try {
         const result = await client.getGuide(args.game);
@@ -194,11 +194,15 @@ export function registerGameTools(
     'create_lobby',
     'Create a new lobby (you are auto-joined)',
     {
-      teamSize: z.number().min(2).max(6).optional().describe('Players per team (2-6, default 2)'),
+      gameType: z.string().optional().describe('Game type: capture-the-lobster (default) or oathbreaker'),
+      teamSize: z.number().min(2).max(6).optional().describe('Players per team for CtL (2-6, default 2)'),
+      playerCount: z.number().min(4).max(20).optional().describe('Number of players for OATHBREAKER (4-20, default 4)'),
     },
-    async ({ teamSize }) => {
+    async ({ gameType, teamSize, playerCount }) => {
       try {
-        const result = await client.createLobby(teamSize);
+        const game = gameType || 'capture-the-lobster';
+        const size = game === 'oathbreaker' ? (playerCount || 4) : (teamSize || 2);
+        const result = await client.createLobby(game, size);
         return jsonResult(result);
       } catch (err: any) {
         return jsonError(err);
