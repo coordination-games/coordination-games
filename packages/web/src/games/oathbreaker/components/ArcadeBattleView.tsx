@@ -271,7 +271,7 @@ export function ArcadeBattleView({
           ← BACK
         </button>
         <div style={{ textAlign: 'center' }}>
-          <div className="pixel-text" style={{ fontSize: 10, color: '#d4a017', letterSpacing: 3 }}>
+          <div className="pixel-text" style={{ fontSize: 10, color: '#e9d852', letterSpacing: 3 }}>
             OATHBREAKER
           </div>
           <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 28, marginTop: 2, imageRendering: 'pixelated', display: 'block', margin: '2px auto 0' }} />
