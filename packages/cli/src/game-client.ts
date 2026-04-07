@@ -125,18 +125,9 @@ export class GameClient {
     return this.processResponse(raw);
   }
 
-  /** Submit a gameplay move (direction path). */
-  async submitMove(path: string[]): Promise<any> {
+  /** Submit any action — posts the body as-is to /move. The server routes by shape. */
+  async submitAction(body: Record<string, any>): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/move', { path });
-  }
-
-  /** Submit a lobby-phase action (propose-team, accept-team, leave-team, choose-class). */
-  async submitAction(action: string, target?: string, cls?: string): Promise<any> {
-    await this.ensureAuth();
-    const body: Record<string, any> = { action };
-    if (target) body.target = target;
-    if (cls) body.class = cls;
     return this.api.post('/api/player/move', body);
   }
 

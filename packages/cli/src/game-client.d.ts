@@ -44,10 +44,8 @@ export declare class GameClient {
     getState(): Promise<any>;
     /** Long-poll for next event (turn change, chat, phase change). */
     waitForUpdate(): Promise<any>;
-    /** Submit a gameplay move (direction path). */
-    submitMove(path: string[]): Promise<any>;
-    /** Submit a lobby-phase action (propose-team, accept-team, leave-team, choose-class). */
-    submitAction(action: string, target?: string, cls?: string): Promise<any>;
+    /** Submit any action — posts the body as-is to /move. The server routes by shape. */
+    submitAction(body: Record<string, any>): Promise<any>;
     /** Send a chat message (routed by server based on current phase). */
     chat(message: string): Promise<any>;
     /** List available lobbies. */

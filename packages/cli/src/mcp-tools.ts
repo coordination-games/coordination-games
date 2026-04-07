@@ -85,20 +85,13 @@ export function registerGameTools(
 
   server.tool(
     'submit_move',
-    'Submit your action for the current phase',
+    'Submit your action for the current phase. Pass the action object directly — the server routes by shape. Examples: { type: "move", path: ["N","NE"] }, { type: "pledge", amount: 20 }, { action: "propose-team", target: "AgentName" }',
     {
-      path: z.array(z.string()).optional().describe('Gameplay: direction array, e.g. ["N","NE"]. Rogues get 2 steps, others 1.'),
-      action: z.string().optional().describe('Lobby action: propose-team, accept-team, leave-team, choose-class'),
-      target: z.string().optional().describe('Target for lobby actions (name for propose-team, teamId for accept-team)'),
-      class: z.string().optional().describe('Unit class for choose-class action (rogue, knight, mage)'),
+      action: z.record(z.string(), z.any()).describe('The action object to submit. Must match the game\'s expected format (check get_guide).'),
     },
     async (args) => {
       try {
-        if (args.action) {
-          const result = await client.submitAction(args.action, args.target, args.class);
-          return jsonResult(result);
-        }
-        const result = await client.submitMove(args.path ?? []);
+        const result = await client.submitAction(args.action);
         return jsonResult(result);
       } catch (err: any) {
         return jsonError(err);

@@ -230,12 +230,9 @@ export function registerGameCommands(program: Command) {
           return;
         }
 
-        let result: any;
-        if (Array.isArray(moveData)) {
-          result = await client.submitMove(moveData);
-        } else {
-          result = await client.submitAction(moveData.action, moveData.target, moveData.class);
-        }
+        // Send whatever the user gave us — server routes by shape
+        const body = Array.isArray(moveData) ? { type: 'move', path: moveData } : moveData;
+        const result = await client.submitAction(body);
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
