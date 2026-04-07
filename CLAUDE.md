@@ -273,8 +273,9 @@ The HexGrid component (`packages/web/src/components/HexGrid.tsx`) renders:
 
 ```
 packages/engine/src/           — Generic game server framework (@coordination-games/engine)
-  types.ts                       — All shared types (CoordinationGame, ToolPlugin, LobbyPhase, ActionResult w/ progressIncrement, etc.)
-  game-session.ts                — GameRoom<TConfig, TState, TAction, TOutcome> with progress tracking, state snapshots, getSpectatorView(delay)
+  types.ts                       — All shared types (CoordinationGame w/ buildSpectatorView/guide/getSummary/getPlayerStatus, ToolPlugin, LobbyPhase, ActionResult w/ progressIncrement, SpectatorContext, etc.)
+  game-session.ts                — GameRoom<TConfig, TState, TAction, TOutcome> with progress tracking, state snapshots, playerIds, getSpectatorView() calling plugin.buildSpectatorView()
+  registry.ts                    — Game plugin registry: registerGame(), getGame(), getRegisteredGames(), getAllGames()
   plugin-loader.ts               — Plugin registry, topological sort, pipeline builder
   mcp.ts                         — Phase-aware MCP tool visibility, dynamic guide generator
   merkle.ts                      — Merkle tree construction for game proofs
@@ -285,7 +286,7 @@ packages/engine/src/           — Generic game server framework (@coordination-
     balance.ts                   — Vibes tracking
 
 packages/games/capture-the-lobster/src/  — CtL game plugin (@coordination-games/game-ctl)
-  plugin.ts                      — CaptureTheLobsterPlugin (CoordinationGame impl + LobbyConfig)
+  plugin.ts                      — CaptureTheLobsterPlugin (CoordinationGame impl + LobbyConfig + registerGame() + buildSpectatorView/guide/getSummary/getPlayerStatus)
   hex.ts                         — Axial hex coordinates (unchanged)
   los.ts                         — Line-of-sight (unchanged)
   combat.ts                      — RPS combat resolution (unchanged)
@@ -299,7 +300,7 @@ packages/games/capture-the-lobster/src/  — CtL game plugin (@coordination-game
     class-selection.ts           — LobbyPhase: pick rogue/knight/mage
 
 packages/games/oathbreaker/src/  — OATHBREAKER game plugin (@coordination-games/game-oathbreaker)
-  plugin.ts                      — OathbreakerPlugin (CoordinationGame impl)
+  plugin.ts                      — OathbreakerPlugin (CoordinationGame impl + registerGame() + buildSpectatorView/guide/getSummary/getPlayerStatus)
   game.ts                        — Iterated prisoner's dilemma game logic
   types.ts                       — OATHBREAKER-specific types
 
@@ -311,7 +312,7 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   tracker.ts                     — ELO rating system with SQLite
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
-  api.ts                         — Express server, REST API, WebSocket spectator feed. One GameRoomData type, one games map, unified wireCallbacks/spectator broadcast/bot scheduling.
+  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Generic resolveGameRoom(), action passthrough, spectator broadcast via plugin.buildSpectatorView(). One GameRoomData type, one games map.
   game-session.ts                — Game room helpers (typed state access, action submission)
   claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
   lobby-runner.ts                — Lobby orchestrator with Claude bots
