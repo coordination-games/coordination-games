@@ -5,7 +5,7 @@
  * Framework calls handleAction, game decides everything else.
  */
 
-import type { CoordinationGame, ActionResult } from './types.js';
+import type { CoordinationGame, ActionResult, SpectatorContext } from './types.js';
 
 export class GameRoom<TConfig, TState, TAction, TOutcome> {
   private _state: TState;
@@ -43,13 +43,21 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
   get progressCounter(): number { return this._progressCounter; }
 
   /** Get spectator view with delay (in progress units, not raw actions). */
-  getSpectatorView(delay: number = 0): unknown {
+  getSpectatorView(delay: number = 0, context?: SpectatorContext): unknown {
+    const ctx = context ?? { handles: {}, relayMessages: [] };
     if (delay <= 0 || this._progressSnapshots.length === 0) {
-      return this.game.getVisibleState(this._state, null);
+      const prevIdx = this._stateHistory.length >= 2 ? this._stateHistory.length - 2 : null;
+      const prevState = prevIdx !== null ? this._stateHistory[prevIdx] : null;
+      return this.game.buildSpectatorView(this._state, prevState, ctx);
     }
     const targetProgress = Math.max(0, this._progressSnapshots.length - 1 - delay);
     const historyIndex = this._progressSnapshots[targetProgress];
-    return this.game.getVisibleState(this._stateHistory[historyIndex], null);
+    const prevIndex = targetProgress > 0 ? this._progressSnapshots[targetProgress - 1] : 0;
+    return this.game.buildSpectatorView(
+      this._stateHistory[historyIndex],
+      historyIndex > 0 ? this._stateHistory[prevIndex] : null,
+      ctx,
+    );
   }
 
   /**

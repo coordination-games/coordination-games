@@ -32,6 +32,14 @@ export {
 // Game room (v2 action-based)
 export { GameRoom } from './game-session.js';
 
+// Game plugin registry
+export {
+  registerGame,
+  getGame,
+  getRegisteredGames,
+  getAllGames,
+} from './registry.js';
+
 // Server-side framework
 export {
   GameFramework,

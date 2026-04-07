@@ -9,10 +9,15 @@ import type {
   CoordinationGame,
   ActionResult,
   GameLobbyConfig,
+  SpectatorContext,
 } from '@coordination-games/engine';
+import { registerGame } from '@coordination-games/engine';
 
 import {
   CtlGameState,
+  GameUnit,
+  FlagState,
+  GamePhase,
   createGameState,
   validateMoveForPlayer,
   submitMove as gameSubmitMove,
@@ -21,9 +26,10 @@ import {
   allMovesSubmitted,
   getStateForAgent,
 } from './game.js';
-import { generateMap, MapConfig } from './map.js';
-import { Direction } from './hex.js';
+import { generateMap, MapConfig, TileType } from './map.js';
+import { Hex, Direction } from './hex.js';
 import { UnitClass } from './movement.js';
+import { getUnitVision } from './fog.js';
 
 // ---------------------------------------------------------------------------
 // CtL-specific types
@@ -74,6 +80,217 @@ export type CtlAction =
   | { type: 'game_start' }
   | { type: 'move'; agentId: string; path: Direction[] }
   | { type: 'turn_timeout' };
+
+// ---------------------------------------------------------------------------
+// Spectator view types (consumed by the frontend)
+// ---------------------------------------------------------------------------
+
+export interface SpectatorTile {
+  q: number;
+  r: number;
+  type: TileType;
+  unit?: {
+    id: string;
+    team: 'A' | 'B';
+    unitClass: UnitClass;
+    carryingFlag?: boolean;
+    alive: boolean;
+    respawnTurn?: number;
+  };
+  units?: {
+    id: string;
+    team: 'A' | 'B';
+    unitClass: UnitClass;
+    carryingFlag?: boolean;
+    alive: boolean;
+    respawnTurn?: number;
+  }[];
+  flag?: { team: 'A' | 'B' };
+}
+
+export interface SpectatorState {
+  turn: number;
+  maxTurns: number;
+  phase: GamePhase;
+  tiles: SpectatorTile[];
+  units: {
+    id: string;
+    team: 'A' | 'B';
+    unitClass: UnitClass;
+    position: Hex;
+    alive: boolean;
+    carryingFlag: boolean;
+    respawnTurn?: number;
+  }[];
+  kills: { killerId: string; victimId: string; reason: string }[];
+  chatA: { from: string; message: string; turn: number }[];
+  chatB: { from: string; message: string; turn: number }[];
+  flagA: { status: 'at_base' | 'carried'; carrier?: string };
+  flagB: { status: 'at_base' | 'carried'; carrier?: string };
+  score: { A: number; B: number };
+  winner: 'A' | 'B' | null;
+  mapRadius: number;
+  visibleA: string[];
+  visibleB: string[];
+  visibleByUnit: Record<string, string[]>;
+  turnTimeoutMs: number;
+  turnStartedAt: number;
+  handles: Record<string, string>;
+  relayMessages?: any[];
+}
+
+// ---------------------------------------------------------------------------
+// Build spectator view from raw game state
+// ---------------------------------------------------------------------------
+
+function buildCtlSpectatorView(
+  state: CtlGameState,
+  prevState: CtlGameState | null,
+  context: SpectatorContext,
+): SpectatorState {
+  const map = { tiles: new Map<string, string>(state.mapTiles), radius: state.mapRadius, bases: state.mapBases };
+  const { units, flags, turn, phase, config, score } = state;
+
+  // Build full tile array (no fog -- spectators see everything)
+  const tiles: SpectatorTile[] = [];
+  const unitsByHex = new Map<string, GameUnit[]>();
+  for (const u of units) {
+    const key = `${u.position.q},${u.position.r}`;
+    const list = unitsByHex.get(key) ?? [];
+    list.push(u);
+    unitsByHex.set(key, list);
+  }
+
+  const flagsByHex = new Map<string, 'A' | 'B'>();
+  for (const team of ['A', 'B'] as const) {
+    const teamFlags = flags[team];
+    for (const f of teamFlags) {
+      flagsByHex.set(`${f.position.q},${f.position.r}`, team);
+    }
+  }
+
+  for (const [key, tileType] of map.tiles) {
+    const [qStr, rStr] = key.split(',');
+    const q = Number(qStr);
+    const r = Number(rStr);
+    const tile: SpectatorTile = { q, r, type: tileType as TileType };
+
+    const unitsHere = unitsByHex.get(key);
+    if (unitsHere && unitsHere.length > 0) {
+      const primary = unitsHere[0];
+      tile.unit = {
+        id: primary.id,
+        team: primary.team,
+        unitClass: primary.unitClass,
+        carryingFlag: primary.carryingFlag || undefined,
+        alive: primary.alive,
+        respawnTurn: primary.respawnTurn,
+      };
+      if (unitsHere.length > 1) {
+        tile.units = unitsHere.map((u) => ({
+          id: u.id,
+          team: u.team,
+          unitClass: u.unitClass,
+          carryingFlag: u.carryingFlag || undefined,
+          alive: u.alive,
+          respawnTurn: u.respawnTurn,
+        }));
+      }
+    }
+
+    const flagTeam = flagsByHex.get(key);
+    if (flagTeam !== undefined) {
+      tile.flag = { team: flagTeam };
+    }
+
+    tiles.push(tile);
+  }
+
+  // Kills -- inferred by comparing alive status with previous state
+  const kills: { killerId: string; victimId: string; reason: string }[] = [];
+  if (prevState) {
+    for (const unit of units) {
+      const prevUnit = prevState.units.find((u: GameUnit) => u.id === unit.id);
+      if (prevUnit && prevUnit.alive && !unit.alive) {
+        kills.push({ killerId: 'unknown', victimId: unit.id, reason: 'combat' });
+      }
+    }
+  }
+
+  // Build flag status summaries
+  function flagStatus(flagArr: FlagState[]): { status: 'at_base' | 'carried'; carrier?: string } {
+    for (const f of flagArr) {
+      if (f.carried && f.carrierId) {
+        return { status: 'carried', carrier: f.carrierId };
+      }
+    }
+    return { status: 'at_base' };
+  }
+
+  // Compute per-team fog of war
+  const walls = new Set<string>();
+  const allHexKeys = new Set<string>();
+  for (const [key, tileType] of map.tiles) {
+    allHexKeys.add(key);
+    if (tileType === 'wall') walls.add(key);
+  }
+
+  const visibleA = new Set<string>();
+  const visibleB = new Set<string>();
+  const visibleByUnit: Record<string, string[]> = {};
+  for (const u of units) {
+    if (!u.alive) continue;
+    const unitVision = getUnitVision(
+      { id: u.id, position: u.position, unitClass: u.unitClass, team: u.team, alive: u.alive },
+      walls,
+      allHexKeys,
+    );
+    visibleByUnit[u.id] = [...unitVision];
+    const targetSet = u.team === 'A' ? visibleA : visibleB;
+    for (const hex of unitVision) {
+      targetSet.add(hex);
+    }
+  }
+
+  // Extract chat from relay messages
+  const relayMessages = context.relayMessages ?? [];
+  const chatA = relayMessages
+    .filter((m: any) => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'A'))
+    .map((m: any) => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn }));
+  const chatB = relayMessages
+    .filter((m: any) => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'B'))
+    .map((m: any) => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn }));
+
+  return {
+    turn,
+    maxTurns: config.turnLimit,
+    phase,
+    tiles,
+    units: units.map((u) => ({
+      id: u.id,
+      team: u.team,
+      unitClass: u.unitClass,
+      position: { ...u.position },
+      alive: u.alive,
+      carryingFlag: u.carryingFlag,
+      respawnTurn: u.respawnTurn,
+    })),
+    kills,
+    chatA,
+    chatB,
+    flagA: flagStatus(flags.A),
+    flagB: flagStatus(flags.B),
+    score: { A: score.A, B: score.B },
+    winner: state.winner ?? null,
+    mapRadius: map.radius,
+    visibleA: [...visibleA],
+    visibleB: [...visibleB],
+    visibleByUnit,
+    turnTimeoutMs: 30000,
+    turnStartedAt: Date.now(),
+    handles: context.handles,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // The plugin
@@ -194,6 +411,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return getStateForAgent(state, playerId, submitted);
   },
 
+  buildSpectatorView(state: CtlGameState, prevState: CtlGameState | null, context: SpectatorContext): SpectatorState {
+    return buildCtlSpectatorView(state, prevState, context);
+  },
+
   isOver(state: CtlGameState): boolean {
     return isGameOver(state);
   },
@@ -273,3 +494,6 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return payouts;
   },
 };
+
+// Self-register with the engine's game registry
+registerGame(CaptureTheLobsterPlugin);

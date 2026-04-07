@@ -6,22 +6,12 @@ import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
 
 import {
-  Hex,
-  TileType,
-  getUnitVision,
-  hexToString,
-  CLASS_VISION,
   LobbyManager as EngineLobbyManager,
 } from '@coordination-games/game-ctl';
 import {
   type CtlGameRoom,
-  type GameUnit,
-  type FlagState,
-  type GamePhase,
-  type TurnRecord,
   type UnitClass,
   type Direction,
-  type GameConfig,
   type CtlAction,
   createCtlGameRoom,
   getMapRadiusForTeamSize,
@@ -55,8 +45,8 @@ import {
   type RelayResolver,
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
-import { GameRelay, type RelayMessage } from './typed-relay.js';
-import { GameRoom, buildActionMerkleTree, type MerkleLeafData } from '@coordination-games/engine';
+import { GameRelay } from './typed-relay.js';
+import { GameRoom, buildActionMerkleTree, type MerkleLeafData, getRegisteredGames } from '@coordination-games/engine';
 import {
   OathbreakerPlugin,
   type OathConfig,
@@ -70,61 +60,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SpectatorTile {
-  q: number;
-  r: number;
-  type: TileType;
-  unit?: {
-    id: string;
-    team: 'A' | 'B';
-    unitClass: UnitClass;
-    carryingFlag?: boolean;
-    alive: boolean;
-    respawnTurn?: number;
-  };
-  units?: {
-    id: string;
-    team: 'A' | 'B';
-    unitClass: UnitClass;
-    carryingFlag?: boolean;
-    alive: boolean;
-    respawnTurn?: number;
-  }[];
-  flag?: { team: 'A' | 'B' };
-}
-
-export interface SpectatorState {
-  turn: number;
-  maxTurns: number;
-  phase: GamePhase;
-  tiles: SpectatorTile[];
-  units: {
-    id: string;
-    team: 'A' | 'B';
-    unitClass: UnitClass;
-    position: Hex;
-    alive: boolean;
-    carryingFlag: boolean;
-    respawnTurn?: number;
-  }[];
-  kills: { killerId: string; victimId: string; reason: string }[];
-  chatA: { from: string; message: string; turn: number }[];
-  chatB: { from: string; message: string; turn: number }[];
-  flagA: { status: 'at_base' | 'carried'; carrier?: string };
-  flagB: { status: 'at_base' | 'carried'; carrier?: string };
-  score: { A: number; B: number };
-  winner: 'A' | 'B' | null;
-  mapRadius: number;
-  visibleA: string[];  // hex keys visible to team A
-  visibleB: string[];  // hex keys visible to team B
-  visibleByUnit: Record<string, string[]>;  // per-unit vision for spectator drill-down
-  turnTimeoutMs: number;
-  turnStartedAt: number;  // epoch ms
-  /** Maps agent IDs to display names (e.g. "agent_1" -> "Pinchy") */
-  handles: Record<string, string>;
-  /** Relay messages for this turn (spectators see all, agents see scoped) */
-  relayMessages?: RelayMessage[];
-}
+// SpectatorState and SpectatorTile types are now in @coordination-games/game-ctl (plugin.ts)
 
 export interface ExternalSlot {
   token: string;
@@ -148,8 +84,6 @@ export interface GameRoomData {
   preGameChatA: { from: string; message: string; timestamp: number }[];
   preGameChatB: { from: string; message: string; timestamp: number }[];
   // Legacy CtL fields (will be removed when bot scheduling is genericized)
-  stateHistory?: SpectatorState[];               // indexed by turn (CtL only)
-  spectatorDelay?: number;                       // turns of delay (CtL only)
   botHandles?: string[];                         // handles of bot players in this room
   botMeta?: { id: string; unitClass: UnitClass; team: 'A' | 'B' }[];
   turnTimeoutMs?: number;
@@ -206,176 +140,9 @@ const BOT_DISPLAY_NAMES = [
   'Marina', 'Squidward', 'Barnacle', 'Anchovy',
 ];
 
-// ---------------------------------------------------------------------------
-// Spectator state builder
-// ---------------------------------------------------------------------------
-
-function buildSpectatorState(
-  state: any,
-  prevState: any | null,
-  handles: Record<string, string> = {},
-  relay?: GameRelay,
-): SpectatorState {
-  const map = { tiles: new Map<string, string>(state.mapTiles), radius: state.mapRadius, bases: state.mapBases };
-  const { units, flags, turn, phase, config, score } = state;
-
-  // Build full tile array (no fog — spectators see everything)
-  const tiles: SpectatorTile[] = [];
-  const unitsByHex = new Map<string, GameUnit[]>();
-  for (const u of units) {
-    // Include all units (alive and dead) — dead units shown at spawn with skull
-    const key = `${u.position.q},${u.position.r}`;
-    const list = unitsByHex.get(key) ?? [];
-    list.push(u);
-    unitsByHex.set(key, list);
-  }
-
-  const flagsByHex = new Map<string, 'A' | 'B'>();
-  for (const team of ['A', 'B'] as const) {
-    const teamFlags = flags[team];
-    for (const f of teamFlags) {
-      flagsByHex.set(`${f.position.q},${f.position.r}`, team);
-    }
-  }
-
-  for (const [key, tileType] of map.tiles) {
-    const [qStr, rStr] = key.split(',');
-    const q = Number(qStr);
-    const r = Number(rStr);
-    const tile: SpectatorTile = { q, r, type: tileType as TileType };
-
-    const unitsHere = unitsByHex.get(key);
-    if (unitsHere && unitsHere.length > 0) {
-      // Primary unit (first one)
-      const primary = unitsHere[0];
-      tile.unit = {
-        id: primary.id,
-        team: primary.team,
-        unitClass: primary.unitClass,
-        carryingFlag: primary.carryingFlag || undefined,
-        alive: primary.alive,
-        respawnTurn: primary.respawnTurn,
-      };
-      // Additional units on same hex
-      if (unitsHere.length > 1) {
-        tile.units = unitsHere.map((u) => ({
-          id: u.id,
-          team: u.team,
-          unitClass: u.unitClass,
-          carryingFlag: u.carryingFlag || undefined,
-          alive: u.alive,
-          respawnTurn: u.respawnTurn,
-        }));
-      }
-    }
-
-    const flagTeam = flagsByHex.get(key);
-    if (flagTeam !== undefined) {
-      tile.flag = { team: flagTeam };
-    }
-
-    tiles.push(tile);
-  }
-
-  // Kills — inferred by comparing alive status with previous state
-  const kills: { killerId: string; victimId: string; reason: string }[] = [];
-  if (prevState) {
-    for (const unit of units) {
-      const prevUnit = prevState.units.find((u: any) => u.id === unit.id);
-      if (prevUnit && prevUnit.alive && !unit.alive) {
-        kills.push({ killerId: 'unknown', victimId: unit.id, reason: 'combat' });
-      }
-    }
-  }
-
-  // Build flag status summaries
-  function flagStatus(flagArr: FlagState[]): { status: 'at_base' | 'carried'; carrier?: string } {
-    // Report 'carried' if any flag in the array is carried
-    for (const f of flagArr) {
-      if (f.carried && f.carrierId) {
-        return { status: 'carried', carrier: f.carrierId };
-      }
-    }
-    return { status: 'at_base' };
-  }
-
-  // Compute per-team fog of war
-  const walls = new Set<string>();
-  const allHexKeys = new Set<string>();
-  for (const [key, tileType] of map.tiles) {
-    allHexKeys.add(key);
-    if (tileType === 'wall') walls.add(key);
-  }
-
-  const visibleA = new Set<string>();
-  const visibleB = new Set<string>();
-  const visibleByUnit: Record<string, string[]> = {};
-  for (const u of units) {
-    if (!u.alive) continue;
-    const unitVision = getUnitVision(
-      { id: u.id, position: u.position, unitClass: u.unitClass, team: u.team, alive: u.alive } as any,
-      walls,
-      allHexKeys,
-    );
-    visibleByUnit[u.id] = [...unitVision];
-    const targetSet = u.team === 'A' ? visibleA : visibleB;
-    for (const hex of unitVision) {
-      targetSet.add(hex);
-    }
-  }
-
-  return {
-    turn,
-    maxTurns: config.turnLimit,
-    phase,
-    tiles,
-    units: units.map((u) => ({
-      id: u.id,
-      team: u.team,
-      unitClass: u.unitClass,
-      position: { ...u.position },
-      alive: u.alive,
-      carryingFlag: u.carryingFlag,
-      respawnTurn: u.respawnTurn,
-    })),
-    kills,
-    chatA: relay ? relay.getSpectatorMessages(turn).filter(m => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'A')).map(m => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn })) : [],
-    chatB: relay ? relay.getSpectatorMessages(turn).filter(m => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'B')).map(m => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn })) : [],
-    flagA: flagStatus(flags.A),
-    flagB: flagStatus(flags.B),
-    score: { A: score.A, B: score.B },
-    winner: state.winner ?? null,
-    mapRadius: map.radius,
-    visibleA: [...visibleA],
-    visibleB: [...visibleB],
-    visibleByUnit,
-    turnTimeoutMs: 30000,
-    turnStartedAt: Date.now(),
-    handles,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build spectator view for any game type (with delay)
-// ---------------------------------------------------------------------------
-
-/**
- * Get the spectator view for a game room, using the plugin's spectator delay.
- * For CtL: builds the SpectatorState format from the delayed raw state (via stateHistory cache).
- * For OATHBREAKER (and other games): uses engine's getSpectatorView directly.
- */
-function getSpectatorViewForRoom(room: GameRoomData): any {
-  if (room.gameType === 'capture-the-lobster') {
-    // CtL uses pre-built SpectatorState cache (indexed by progress)
-    if (!room.stateHistory || room.stateHistory.length === 0) return null;
-    const delay = room.plugin.spectatorDelay ?? 0;
-    const idx = Math.max(0, room.stateHistory.length - 1 - delay);
-    return room.stateHistory[idx];
-  }
-  // Generic path: use engine's built-in delayed spectator view
-  const delay = room.plugin.spectatorDelay ?? 0;
-  return room.game.getSpectatorView(delay);
-}
+// buildSpectatorState and getSpectatorViewForRoom are now on the game plugins
+// (CaptureTheLobsterPlugin.buildSpectatorView, OathbreakerPlugin.buildSpectatorView)
+// and accessed via GameRoom.getSpectatorView(delay, context)
 
 // ---------------------------------------------------------------------------
 // Lobby room for spectators
@@ -473,7 +240,7 @@ export class GameServer {
     router.get('/framework', (_req, res) => {
       res.json({
         version: '0.1.0',
-        games: ['capture-the-lobster', 'oathbreaker'],
+        games: getRegisteredGames(),
         status: 'active',
       });
     });
@@ -684,7 +451,7 @@ export class GameServer {
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      const state = getSpectatorViewForRoom(room);
+      const state = this.getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
       const extra = room.gameType === 'oathbreaker'
         ? { gameType: 'oathbreaker' }
@@ -697,7 +464,7 @@ export class GameServer {
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      const state = getSpectatorViewForRoom(room);
+      const state = this.getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
       const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
       res.json({ ...extra, ...state as any });
@@ -713,7 +480,7 @@ export class GameServer {
         return res.status(400).json({ error: 'sender, type, and scope are required' });
       }
 
-      const msg = room.relay.send(sender, room.game.state.turn, {
+      const msg = room.relay.send(sender, room.game.progressCounter, {
         type,
         data: data ?? {},
         scope,
@@ -766,9 +533,17 @@ export class GameServer {
         return res.status(400).json({ error: 'Game is still in progress' });
       }
 
+      // Build spectator views for each progress snapshot
+      const allMessages = room.relay.getAllMessages();
+      const history = room.game.getStateHistory();
+      const turns = history.map((state, i) => {
+        const prevState = i > 0 ? history[i - 1] : null;
+        const messagesUpTo = allMessages.filter(m => m.turn <= i);
+        return room.plugin.buildSpectatorView(state, prevState, { handles: room.handleMap, relayMessages: messagesUpTo });
+      });
       res.json({
         gameId: room.game.gameId,
-        turns: room.stateHistory,
+        turns,
         winner: room.game.state.winner,
         score: room.game.state.score,
         mapRadius: room.game.state.mapRadius,
@@ -802,7 +577,7 @@ export class GameServer {
           turnLimit: game.state.config.turnLimit,
         },
         actions,
-        stateHistory: room.stateHistory,
+        stateHistory: room.game.getStateHistory(),
         outcome: {
           winner: game.state.winner,
           score: game.state.score,
@@ -872,6 +647,15 @@ export class GameServer {
     const router = express.Router();
 
     // Resolver helpers (same logic as MCP callbacks)
+    const resolveGameRoom = (agentId: string): { room: GameRoomData; game: GameRoom<any, any, any, any> } | null => {
+      const gameId = this.agentToGame.get(agentId);
+      if (!gameId) return null;
+      const room = this.games.get(gameId);
+      if (!room) return null;
+      return { room, game: room.game };
+    };
+
+    // Legacy typed resolvers (kept for callers that need game-type-specific state access)
     const resolveGame = (agentId: string): CtlGameRoom | null => {
       const gameId = this.agentToGame.get(agentId);
       if (!gameId) return null;
@@ -1063,17 +847,18 @@ export class GameServer {
     router.get('/guide', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
 
+      const resolvedGuide = resolveGameRoom(agentId);
       const game = resolveGame(agentId);
       const oathGame = resolveOathGame(agentId);
       const lobby = resolveLobby(agentId);
-      const phase = game?.state.phase ?? oathGame?.state.phase ?? lobby?.phase ?? 'none';
+      const phase = resolvedGuide?.game.state.phase ?? lobby?.phase ?? 'none';
 
       // Determine which game's guide to show:
       // 1. Explicit ?game= query param takes priority
       // 2. Auto-detect from player's current game
       // 3. Default to capture-the-lobster
       const requestedGame = (req.query.game as string)?.toLowerCase();
-      const detectedGame = oathGame ? 'oathbreaker' : 'capture-the-lobster';
+      const detectedGame = resolvedGuide?.room.gameType ?? 'capture-the-lobster';
       const gameType = requestedGame || detectedGame;
 
       // --- OATHBREAKER guide ---
@@ -1238,34 +1023,19 @@ export class GameServer {
     router.get('/state', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
 
-      // OATHBREAKER game
-      const oathGame = resolveOathGame(agentId);
-      if (oathGame) {
-        const state = oathGame.getVisibleState(agentId);
-        const relay = resolveRelay(agentId);
-        const relayMessages = relay?.receive(agentId) ?? [];
-        const gameId = this.agentToGame.get(agentId);
-        const room = gameId ? this.games.get(gameId) : undefined;
-        const handles = room?.handleMap ?? {};
-        if ((oathGame.state as OathState).phase === 'finished') {
-          return res.json({ phase: 'finished', gameType: 'oathbreaker', gameOver: true, ...(state as any), relayMessages, handles });
-        }
-        return res.json({ phase: 'game', gameType: 'oathbreaker', ...(state as any), relayMessages, handles });
-      }
-
-      // CtL game
-      const game = resolveGame(agentId);
-      if (game) {
+      // Active game (any type)
+      const resolved = resolveGameRoom(agentId);
+      if (resolved) {
+        const { room, game } = resolved;
         const state = game.getVisibleState(agentId);
         const relay = resolveRelay(agentId);
         const relayMessages = relay?.receive(agentId) ?? [];
-        const gameId = this.agentToGame.get(agentId);
-        const room = gameId ? this.games.get(gameId) : undefined;
-        const handles = room?.handleMap ?? {};
-        if (game.state.phase === 'finished') {
-          return res.json({ phase: 'finished', gameOver: true, winner: game.state.winner, ...(state as any), relayMessages, handles });
+        const handles = room.handleMap ?? {};
+        const gameTypeExtra = room.gameType !== 'capture-the-lobster' ? { gameType: room.gameType } : {};
+        if (game.isOver()) {
+          return res.json({ phase: 'finished', gameOver: true, ...gameTypeExtra, ...(state as any), relayMessages, handles });
         }
-        return res.json({ phase: 'game', ...(state as any), relayMessages, handles });
+        return res.json({ phase: 'game', ...gameTypeExtra, ...(state as any), relayMessages, handles });
       }
 
       // OATHBREAKER waiting room
@@ -1302,6 +1072,7 @@ export class GameServer {
     router.get('/wait', requirePlayerAuth, async (req: any, res: any) => {
       const agentId = req.agentId as string;
 
+      const resolved = resolveGameRoom(agentId);
       const oathGame = resolveOathGame(agentId);
       const game = resolveGame(agentId);
       const lobby = resolveLobby(agentId);
@@ -1541,59 +1312,77 @@ export class GameServer {
         }
       }
 
-      // OATHBREAKER game actions
-      const oathGame = resolveOathGame(agentId);
-      if (oathGame) {
+      // Generic game action passthrough
+      const resolved = resolveGameRoom(agentId);
+      if (!resolved) return res.status(400).json({ error: 'No game in progress.' });
+      const { room: gameRoom, game: gameInstance } = resolved;
+
+      // If the body contains a `type` field, treat it as a full typed action (generic path).
+      // The server injects agentId where needed for security (agents can't impersonate others).
+      if (req.body?.type) {
+        const gameAction = { ...req.body };
+        // Inject agentId for action types that reference the acting player
+        if (gameAction.agentId !== undefined) {
+          gameAction.agentId = agentId;
+        }
+        const result = await gameInstance.handleAction(agentId, gameAction);
+        if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit action.' });
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, ...updates });
+      }
+
+      // Legacy OATHBREAKER action parsing (amount/decision fields without type)
+      if (gameRoom.gameType === 'oathbreaker') {
         const { amount, decision } = req.body ?? {};
-        const oathState = oathGame.state as OathState;
+        const oathState = gameInstance.state as OathState;
 
         if (oathState.phase !== 'playing') {
           return res.status(400).json({ error: `Cannot submit actions -- game phase is: ${oathState.phase}` });
         }
 
-        // Determine action type from body fields
         if (amount !== undefined) {
-          // propose_pledge
           const oathAction: OathAction = { type: 'propose_pledge', amount: Number(amount) };
-          const result = await oathGame.handleAction(agentId, oathAction);
+          const result = await gameInstance.handleAction(agentId, oathAction);
           if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to propose pledge.' });
           const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
           return res.json({ success: true, action: 'propose_pledge', amount: Number(amount), ...updates });
         }
 
         if (decision !== undefined) {
-          // submit_decision
           if (decision !== 'C' && decision !== 'D') {
             return res.status(400).json({ error: 'decision must be "C" (cooperate) or "D" (defect)' });
           }
           const oathAction: OathAction = { type: 'submit_decision', decision };
-          const result = await oathGame.handleAction(agentId, oathAction);
+          const result = await gameInstance.handleAction(agentId, oathAction);
           if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit decision.' });
           const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
           return res.json({ success: true, action: 'submit_decision', decision, ...updates });
         }
 
-        return res.status(400).json({ error: 'OATHBREAKER requires "amount" (propose_pledge) or "decision" (submit_decision, "C" or "D")' });
+        return res.status(400).json({ error: 'OATHBREAKER requires "amount" (propose_pledge) or "decision" (submit_decision, "C" or "D"), or a full typed action with "type" field' });
       }
 
-      // CtL gameplay move (direction path)
-      const game = resolveGame(agentId);
-      if (!game) return res.status(400).json({ error: 'No game in progress.' });
-      if (game.state.phase !== 'in_progress') return res.status(400).json({ error: `Cannot submit moves -- game phase is: ${game.state.phase}` });
+      // Legacy CtL move parsing (path field without type)
+      if (gameRoom.gameType === 'capture-the-lobster') {
+        if (gameInstance.state.phase !== 'in_progress') return res.status(400).json({ error: `Cannot submit moves -- game phase is: ${gameInstance.state.phase}` });
 
-      const movePath = path ?? [];
-      if (!Array.isArray(movePath)) return res.status(400).json({ error: 'path must be an array of direction strings' });
-      for (const dir of movePath) {
-        if (!VALID_DIRECTIONS.includes(dir as Direction)) {
-          return res.status(400).json({ error: `Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}` });
+        const movePath = path ?? [];
+        if (!Array.isArray(movePath)) return res.status(400).json({ error: 'path must be an array of direction strings' });
+        for (const dir of movePath) {
+          if (!VALID_DIRECTIONS.includes(dir as Direction)) {
+            return res.status(400).json({ error: `Invalid direction "${dir}". Valid: ${VALID_DIRECTIONS.join(', ')}` });
+          }
         }
+
+        const directions = movePath as Direction[];
+        const actionResult = await gameInstance.handleAction(agentId, { type: 'move', agentId, path: directions });
+        if (!actionResult.success) return res.status(400).json({ error: actionResult.error ?? 'Failed to submit move.' });
+        const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
+        return res.json({ success: true, path: directions, ...updates });
       }
 
-      const directions = movePath as Direction[];
-      const actionResult = await game.handleAction(agentId, { type: 'move', agentId, path: directions });
-      if (!actionResult.success) return res.status(400).json({ error: actionResult.error ?? 'Failed to submit move.' });
-      const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-      return res.json({ success: true, path: directions, ...updates });
+      // Unknown game type — require full typed action
+      return res.status(400).json({ error: 'Unknown game type. Send a full typed action with a "type" field.' });
     });
 
     // (No dedicated /chat endpoint — chat goes through /tool as basic-chat:chat)
@@ -1820,40 +1609,25 @@ export class GameServer {
         const relayData = (result as any).relay;
         const scope = relayData.scope ?? 'all';
 
-        const oathGame = resolveOathGame(agentId);
-        const game = resolveGame(agentId);
+        const resolvedForRelay = resolveGameRoom(agentId);
         const lobby = resolveLobby(agentId);
 
-        if (oathGame) {
-          // OATHBREAKER relay
-          const gameId = this.agentToGame.get(agentId)!;
-          const oathRoom = this.games.get(gameId);
-          if (oathRoom) {
-            const oathState = oathGame.state as OathState;
-            oathRoom.relay.send(agentId, oathState.round, {
-              type: relayData.type,
-              data: relayData.data,
-              scope,
-              pluginId: relayData.pluginId ?? pluginId,
-            });
-            for (const player of oathState.players) {
-              if (player.id !== agentId) notifyAgent(player.id);
-            }
+        if (resolvedForRelay) {
+          const { room: relayRoom, game: relayGame } = resolvedForRelay;
+          relayRoom.relay.send(agentId, relayGame.progressCounter, {
+            type: relayData.type,
+            data: relayData.data,
+            scope,
+            pluginId: relayData.pluginId ?? pluginId,
+          });
+          this.broadcastSpectatorState(relayRoom);
+          // Notify other players in the game
+          for (const [slotAgentId] of relayRoom.externalSlots) {
+            if (slotAgentId !== agentId) notifyAgent(slotAgentId);
           }
-        } else if (game) {
-          const gameId = this.agentToGame.get(agentId)!;
-          const room = this.games.get(gameId);
-          if (room) {
-            room.relay.send(agentId, game.state.turn, {
-              type: relayData.type,
-              data: relayData.data,
-              scope,
-              pluginId: relayData.pluginId ?? pluginId,
-            });
-            this.broadcastSpectatorState(room);
-            for (const unit of game.state.units) {
-              if (unit.id !== agentId) notifyAgent(unit.id);
-            }
+          // Also notify bot sessions
+          for (const bot of relayRoom.botSessions) {
+            if (bot.id !== agentId) notifyAgent(bot.id);
           }
         } else if (lobby) {
           // Lobby phase: route through lobby's message system
@@ -1943,7 +1717,7 @@ export class GameServer {
             room.spectators.add(ws);
 
             // Send current state (uses delayed view for CtL, immediate for OATHBREAKER)
-            const state = getSpectatorViewForRoom(room);
+            const state = this.getSpectatorViewForRoom(room);
             if (state) {
               const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
               ws.send(JSON.stringify({ type: 'state_update', data: { ...extra, ...state as any } }));
@@ -2027,16 +1801,26 @@ export class GameServer {
   // Broadcast spectator state (unified for all game types)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Get the spectator view for a game room, using the plugin's spectator delay.
+   * Uses the engine's GameRoom.getSpectatorView with SpectatorContext.
+   */
+  private getSpectatorViewForRoom(room: GameRoomData): any {
+    const delay = room.plugin.spectatorDelay ?? 0;
+    const currentProgress = room.game.progressCounter;
+    const delayedProgress = Math.max(0, currentProgress - delay);
+    const relayMessages = room.relay.getSpectatorMessages(delayedProgress);
+    const ctx = { handles: room.handleMap, relayMessages };
+    return room.game.getSpectatorView(delay, ctx);
+  }
+
   private broadcastSpectatorState(room: GameRoomData): void {
-    const state = getSpectatorViewForRoom(room);
+    const state = this.getSpectatorViewForRoom(room);
     if (!state) return;
 
-    // Include relay messages for spectators (delayed for CtL, immediate for others)
+    // Add relay messages for the frontend (delayed per plugin setting)
     const delay = room.plugin.spectatorDelay ?? 0;
-    const currentProgress = room.gameType === 'capture-the-lobster'
-      ? room.game.state.turn
-      : (room.game.state as any).round ?? 0;
-    const delayedProgress = Math.max(0, currentProgress - delay);
+    const delayedProgress = Math.max(0, room.game.progressCounter - delay);
     const relayMessages = room.relay.getSpectatorMessages(delayedProgress);
 
     const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
@@ -2116,9 +1900,7 @@ export class GameServer {
     };
     const game = createCtlGameRoom(gameId, ctlConfig);
 
-    // Take initial snapshot
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
-    const initialState = buildSpectatorState(game.state, null, handleMap, relay);
 
     const room: GameRoomData = {
       gameType: 'capture-the-lobster',
@@ -2138,9 +1920,6 @@ export class GameServer {
       lobbyChat: [],
       preGameChatA: [],
       preGameChatB: [],
-      // Legacy CtL fields
-      stateHistory: [initialState],
-      spectatorDelay: 2,
       botHandles,
       botMeta: players,
       turnTimeoutMs: 30000,
@@ -2334,14 +2113,6 @@ export class GameServer {
       // Notify waiting agents
       notifyTurnResolved(gameId);
 
-      // For CtL: snapshot spectator state into cache (frontend expects SpectatorState format)
-      if (room.gameType === 'capture-the-lobster' && room.stateHistory) {
-        const history = game.getStateHistory();
-        const prevState = history.length >= 2 ? history[history.length - 2] : null;
-        const spectatorState = buildSpectatorState(game.state, prevState, room.handleMap, room.relay);
-        room.stateHistory.push(spectatorState);
-      }
-
       // Broadcast spectator view (with delay from plugin)
       this.broadcastSpectatorState(room);
 
@@ -2389,18 +2160,10 @@ export class GameServer {
     if (room.finished) return;
     room.finished = true;
 
-    // For CtL: build final spectator state snapshot
-    if (room.gameType === 'capture-the-lobster' && room.stateHistory) {
-      const history = room.game.getStateHistory();
-      const prevState = history.length >= 2 ? history[history.length - 2] : null;
-      const finalState = buildSpectatorState(room.game.state, prevState, room.handleMap, room.relay);
-      room.stateHistory.push(finalState);
-    }
-
     // Final spectator broadcast (no delay — show the ending)
-    const spectatorView = room.gameType === 'capture-the-lobster'
-      ? room.stateHistory?.[room.stateHistory.length - 1]
-      : room.game.getVisibleState(null);
+    const allRelayMessages = room.relay.getAllMessages();
+    const finalCtx = { handles: room.handleMap, relayMessages: allRelayMessages };
+    const spectatorView = room.game.getSpectatorView(0, finalCtx);
     if (spectatorView) {
       const extra = room.gameType === 'oathbreaker' ? { gameType: 'oathbreaker' } : {};
       const msg = JSON.stringify({ type: 'game_over', data: { ...extra, ...spectatorView as any } });
@@ -2581,7 +2344,6 @@ export class GameServer {
     const game = createCtlGameRoom(gameId, ctlConfig);
 
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
-    const initialState = buildSpectatorState(game.state, null, handleMap, relay);
 
     const room: GameRoomData = {
       gameType: 'capture-the-lobster',
@@ -2603,9 +2365,6 @@ export class GameServer {
       lobbyChat,
       preGameChatA,
       preGameChatB,
-      // Legacy CtL fields
-      stateHistory: [initialState],
-      spectatorDelay: 2,
       botHandles,
       botMeta: players,
       turnTimeoutMs: 30000,

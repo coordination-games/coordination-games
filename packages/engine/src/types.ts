@@ -14,6 +14,18 @@
 export type Address = string;
 
 // ---------------------------------------------------------------------------
+// Spectator context (passed to buildSpectatorView)
+// ---------------------------------------------------------------------------
+
+/** Context provided to buildSpectatorView by the framework. */
+export interface SpectatorContext {
+  /** Maps agent IDs to display names. */
+  handles: Record<string, string>;
+  /** Relay messages up to the current progress point (for delayed spectator views). */
+  relayMessages: any[];
+}
+
+// ---------------------------------------------------------------------------
 // Game plugin interface (v2 — action-based)
 // ---------------------------------------------------------------------------
 
@@ -80,6 +92,13 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
 
   /** Delay in progress units (turns for CtL, rounds for OATHBREAKER). Default 0. */
   spectatorDelay?: number;
+
+  /**
+   * Build the spectator view for a given state. Required.
+   * Called by the engine's GameRoom.getSpectatorView() to produce the
+   * frontend-ready spectator payload. Each game defines its own shape.
+   */
+  buildSpectatorView(state: TState, prevState: TState | null, context: SpectatorContext): unknown;
 
   /** IDs of players that need to submit an action in the current state. */
   getPlayersNeedingAction?(state: TState): string[];

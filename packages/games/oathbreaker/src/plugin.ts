@@ -13,7 +13,8 @@ import type {
   OathPlayerRanking,
 } from './types.js';
 
-import type { CoordinationGame } from '@coordination-games/engine';
+import type { CoordinationGame, SpectatorContext } from '@coordination-games/engine';
+import { registerGame } from '@coordination-games/engine';
 
 import {
   createInitialState,
@@ -74,6 +75,10 @@ export const OathbreakerPlugin = {
     return getAgentView(state, playerId) ?? getSpectatorView(state);
   },
 
+  buildSpectatorView(state: OathState, _prevState: OathState | null, _context: SpectatorContext): unknown {
+    return getSpectatorView(state);
+  },
+
   isOver(state: OathState): boolean {
     return state.phase === 'finished';
   },
@@ -115,4 +120,7 @@ export const OathbreakerPlugin = {
     return payouts;
   },
 };
+
+// Self-register with the engine's game registry
+registerGame(OathbreakerPlugin);
 
