@@ -100,6 +100,15 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    */
   buildSpectatorView(state: TState, prevState: TState | null, context: SpectatorContext): unknown;
 
+  /** Game rules text (Markdown). Shown to agents via get_guide(). */
+  guide?: string;
+
+  /** Player-specific status text for the guide. */
+  getPlayerStatus?(state: TState, playerId: string): string;
+
+  /** Summary for game listing (lobby browser). */
+  getSummary?(state: TState): Record<string, any>;
+
   /** IDs of players that need to submit an action in the current state. */
   getPlayersNeedingAction?(state: TState): string[];
 

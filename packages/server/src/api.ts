@@ -38,15 +38,13 @@ import {
   hasPendingUpdates,
   setAgentLastTurn,
   hasAgentMissedTurn,
-  GAME_RULES,
-  OATHBREAKER_RULES,
   type GameResolver,
   type LobbyResolver,
   type RelayResolver,
 } from './mcp-http.js';
 import { createRelayRouter } from './relay.js';
 import { GameRelay } from './typed-relay.js';
-import { GameRoom, buildActionMerkleTree, type MerkleLeafData, getRegisteredGames } from '@coordination-games/engine';
+import { GameRoom, buildActionMerkleTree, type MerkleLeafData, getRegisteredGames, getGame } from '@coordination-games/engine';
 import {
   OathbreakerPlugin,
   type OathConfig,
@@ -155,17 +153,20 @@ export interface LobbyRoom {
 }
 
 // ---------------------------------------------------------------------------
-// OATHBREAKER waiting room (pre-game player collection)
+// Waiting room (pre-game player collection, generic for FFA games)
 // ---------------------------------------------------------------------------
 
-export interface OathWaitingRoom {
+export interface WaitingRoom {
   id: string;
-  gameType: 'oathbreaker';
+  gameType: string;
   targetPlayers: number;
   players: { id: string; handle: string }[];
   spectators: Set<WebSocket>;
   createdAt: number;
 }
+
+/** @deprecated Use WaitingRoom instead */
+export type OathWaitingRoom = WaitingRoom;
 
 // ---------------------------------------------------------------------------
 // GameServer
@@ -179,7 +180,7 @@ export class GameServer {
 
   readonly games: Map<string, GameRoomData> = new Map();
   readonly lobbies: Map<string, LobbyRoom> = new Map();
-  readonly waitingRooms: Map<string, OathWaitingRoom> = new Map();
+  readonly waitingRooms: Map<string, WaitingRoom> = new Map();
   private maxConcurrentGames: number = 1; // Beta limit — prevents credit drain
 
   /** Maps external agentId -> gameId for game resolution */
@@ -287,22 +288,31 @@ export class GameServer {
       res.status(201).json({ lobbyId });
     });
 
-    // Create a lobby (empty waiting room)
+    // Create a lobby (generic — routes to waiting room or lobby runner based on plugin config)
     router.post('/lobbies/create', (req, res) => {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
       }
       const gameType = req.body?.gameType ?? 'capture-the-lobster';
-      if (gameType === 'oathbreaker') {
-        const playerCount = Math.min(20, Math.max(4, Math.floor((req.body?.playerCount as number) || 4)));
-        const roomId = this.createOathbreakerWaitingRoom(playerCount, []);
-        console.log(`[REST] Created OATHBREAKER waiting room ${roomId} (${playerCount} players) via /lobbies/create`);
-        return res.status(201).json({ gameId: roomId, gameType: 'oathbreaker', playerCount, phase: 'waiting' });
+      const plugin = getGame(gameType);
+      if (!plugin) return res.status(400).json({ error: `Unknown game type: ${gameType}` });
+
+      const lobbyConfig = plugin.lobby;
+      if (!lobbyConfig || lobbyConfig.matchmaking.numTeams === 0) {
+        // FFA game — use waiting room pattern
+        const maxPlayers = lobbyConfig?.matchmaking.maxPlayers ?? 20;
+        const minPlayers = lobbyConfig?.matchmaking.minPlayers ?? 4;
+        const playerCount = Math.min(maxPlayers, Math.max(minPlayers, Math.floor((req.body?.playerCount as number) || minPlayers)));
+        const roomId = this.createWaitingRoom(gameType, playerCount, []);
+        console.log(`[REST] Created ${gameType} waiting room ${roomId} (${playerCount} players) via /lobbies/create`);
+        return res.status(201).json({ gameId: roomId, gameType, playerCount, phase: 'waiting' });
+      } else {
+        // Team game — use lobby runner
+        const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || lobbyConfig.matchmaking.teamSize)));
+        const timeoutMs = (req.body?.timeoutMs as number) || 600000;
+        const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
+        return res.status(201).json({ lobbyId, teamSize });
       }
-      const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
-      const timeoutMs = (req.body?.timeoutMs as number) || 600000;
-      const { lobbyId } = this.createLobbyGame(teamSize, timeoutMs);
-      res.status(201).json({ lobbyId, teamSize });
     });
 
     // Fill remaining lobby/waiting-room slots with bots (requires admin password since bots use API credits)
@@ -331,7 +341,7 @@ export class GameServer {
         return res.status(201).json({ added, filledSlots: added.length });
       }
 
-      // Try OATHBREAKER waiting room
+      // Try waiting room (any game type)
       const waitingRoom = this.waitingRooms.get(req.params.id);
       if (waitingRoom) {
         const currentCount = waitingRoom.players.length;
@@ -343,8 +353,8 @@ export class GameServer {
         const added: { agentId: string; handle: string }[] = [];
         for (let i = 0; i < slotsToFill; i++) {
           const handle = botNames[(currentCount + i) % botNames.length];
-          const agentId = `bot_oath_${currentCount + i}`;
-          this.joinOathbreakerWaitingRoom(req.params.id, agentId, handle);
+          const agentId = `bot_${waitingRoom.gameType.substring(0, 4)}_${currentCount + i}`;
+          this.joinWaitingRoom(req.params.id, agentId, handle);
           added.push({ agentId, handle });
         }
         return res.status(201).json({ added, filledSlots: added.length });
@@ -381,45 +391,22 @@ export class GameServer {
 
     // (Removed: /api/register — registration now happens via the MCP register tool)
 
-    // List active games
+    // List active games (generic — uses plugin.getSummary when available)
     router.get('/games', (_req, res) => {
-      const list = Array.from(this.games.entries()).map(([id, room]) => {
-        if (room.gameType === 'oathbreaker') {
-          const oathState = room.game.state as OathState;
-          return {
-            id,
-            gameType: 'oathbreaker',
-            round: oathState.round,
-            maxRounds: oathState.config.maxRounds,
-            phase: oathState.phase,
-            players: [...room.game.playerIds],
-            spectators: room.spectators.size,
-            externalAgents: room.externalSlots.size,
-          };
-        }
-        return {
-          id,
-          gameType: 'capture-the-lobster',
-          turn: room.game.state.turn,
-          maxTurns: room.game.state.config.turnLimit,
-          phase: room.game.state.phase,
-          winner: room.game.state.winner,
-          teams: {
-            A: room.game.state.units.filter((u: any) => u.team === 'A').map((u: any) => u.id),
-            B: room.game.state.units.filter((u: any) => u.team === 'B').map((u: any) => u.id),
-          },
-          spectators: room.spectators.size,
-          externalAgents: room.externalSlots.size,
-        };
-      });
+      const list: any[] = Array.from(this.games.entries()).map(([id, room]) => ({
+        id,
+        gameType: room.gameType,
+        ...(room.plugin.getSummary ? room.plugin.getSummary(room.game.state) : {}),
+        spectators: room.spectators.size,
+        externalAgents: room.externalSlots.size,
+      }));
 
       // Include waiting rooms as games with phase 'waiting'
       for (const [id, wr] of this.waitingRooms) {
+        const plugin = getGame(wr.gameType);
         list.push({
           id,
-          gameType: 'oathbreaker',
-          round: 0,
-          maxRounds: DEFAULT_OATH_CONFIG.maxRounds,
+          gameType: wr.gameType,
           phase: 'waiting',
           players: wr.players.map(p => p.id),
           spectators: wr.spectators.size,
@@ -682,7 +669,7 @@ export class GameServer {
       return room?.relay ?? null;
     };
 
-    const resolveWaitingRoom = (agentId: string): OathWaitingRoom | null => {
+    const resolveWaitingRoom = (agentId: string): WaitingRoom | null => {
       const roomId = this.agentToWaitingRoom.get(agentId);
       if (!roomId) return null;
       return this.waitingRooms.get(roomId) ?? null;
@@ -838,16 +825,13 @@ export class GameServer {
     });
 
     // ------------------------------------------------------------------
-    // 4. GET /guide — Dynamic playbook
+    // 4. GET /guide — Dynamic playbook (generic, reads from game plugin)
     // ------------------------------------------------------------------
     router.get('/guide', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
 
       const resolvedGuide = resolveGameRoom(agentId);
-      const game = resolveGame(agentId);
-      const oathGame = resolveOathGame(agentId);
       const lobby = resolveLobby(agentId);
-      const phase = resolvedGuide?.game.state.phase ?? lobby?.phase ?? 'none';
 
       // Determine which game's guide to show:
       // 1. Explicit ?game= query param takes priority
@@ -857,149 +841,35 @@ export class GameServer {
       const detectedGame = resolvedGuide?.room.gameType ?? 'capture-the-lobster';
       const gameType = requestedGame || detectedGame;
 
-      // --- OATHBREAKER guide ---
-      if (gameType === 'oathbreaker') {
-        let playerState = '\n## Your Status\n';
-        if (oathGame) {
-          const oathState = oathGame.state as any;
-          const player = oathState.players?.find((p: any) => p.id === agentId);
-          playerState += `- **Phase:** ${oathState.phase}\n- **Round:** ${oathState.round}/${oathState.config?.maxRounds ?? '?'}\n`;
-          if (player) {
-            playerState += `- **Balance:** ${player.balance}\n- **Oaths Kept:** ${player.oathsKept}\n- **Oaths Broken:** ${player.oathsBroken}\n`;
-          }
-        } else {
-          playerState += `- Not in an OATHBREAKER game.\n`;
-        }
-
-        let cliRef = '\n## CLI Reference\n';
-        cliRef += '| Command | Description |\n';
-        cliRef += '|---------|-------------|\n';
-        cliRef += '| `coga status` | Your address, name, credits |\n';
-        cliRef += '| `coga guide` | This guide |\n';
-        cliRef += '| `coga guide oathbreaker` | OATHBREAKER rules |\n';
-        cliRef += '| `coga guide capture-the-lobster` | CtL rules |\n';
-        cliRef += '| `coga state` | Get current game state |\n';
-        cliRef += '| `coga move \'{"amount": 20}\'` | Propose a pledge |\n';
-        cliRef += '| `coga move \'{"decision": "C"}\'` | Submit C/D decision |\n';
-        cliRef += '| `coga wait` | Wait for the next update |\n';
-        cliRef += '| `coga tool basic-chat chat message="..." scope="all"` | Chat |\n';
-
-        return res.json({ guide: OATHBREAKER_RULES + playerState + cliRef });
+      // Look up the game plugin from the registry
+      const plugin = getGame(gameType);
+      if (!plugin) {
+        return res.status(404).json({ error: `Unknown game type: ${gameType}` });
       }
 
-      // --- Capture the Lobster guide (default) ---
+      // Game rules from the plugin
+      let guide = plugin.guide ?? `# ${gameType}\nNo guide available.`;
 
-      // --- Player Status ---
-      let playerState = '\n## Your Status\n';
-      if (game) {
-        playerState += `- **Phase:** ${game.state.phase}\n- **Turn:** ${game.state.turn}\n`;
-        const unit = game.state.units.find((u: any) => u.id === agentId);
-        if (unit) {
-          playerState += `- **Team:** ${unit.team}\n- **Class:** ${unit.unitClass}\n- **Alive:** ${unit.alive}\n`;
-        }
+      // Player-specific status from the plugin
+      if (plugin.getPlayerStatus && resolvedGuide) {
+        guide += plugin.getPlayerStatus(resolvedGuide.game.state, agentId);
       } else if (lobby) {
-        playerState += `- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
+        guide += `\n## Your Status\n- **Phase:** ${lobby.phase}\n- **Lobby:** active\n`;
       } else {
-        playerState += `- Not in a game or lobby.\n`;
+        guide += `\n## Your Status\n- Not in a game or lobby.\n`;
       }
 
-      // --- Actions vs Moves ---
-      let actions = '\n## How coga move Works\n\n';
-      actions += 'The `coga move` command sends two different types of data depending on context:\n\n';
-      actions += '- **Lobby actions** (universal, same for all games): `{"action":"propose-team","target":"..."}` — structured objects that operate on the lobby (form teams, pick classes)\n';
-      actions += '- **Game moves** (game-specific): the raw move data for whatever game you\'re playing. Each game defines its own move format.\n\n';
-      actions += 'For **Capture the Lobster**, game moves are a plain JSON array of directions: `["N","NE"]`\n\n';
-
-      actions += '## Actions Available Now\n';
-
-      if (!game && !lobby) {
-        actions += 'You are not in a game or lobby.\n\n';
-        actions += '```\n';
-        actions += 'coga lobbies                   # list open lobbies\n';
-        actions += 'coga create-lobby -s 2         # create a 2v2 lobby\n';
-        actions += 'coga join <lobbyId>            # join a lobby\n';
-        actions += '```\n';
-        actions += '\nMCP equivalents: `list_lobbies()`, `create_lobby(teamSize)`, `join_lobby(lobbyId)`\n';
-      } else if (lobby && lobby.phase === 'forming') {
-        actions += '### Lobby — Team Formation\n\n';
-        actions += 'The `target` field is always a **display name** (handle) for propose-team, or a **teamId** for accept-team.\n\n';
-        actions += '```\n';
-        actions += '# Invite someone to your team (use their display name)\n';
-        actions += 'coga move \'{"action":"propose-team","target":"Sheldon"}\'\n\n';
-        actions += '# Accept a team invite (use the teamId from your pendingInvites)\n';
-        actions += 'coga move \'{"action":"accept-team","target":"team_1"}\'\n\n';
-        actions += '# Leave your current team\n';
-        actions += 'coga move \'{"action":"leave-team"}\'\n\n';
-        actions += '# Chat (visible to everyone in lobby)\n';
-        actions += 'coga tool basic-chat chat message="hello everyone" scope="all"\n\n';
-        actions += '# Chat (team only)\n';
-        actions += 'coga tool basic-chat chat message="strategy talk" scope="team"\n\n';
-        actions += '# Wait for the next update (blocks until something happens)\n';
-        actions += 'coga wait\n';
-        actions += '```\n';
-        actions += '\nMCP equivalents: `propose_team(name)`, `accept_team(teamId)`, `leave_team()`, `chat(message, scope)`, `wait_for_update()`\n';
-        actions += '\n**IMPORTANT:** After each action, call `coga wait` to see what changed. Check `pendingInvites` in the response for team invitations you can accept.\n';
-      } else if (lobby && lobby.phase === 'pre_game') {
-        actions += '### Pre-Game — Class Selection\n\n';
-        actions += '```\n';
-        actions += '# Pick your class\n';
-        actions += 'coga move \'{"action":"choose-class","class":"rogue"}\'\n';
-        actions += 'coga move \'{"action":"choose-class","class":"knight"}\'\n';
-        actions += 'coga move \'{"action":"choose-class","class":"mage"}\'\n\n';
-        actions += '# Team chat (discuss strategy before picking)\n';
-        actions += 'coga tool basic-chat chat message="I will go rogue" scope="team"\n\n';
-        actions += '# Wait for updates\n';
-        actions += 'coga wait\n';
-        actions += '```\n';
-        actions += '\nMCP equivalents: `choose_class(unitClass)`, `chat(message, "team")`, `wait_for_update()`\n';
-      } else if (game && game.state.phase === 'in_progress') {
-        actions += '### Gameplay\n\n';
-        actions += 'Your main loop: `wait` → read state → `move` → repeat.\n\n';
-        actions += '```\n';
-        actions += '# Wait for the next turn (returns full board state)\n';
-        actions += 'coga wait\n\n';
-        actions += '# Submit your move (direction array, up to your speed)\n';
-        actions += 'coga move \'["N","NE"]\'\n';
-        actions += 'coga move \'["S"]\'\n';
-        actions += 'coga move \'[]\'\t\t\t# stay put\n\n';
-        actions += '# Team chat (share enemy positions, coordinate)\n';
-        actions += 'coga tool basic-chat chat message="enemy rogue at 2,3" scope="team"\n\n';
-        actions += '# Get state (use only for recovery/bootstrap, wait gives you state every turn)\n';
-        actions += 'coga state\n';
-        actions += '```\n';
-        actions += '\nMCP equivalents: `wait_for_update()`, `submit_move(path)`, `chat(message, "team")`, `get_state()`\n';
-        actions += '\nDirections: **N, NE, SE, S, SW, NW** (flat-top hex grid, no E/W)\n';
-      }
-
-      // --- Plugins ---
-      let plugins = '\n## Plugins\n';
-      plugins += `Required: **${(CaptureTheLobsterPlugin.requiredPlugins ?? []).join(', ') || 'none'}**\n`;
-      plugins += `Recommended: **${(CaptureTheLobsterPlugin.recommendedPlugins ?? []).join(', ') || 'none'}**\n`;
-
-      plugins += '\n### basic-chat\n';
-      plugins += 'Team and lobby communication. Messages are routed through the typed relay.\n';
-      plugins += '| Tool | MCP | Description |\n';
-      plugins += '|------|-----|-------------|\n';
-      plugins += '| `chat` | Yes | Send a message. Scope: "team", "all", or an agentId for DM |\n';
-      plugins += '\nCLI: `coga tool basic-chat chat message="your message" scope="team"`\n';
-
-      plugins += '\n### elo\n';
-      plugins += 'ELO ratings and match history. Updated automatically after games.\n';
-      plugins += '| Tool | MCP | Description |\n';
-      plugins += '|------|-----|-------------|\n';
-      plugins += '| `get_leaderboard` | No | Top players by ELO rating |\n';
-      plugins += '| `get_my_stats` | No | Your ELO rating and recent matches |\n';
-      plugins += '\nCLI: `coga tool elo get_leaderboard` / `coga tool elo get_my_stats`\n';
-
-      // --- General CLI Reference ---
+      // Generic CLI reference (same for all games)
       let cliRef = '\n## CLI Reference\n';
       cliRef += 'The `coga` CLI is how you interact with the game from the command line.\n\n';
       cliRef += '| Command | Description |\n';
       cliRef += '|---------|-------------|\n';
       cliRef += '| `coga status` | Your address, name, credits, registration status |\n';
       cliRef += '| `coga guide` | This guide (auto-detects your game) |\n';
-      cliRef += '| `coga guide oathbreaker` | OATHBREAKER rules |\n';
-      cliRef += '| `coga guide capture-the-lobster` | CtL rules |\n';
+      const gameTypes = getRegisteredGames();
+      for (const gt of gameTypes) {
+        cliRef += `| \`coga guide ${gt}\` | ${gt} rules |\n`;
+      }
       cliRef += '| `coga lobbies` | List active lobbies |\n';
       cliRef += '| `coga create-lobby -s <n>` | Create a lobby (team size 2-6) |\n';
       cliRef += '| `coga join <lobbyId>` | Join a lobby |\n';
@@ -1010,7 +880,9 @@ export class GameServer {
       cliRef += '| `coga verify <gameId>` | Verify game integrity on-chain |\n';
       cliRef += '| `coga serve --stdio` | Start MCP server (for AI agents) |\n';
 
-      res.json({ guide: GAME_RULES + plugins + playerState + actions + cliRef });
+      guide += cliRef;
+
+      res.json({ guide });
     });
 
     // ------------------------------------------------------------------
@@ -1418,21 +1290,21 @@ export class GameServer {
         return res.json({ success: true, agentId, lobbyId, ...updates });
       }
 
-      // Try OATHBREAKER waiting room
+      // Try waiting room (any game type)
       const waitingRoom = this.waitingRooms.get(lobbyId);
       if (waitingRoom) {
-        const result = this.joinOathbreakerWaitingRoom(lobbyId, agentId, agentName);
+        const result = this.joinWaitingRoom(lobbyId, agentId, agentName);
         if (!result.success) return res.status(400).json({ error: result.error });
 
-        console.log(`[REST] Agent ${agentId} (${agentName}) joined OATHBREAKER waiting room ${lobbyId}`);
+        console.log(`[REST] Agent ${agentId} (${agentName}) joined ${waitingRoom.gameType} waiting room ${lobbyId}`);
 
         // If the waiting room promoted to a game, resolve game state
         if (result.gameStarted) {
           const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ success: true, agentId, gameId: result.gameId, gameType: 'oathbreaker', phase: 'playing', ...updates });
+          return res.json({ success: true, agentId, gameId: result.gameId, gameType: waitingRoom.gameType, phase: 'playing', ...updates });
         }
 
-        return res.json({ success: true, agentId, gameId: lobbyId, gameType: 'oathbreaker', phase: 'waiting' });
+        return res.json({ success: true, agentId, gameId: lobbyId, gameType: waitingRoom.gameType, phase: 'waiting' });
       }
 
       return res.status(404).json({ error: 'Lobby not found' });
@@ -1450,18 +1322,24 @@ export class GameServer {
         return res.status(429).json({ error: 'Server busy -- a lobby or game is already running.' });
       }
 
-      if (gameType === 'oathbreaker') {
-        // OATHBREAKER lobby — FFA, no teams, configurable player count
-        const playerCount = Math.min(20, Math.max(4, Math.floor((req.body?.playerCount as number) || 4)));
-        const roomId = this.createOathbreakerWaitingRoom(playerCount, [{ id: agentId, handle: agentName }]);
+      const plugin = getGame(gameType);
+      if (!plugin) return res.status(400).json({ error: `Unknown game type: ${gameType}` });
 
-        console.log(`[REST] Agent ${agentId} (${agentName}) created OATHBREAKER waiting room ${roomId} (${playerCount} players)`);
+      const lobbyConfig = plugin.lobby;
+      if (!lobbyConfig || lobbyConfig.matchmaking.numTeams === 0) {
+        // FFA game — use waiting room pattern, auto-join the creator
+        const maxPlayers = lobbyConfig?.matchmaking.maxPlayers ?? 20;
+        const minPlayers = lobbyConfig?.matchmaking.minPlayers ?? 4;
+        const playerCount = Math.min(maxPlayers, Math.max(minPlayers, Math.floor((req.body?.playerCount as number) || minPlayers)));
+        const roomId = this.createWaitingRoom(gameType, playerCount, [{ id: agentId, handle: agentName }]);
 
-        return res.json({ success: true, gameId: roomId, gameType: 'oathbreaker', playerCount, phase: 'waiting' });
+        console.log(`[REST] Agent ${agentId} (${agentName}) created ${gameType} waiting room ${roomId} (${playerCount} players)`);
+
+        return res.json({ success: true, gameId: roomId, gameType, playerCount, phase: 'waiting' });
       }
 
-      // Default: CtL lobby
-      const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || 2)));
+      // Team game — use lobby runner
+      const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || lobbyConfig.matchmaking.teamSize)));
       const { lobbyId } = this.createLobbyGame(teamSize, 600000);
       const lobbyRoom = this.lobbies.get(lobbyId)!;
 
@@ -1935,19 +1813,20 @@ export class GameServer {
   // ---------------------------------------------------------------------------
 
   /**
-   * Create an OATHBREAKER waiting room.
+   * Create a waiting room for FFA games (no lobby phases).
    * Players collect here before the game is created. When enough players join,
    * the waiting room promotes to a real game with game_start fired immediately.
    */
-  createOathbreakerWaitingRoom(
+  createWaitingRoom(
+    gameType: string,
     targetPlayers: number,
     initialPlayers: { id: string; handle: string }[],
   ): string {
     const roomId = crypto.randomUUID();
 
-    const waitingRoom: OathWaitingRoom = {
+    const waitingRoom: WaitingRoom = {
       id: roomId,
-      gameType: 'oathbreaker',
+      gameType,
       targetPlayers,
       players: [...initialPlayers],
       spectators: new Set(),
@@ -1960,7 +1839,7 @@ export class GameServer {
       this.agentToWaitingRoom.set(p.id, roomId);
     }
 
-    console.log(`[OATHBREAKER] Waiting room ${roomId} created (${initialPlayers.length}/${targetPlayers} players)`);
+    console.log(`[WaitingRoom] ${gameType} room ${roomId} created (${initialPlayers.length}/${targetPlayers} players)`);
 
     // Check if we already have enough players
     if (initialPlayers.length >= targetPlayers) {
@@ -1970,10 +1849,18 @@ export class GameServer {
     return roomId;
   }
 
+  /** @deprecated Use createWaitingRoom instead */
+  createOathbreakerWaitingRoom(
+    targetPlayers: number,
+    initialPlayers: { id: string; handle: string }[],
+  ): string {
+    return this.createWaitingRoom('oathbreaker', targetPlayers, initialPlayers);
+  }
+
   /**
-   * Join an OATHBREAKER waiting room.
+   * Join a waiting room.
    */
-  joinOathbreakerWaitingRoom(
+  joinWaitingRoom(
     roomId: string,
     agentId: string,
     handle: string,
@@ -2002,7 +1889,7 @@ export class GameServer {
     // Broadcast to spectators
     this.broadcastWaitingRoomState(waitingRoom);
 
-    console.log(`[OATHBREAKER] ${handle} (${agentId}) joined waiting room ${roomId} (${waitingRoom.players.length}/${waitingRoom.targetPlayers})`);
+    console.log(`[WaitingRoom] ${handle} (${agentId}) joined ${waitingRoom.gameType} room ${roomId} (${waitingRoom.players.length}/${waitingRoom.targetPlayers})`);
 
     // Check if we have enough players to start
     if (waitingRoom.players.length >= waitingRoom.targetPlayers) {
@@ -2013,14 +1900,26 @@ export class GameServer {
     return { success: true };
   }
 
+  /** @deprecated Use joinWaitingRoom instead */
+  joinOathbreakerWaitingRoom(
+    roomId: string,
+    agentId: string,
+    handle: string,
+  ): { success: boolean; error?: string; gameStarted?: boolean; gameId?: string } {
+    return this.joinWaitingRoom(roomId, agentId, handle);
+  }
+
   /**
-   * Promote a waiting room to a real OATHBREAKER game.
+   * Promote a waiting room to a real game.
    * Creates the GameRoom, fires game_start, cleans up the waiting room.
    */
   private promoteWaitingRoom(roomId: string): string {
     const waitingRoom = this.waitingRooms.get(roomId)!;
-    const players = waitingRoom.players;
+    const { gameType, players } = waitingRoom;
     const gameId = roomId; // Reuse the ID so spectator WebSocket connections carry over
+
+    const plugin = getGame(gameType);
+    if (!plugin) throw new Error(`Cannot promote waiting room: unknown game type "${gameType}"`);
 
     const handleMap: Record<string, string> = {};
     for (const p of players) {
@@ -2030,18 +1929,29 @@ export class GameServer {
       this.agentToGame.set(p.id, gameId);
     }
 
-    const oathConfig: OathConfig = {
-      ...DEFAULT_OATH_CONFIG,
-      playerIds: players.map(p => p.id),
-      seed: gameId,
-    };
+    // Build game config — currently OATHBREAKER-specific but extensible
+    // Future games can define their own config builder via the plugin
+    let config: any;
+    if (gameType === 'oathbreaker') {
+      config = {
+        ...DEFAULT_OATH_CONFIG,
+        playerIds: players.map(p => p.id),
+        seed: gameId,
+      };
+    } else {
+      // Generic fallback — games with waiting rooms should define config needs
+      config = {
+        playerIds: players.map(p => p.id),
+        seed: gameId,
+      };
+    }
 
-    const game = GameRoom.create(OathbreakerPlugin, oathConfig, gameId, players.map(p => p.id)) as OathGameRoom;
+    const game = GameRoom.create(plugin, config, gameId, players.map(p => p.id));
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: 'FFA' })));
 
     const room: GameRoomData = {
-      gameType: 'oathbreaker',
-      plugin: OathbreakerPlugin,
+      gameType,
+      plugin,
       game,
       spectators: waitingRoom.spectators, // Transfer spectators from waiting room
       finished: false,
@@ -2068,18 +1978,18 @@ export class GameServer {
       notifyAgent(p.id);
     }
 
-    console.log(`[OATHBREAKER] Waiting room ${roomId} promoted to game ${gameId} with ${players.length} players`);
+    console.log(`[WaitingRoom] ${gameType} room ${roomId} promoted to game ${gameId} with ${players.length} players`);
     return gameId;
   }
 
   /**
    * Broadcast waiting room state to WebSocket spectators.
    */
-  private broadcastWaitingRoomState(waitingRoom: OathWaitingRoom): void {
+  private broadcastWaitingRoomState(waitingRoom: WaitingRoom): void {
     const data = {
       type: 'state_update',
       data: {
-        gameType: 'oathbreaker',
+        gameType: waitingRoom.gameType,
         phase: 'waiting',
         targetPlayers: waitingRoom.targetPlayers,
         players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
