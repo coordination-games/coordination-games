@@ -97,8 +97,9 @@ export type OathGameRoom = GameRoom<OathConfig, OathState, OathAction, OathOutco
 // ---------------------------------------------------------------------------
 
 function buildGameResultFromRoom(
-  room: CtlGameRoom,
+  room: GameRoom<any, any, any, any>,
   gameId: string,
+  gameType: string,
   playerIds: string[],
 ) {
   const leaves: MerkleLeafData[] = room.actionLog.map((entry, index) => ({
@@ -110,13 +111,9 @@ function buildGameResultFromRoom(
 
   return {
     gameId,
-    gameType: 'capture-the-lobster',
+    gameType,
     players: playerIds,
-    outcome: {
-      winner: room.state.winner,
-      score: { ...room.state.score },
-      turnCount: room.state.turn,
-    },
+    outcome: room.getOutcome(),
     actionsRoot: tree.root,
     configHash: '',
     actionCount: room.actionLog.length,
@@ -395,7 +392,7 @@ export class GameServer {
             round: oathState.round,
             maxRounds: oathState.config.maxRounds,
             phase: oathState.phase,
-            players: oathState.players.map(p => p.id),
+            players: [...room.game.playerIds],
             spectators: room.spectators.size,
             externalAgents: room.externalSlots.size,
           };
@@ -495,8 +492,8 @@ export class GameServer {
       this.broadcastSpectatorState(room);
 
       // Notify other agents
-      for (const unit of room.game.state.units) {
-        if (unit.id !== sender) notifyAgent(unit.id);
+      for (const playerId of room.game.playerIds) {
+        if (playerId !== sender) notifyAgent(playerId);
       }
 
       res.json({ ok: true, index: msg.index });
@@ -591,28 +588,27 @@ export class GameServer {
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
-      if (room.game.state.phase !== 'finished') {
+      if (!room.game.isOver()) {
         return res.status(400).json({ error: 'Game is still in progress' });
       }
 
       try {
-        const playerIds = room.game.state.units.map((u) => u.id);
-        const result = buildGameResultFromRoom(room.game, req.params.id, playerIds);
+        const playerIds = [...room.game.playerIds];
+        const result = buildGameResultFromRoom(room.game, req.params.id, room.gameType, playerIds);
         const payouts = room.game.computePayouts(playerIds);
         res.json({
           ...result,
           payouts: Object.fromEntries(payouts),
         });
       } catch (err: any) {
-        const game = room.game;
         res.json({
           gameId: req.params.id,
-          gameType: 'capture-the-lobster',
-          players: game.state.units.map((u) => u.id),
-          outcome: { winner: game.state.winner, score: game.state.score },
+          gameType: room.gameType,
+          players: [...room.game.playerIds],
+          outcome: room.game.isOver() ? room.game.getOutcome() : null,
           movesRoot: null,
           configHash: null,
-          turnCount: game.state.turn,
+          actionCount: room.game.actionLog.length,
           timestamp: Math.floor(Date.now() / 1000),
         });
       }
@@ -2040,7 +2036,7 @@ export class GameServer {
       seed: gameId,
     };
 
-    const game = GameRoom.create(OathbreakerPlugin, oathConfig, gameId) as OathGameRoom;
+    const game = GameRoom.create(OathbreakerPlugin, oathConfig, gameId, players.map(p => p.id)) as OathGameRoom;
     const relay = new GameRelay(players.map(p => ({ id: p.id, team: 'FFA' })));
 
     const room: GameRoomData = {
@@ -2204,11 +2200,11 @@ export class GameServer {
 
     console.log(`[Game] Game ${gameId} (${room.gameType}) finished.`);
 
-    // Build game result with Merkle root for on-chain anchoring (if applicable)
-    if (room.gameType === 'capture-the-lobster') {
+    // Build game result with Merkle root for on-chain anchoring
+    const playerIds = [...room.game.playerIds];
+    if (playerIds.length > 0) {
       try {
-        const playerIds = room.game.state.units.map((u: any) => u.id);
-        const result = buildGameResultFromRoom(room.game, gameId, playerIds);
+        const result = buildGameResultFromRoom(room.game, gameId, room.gameType, playerIds);
         const payouts = room.game.computePayouts(playerIds);
         console.log(`[Coordination] Game result built. Actions root: ${result.actionsRoot.slice(0, 16)}... Actions: ${result.actionCount}`);
         const payoutSummary = [...payouts.entries()].map(([id, delta]) => `${id}:${delta > 0 ? '+' : ''}${delta}`).join(', ');

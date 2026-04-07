@@ -16,6 +16,7 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
   private _currentTimer: ReturnType<typeof setTimeout> | null = null;
   private _lock = false; // simple mutex (single-threaded JS, just prevents reentrant calls)
   private _actionLog: { playerId: string | null; action: TAction; stateHash?: string }[] = [];
+  private _playerIds: string[];
   readonly gameId: string;
   private readonly game: CoordinationGame<TConfig, TState, TAction, TOutcome>;
 
@@ -27,12 +28,14 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
     game: CoordinationGame<TConfig, TState, TAction, TOutcome>,
     initialState: TState,
     gameId: string,
+    playerIds: string[] = [],
   ) {
     this.game = game;
     this._state = initialState;
     this._stateHistory = [initialState];
     this._progressSnapshots = [0]; // initial state is progress point 0
     this.gameId = gameId;
+    this._playerIds = playerIds;
   }
 
   // --- State accessors ---
@@ -41,6 +44,7 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
   get actionLog() { return this._actionLog; }
   get gamePlugin() { return this.game; }
   get progressCounter(): number { return this._progressCounter; }
+  get playerIds(): readonly string[] { return this._playerIds; }
 
   /** Get spectator view with delay (in progress units, not raw actions). */
   getSpectatorView(delay: number = 0, context?: SpectatorContext): unknown {
@@ -156,8 +160,9 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
     game: CoordinationGame<TConfig, TState, TAction, TOutcome>,
     config: TConfig,
     gameId: string,
+    playerIds: string[] = [],
   ): GameRoom<TConfig, TState, TAction, TOutcome> {
     const initialState = game.createInitialState(config);
-    return new GameRoom(game, initialState, gameId);
+    return new GameRoom(game, initialState, gameId, playerIds);
   }
 }

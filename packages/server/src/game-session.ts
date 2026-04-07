@@ -35,5 +35,6 @@ export function createCtlGameRoom(
   gameId: string,
   config: CtlConfig,
 ): CtlGameRoom {
-  return GameRoom.create(CaptureTheLobsterPlugin, config, gameId);
+  const playerIds = config.players.map(p => p.id);
+  return GameRoom.create(CaptureTheLobsterPlugin, config, gameId, playerIds);
 }
