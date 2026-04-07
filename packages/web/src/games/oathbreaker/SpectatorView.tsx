@@ -72,6 +72,7 @@ function mapServerState(raw: any): OathSpectatorState | null {
 // ---------------------------------------------------------------------------
 
 export function OathbreakerSpectatorView(props: SpectatorViewProps) {
+  // handles and chatMessages come from GamePage via platform (same as CtL)
   const { gameId, handles, chatMessages } = props;
 
   const [state, setState] = useState<OathSpectatorState | null>(null);
@@ -80,7 +81,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   const [selectedPairing, setSelectedPairing] = useState<OathSpectatorPairing | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Fetch initial state + connect WebSocket
+  // Fetch initial state + connect WebSocket (game state only — handles/chat come from props)
   useEffect(() => {
     if (!gameId) return;
 
@@ -116,7 +117,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   // Character assignments — seeded, deterministic
   const characters = useMemo(() => {
     if (!state) return {};
-    const playerIds = state.players.map(p => p.id).sort(); // sort for determinism
+    const playerIds = state.players.map(p => p.id).sort();
     return assignCharacters(playerIds, gameId ?? 'default');
   }, [state?.players.length, gameId]);
 

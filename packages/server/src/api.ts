@@ -425,10 +425,14 @@ export class GameServer {
 
       const state = this.getSpectatorViewForRoom(room);
       if (!state) return res.status(200).json({ phase: 'pre_game' });
-      const extra: Record<string, any> = { gameType: room.gameType };
+      const extra: Record<string, any> = { gameType: room.gameType, handles: room.handleMap ?? {} };
       if (room.lobbyChat?.length) extra.lobbyChat = room.lobbyChat;
       if (room.preGameChatA?.length) extra.preGameChatA = room.preGameChatA;
       if (room.preGameChatB?.length) extra.preGameChatB = room.preGameChatB;
+      // Include relay messages for spectator
+      const delay = room.plugin.spectatorDelay ?? 0;
+      const delayedProgress = Math.max(0, room.game.progressCounter - delay);
+      extra.relayMessages = room.relay.getSpectatorMessages(delayedProgress);
       res.json({ ...extra, ...state as any });
     });
 
@@ -1552,7 +1556,7 @@ export class GameServer {
     const delayedProgress = Math.max(0, room.game.progressCounter - delay);
     const relayMessages = room.relay.getSpectatorMessages(delayedProgress);
 
-    const extra = { gameType: room.gameType };
+    const extra = { gameType: room.gameType, handles: room.handleMap ?? {} };
     const stateWithRelay = { ...extra, ...state as any, relayMessages };
 
     const msg = JSON.stringify({ type: 'state_update', data: stateWithRelay });

@@ -311,13 +311,13 @@ export function ArcadeBattleView({
         </div>
       </div>
 
-      {/* Arena */}
+      {/* Arena — compact height, sprites fill it */}
       <div className={`arena-bg ${reveal.shakeClass}`} style={{
-        flex: 1,
+        height: 220,
+        flexShrink: 0,
         backgroundImage: `url(${bgUrl})`,
         display: 'flex', flexDirection: 'column',
         position: 'relative',
-        minHeight: 200,
       }}>
         {/* Darken overlay during reveal */}
         {reveal.phase === 'darken' && (
@@ -352,8 +352,8 @@ export function ArcadeBattleView({
         <div style={{
           flex: 1,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-          gap: '15%',
-          paddingBottom: 16,
+          gap: '10%',
+          paddingBottom: 8,
           position: 'relative', zIndex: 2,
         }}>
           {/* P1 — left side, faces right (toward center) */}
