@@ -1113,10 +1113,8 @@ export class GameServer {
       }
 
       const gameAction = { ...req.body };
-      // Inject agentId for action types that reference the acting player
-      if (gameAction.agentId !== undefined) {
-        gameAction.agentId = agentId;
-      }
+      // Always inject agentId — the game plugin uses it to identify the acting player
+      gameAction.agentId = agentId;
       const result = await gameInstance.handleAction(agentId, gameAction);
       if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to submit action.' });
       const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);

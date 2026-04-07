@@ -150,7 +150,7 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
     this._currentTimer = setTimeout(() => {
       if (myId !== this._timerId) return; // stale
       this._currentTimer = null;
-      this.handleAction(null, deadline.action);
+      this.handleAction(null, deadline.action).catch(() => {});
     }, deadline.seconds * 1000);
   }
 
