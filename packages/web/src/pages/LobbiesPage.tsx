@@ -8,7 +8,7 @@ interface Game {
   gameType?: string;
   turn: number;
   maxTurns: number;
-  phase: 'in_progress' | 'finished' | 'starting' | 'playing' | 'waiting';
+  phase: 'in_progress' | 'finished' | 'starting' | 'playing';
   winner?: string;
   teamsA: number;
   teamsB: number;
@@ -20,9 +20,11 @@ interface Game {
 
 interface Lobby {
   lobbyId: string;
+  gameType?: string;
   phase: string;
   agents: any[];
   teams: Record<string, any>;
+  targetPlayers?: number;
   gameId?: string;
 }
 
@@ -102,7 +104,7 @@ export default function LobbiesPage() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
         });
-        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.gameId}`); return; }
+        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
       } else {
         const res = await fetch('/api/lobbies/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -115,8 +117,8 @@ export default function LobbiesPage() {
   }
 
   const filteredGames = games.filter(g => (g.gameType ?? 'capture-the-lobster') === gameTab);
-  const waitingRooms = filteredGames.filter(g => g.phase === 'waiting');
-  const activeGames = filteredGames.filter((g) => g.phase !== 'finished' && g.phase !== 'waiting');
+  const filteredLobbies = lobbies.filter(l => (l.gameType ?? 'capture-the-lobster') === gameTab);
+  const activeGames = filteredGames.filter((g) => g.phase !== 'finished');
   const finishedGames = filteredGames.filter((g) => g.phase === 'finished');
 
   return (
@@ -191,31 +193,18 @@ export default function LobbiesPage() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
-            {creating ? 'Creating...' : gameTab === 'oathbreaker' ? 'Create Game' : 'Create Lobby'}
+            {creating ? 'Creating...' : 'Create Lobby'}
           </motion.button>
         </div>
       </div>
 
-      {lobbies.length > 0 && gameTab === 'capture-the-lobster' && (
+      {filteredLobbies.length > 0 && (
         <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <SectionHeader title="Active Lobbies" count={lobbies.length} />
+          <SectionHeader title="Active Lobbies" count={filteredLobbies.length} />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {lobbies.map((lobby, i) => (
+            {filteredLobbies.map((lobby, i) => (
               <motion.div key={lobby.lobbyId} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, duration: 0.4 }}>
                 <LobbyCard lobby={lobby} onClick={() => navigate(`/lobby/${lobby.lobbyId}`)} />
-              </motion.div>
-            ))}
-          </div>
-        </motion.section>
-      )}
-
-      {waitingRooms.length > 0 && gameTab === 'oathbreaker' && (
-        <motion.section initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <SectionHeader title="Waiting Rooms" count={waitingRooms.length} />
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {waitingRooms.map((room, i) => (
-              <motion.div key={room.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, duration: 0.4 }}>
-                <WaitingRoomCard room={room} onClick={() => navigate(`/lobby/${room.id}`)} />
               </motion.div>
             ))}
           </div>
@@ -298,6 +287,8 @@ function lobbyPhaseBadge(phase: string) {
 function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
   const teamCount = Object.keys(lobby.teams).length;
   const agentCount = lobby.agents.length;
+  const gameType = lobby.gameType ?? 'capture-the-lobster';
+  const isSimple = !lobby.teams || Object.keys(lobby.teams).length === 0;
 
   return (
     <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
@@ -306,43 +297,21 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
         {lobbyPhaseBadge(lobby.phase)}
       </div>
       <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agentCount}</span> agents
+        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agentCount}</span> {isSimple ? 'players' : 'agents'}
+        {lobby.targetPlayers && <span className="ml-1" style={{ color: 'var(--color-ink-faint)' }}>/ {lobby.targetPlayers}</span>}
         {teamCount > 0 && <span className="ml-2">· <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{teamCount}</span> teams formed</span>}
       </div>
-      <div className="flex flex-wrap gap-1">
-        {lobby.agents.slice(0, 8).map((agent: any) => (
-          <span key={agent.id} className="inline-block rounded-md px-1.5 py-0.5 text-xs font-mono" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}>
-            {agent.handle || agent.id}
-          </span>
-        ))}
-      </div>
-    </button>
-  );
-}
-
-function WaitingRoomCard({ room, onClick }: { room: Game; onClick: () => void }) {
-  const playerCount = room.playerCount ?? 0;
-  const targetPlayers = room.maxTurns; // maxTurns maps to maxRounds which maps from targetPlayers in the list
-
-  return (
-    <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>{room.id}</span>
-        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.2)' }}>
-          <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-amber)' }} />
-          Waiting
-        </span>
-      </div>
-      <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-blood)' }}>{playerCount}</span> players joined
-      </div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>
-          OATHBREAKER
-        </span>
-        <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          waiting for players
-        </span>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap gap-1">
+          {lobby.agents.slice(0, 8).map((agent: any) => (
+            <span key={agent.id} className="inline-block rounded-md px-1.5 py-0.5 text-xs font-mono" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}>
+              {agent.handle || agent.id}
+            </span>
+          ))}
+        </div>
+        {gameType === 'oathbreaker' && (
+          <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>OATHBREAKER</span>
+        )}
       </div>
     </button>
   );

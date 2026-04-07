@@ -111,28 +111,31 @@ const BOT_DISPLAY_NAMES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Lobby room for spectators
+// Unified Lobby (covers both runner-based lobbies and simple waiting lobbies)
 // ---------------------------------------------------------------------------
 
-export interface LobbyRoom {
-  runner: LobbyRunner;
-  spectators: Set<WebSocket>;
-  state: LobbyRunnerState | null;
-  // External agent slots for this lobby
-  externalSlots: Map<string, ExternalSlot>;
-  lobbyManager: EngineLobbyManager | null;
-}
-
-// ---------------------------------------------------------------------------
-// Waiting room (pre-game player collection, generic for FFA games)
-// ---------------------------------------------------------------------------
-
-export interface WaitingRoom {
+export interface Lobby {
   id: string;
   gameType: string;
-  targetPlayers: number;
+  plugin: any;  // CoordinationGame plugin
+
+  // Player tracking (used by simple lobbies; runner lobbies use runner.lobby.agents)
   players: { id: string; handle: string }[];
+  targetPlayers: number;
+
+  // Spectators
   spectators: Set<WebSocket>;
+
+  // Optional: lobby runner (for games with phases like CtL)
+  runner?: LobbyRunner;
+  lobbyManager?: EngineLobbyManager;
+
+  // State from runner (if present)
+  runnerState?: LobbyRunnerState | null;
+
+  // External agent slots (for auth tracking)
+  externalSlots: Map<string, ExternalSlot>;
+
   createdAt: number;
 }
 
@@ -147,16 +150,13 @@ export class GameServer {
   readonly elo: EloTracker;
 
   readonly games: Map<string, GameRoomData> = new Map();
-  readonly lobbies: Map<string, LobbyRoom> = new Map();
-  readonly waitingRooms: Map<string, WaitingRoom> = new Map();
+  readonly lobbies: Map<string, Lobby> = new Map();
   private maxConcurrentGames: number = 1; // Beta limit — prevents credit drain
 
   /** Maps external agentId -> gameId for game resolution */
   private agentToGame: Map<string, string> = new Map();
   /** Maps external agentId -> lobbyId for lobby resolution */
   private agentToLobby: Map<string, string> = new Map();
-  /** Maps external agentId -> waiting room ID */
-  private agentToWaitingRoom: Map<string, string> = new Map();
 
   /** Server URL for bot connections (base URL — bots connect via coga subprocess) */
   private serverUrl: string;
@@ -204,34 +204,83 @@ export class GameServer {
       });
     });
 
-    // List active lobbies
+    // List active lobbies (unified — both runner-based and simple lobbies)
     router.get('/lobbies', (_req, res) => {
-      const list = Array.from(this.lobbies.entries()).map(([id, room]) => ({
-        lobbyId: id,
-        phase: room.state?.phase ?? 'forming',
-        agents: room.state?.agents ?? [],
-        teams: room.state?.teams ?? {},
-        chat: room.state?.chat ?? [],
-        preGame: room.state?.preGame ?? null,
-        gameId: room.state?.gameId ?? null,
-        spectators: room.spectators.size,
-        externalSlots: Array.from(room.externalSlots.values()).map((s) => ({
-          agentId: s.agentId,
-          connected: s.connected,
-        })),
-      }));
+      const list = Array.from(this.lobbies.entries()).map(([id, lobby]) => {
+        if (lobby.runner) {
+          // Runner-based lobby (CtL)
+          return {
+            lobbyId: id,
+            gameType: lobby.gameType,
+            phase: lobby.runnerState?.phase ?? 'forming',
+            agents: lobby.runnerState?.agents ?? [],
+            teams: lobby.runnerState?.teams ?? {},
+            chat: lobby.runnerState?.chat ?? [],
+            preGame: lobby.runnerState?.preGame ?? null,
+            gameId: lobby.runnerState?.gameId ?? null,
+            spectators: lobby.spectators.size,
+            externalSlots: Array.from(lobby.externalSlots.values()).map((s) => ({
+              agentId: s.agentId,
+              connected: s.connected,
+            })),
+          };
+        } else {
+          // Simple lobby (OATHBREAKER etc.)
+          return {
+            lobbyId: id,
+            gameType: lobby.gameType,
+            phase: 'forming',
+            agents: lobby.players.map(p => ({ id: p.id, handle: p.handle, team: null })),
+            teams: {},
+            chat: [],
+            preGame: null,
+            gameId: null,
+            targetPlayers: lobby.targetPlayers,
+            spectators: lobby.spectators.size,
+            externalSlots: Array.from(lobby.externalSlots.values()).map((s) => ({
+              agentId: s.agentId,
+              connected: s.connected,
+            })),
+          };
+        }
+      });
       res.json(list);
     });
 
-    // Get lobby state
+    // Get lobby state (unified)
     router.get('/lobbies/:id', (req, res) => {
-      const room = this.lobbies.get(req.params.id);
-      if (!room) return res.status(404).json({ error: 'Lobby not found' });
-      // Always compute fresh state for accurate timer
-      const freshState = room.runner.getState();
-      res.json({
-        ...freshState,
-        externalSlots: Array.from(room.externalSlots.values()).map((s) => ({
+      const lobby = this.lobbies.get(req.params.id);
+      if (!lobby) return res.status(404).json({ error: 'Lobby not found' });
+
+      if (lobby.runner) {
+        // Runner-based lobby — compute fresh state for accurate timer
+        const freshState = lobby.runner.getState();
+        return res.json({
+          ...freshState,
+          gameType: lobby.gameType,
+          externalSlots: Array.from(lobby.externalSlots.values()).map((s) => ({
+            agentId: s.agentId,
+            connected: s.connected,
+          })),
+        });
+      }
+
+      // Simple lobby — return LobbyRunnerState-shaped data
+      return res.json({
+        lobbyId: lobby.id,
+        gameType: lobby.gameType,
+        phase: 'forming',
+        agents: lobby.players.map(p => ({ id: p.id, handle: p.handle, team: null })),
+        teams: {},
+        chat: [],
+        preGame: null,
+        gameId: null,
+        error: null,
+        teamSize: 0,
+        targetPlayers: lobby.targetPlayers,
+        noTimeout: true,
+        timeRemainingSeconds: -1,
+        externalSlots: Array.from(lobby.externalSlots.values()).map((s) => ({
           agentId: s.agentId,
           connected: s.connected,
         })),
@@ -249,7 +298,7 @@ export class GameServer {
       res.status(201).json({ lobbyId });
     });
 
-    // Create a lobby (generic — routes to waiting room or lobby runner based on plugin config)
+    // Create a lobby (generic — routes to simple lobby or lobby runner based on plugin config)
     router.post('/lobbies/create', (req, res) => {
       if (this.activeGameCount() >= this.maxConcurrentGames) {
         return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
@@ -260,13 +309,13 @@ export class GameServer {
 
       const lobbyConfig = plugin.lobby;
       if (!lobbyConfig || lobbyConfig.matchmaking.numTeams === 0) {
-        // FFA game — use waiting room pattern
+        // FFA game — simple lobby (no phases)
         const maxPlayers = lobbyConfig?.matchmaking.maxPlayers ?? 20;
         const minPlayers = lobbyConfig?.matchmaking.minPlayers ?? 4;
         const playerCount = Math.min(maxPlayers, Math.max(minPlayers, Math.floor((req.body?.playerCount as number) || minPlayers)));
-        const roomId = this.createWaitingRoom(gameType, playerCount, []);
-        console.log(`[REST] Created ${gameType} waiting room ${roomId} (${playerCount} players) via /lobbies/create`);
-        return res.status(201).json({ gameId: roomId, gameType, playerCount, phase: 'waiting' });
+        const lobbyId = this.createSimpleLobby(gameType, playerCount, []);
+        console.log(`[REST] Created ${gameType} lobby ${lobbyId} (${playerCount} players) via /lobbies/create`);
+        return res.status(201).json({ lobbyId, gameId: lobbyId, gameType, playerCount, phase: 'forming' });
       } else {
         // Team game — use lobby runner
         const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || lobbyConfig.matchmaking.teamSize)));
@@ -276,71 +325,75 @@ export class GameServer {
       }
     });
 
-    // Fill remaining lobby/waiting-room slots with bots (requires admin password since bots use API credits)
+    // Fill remaining lobby slots with bots (requires admin password since bots use API credits)
     router.post('/lobbies/:id/fill-bots', (req, res) => {
       const adminPassword = process.env.ADMIN_PASSWORD;
       if (adminPassword && req.body?.password !== adminPassword) {
         return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
       }
 
-      // Try lobby first
-      const lobbyRoom = this.lobbies.get(req.params.id);
-      if (lobbyRoom) {
-        if (lobbyRoom.state?.phase && lobbyRoom.state.phase !== 'forming') {
+      const lobby = this.lobbies.get(req.params.id);
+      if (!lobby) return res.status(404).json({ error: 'Lobby not found' });
+
+      if (lobby.runner) {
+        // Runner-based lobby (CtL)
+        if (lobby.runnerState?.phase && lobby.runnerState.phase !== 'forming') {
           return res.status(400).json({ error: 'Lobby is no longer in forming phase' });
         }
-        const totalSlots = (lobbyRoom.runner as any).teamSize * 2;
-        const currentAgents = lobbyRoom.runner.lobby.agents.size;
+        const totalSlots = (lobby.runner as any).teamSize * 2;
+        const currentAgents = lobby.runner.lobby.agents.size;
         const slotsToFill = totalSlots - currentAgents;
         if (slotsToFill <= 0) {
           return res.status(400).json({ error: 'Lobby is already full' });
         }
         const added: { agentId: string; handle: string }[] = [];
         for (let i = 0; i < slotsToFill; i++) {
-          added.push(lobbyRoom.runner.addBot());
+          added.push(lobby.runner.addBot());
         }
         return res.status(201).json({ added, filledSlots: added.length });
-      }
-
-      // Try waiting room (any game type)
-      const waitingRoom = this.waitingRooms.get(req.params.id);
-      if (waitingRoom) {
-        const currentCount = waitingRoom.players.length;
-        const slotsToFill = waitingRoom.targetPlayers - currentCount;
+      } else {
+        // Simple lobby
+        const currentCount = lobby.players.length;
+        const slotsToFill = lobby.targetPlayers - currentCount;
         if (slotsToFill <= 0) {
-          return res.status(400).json({ error: 'Waiting room is already full' });
+          return res.status(400).json({ error: 'Lobby is already full' });
         }
         const botNames = ['Pinchy', 'Clawdia', 'Sheldon', 'Snappy', 'Bubbles', 'Coral', 'Neptune', 'Triton', 'Marina', 'Squidward', 'Barnacle', 'Anchovy'];
         const added: { agentId: string; handle: string }[] = [];
         for (let i = 0; i < slotsToFill; i++) {
           const handle = botNames[(currentCount + i) % botNames.length];
-          const agentId = `bot_${waitingRoom.gameType.substring(0, 4)}_${currentCount + i}`;
-          this.joinWaitingRoom(req.params.id, agentId, handle);
+          const agentId = `bot_${lobby.gameType.substring(0, 4)}_${currentCount + i}`;
+          this.joinSimpleLobby(req.params.id, agentId, handle);
           added.push({ agentId, handle });
         }
         return res.status(201).json({ added, filledSlots: added.length });
       }
-
-      return res.status(404).json({ error: 'Lobby not found' });
     });
 
     // Disable lobby timeout (keep lobby open indefinitely)
     router.post('/lobbies/:id/no-timeout', (req, res) => {
-      const lobbyRoom = this.lobbies.get(req.params.id);
-      if (!lobbyRoom) {
+      const lobby = this.lobbies.get(req.params.id);
+      if (!lobby) {
         return res.status(404).json({ error: 'Lobby not found' });
       }
-      lobbyRoom.runner.disableTimeout();
+      if (lobby.runner) {
+        lobby.runner.disableTimeout();
+      }
+      // Simple lobbies have no timeout by default — no-op is fine
       res.json({ ok: true });
     });
 
     // Close/disband a lobby
     router.delete('/lobbies/:id', (req, res) => {
-      const lobbyRoom = this.lobbies.get(req.params.id);
-      if (!lobbyRoom) {
+      const lobby = this.lobbies.get(req.params.id);
+      if (!lobby) {
         return res.status(404).json({ error: 'Lobby not found' });
       }
-      lobbyRoom.runner.stop();
+      if (lobby.runner) {
+        lobby.runner.stop();
+      }
+      // Close spectator WebSockets
+      for (const ws of lobby.spectators) ws.close();
       this.lobbies.delete(req.params.id);
       // Clean up agent->lobby mappings
       for (const [agentId, lobbyId] of this.agentToLobby.entries()) {
@@ -360,35 +413,11 @@ export class GameServer {
         externalAgents: room.externalSlots.size,
       }));
 
-      // Include waiting rooms as games with phase 'waiting'
-      for (const [id, wr] of this.waitingRooms) {
-        const plugin = getGame(wr.gameType);
-        list.push({
-          id,
-          gameType: wr.gameType,
-          phase: 'waiting',
-          players: wr.players.map(p => p.id),
-          spectators: wr.spectators.size,
-          externalAgents: wr.players.length,
-        });
-      }
-
       res.json(list);
     });
 
-    // Game details (also checks waiting rooms)
+    // Game details
     router.get('/games/:id', (req, res) => {
-      // Check waiting rooms first
-      const waitingRoom = this.waitingRooms.get(req.params.id);
-      if (waitingRoom) {
-        return res.json({
-          gameType: waitingRoom.gameType,
-          targetPlayers: waitingRoom.targetPlayers,
-          phase: 'waiting',
-          players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
-        });
-      }
-
       const room = this.games.get(req.params.id);
       if (!room) return res.status(404).json({ error: 'Game not found' });
 
@@ -608,10 +637,13 @@ export class GameServer {
       return room?.relay ?? null;
     };
 
-    const resolveWaitingRoom = (agentId: string): WaitingRoom | null => {
-      const roomId = this.agentToWaitingRoom.get(agentId);
-      if (!roomId) return null;
-      return this.waitingRooms.get(roomId) ?? null;
+    /** Resolve a simple (non-runner) lobby for an agent */
+    const resolveSimpleLobby = (agentId: string): Lobby | null => {
+      const lobbyId = this.agentToLobby.get(agentId);
+      if (!lobbyId) return null;
+      const lobby = this.lobbies.get(lobbyId);
+      if (!lobby || lobby.runner) return null; // Only return simple lobbies
+      return lobby;
     };
 
     /** Get the handle map for an agent (from their game room, or from global registry as fallback) */
@@ -843,16 +875,16 @@ export class GameServer {
         return res.json({ phase: 'game', ...gameTypeExtra, ...(state as any), relayMessages, handles });
       }
 
-      // Waiting room (FFA games)
-      const waitingRoom = resolveWaitingRoom(agentId);
-      if (waitingRoom) {
+      // Simple lobby (FFA games waiting for players)
+      const simpleLobby = resolveSimpleLobby(agentId);
+      if (simpleLobby) {
         return res.json({
           phase: 'waiting',
-          gameType: waitingRoom.gameType,
-          gameId: waitingRoom.id,
-          targetPlayers: waitingRoom.targetPlayers,
-          currentPlayers: waitingRoom.players.length,
-          players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+          gameType: simpleLobby.gameType,
+          gameId: simpleLobby.id,
+          targetPlayers: simpleLobby.targetPlayers,
+          currentPlayers: simpleLobby.players.length,
+          players: simpleLobby.players.map(p => ({ id: p.id, handle: p.handle })),
         });
       }
 
@@ -976,13 +1008,13 @@ export class GameServer {
         return res.json({ reason: 'update', ...updates });
       }
 
-      // === Waiting room (FFA games) ===
-      const waitingRoom = resolveWaitingRoom(agentId);
-      if (waitingRoom) {
+      // === Simple lobby (FFA games waiting for players) ===
+      const simpleLobby = resolveSimpleLobby(agentId);
+      if (simpleLobby) {
         // Long-poll: wait until game starts or more players join
         await waitForAgentUpdate(agentId, 25000);
 
-        // After waking, check if game started (waiting room promoted to game)
+        // After waking, check if game started (lobby promoted to game)
         const newGameResolved = resolveGameRoom(agentId);
         if (newGameResolved) {
           const { room: newRoom, game: newGame } = newGameResolved;
@@ -991,17 +1023,17 @@ export class GameServer {
           return res.json({ reason: 'game_started', phase: 'game', gameType: newRoom.gameType, ...state, handles: gameHandles });
         }
 
-        // Still in waiting room — return current state
-        const updatedRoom = resolveWaitingRoom(agentId);
-        if (!updatedRoom) return res.json({ reason: 'waiting_room_closed' });
+        // Still in lobby — return current state
+        const updatedLobbySimple = resolveSimpleLobby(agentId);
+        if (!updatedLobbySimple) return res.json({ reason: 'lobby_closed' });
         return res.json({
           reason: 'update',
           phase: 'waiting',
-          gameType: updatedRoom.gameType,
-          gameId: updatedRoom.id,
-          targetPlayers: updatedRoom.targetPlayers,
-          currentPlayers: updatedRoom.players.length,
-          players: updatedRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+          gameType: updatedLobbySimple.gameType,
+          gameId: updatedLobbySimple.id,
+          targetPlayers: updatedLobbySimple.targetPlayers,
+          currentPlayers: updatedLobbySimple.players.length,
+          players: updatedLobbySimple.players.map(p => ({ id: p.id, handle: p.handle })),
         });
       }
 
@@ -1088,7 +1120,7 @@ export class GameServer {
     // (No dedicated /chat endpoint — chat goes through /tool as basic-chat:chat)
 
     // ------------------------------------------------------------------
-    // 9. POST /lobby/join — Join a lobby or waiting room
+    // 9. POST /lobby/join — Join a lobby (unified)
     // ------------------------------------------------------------------
     router.post('/lobby/join', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
@@ -1096,54 +1128,47 @@ export class GameServer {
       const lobbyId = req.body?.lobbyId ?? req.body?.gameId;
       if (!lobbyId) return res.status(400).json({ error: 'lobbyId is required' });
 
-      // Try lobby first
-      const lobbyRoom = this.lobbies.get(lobbyId);
-      if (lobbyRoom) {
-        // Track the slot
-        lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
+      const lobby = this.lobbies.get(lobbyId);
+      if (!lobby) return res.status(404).json({ error: 'Lobby not found' });
+
+      if (lobby.runner) {
+        // Runner-based lobby (CtL)
+        lobby.externalSlots.set(agentId, { token: '', agentId, connected: true });
         this.agentToLobby.set(agentId, lobbyId);
 
-        // Add agent to the lobby manager
-        if (lobbyRoom.lobbyManager) {
-          lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
+        if (lobby.lobbyManager) {
+          lobby.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
         }
 
         console.log(`[REST] Agent ${agentId} (${agentName}) joined lobby ${lobbyId}`);
-        lobbyRoom.runner.emitState();
+        lobby.runner.emitState();
 
-        // Notify other agents
-        if (lobbyRoom.lobbyManager) {
-          for (const [id] of lobbyRoom.lobbyManager.agents) {
+        if (lobby.lobbyManager) {
+          for (const [id] of lobby.lobbyManager.agents) {
             if (id !== agentId) notifyAgent(id);
           }
         }
 
         const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
         return res.json({ success: true, agentId, lobbyId, ...updates });
-      }
-
-      // Try waiting room (any game type)
-      const waitingRoom = this.waitingRooms.get(lobbyId);
-      if (waitingRoom) {
-        const result = this.joinWaitingRoom(lobbyId, agentId, agentName);
+      } else {
+        // Simple lobby
+        const result = this.joinSimpleLobby(lobbyId, agentId, agentName);
         if (!result.success) return res.status(400).json({ error: result.error });
 
-        console.log(`[REST] Agent ${agentId} (${agentName}) joined ${waitingRoom.gameType} waiting room ${lobbyId}`);
+        console.log(`[REST] Agent ${agentId} (${agentName}) joined ${lobby.gameType} lobby ${lobbyId}`);
 
-        // If the waiting room promoted to a game, resolve game state
         if (result.gameStarted) {
           const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
-          return res.json({ success: true, agentId, gameId: result.gameId, gameType: waitingRoom.gameType, phase: 'playing', ...updates });
+          return res.json({ success: true, agentId, gameId: result.gameId, gameType: lobby.gameType, phase: 'playing', ...updates });
         }
 
-        return res.json({ success: true, agentId, gameId: lobbyId, gameType: waitingRoom.gameType, phase: 'waiting' });
+        return res.json({ success: true, agentId, gameId: lobbyId, gameType: lobby.gameType, phase: 'waiting' });
       }
-
-      return res.status(404).json({ error: 'Lobby not found' });
     });
 
     // ------------------------------------------------------------------
-    // 10. POST /lobby/create — Create a lobby
+    // 10. POST /lobby/create — Create a lobby (unified)
     // ------------------------------------------------------------------
     router.post('/lobby/create', requirePlayerAuth, (req: any, res: any) => {
       const agentId = req.agentId as string;
@@ -1159,29 +1184,29 @@ export class GameServer {
 
       const lobbyConfig = plugin.lobby;
       if (!lobbyConfig || lobbyConfig.matchmaking.numTeams === 0) {
-        // FFA game — use waiting room pattern, auto-join the creator
+        // FFA game — simple lobby, auto-join the creator
         const maxPlayers = lobbyConfig?.matchmaking.maxPlayers ?? 20;
         const minPlayers = lobbyConfig?.matchmaking.minPlayers ?? 4;
         const playerCount = Math.min(maxPlayers, Math.max(minPlayers, Math.floor((req.body?.playerCount as number) || minPlayers)));
-        const roomId = this.createWaitingRoom(gameType, playerCount, [{ id: agentId, handle: agentName }]);
+        const lobbyId = this.createSimpleLobby(gameType, playerCount, [{ id: agentId, handle: agentName }]);
 
-        console.log(`[REST] Agent ${agentId} (${agentName}) created ${gameType} waiting room ${roomId} (${playerCount} players)`);
+        console.log(`[REST] Agent ${agentId} (${agentName}) created ${gameType} lobby ${lobbyId} (${playerCount} players)`);
 
-        return res.json({ success: true, gameId: roomId, gameType, playerCount, phase: 'waiting' });
+        return res.json({ success: true, lobbyId, gameId: lobbyId, gameType, playerCount, phase: 'forming' });
       }
 
       // Team game — use lobby runner
       const teamSize = Math.min(6, Math.max(2, Math.floor((req.body?.teamSize as number) || lobbyConfig.matchmaking.teamSize)));
       const { lobbyId } = this.createLobbyGame(teamSize, 600000);
-      const lobbyRoom = this.lobbies.get(lobbyId)!;
+      const lobby = this.lobbies.get(lobbyId)!;
 
       // Auto-join the creator
-      lobbyRoom.externalSlots.set(agentId, { token: '', agentId, connected: true });
+      lobby.externalSlots.set(agentId, { token: '', agentId, connected: true });
       this.agentToLobby.set(agentId, lobbyId);
-      if (lobbyRoom.lobbyManager) {
-        lobbyRoom.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
+      if (lobby.lobbyManager) {
+        lobby.lobbyManager.addAgent({ id: agentId, handle: agentName, elo: 1000 });
       }
-      lobbyRoom.runner.emitState();
+      lobby.runner!.emitState();
 
       console.log(`[REST] Agent ${agentId} (${agentName}) created and joined lobby ${lobbyId} (${teamSize}v${teamSize})`);
 
@@ -1347,8 +1372,10 @@ export class GameServer {
             const lobbyId = this.agentToLobby.get(agentId);
             if (lobbyId) {
               const lobbyRoom = this.lobbies.get(lobbyId);
-              if (lobbyRoom) {
+              if (lobbyRoom?.runner) {
                 lobbyRoom.runner.emitState();
+              }
+              if (lobby) {
                 for (const [id] of lobby.agents) {
                   if (id !== agentId) notifyAgent(id);
                 }
@@ -1440,60 +1467,54 @@ export class GameServer {
           return;
         }
 
-        // Check waiting rooms (FFA pre-game)
-        const waitingRoom = this.waitingRooms.get(gameId);
-        if (waitingRoom) {
-          this.wss.handleUpgrade(request, socket, head, (ws) => {
-            waitingRoom.spectators.add(ws);
-
-            // Send current waiting room state
-            ws.send(JSON.stringify({
-              type: 'state_update',
-              data: {
-                gameType: waitingRoom.gameType,
-                phase: 'waiting',
-                targetPlayers: waitingRoom.targetPlayers,
-                players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
-              },
-            }));
-
-            ws.on('close', () => {
-              waitingRoom.spectators.delete(ws);
-            });
-
-            ws.on('error', () => {
-              waitingRoom.spectators.delete(ws);
-            });
-          });
-          return;
-        }
-
         socket.destroy();
         return;
       }
 
-      // Lobby WebSocket: /ws/lobby/:id
+      // Lobby WebSocket: /ws/lobby/:id (unified — both runner and simple lobbies)
       const lobbyMatch = url.pathname.match(/^\/ws\/lobby\/(.+)$/);
       if (lobbyMatch) {
         const lobbyId = lobbyMatch[1];
-        const lobbyRoom = this.lobbies.get(lobbyId);
-        if (!lobbyRoom) {
+        const lobby = this.lobbies.get(lobbyId);
+        if (!lobby) {
           socket.destroy();
           return;
         }
 
         this.wss.handleUpgrade(request, socket, head, (ws) => {
-          lobbyRoom.spectators.add(ws);
+          lobby.spectators.add(ws);
 
-          // Send current state (fresh for accurate timer)
-          ws.send(JSON.stringify({ type: 'lobby_update', data: lobbyRoom.runner.getState() }));
+          if (lobby.runner) {
+            // Runner-based lobby — send runner state
+            ws.send(JSON.stringify({ type: 'lobby_update', data: lobby.runner.getState() }));
+          } else {
+            // Simple lobby — send LobbyRunnerState-shaped data
+            ws.send(JSON.stringify({
+              type: 'lobby_update',
+              data: {
+                lobbyId: lobby.id,
+                gameType: lobby.gameType,
+                phase: 'forming',
+                agents: lobby.players.map(p => ({ id: p.id, handle: p.handle, team: null })),
+                teams: {},
+                chat: [],
+                preGame: null,
+                gameId: null,
+                error: null,
+                teamSize: 0,
+                targetPlayers: lobby.targetPlayers,
+                noTimeout: true,
+                timeRemainingSeconds: -1,
+              },
+            }));
+          }
 
           ws.on('close', () => {
-            lobbyRoom.spectators.delete(ws);
+            lobby.spectators.delete(ws);
           });
 
           ws.on('error', () => {
-            lobbyRoom.spectators.delete(ws);
+            lobby.spectators.delete(ws);
           });
         });
         return;
@@ -1551,18 +1572,17 @@ export class GameServer {
     for (const [, room] of this.games) {
       if (!room.finished) count++;
     }
-    // Count active lobbies (but not failed/finished ones)
-    for (const [, room] of this.lobbies) {
-      if (!room.state || room.state.phase === 'failed') continue;
-      // If lobby's game is finished, don't count it
-      if (room.state.gameId) {
-        const gameRoom = this.games.get(room.state.gameId);
-        if (gameRoom?.finished) continue;
+    // Count active lobbies (both runner-based and simple)
+    for (const [, lobby] of this.lobbies) {
+      if (lobby.runner) {
+        if (!lobby.runnerState || lobby.runnerState.phase === 'failed') continue;
+        if (lobby.runnerState.gameId) {
+          const gameRoom = this.games.get(lobby.runnerState.gameId);
+          if (gameRoom?.finished) continue;
+        }
       }
       count++;
     }
-    // Count active waiting rooms
-    count += this.waitingRooms.size;
     return count;
   }
 
@@ -1620,83 +1640,87 @@ export class GameServer {
   }
 
   // ---------------------------------------------------------------------------
-  // OATHBREAKER waiting room + game creation
+  // Simple lobby creation + management (for FFA games without phases)
   // ---------------------------------------------------------------------------
 
   /**
-   * Create a waiting room for FFA games (no lobby phases).
+   * Create a simple lobby for FFA games (no lobby phases).
    * Players collect here before the game is created. When enough players join,
-   * the waiting room promotes to a real game with game_start fired immediately.
+   * the lobby promotes to a real game with game_start fired immediately.
    */
-  createWaitingRoom(
+  createSimpleLobby(
     gameType: string,
     targetPlayers: number,
     initialPlayers: { id: string; handle: string }[],
   ): string {
-    const roomId = crypto.randomUUID();
+    const lobbyId = crypto.randomUUID();
+    const plugin = getGame(gameType);
 
-    const waitingRoom: WaitingRoom = {
-      id: roomId,
+    const lobby: Lobby = {
+      id: lobbyId,
       gameType,
-      targetPlayers,
+      plugin,
       players: [...initialPlayers],
+      targetPlayers,
       spectators: new Set(),
+      externalSlots: new Map(),
       createdAt: Date.now(),
     };
 
-    this.waitingRooms.set(roomId, waitingRoom);
+    this.lobbies.set(lobbyId, lobby);
 
     for (const p of initialPlayers) {
-      this.agentToWaitingRoom.set(p.id, roomId);
+      this.agentToLobby.set(p.id, lobbyId);
     }
 
-    console.log(`[WaitingRoom] ${gameType} room ${roomId} created (${initialPlayers.length}/${targetPlayers} players)`);
+    console.log(`[Lobby] ${gameType} lobby ${lobbyId} created (${initialPlayers.length}/${targetPlayers} players)`);
 
     // Check if we already have enough players
     if (initialPlayers.length >= targetPlayers) {
-      this.promoteWaitingRoom(roomId);
+      this.promoteLobby(lobbyId);
     }
 
-    return roomId;
+    return lobbyId;
   }
 
   /**
-   * Join a waiting room.
+   * Join a simple lobby.
    */
-  joinWaitingRoom(
-    roomId: string,
+  joinSimpleLobby(
+    lobbyId: string,
     agentId: string,
     handle: string,
   ): { success: boolean; error?: string; gameStarted?: boolean; gameId?: string } {
-    const waitingRoom = this.waitingRooms.get(roomId);
-    if (!waitingRoom) return { success: false, error: 'Waiting room not found' };
+    const lobby = this.lobbies.get(lobbyId);
+    if (!lobby) return { success: false, error: 'Lobby not found' };
+    if (lobby.runner) return { success: false, error: 'Use lobby join for runner-based lobbies' };
 
-    // Check if already in the room
-    if (waitingRoom.players.some(p => p.id === agentId)) {
-      return { success: false, error: 'Already in this waiting room' };
+    // Check if already in the lobby
+    if (lobby.players.some(p => p.id === agentId)) {
+      return { success: false, error: 'Already in this lobby' };
     }
 
-    // Check if room is full
-    if (waitingRoom.players.length >= waitingRoom.targetPlayers) {
-      return { success: false, error: 'Waiting room is full' };
+    // Check if lobby is full
+    if (lobby.players.length >= lobby.targetPlayers) {
+      return { success: false, error: 'Lobby is full' };
     }
 
-    waitingRoom.players.push({ id: agentId, handle });
-    this.agentToWaitingRoom.set(agentId, roomId);
+    lobby.players.push({ id: agentId, handle });
+    this.agentToLobby.set(agentId, lobbyId);
 
     // Notify existing players that someone joined
-    for (const p of waitingRoom.players) {
+    for (const p of lobby.players) {
       if (p.id !== agentId) notifyAgent(p.id);
     }
 
     // Broadcast to spectators
-    this.broadcastWaitingRoomState(waitingRoom);
+    this.broadcastSimpleLobbyState(lobby);
 
-    console.log(`[WaitingRoom] ${handle} (${agentId}) joined ${waitingRoom.gameType} room ${roomId} (${waitingRoom.players.length}/${waitingRoom.targetPlayers})`);
+    console.log(`[Lobby] ${handle} (${agentId}) joined ${lobby.gameType} lobby ${lobbyId} (${lobby.players.length}/${lobby.targetPlayers})`);
 
     // Check if we have enough players to start
-    if (waitingRoom.players.length >= waitingRoom.targetPlayers) {
-      const gameId = this.promoteWaitingRoom(roomId);
+    if (lobby.players.length >= lobby.targetPlayers) {
+      const gameId = this.promoteLobby(lobbyId);
       return { success: true, gameStarted: true, gameId };
     }
 
@@ -1704,22 +1728,22 @@ export class GameServer {
   }
 
   /**
-   * Promote a waiting room to a real game.
-   * Creates the GameRoom, fires game_start, cleans up the waiting room.
+   * Promote a simple lobby to a real game.
+   * Creates the GameRoom, fires game_start, cleans up the lobby.
    */
-  private promoteWaitingRoom(roomId: string): string {
-    const waitingRoom = this.waitingRooms.get(roomId)!;
-    const { gameType, players } = waitingRoom;
-    const gameId = roomId; // Reuse the ID so spectator WebSocket connections carry over
+  private promoteLobby(lobbyId: string): string {
+    const lobby = this.lobbies.get(lobbyId)!;
+    const { gameType, players } = lobby;
+    const gameId = lobbyId; // Reuse the ID so spectator WebSocket connections carry over
 
     const plugin = getGame(gameType);
-    if (!plugin) throw new Error(`Cannot promote waiting room: unknown game type "${gameType}"`);
+    if (!plugin) throw new Error(`Cannot promote lobby: unknown game type "${gameType}"`);
 
     const handleMap: Record<string, string> = {};
     for (const p of players) {
       handleMap[p.id] = p.handle;
-      // Move agent mapping from waiting room to game
-      this.agentToWaitingRoom.delete(p.id);
+      // Move agent mapping from lobby to game
+      this.agentToLobby.delete(p.id);
       this.agentToGame.set(p.id, gameId);
     }
 
@@ -1736,7 +1760,7 @@ export class GameServer {
       gameType,
       plugin,
       game,
-      spectators: waitingRoom.spectators, // Transfer spectators from waiting room
+      spectators: lobby.spectators, // Transfer spectators from lobby
       finished: false,
       externalSlots: new Map(players.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
       handleMap,
@@ -1749,8 +1773,8 @@ export class GameServer {
 
     this.games.set(gameId, room);
 
-    // Remove the waiting room
-    this.waitingRooms.delete(roomId);
+    // Remove the lobby
+    this.lobbies.delete(lobbyId);
 
     // Wire callbacks and start immediately
     this.wireCallbacks(gameId, room);
@@ -1761,25 +1785,33 @@ export class GameServer {
       notifyAgent(p.id);
     }
 
-    console.log(`[WaitingRoom] ${gameType} room ${roomId} promoted to game ${gameId} with ${players.length} players`);
+    console.log(`[Lobby] ${gameType} lobby ${lobbyId} promoted to game ${gameId} with ${players.length} players`);
     return gameId;
   }
 
   /**
-   * Broadcast waiting room state to WebSocket spectators.
+   * Broadcast simple lobby state to WebSocket spectators (LobbyRunnerState-shaped).
    */
-  private broadcastWaitingRoomState(waitingRoom: WaitingRoom): void {
-    const data = {
-      type: 'state_update',
+  private broadcastSimpleLobbyState(lobby: Lobby): void {
+    const msg = JSON.stringify({
+      type: 'lobby_update',
       data: {
-        gameType: waitingRoom.gameType,
-        phase: 'waiting',
-        targetPlayers: waitingRoom.targetPlayers,
-        players: waitingRoom.players.map(p => ({ id: p.id, handle: p.handle })),
+        lobbyId: lobby.id,
+        gameType: lobby.gameType,
+        phase: 'forming',
+        agents: lobby.players.map(p => ({ id: p.id, handle: p.handle, team: null })),
+        teams: {},
+        chat: [],
+        preGame: null,
+        gameId: null,
+        error: null,
+        teamSize: 0,
+        targetPlayers: lobby.targetPlayers,
+        noTimeout: true,
+        timeRemainingSeconds: -1,
       },
-    };
-    const msg = JSON.stringify(data);
-    for (const ws of waitingRoom.spectators) {
+    });
+    for (const ws of lobby.spectators) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(msg);
       }
@@ -1907,12 +1939,13 @@ export class GameServer {
   // Broadcast lobby state to spectators
   // ---------------------------------------------------------------------------
 
-  private broadcastLobbyState(lobbyRoom: LobbyRoom): void {
-    if (lobbyRoom.spectators.size === 0) return;
-    const state = lobbyRoom.runner.getState();
-    console.log(`[Lobby] Broadcasting to ${lobbyRoom.spectators.size} spectators, phase=${state.phase}, agents=${state.agents.length}`);
+  private broadcastLobbyState(lobby: Lobby): void {
+    if (lobby.spectators.size === 0) return;
+    if (!lobby.runner) return; // Simple lobbies use broadcastSimpleLobbyState
+    const state = lobby.runner.getState();
+    console.log(`[Lobby] Broadcasting to ${lobby.spectators.size} spectators, phase=${state.phase}, agents=${state.agents.length}`);
     const msg = JSON.stringify({ type: 'lobby_update', data: state });
-    for (const ws of lobbyRoom.spectators) {
+    for (const ws of lobby.spectators) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(msg);
       }
@@ -1929,21 +1962,21 @@ export class GameServer {
   ): { lobbyId: string } {
     // Clean up failed/finished lobbies before creating a new one
     for (const [id, room] of this.lobbies) {
-      if (room.state && room.state.phase === 'failed') {
+      if (room.runnerState && room.runnerState.phase === 'failed') {
         this.lobbies.delete(id);
       }
     }
     const runner = new LobbyRunner(teamSize, timeoutMs, {
       onStateChange: (state: LobbyRunnerState) => {
         console.log(`[Lobby] onStateChange: lobbyId=${state.lobbyId}, phase=${state.phase}, agents=${state.agents.length}`);
-        const lobbyRoom = this.lobbies.get(state.lobbyId);
-        if (lobbyRoom) {
-          lobbyRoom.state = state;
-          console.log(`[Lobby] Found room, spectators=${lobbyRoom.spectators.size}`);
-          this.broadcastLobbyState(lobbyRoom);
+        const lobby = this.lobbies.get(state.lobbyId);
+        if (lobby) {
+          lobby.runnerState = state;
+          console.log(`[Lobby] Found room, spectators=${lobby.spectators.size}`);
+          this.broadcastLobbyState(lobby);
           // Notify all agents in this lobby about state changes (phase transitions, new agents, etc.)
-          if (lobbyRoom.lobbyManager) {
-            for (const [id] of lobbyRoom.lobbyManager.agents) {
+          if (lobby.lobbyManager) {
+            for (const [id] of lobby.lobbyManager.agents) {
               notifyAgent(id);
             }
           }
@@ -1953,8 +1986,8 @@ export class GameServer {
       },
       onGameCreated: (gameId, teamPlayers, handles) => {
         // Grab lobby chat before transitioning to game
-        const lobbyRoom = this.lobbies.get(runner.lobby.lobbyId);
-        const lobbyChat = lobbyRoom?.state?.chat ?? [];
+        const lobby = this.lobbies.get(runner.lobby.lobbyId);
+        const lobbyChat = lobby?.runnerState?.chat ?? [];
         const preGameChatA = runner.lobby.preGameChat?.A ?? [];
         const preGameChatB = runner.lobby.preGameChat?.B ?? [];
         this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB);
@@ -1962,14 +1995,21 @@ export class GameServer {
     }, this.serverUrl);
 
     const lobbyId = runner.lobby.lobbyId;
-    const lobbyRoom: LobbyRoom = {
-      runner,
+    const plugin = getGame('capture-the-lobster');
+    const lobby: Lobby = {
+      id: lobbyId,
+      gameType: 'capture-the-lobster',
+      plugin,
+      players: [],
+      targetPlayers: teamSize * 2,
       spectators: new Set(),
-      state: null,
-      externalSlots: new Map(),
+      runner,
       lobbyManager: runner.lobby,
+      runnerState: null,
+      externalSlots: new Map(),
+      createdAt: Date.now(),
     };
-    this.lobbies.set(lobbyId, lobbyRoom);
+    this.lobbies.set(lobbyId, lobby);
 
     // Start the lobby runner (async, runs in background)
     runner.run().catch((err) => {
@@ -2089,9 +2129,9 @@ export class GameServer {
       room.game.cancelTimer();
       for (const ws of room.spectators) ws.close();
     }
-    for (const [, lobbyRoom] of this.lobbies) {
-      lobbyRoom.runner.abort();
-      for (const ws of lobbyRoom.spectators) ws.close();
+    for (const [, lobby] of this.lobbies) {
+      if (lobby.runner) lobby.runner.abort();
+      for (const ws of lobby.spectators) ws.close();
     }
     this.wss.close();
     this.server.close();
