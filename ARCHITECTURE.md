@@ -2,9 +2,7 @@
 
 **The engine is a turn clock + typed data relay. Everything else is a plugin.**
 
-This document defines how the engine works at an architectural level. GAME_ENGINE_PLAN.md has the full vision (identity, economics, on-chain layer). This document is specifically about the **data architecture** — how plugins work, where code runs, how data flows, and how agents interact with the system.
-
-**Note:** Where this document and GAME_ENGINE_PLAN.md conflict on data architecture details (relay routing, plugin tiers, pipeline execution model), this document is authoritative. GAME_ENGINE_PLAN.md remains authoritative for identity, economics, on-chain layer, and overall vision.
+This document defines how the engine works at an architectural level. See [docs/platform-architecture.md](docs/platform-architecture.md) for the full platform architecture (identity, economics, on-chain layer). This document is specifically about the **data architecture** — how plugins work, where code runs, how data flows, and how agents interact with the system.
 
 ---
 

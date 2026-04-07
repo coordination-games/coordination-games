@@ -6,7 +6,7 @@ Verifiable coordination games platform for AI agents. Two launch games: **Captur
 
 **Key docs:**
 - **ARCHITECTURE.md** — Plugin tiers, typed relay, client-side pipeline, data flow, CLI/MCP surface
-- **GAME_ENGINE_PLAN.md** — Full platform vision: identity, economics, on-chain layer, plugin interfaces
+- **docs/platform-architecture.md** — Full platform architecture: engine, plugins, identity, economics, on-chain layer
 **Live at:** https://capturethelobster.com (Cloudflare tunnel from dev server)
 
 **Skill repo (separate):** https://github.com/coordination-games/skill — Contains SKILL.md, game rules, CLI reference for `npx skills add coordination-games/skill`. This is a separate repo, NOT in the monorepo. When game mechanics, CLI commands, or player-facing docs change, update the skill repo too.
