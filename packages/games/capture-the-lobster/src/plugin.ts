@@ -9,6 +9,7 @@ import type {
   CoordinationGame,
   ActionResult,
   GameLobbyConfig,
+  GameSetup,
   SpectatorContext,
 } from '@coordination-games/engine';
 import { registerGame } from '@coordination-games/engine';
@@ -25,8 +26,9 @@ import {
   isGameOver,
   allMovesSubmitted,
   getStateForAgent,
+  getTurnLimitForRadius,
 } from './game.js';
-import { generateMap, MapConfig, TileType } from './map.js';
+import { generateMap, getMapRadiusForTeamSize, MapConfig, TileType } from './map.js';
 import { Hex, Direction } from './hex.js';
 import { UnitClass } from './movement.js';
 import { getUnitVision } from './fog.js';
@@ -639,6 +641,55 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     }
 
     return payouts;
+  },
+
+  createConfig(
+    players: { id: string; handle: string; team?: string; role?: string }[],
+    seed: string,
+    options?: Record<string, any>,
+  ): GameSetup<CtlConfig> {
+    const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
+
+    // If players already have team/role assignments (from lobby), use them.
+    // Otherwise assign teams and classes automatically (bot games).
+    const hasTeams = players.some(p => p.team);
+    let ctlPlayers: CtlPlayerConfig[];
+
+    if (hasTeams) {
+      ctlPlayers = players.map(p => ({
+        id: p.id,
+        team: (p.team as 'A' | 'B') ?? 'A',
+        unitClass: (p.role as UnitClass) ?? classes[0],
+      }));
+    } else {
+      // Auto-assign: alternate A/B, cycle through classes
+      ctlPlayers = players.map((p, i) => ({
+        id: p.id,
+        team: (i % 2 === 0 ? 'A' : 'B') as 'A' | 'B',
+        unitClass: classes[Math.floor(i / 2) % classes.length],
+      }));
+    }
+
+    const teamSize = options?.teamSize ?? Math.max(
+      ctlPlayers.filter(p => p.team === 'A').length,
+      ctlPlayers.filter(p => p.team === 'B').length,
+    );
+    const radius = getMapRadiusForTeamSize(teamSize);
+    const turnLimit = getTurnLimitForRadius(radius);
+
+    const config: CtlConfig = {
+      mapSeed: seed,
+      mapRadius: radius,
+      teamSize,
+      turnLimit,
+      turnTimerSeconds: options?.turnTimerSeconds ?? 30,
+      players: ctlPlayers,
+    };
+
+    return {
+      config,
+      players: ctlPlayers.map(p => ({ id: p.id, team: p.team })),
+    };
   },
 };
 

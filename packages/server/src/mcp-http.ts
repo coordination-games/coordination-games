@@ -13,7 +13,6 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { Direction, UnitClass, CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { LobbyManager as EngineLobbyManager } from '@coordination-games/game-ctl';
-import type { CtlGameRoom } from './game-session.js';
 import { GameRoom } from '@coordination-games/engine';
 import crypto from 'node:crypto';
 

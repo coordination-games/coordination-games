@@ -106,7 +106,7 @@ function jsonResult(data: unknown) {
 export interface BotSession {
   id: string;
   handle: string;
-  team: 'A' | 'B';
+  team: string;
   client: GameClient;
   plugins: ToolPlugin[];
   sessionId: string | null;
@@ -175,7 +175,7 @@ export async function runClaudeBotTurn(
  * Create bot sessions. Each bot gets a GameClient backed by a server-issued token.
  */
 export function createBotSessions(
-  bots: { id: string; handle: string; team: 'A' | 'B' }[],
+  bots: { id: string; handle: string; team: string }[],
   serverUrl: string,
   getToken: (id: string, handle: string) => string,
   plugins: ToolPlugin[] = [],

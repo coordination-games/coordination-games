@@ -8,14 +8,6 @@ import crypto from 'node:crypto';
 import {
   LobbyManager as EngineLobbyManager,
 } from '@coordination-games/game-ctl';
-import {
-  type UnitClass,
-  createCtlGameRoom,
-  getMapRadiusForTeamSize,
-  getTurnLimitForRadius,
-  CaptureTheLobsterPlugin,
-} from './game-session.js';
-import type { CtlConfig } from '@coordination-games/game-ctl';
 import { EloTracker } from '@coordination-games/plugin-elo';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
@@ -42,7 +34,6 @@ import {
 import { createRelayRouter } from './relay.js';
 import { GameRelay } from './typed-relay.js';
 import { GameRoom, buildActionMerkleTree, type MerkleLeafData, getRegisteredGames, getGame } from '@coordination-games/engine';
-import { DEFAULT_OATH_CONFIG } from '@coordination-games/game-oathbreaker';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1064,7 +1055,7 @@ export class GameServer {
               return res.status(400).json({ error: 'choose-class requires "class" (rogue, knight, or mage).' });
             }
             if (lobby.phase !== 'pre_game') return res.status(400).json({ error: 'Class selection only during pre-game phase.' });
-            const result = lobby.chooseClass(agentId, cls as UnitClass);
+            const result = lobby.chooseClass(agentId, cls as any);
             if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed.' });
             const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
             return res.json({ success: true, class: cls, ...updates });
@@ -1280,7 +1271,7 @@ export class GameServer {
       if (!lobby) return res.status(400).json({ error: 'No lobby available.' });
       if (lobby.phase !== 'pre_game') return res.status(400).json({ error: 'Class selection only during pre-game phase.' });
 
-      const result = lobby.chooseClass(agentId, cls as UnitClass);
+      const result = lobby.chooseClass(agentId, cls as any);
       if (!result.success) return res.status(400).json({ error: result.error ?? 'Failed to choose class.' });
 
       const updates = buildUpdates(agentId, resolveGame, resolveLobby, resolveRelay);
@@ -1577,49 +1568,29 @@ export class GameServer {
 
   createBotGame(teamSize: number = 4): { gameId: string; game: GameRoom<any, any, any, any> } {
     const gameId = crypto.randomUUID();
-    const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
+    const plugin = getGame('capture-the-lobster')!;
 
-    const players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[] = [];
+    // Generate bot players (generic — plugin assigns teams/roles)
+    const playerCount = teamSize * 2;
     const botHandles: string[] = [];
     const handleMap: Record<string, string> = {};
+    const inputPlayers: { id: string; handle: string }[] = [];
 
-    for (let i = 0; i < teamSize; i++) {
-      const handleA = `bot_${i * 2 + 1}`;
-      const handleB = `bot_${i * 2 + 2}`;
-      botHandles.push(handleA, handleB);
-
-      handleMap[handleA] = BOT_DISPLAY_NAMES[(i * 2) % BOT_DISPLAY_NAMES.length];
-      handleMap[handleB] = BOT_DISPLAY_NAMES[(i * 2 + 1) % BOT_DISPLAY_NAMES.length];
-
-      players.push({
-        id: handleA,
-        team: 'A',
-        unitClass: classes[i % classes.length],
-      });
-      players.push({
-        id: handleB,
-        team: 'B',
-        unitClass: classes[i % classes.length],
-      });
+    for (let i = 0; i < playerCount; i++) {
+      const id = `bot_${i + 1}`;
+      botHandles.push(id);
+      handleMap[id] = BOT_DISPLAY_NAMES[i % BOT_DISPLAY_NAMES.length];
+      inputPlayers.push({ id, handle: handleMap[id] });
     }
 
-    const radius = getMapRadiusForTeamSize(teamSize);
-    const turnLimit = getTurnLimitForRadius(radius);
-    const ctlConfig: CtlConfig = {
-      mapSeed: gameId,
-      mapRadius: radius,
-      teamSize,
-      turnLimit,
-      turnTimerSeconds: 30,
-      players: players.map(p => ({ id: p.id, team: p.team, unitClass: p.unitClass })),
-    };
-    const game = createCtlGameRoom(gameId, ctlConfig);
-
-    const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
+    // Plugin builds config (assigns teams, roles, map params)
+    const setup = plugin.createConfig!(inputPlayers, gameId, { teamSize });
+    const game = GameRoom.create(plugin, setup.config, gameId, setup.players.map(p => p.id));
+    const relay = new GameRelay(setup.players);
 
     const room: GameRoomData = {
       gameType: 'capture-the-lobster',
-      plugin: CaptureTheLobsterPlugin,
+      plugin,
       game,
       spectators: new Set(),
       finished: false,
@@ -1627,7 +1598,7 @@ export class GameServer {
       handleMap,
       relay,
       botSessions: createBotSessions(
-        players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
+        setup.players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
         this.serverUrl,
         (id, handle) => createBotToken(id, handle),
         [BasicChatPlugin],
@@ -1752,25 +1723,14 @@ export class GameServer {
       this.agentToGame.set(p.id, gameId);
     }
 
-    // Build game config — currently OATHBREAKER-specific but extensible
-    // Future games can define their own config builder via the plugin
-    let config: any;
-    if (gameType === 'oathbreaker') {
-      config = {
-        ...DEFAULT_OATH_CONFIG,
-        playerIds: players.map(p => p.id),
-        seed: gameId,
-      };
-    } else {
-      // Generic fallback — games with waiting rooms should define config needs
-      config = {
-        playerIds: players.map(p => p.id),
-        seed: gameId,
-      };
-    }
+    // Plugin builds the config (teams, roles, game params)
+    const setup = plugin.createConfig!(
+      players.map(p => ({ id: p.id, handle: p.handle })),
+      gameId,
+    );
 
-    const game = GameRoom.create(plugin, config, gameId, players.map(p => p.id));
-    const relay = new GameRelay(players.map(p => ({ id: p.id, team: 'FFA' })));
+    const game = GameRoom.create(plugin, setup.config, gameId, setup.players.map(p => p.id));
+    const relay = new GameRelay(setup.players);
 
     const room: GameRoomData = {
       gameType,
@@ -2025,7 +1985,7 @@ export class GameServer {
 
   private createGameFromLobby(
     gameId: string,
-    teamPlayers: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
+    teamPlayers: { id: string; team: string; unitClass?: string; [key: string]: any }[],
     handles: Record<string, string> = {},
     lobbyChat: { from: string; message: string; timestamp: number }[] = [],
     preGameChatA: { from: string; message: string; timestamp: number }[] = [],
@@ -2051,27 +2011,24 @@ export class GameServer {
       }
     }
 
-    const teamSize = Math.max(
-      players.filter(p => p.team === 'A').length,
-      players.filter(p => p.team === 'B').length,
+    // Plugin builds config from lobby-assigned teams and roles
+    const plugin = getGame('capture-the-lobster')!;
+    const setup = plugin.createConfig!(
+      players.map(p => ({
+        id: p.id,
+        handle: handleMap[p.id] ?? p.id,
+        team: p.team,
+        role: p.unitClass,
+      })),
+      gameId,
     );
-    const radius = getMapRadiusForTeamSize(teamSize);
-    const turnLimit = getTurnLimitForRadius(radius);
-    const ctlConfig: CtlConfig = {
-      mapSeed: gameId,
-      mapRadius: radius,
-      teamSize,
-      turnLimit,
-      turnTimerSeconds: 30,
-      players: players.map(p => ({ id: p.id, team: p.team, unitClass: p.unitClass })),
-    };
-    const game = createCtlGameRoom(gameId, ctlConfig);
 
-    const relay = new GameRelay(players.map(p => ({ id: p.id, team: p.team })));
+    const game = GameRoom.create(plugin, setup.config, gameId, setup.players.map(p => p.id));
+    const relay = new GameRelay(setup.players);
 
     const room: GameRoomData = {
       gameType: 'capture-the-lobster',
-      plugin: CaptureTheLobsterPlugin,
+      plugin,
       game,
       spectators: new Set(),
       finished: false,

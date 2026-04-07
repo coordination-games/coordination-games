@@ -5,15 +5,16 @@
  * See FRAMEWORK_SPEC.md for the full spec.
  */
 
-import type {
-  OathConfig,
-  OathState,
-  OathAction,
-  OathOutcome,
-  OathPlayerRanking,
+import {
+  DEFAULT_OATH_CONFIG,
+  type OathConfig,
+  type OathState,
+  type OathAction,
+  type OathOutcome,
+  type OathPlayerRanking,
 } from './types.js';
 
-import type { CoordinationGame, SpectatorContext } from '@coordination-games/engine';
+import type { CoordinationGame, GameSetup, SpectatorContext } from '@coordination-games/engine';
 import { registerGame } from '@coordination-games/engine';
 
 import {
@@ -262,6 +263,22 @@ export const OathbreakerPlugin = {
       payouts.set(id, ranking ? ranking.dollarValue - 1 : 0);
     }
     return payouts;
+  },
+
+  createConfig(
+    players: { id: string; handle: string; team?: string; role?: string }[],
+    seed: string,
+    options?: Record<string, any>,
+  ): GameSetup<OathConfig> {
+    return {
+      config: {
+        ...DEFAULT_OATH_CONFIG,
+        playerIds: players.map(p => p.id),
+        seed,
+        ...(options?.maxRounds ? { maxRounds: options.maxRounds } : {}),
+      },
+      players: players.map(p => ({ id: p.id, team: 'FFA' })),
+    };
   },
 };
 

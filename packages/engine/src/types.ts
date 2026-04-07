@@ -117,6 +117,29 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
 
   /** Recommended plugin IDs. */
   readonly recommendedPlugins?: string[];
+
+  /**
+   * Build a game config from a player list.
+   * Called by the server when creating a game from a lobby or waiting room.
+   * Returns the config plus relay-relevant player info (team assignments for message routing).
+   */
+  createConfig?(
+    players: { id: string; handle: string; team?: string; role?: string }[],
+    seed: string,
+    options?: Record<string, any>,
+  ): GameSetup<TConfig>;
+}
+
+// ---------------------------------------------------------------------------
+// GameSetup — returned by createConfig
+// ---------------------------------------------------------------------------
+
+/** Result of a plugin's createConfig — config plus relay-relevant player info. */
+export interface GameSetup<TConfig> {
+  /** The game config to pass to createInitialState. */
+  config: TConfig;
+  /** Player-to-team mapping for relay routing. Use 'FFA' for free-for-all games. */
+  players: { id: string; team: string }[];
 }
 
 // ---------------------------------------------------------------------------
