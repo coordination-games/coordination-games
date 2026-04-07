@@ -274,8 +274,8 @@ export function ArcadeBattleView({
           <div className="pixel-text" style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}>
             OATHBREAKER
           </div>
-          <div style={{ fontSize: 9, color: '#6b7280', marginTop: 2 }}>誓約破り</div>
-          <div className="pixel-text" style={{ fontSize: 5, color: '#4b5563' }}>Seiyaku-yaburi</div>
+          <img src="/assets/oathbreaker/kanji-title.png" alt="誓約破り" style={{ height: 24, marginTop: 2, imageRendering: 'auto' }} />
+          <div className="pixel-text" style={{ fontSize: 5, color: '#9ca3af', marginTop: 1 }}>Seiyaku-yaburi</div>
         </div>
         <span className="pixel-text" style={{ fontSize: 7, color: '#6b7280' }}>
           ROUND {currentRound}/{maxRounds}
@@ -351,26 +351,27 @@ export function ArcadeBattleView({
         {/* Fighters */}
         <div style={{
           flex: 1,
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-          padding: '0 10%', paddingBottom: 16,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+          gap: '15%',
+          paddingBottom: 16,
           position: 'relative', zIndex: 2,
         }}>
-          {/* P1 — left, faces right */}
+          {/* P1 — left, mirrored to face right (sprites naturally face left) */}
           <div className={reveal.phase === 'reveal' && reveal.p1Pose === 'victory' ? 'golden-glow' : ''}>
             <CharacterSprite
               character={char1?.characterName ?? 'buchu'}
               pose={reveal.p1Pose}
+              mirror
               scale={4}
               tint={char1?.tint}
             />
           </div>
 
-          {/* P2 — right, faces left (mirrored) */}
+          {/* P2 — right, natural left-facing (toward center) */}
           <div className={reveal.phase === 'reveal' && reveal.p2Pose === 'victory' ? 'golden-glow' : ''}>
             <CharacterSprite
               character={char2?.characterName ?? 'star'}
               pose={reveal.p2Pose}
-              mirror
               scale={4}
               tint={char2?.tint}
             />
