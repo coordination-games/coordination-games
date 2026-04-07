@@ -85,7 +85,7 @@ export function registerGameTools(
 
   server.tool(
     'submit_move',
-    'Submit your action for the current phase. Pass the action object directly — the server routes by shape. Examples: { type: "move", path: ["N","NE"] }, { type: "pledge", amount: 20 }, { action: "propose-team", target: "AgentName" }',
+    'Submit your action for the current phase. Pass the action object directly — the server routes by shape. Examples: { type: "move", path: ["N","NE"] }, { type: "propose_pledge", amount: 20 }, { type: "submit_decision", decision: "C" }, { action: "propose-team", target: "AgentName" }',
     {
       action: z.record(z.string(), z.any()).describe('The action object to submit. Must match the game\'s expected format (check get_guide).'),
     },

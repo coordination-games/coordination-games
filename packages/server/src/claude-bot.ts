@@ -46,7 +46,7 @@ export function createBotMcpServer(client: GameClient, plugins: ToolPlugin[] = [
       async () => jsonResult(await client.getState())),
     tool('wait_for_update', 'YOUR MAIN LOOP — blocks until next event.', {},
       async () => jsonResult(await client.waitForUpdate())),
-    tool('submit_move', 'Submit your action. Pass the full action object (e.g. { type: "move", path: ["N","NE"] } or { type: "pledge", amount: 20 }).', { action: z.record(z.string(), z.any()).describe('Action object — check get_guide for format.') },
+    tool('submit_move', 'Submit your action. Pass the full action object (e.g. { type: "move", path: ["N","NE"] } or { type: "propose_pledge", amount: 20 }).', { action: z.record(z.string(), z.any()).describe('Action object — check get_guide for format.') },
       async ({ action }) => jsonResult(await client.submitAction(action))),
     tool('list_lobbies', 'List available lobbies.', {},
       async () => jsonResult(await client.listLobbies())),
