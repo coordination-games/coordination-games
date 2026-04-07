@@ -8,6 +8,8 @@ import crypto from 'node:crypto';
 import {
   LobbyManager as EngineLobbyManager,
 } from '@coordination-games/game-ctl';
+// Side-effect imports: trigger registerGame() for each game plugin
+import '@coordination-games/game-oathbreaker';
 import { EloTracker } from '@coordination-games/plugin-elo';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
