@@ -1,0 +1,33 @@
+name = "ctl-server"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ctl-db"
+database_id = "a16be595-731c-4b55-8c4a-d937c142c2da"
+
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoomDO"
+
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "LobbyDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoomDO", "LobbyDO"]
+
+[vars]
+ENVIRONMENT = "production"
+
+[[routes]]
+pattern = "ctl-beta.capturethelobster.com/*"
+zone_name = "capturethelobster.com"
+
+# Note: custom domain ctl-beta.capturethelobster.com was set up via:
+#   wrangler deploy --domain ctl-beta.capturethelobster.com
+# This created both the Worker route and the proxied DNS record.
+# Subsequent deploys use `wrangler deploy` (no --domain flag needed).

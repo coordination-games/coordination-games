@@ -32,6 +32,53 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 
 ## Running
 
+### Cloudflare Workers (packages/workers-server)
+
+The target architecture (in progress — see docs/plans/cloudflare-migration.md). Live at `https://ctl-beta.capturethelobster.com`.
+
+**Local dev:**
+```bash
+npm install --include=dev
+cd packages/workers-server
+wrangler dev  # runs on http://localhost:8787
+```
+
+**Apply D1 migrations locally:**
+```bash
+wrangler d1 execute ctl-db --local --file=migrations/0001_init.sql
+```
+
+**Inspect local D1 state:**
+```bash
+wrangler d1 execute ctl-db --local --command="SELECT * FROM players LIMIT 10"
+# Local D1 state lives in packages/workers-server/.wrangler/state/
+# Wipe it: rm -rf packages/workers-server/.wrangler/state/
+```
+
+**Deploy to production:**
+```bash
+cd packages/workers-server
+wrangler deploy
+```
+
+**Set secrets:**
+```bash
+wrangler secret put RELAYER_PRIVATE_KEY
+wrangler secret put RPC_URL
+```
+
+**Tail production logs:**
+```bash
+wrangler tail
+```
+
+**Debug with Chrome DevTools:**
+```bash
+wrangler dev --inspect  # then open chrome://inspect
+```
+
+### Node.js server (packages/server — legacy, still running on demo)
+
 ```bash
 # Install (MUST use --include=dev due to npm workspaces bug)
 npm install --include=dev

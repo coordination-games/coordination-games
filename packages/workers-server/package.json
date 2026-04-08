@@ -1,0 +1,16 @@
+{
+  "name": "@coordination-games/workers-server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20250407.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
