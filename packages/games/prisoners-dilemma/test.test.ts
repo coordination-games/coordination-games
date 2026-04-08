@@ -11,6 +11,12 @@ import {
   isOver,
   getOutcome,
 } from './src/game.js';
+import {
+  buildStrategyContext,
+  createStrategyBot,
+  runMatch,
+  runRoundRobinTournament,
+} from './src/index.js';
 import type { IPDAction } from './src/types.js';
 
 const PLAYERS = [
@@ -147,5 +153,97 @@ describe('IPD game logic', () => {
     expect(s.finished).toBe(true);
     expect(s.winner).toBe(null);
     expect(getOutcome(s).winner).toBe(null);
+  });
+
+  it('built-in always_cooperate always cooperates', () => {
+    const bot = createStrategyBot('always_cooperate');
+    const context = buildStrategyContext([], 0, 10);
+    expect(bot.decide(context)).toBe('cooperate');
+  });
+
+  it('built-in always_defect always defects', () => {
+    const bot = createStrategyBot('always_defect');
+    const context = buildStrategyContext([], 0, 10);
+    expect(bot.decide(context)).toBe('defect');
+  });
+
+  it('tit_for_tat cooperates first then mirrors opponent', () => {
+    const bot = createStrategyBot('tit_for_tat');
+    expect(bot.decide(buildStrategyContext([], 0, 10))).toBe('cooperate');
+    expect(
+      bot.decide(
+        buildStrategyContext([
+          { round: 1, p0Action: 'cooperate', p1Action: 'defect', p0Payoff: 0, p1Payoff: 3 },
+        ], 0, 10),
+      ),
+    ).toBe('defect');
+  });
+
+  it('grudger defects forever after first betrayal', () => {
+    const bot = createStrategyBot('grudger');
+    expect(bot.decide(buildStrategyContext([], 0, 10))).toBe('cooperate');
+    expect(
+      bot.decide(
+        buildStrategyContext([
+          { round: 1, p0Action: 'cooperate', p1Action: 'defect', p0Payoff: 0, p1Payoff: 3 },
+        ], 0, 10),
+      ),
+    ).toBe('defect');
+    expect(
+      bot.decide(
+        buildStrategyContext([
+          { round: 1, p0Action: 'cooperate', p1Action: 'defect', p0Payoff: 0, p1Payoff: 3 },
+          { round: 2, p0Action: 'defect', p1Action: 'cooperate', p0Payoff: 3, p1Payoff: 0 },
+        ], 0, 10),
+      ),
+    ).toBe('defect');
+  });
+
+  it('detective probes then defects against pure cooperators', () => {
+    const bot = createStrategyBot('detective');
+    expect(bot.decide(buildStrategyContext([], 0, 10))).toBe('cooperate');
+    expect(
+      bot.decide(
+        buildStrategyContext([
+          { round: 1, p0Action: 'cooperate', p1Action: 'cooperate', p0Payoff: 2, p1Payoff: 2 },
+        ], 0, 10),
+      ),
+    ).toBe('defect');
+    expect(
+      bot.decide(
+        buildStrategyContext([
+          { round: 1, p0Action: 'cooperate', p1Action: 'cooperate', p0Payoff: 2, p1Payoff: 2 },
+          { round: 2, p0Action: 'defect', p1Action: 'cooperate', p0Payoff: 3, p1Payoff: 0 },
+          { round: 3, p0Action: 'cooperate', p1Action: 'cooperate', p0Payoff: 2, p1Payoff: 2 },
+          { round: 4, p0Action: 'cooperate', p1Action: 'cooperate', p0Payoff: 2, p1Payoff: 2 },
+        ], 0, 10),
+      ),
+    ).toBe('defect');
+  });
+
+  it('detective switches to tit-for-tat after being betrayed', () => {
+    const bot = createStrategyBot('detective');
+    expect(
+      bot.decide(
+        buildStrategyContext([
+          { round: 1, p0Action: 'cooperate', p1Action: 'cooperate', p0Payoff: 2, p1Payoff: 2 },
+          { round: 2, p0Action: 'defect', p1Action: 'defect', p0Payoff: 1, p1Payoff: 1 },
+          { round: 3, p0Action: 'cooperate', p1Action: 'cooperate', p0Payoff: 2, p1Payoff: 2 },
+          { round: 4, p0Action: 'cooperate', p1Action: 'defect', p0Payoff: 0, p1Payoff: 3 },
+        ], 0, 10),
+      ),
+    ).toBe('defect');
+  });
+
+  it('runMatch returns deterministic outcomes', () => {
+    const result = runMatch('always_defect', 'always_cooperate', 10);
+    expect(result.outcome.scores).toEqual([30, 0]);
+    expect(result.outcome.winner).toBe('p0');
+  });
+
+  it('round robin tournament aggregates totals', () => {
+    const tournament = runRoundRobinTournament(['always_cooperate', 'always_defect'], 2);
+    expect(tournament.matches).toHaveLength(4);
+    expect(tournament.totals.always_defect).toBeGreaterThan(tournament.totals.always_cooperate);
   });
 });
