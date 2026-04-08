@@ -8,7 +8,7 @@
  */
 
 import { parseAgentArgs } from "./mcp-client.js";
-import { LLMAgent } from "./llm-agent.js";
+import { LLMAgent, AnthropicProvider, MinimaxProvider } from "./index.js";
 import { SimpleAgent } from "./simple-agent.js";
 import type { Strategy } from "./simple-agent.js";
 
@@ -36,15 +36,24 @@ async function main() {
   }
 
   if (args.personaPath) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      console.error("ANTHROPIC_API_KEY environment variable is required for LLM agents.");
+    const minimaxKey = process.env.MINIMAX_API_KEY;
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+    let provider;
+    if (minimaxKey) {
+      provider = new MinimaxProvider(minimaxKey);
+      console.log("[CLI] Using Minimax provider");
+    } else if (anthropicKey) {
+      provider = new AnthropicProvider(anthropicKey);
+      console.log("[CLI] Using Anthropic provider");
+    } else {
+      console.error("MINIMAX_API_KEY or ANTHROPIC_API_KEY environment variable is required for LLM agents.");
       process.exit(1);
     }
 
     const agent = new LLMAgent({
+      provider,
       personaPath: args.personaPath,
-      apiKey,
       arenaPath: args.arenaPath,
     });
 
@@ -60,12 +69,12 @@ comedy-agent CLI
 
 Usage:
   npx tsx src/cli.ts --simple <strategy>   Run a rule-based agent
-  npx tsx src/cli.ts --persona <path>      Run an LLM-powered agent
+  npx tsx src/cli.ts --persona <path>       Run an LLM-powered agent
 
 Examples:
   npx tsx src/cli.ts --simple cooperator
   npx tsx src/cli.ts --simple tit_for_tat --arena ./comedy-mcp
-  npx tsx src/cli.ts --persona personas/strategic.md
+  MINIMAX_API_KEY=... npx tsx src/cli.ts --persona personas/strategic.md
 
 Strategies (--simple):
   cooperator    Always cooperates, trades freely
@@ -76,7 +85,8 @@ Strategies (--simple):
   opportunist   Cooperates when ahead, defects when behind
 
 Environment:
-  ANTHROPIC_API_KEY   Required for LLM agents
+  MINIMAX_API_KEY   Minimax (OpenAI-compatible) — preferred
+  ANTHROPIC_API_KEY  Anthropic Claude — fallback
 `);
   process.exit(1);
 }

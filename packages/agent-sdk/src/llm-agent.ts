@@ -1,30 +1,44 @@
 /**
- * LLMAgent — Claude-powered agent for Comedy of the Commons.
+ * LLMAgent — LLM-powered agent for Comedy of the Commons.
  *
  * Usage:
- *   import { LLMAgent } from "@coordination-games/agent-sdk";
+ *   import { LLMAgent, AnthropicProvider } from "@coordination-games/agent-sdk";
  *
  *   const agent = new LLMAgent({
+ *     provider: new AnthropicProvider(process.env.ANTHROPIC_API_KEY!),
  *     personaPath: "./personas/strategic.md",
- *     apiKey: process.env.ANTHROPIC_API_KEY,
+ *   });
+ *   agent.run();
+ *
+ * Or with Minimax:
+ *   import { LLMAgent, MinimaxProvider } from "@coordination-games/agent-sdk";
+ *
+ *   const agent = new LLMAgent({
+ *     provider: new MinimaxProvider(process.env.MINIMAX_API_KEY!),
+ *     personaPath: "./personas/strategic.md",
  *   });
  *   agent.run();
  */
 
 import { readFileSync } from "fs";
-import Anthropic from "@anthropic-ai/sdk";
-import { ComedyAgentBase } from "./agent-base.js";
-import type { ComedyAgentView, GameMessage, GameAction } from "./types.js";
+import { ComedyAgentBase, type AgentOptions } from "./agent-base.js";
+import type {
+  ComedyAgentView,
+  GameMessage,
+  GameAction,
+  ProviderTool,
+} from "./types.js";
+import type { LLMProvider } from "./providers.js";
 
 const MODEL_FAST = "claude-haiku-4-20250414";
 const MODEL_SMART = "claude-sonnet-4-20250514";
 const MAX_TOKENS = 1024;
 
-const SUBMIT_ACTIONS_TOOL: Anthropic.Tool = {
+const SUBMIT_ACTIONS_TOOL: ProviderTool = {
   name: "submit_actions",
   description: "Submit 1-2 actions for this round.",
   input_schema: {
-    type: "object" as const,
+    type: "object",
     properties: {
       actions: {
         type: "array",
@@ -53,11 +67,11 @@ const SUBMIT_ACTIONS_TOOL: Anthropic.Tool = {
   },
 };
 
-const SEND_MESSAGES_TOOL: Anthropic.Tool = {
+const SEND_MESSAGES_TOOL: ProviderTool = {
   name: "send_messages",
   description: "Send negotiation messages.",
   input_schema: {
-    type: "object" as const,
+    type: "object",
     properties: {
       messages: {
         type: "array",
@@ -93,7 +107,7 @@ Build/upgrade, trade (player or 4:1 bank), extract/restore ecosystems, armies, c
 Shared across regions. Over-extraction degrades; restoration heals. Flourishing boosts production.
 
 ## Crises
-Random events needing collective resources. Contributors earn VP/inflence; non-contributors face penalties.
+Random events needing collective resources. Contributors earn VP/influence; non-contributors face penalties.
 
 ## Trust
 Public. Keeping promises builds trust. Breaking deals and sabotage erode it.
@@ -102,21 +116,22 @@ Public. Keeping promises builds trust. Breaking deals and sabotage erode it.
 Hidden rounds. Highest VP wins. Commons health determines prize survival.
 `;
 
-export interface LLMAgentOptions {
+export interface LLMAgentOptions extends AgentOptions {
+  /** LLM provider (Anthropic, Minimax, OpenAI, etc.). Required. */
+  provider: LLMProvider;
   personaPath?: string;
-  apiKey?: string;
-  arenaPath?: string;
-  onRound?: (round: number, phase: string, state: ComedyAgentView) => void;
 }
 
 export class LLMAgent extends ComedyAgentBase {
-  private anthropic: Anthropic | null = null;
-  private apiKey: string;
+  private readonly provider: LLMProvider;
   private persona = "";
 
-  constructor(options: LLMAgentOptions = {}) {
+  constructor(options: LLMAgentOptions) {
     super(options);
-    this.apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY ?? "";
+    if (!options.provider) {
+      throw new Error("[LLMAgent] provider is required");
+    }
+    this.provider = options.provider;
     if (options.personaPath) {
       try {
         this.persona = readFileSync(options.personaPath, "utf-8");
@@ -127,12 +142,10 @@ export class LLMAgent extends ComedyAgentBase {
   }
 
   async negotiate(state: ComedyAgentView, messages: GameMessage[]): Promise<GameMessage[]> {
-    if (!this.ensureAnthropic()) return [];
-
     const prompt = this.buildNegotiationPrompt(state, messages);
 
     try {
-      const result = await this.callClaude({
+      const result = await this.provider.complete({
         model: MODEL_SMART,
         system: this.buildSystemPrompt("negotiation"),
         userMessage: prompt,
@@ -161,12 +174,10 @@ export class LLMAgent extends ComedyAgentBase {
   }
 
   async act(state: ComedyAgentView): Promise<GameAction[]> {
-    if (!this.ensureAnthropic()) return [{ type: "pass", params: {} }];
-
     const prompt = this.buildActionPrompt(state);
 
     try {
-      const result = await this.callClaude({
+      const result = await this.provider.complete({
         model: MODEL_FAST,
         system: this.buildSystemPrompt("action"),
         userMessage: prompt,
@@ -295,42 +306,11 @@ export class LLMAgent extends ComedyAgentBase {
     return parts.join("\n");
   }
 
-  private ensureAnthropic(): boolean {
-    if (!this.anthropic) {
-      if (!this.apiKey) {
-        console.error("[LLMAgent] No ANTHROPIC_API_KEY set");
-        return false;
-      }
-      this.anthropic = new Anthropic({ apiKey: this.apiKey });
-    }
-    return true;
-  }
-
-  private async callClaude(opts: {
-    model: string;
-    system: string;
-    userMessage: string;
-    tools: Anthropic.Tool[];
-  }): Promise<Anthropic.Message> {
-    if (!this.anthropic) throw new Error("Not initialized");
-    return this.anthropic.messages.create({
-      model: opts.model,
-      max_tokens: MAX_TOKENS,
-      system: opts.system,
-      tools: opts.tools,
-      tool_choice: { type: "any" },
-      messages: [{ role: "user", content: opts.userMessage }],
-    });
-  }
-
   private extractToolInput<T>(
-    response: Anthropic.Message,
+    response: { toolCalls: Array<{ name: string; input: Record<string, unknown> }> },
     toolName: string,
   ): T | null {
-    const block = response.content.find(
-      (b): b is Anthropic.ContentBlock & { type: "tool_use" } =>
-        b.type === "tool_use" && (b as { name?: string }).name === toolName,
-    );
+    const block = response.toolCalls.find((tc) => tc.name === toolName);
     return block ? (block.input as T) : null;
   }
 

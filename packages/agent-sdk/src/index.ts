@@ -29,3 +29,11 @@ export * from "./types.js";
 
 export { LLMAgent } from "./llm-agent.js";
 export { SimpleAgent } from "./simple-agent.js";
+
+export {
+  LLMProvider,
+  LLMProviderOptions,
+  AnthropicProvider,
+  MinimaxProvider,
+  MinimaxProviderOptions,
+} from "./providers.js";

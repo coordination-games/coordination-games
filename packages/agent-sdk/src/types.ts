@@ -2,6 +2,16 @@
  * Shared types for the Comedy of the Commons Agent SDK.
  */
 
+export interface ProviderTool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
 export type ResourceType = "grain" | "timber" | "ore" | "fish" | "water" | "energy";
 
 export interface ResourceInventory {
