@@ -29,19 +29,28 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 ## Running
 
 ```bash
-# Runtime baseline
-nvm use 22
+# Use Node 22 (do NOT use Node 23/24 — better-sqlite3 native build fails)
+# If nvm is not available, set PATH and npm_config_nodedir directly:
+export PATH="/opt/homebrew/Cellar/node@22/22.22.2_1/bin:$PATH"
+export npm_config_nodedir="/opt/homebrew/Cellar/node@22/22.22.2_1"
 
-# Install (MUST use --include=dev due to npm workspaces bug)
+# Install
 npm install --include=dev
 
-# Build (order matters: engine first, then game, then server)
-cd packages/engine && tsc --skipLibCheck
-cd packages/games/capture-the-lobster && tsc --skipLibCheck
-cd packages/server && tsc --skipLibCheck
-cd packages/web && npx vite build
+# Fix missing rollup platform package (Darwin ARM64)
+npm install @rollup/rollup-darwin-arm64
 
-# Start server (serves built frontend)
+# Build (full build — all packages)
+npm run build
+
+# Or build individual packages in order:
+npm run build -w packages/engine
+npm run build -w packages/games/capture-the-lobster
+npm run build -w packages/games/oathbreaker
+npm run build -w packages/server
+npm run build -w packages/web
+
+# Start server
 PORT=5173 node packages/server/dist/index.js
 
 # Cloudflare tunnel (named tunnel, routes capturethelobster.com -> localhost:5173)
