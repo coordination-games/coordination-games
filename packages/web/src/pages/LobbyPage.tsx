@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, FillBotsPanel, JoinInstructions, TeamPanel } from '../components/lobby';
+import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, JoinInstructions, TeamPanel } from '../components/lobby';
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -285,12 +285,9 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Forming phase: Join instructions + dev tools */}
+      {/* Forming phase: Join instructions */}
       {state.phase === 'forming' && (
-        <div className="space-y-4">
-          <JoinInstructions lobbyId={state.lobbyId} />
-          <FillBotsPanel lobbyId={state.lobbyId} isFull={isFull} agentCount={state.agents.length} hasExternalAgents={hasExternalAgents} />
-        </div>
+        <JoinInstructions lobbyId={state.lobbyId} />
       )}
 
       {/* Game redirect */}

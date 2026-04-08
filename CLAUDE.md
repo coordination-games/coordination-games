@@ -62,7 +62,6 @@ TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
 - **No shared team vision** — agents must communicate via chat
 - **First capture wins** (any enemy flag to any own base), turn limit scales with map size, draw on timeout
 - **Team sizes 2-6** — map radius scales: 2→5, 3→6, 4→7, 5→8, 6→9. Teams of 5+ have 2 flags each.
-- **Claude Agent SDK bots** use Haiku model, connecting via `coga serve --bot-mode` subprocess. Same auth + pipeline path as real players. Chat goes through the typed relay, not game state.
 
 ## Known Issues & Workarounds
 
@@ -185,27 +184,6 @@ Current beta defaults (in `api.ts`):
 3. Init wallet: `coga init` (generates wallet, registers on-chain)
 4. Play: Tell Claude "Play Capture the Lobster"
 
-### Bot Architecture
-
-**Bots use in-process MCP via the Claude Agent SDK**, backed by GameClient (same REST + pipeline as players).
-
-The bot harness (`claude-bot.ts`) creates an in-process MCP server using `createSdkMcpServer()` + `tool()` from the Agent SDK. Each tool calls `GameClient` methods, which hit the REST API and run the pipeline. Bots get server-issued tokens via `createBotToken()` — no wallet needed.
-
-```
-Real players:  Agent → CLI MCP (coga serve --stdio) → REST API → Game Server
-Bots:          Bot (Haiku) → in-process MCP (createSdkMcpServer) → GameClient → REST API → Game Server
-```
-
-**Bot auth:** Server generates tokens in-memory via `createBotToken()`. No wallet, no challenge-response. The token goes into `GameClient({ token })`. From GameClient's perspective, it's just a token — same as wallet-authenticated players.
-
-**Bot sessions persist across turns** via Claude Agent SDK `resume` — bots remember previous turns and maintain strategy. System prompt is generic ("You are a game-playing agent. Call get_guide() to learn the rules."). Game knowledge comes from `get_guide()`, not hardcoded prompts.
-
-**Claude Agent SDK bots** use Haiku model, connecting via `coga serve --bot-mode` subprocess. Same auth + pipeline path as real players. Chat goes through the typed relay, not game state.
-
-**Lobby phase** uses `LobbyRunner`:
-- Spawns bots, runs team negotiation rounds (3 rounds, 20s each)
-- Pre-game class selection: 2 rounds — discuss first, then pick
-
 ### Plugin Tools — MCP vs CLI
 
 Plugins have two sides: **consumption** (processing incoming relay data) and **production** (sending data through the relay via tool calls).
@@ -317,12 +295,11 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
 
 packages/server/src/             — Server entry point (wires engine + games + plugins)
   api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Unified Lobby type (WaitingRoom merged into Lobby — games with phases get a LobbyRunner, games without phases get a simple lobby that collects players and promotes when full). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). Config creation via plugin.createConfig() — zero game-specific imports except LobbyManager (deferred). One GameRoomData type, one games map, one lobbies map.
-  claude-bot.ts                  — Generic Claude Agent SDK bot harness (connects via in-process MCP backed by REST)
-  lobby-runner.ts                — Lobby orchestrator with Claude bots
+  lobby-runner.ts                — Lobby phase state machine (team formation + pre-game class selection). External-agents-only; no bots.
   mcp-http.ts                    — Token registry, turn waiters, message cursors (utility module — MCP endpoint disabled)
-  game-client.ts                 — GameClient copy for bot harness (shared with CLI, REST + pipeline)
-  api-client.ts                  — REST client copy for bot harness
-  pipeline.ts                    — Pipeline runner copy for bot harness
+  game-client.ts                 — GameClient (shared with CLI, REST + pipeline)
+  api-client.ts                  — REST client
+  pipeline.ts                    — Pipeline runner
   relay.ts                       — On-chain gas relayer (registration, credits, settlement, EAS attestations)
   index.ts                       — Entry point with crash guards
 
@@ -332,7 +309,6 @@ packages/web/src/
     PlayerList.tsx               — Agent list (works for FFA or teams)
     ChatPanel.tsx                — Lobby chat
     TimerBar.tsx                 — Countdown + pause/extend
-    FillBotsPanel.tsx            — Admin password + fill button
     JoinInstructions.tsx         — Install + join copy-paste
     TeamPanel.tsx                — Team display (only rendered when numTeams > 1)
     index.ts                     — Re-exports all lobby components

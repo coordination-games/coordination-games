@@ -12,10 +12,8 @@ import {
 import '@coordination-games/game-oathbreaker';
 import { EloTracker } from '@coordination-games/plugin-elo';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
-import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
-  createBotToken,
   notifyTurnResolved,
   notifyAgent,
   getAgentName,
@@ -56,13 +54,11 @@ export interface GameRoomData {
   externalSlots: Map<string, ExternalSlot>;
   handleMap: Record<string, string>;
   relay: GameRelay;
-  botSessions: BotSession[];
   /** Chat from the lobby phase (preserved for spectators) */
   lobbyChat: { from: string; message: string; timestamp: number }[];
   /** Pre-game team chat (preserved for spectators) */
   preGameChatA: { from: string; message: string; timestamp: number }[];
   preGameChatB: { from: string; message: string; timestamp: number }[];
-  botHandles?: string[];                         // handles of bot players in this room
   turnTimeoutMs?: number;
 }
 
@@ -101,16 +97,6 @@ function hasSubmitted(game: GameRoom<any, any, any, any>, plugin: any, agentId: 
   const needsAction = plugin.getPlayersNeedingAction(game.state) as string[];
   return !needsAction.includes(agentId);
 }
-
-// ---------------------------------------------------------------------------
-// Bot display names (shared with lobby-runner)
-// ---------------------------------------------------------------------------
-
-const BOT_DISPLAY_NAMES = [
-  'Pinchy', 'Clawdia', 'Sheldon', 'Snappy',
-  'Bubbles', 'Coral', 'Neptune', 'Triton',
-  'Marina', 'Squidward', 'Barnacle', 'Anchovy',
-];
 
 // ---------------------------------------------------------------------------
 // Unified Lobby (covers both runner-based lobbies and simple waiting lobbies)
@@ -327,51 +313,6 @@ export class GameServer {
       }
     });
 
-    // Fill remaining lobby slots with bots (requires admin password since bots use API credits)
-    router.post('/lobbies/:id/fill-bots', (req, res) => {
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      if (adminPassword && req.body?.password !== adminPassword) {
-        return res.status(401).json({ error: 'Admin password required to add bots (they use API credits).' });
-      }
-
-      const lobby = this.lobbies.get(req.params.id);
-      if (!lobby) return res.status(404).json({ error: 'Lobby not found' });
-
-      if (lobby.runner) {
-        // Runner-based lobby (CtL)
-        if (lobby.runnerState?.phase && lobby.runnerState.phase !== 'forming') {
-          return res.status(400).json({ error: 'Lobby is no longer in forming phase' });
-        }
-        const totalSlots = (lobby.runner as any).teamSize * 2;
-        const currentAgents = lobby.runner.lobby.agents.size;
-        const slotsToFill = totalSlots - currentAgents;
-        if (slotsToFill <= 0) {
-          return res.status(400).json({ error: 'Lobby is already full' });
-        }
-        const added: { agentId: string; handle: string }[] = [];
-        for (let i = 0; i < slotsToFill; i++) {
-          added.push(lobby.runner.addBot());
-        }
-        return res.status(201).json({ added, filledSlots: added.length });
-      } else {
-        // Simple lobby
-        const currentCount = lobby.players.length;
-        const slotsToFill = lobby.targetPlayers - currentCount;
-        if (slotsToFill <= 0) {
-          return res.status(400).json({ error: 'Lobby is already full' });
-        }
-        const botNames = ['Pinchy', 'Clawdia', 'Sheldon', 'Snappy', 'Bubbles', 'Coral', 'Neptune', 'Triton', 'Marina', 'Squidward', 'Barnacle', 'Anchovy'];
-        const added: { agentId: string; handle: string }[] = [];
-        for (let i = 0; i < slotsToFill; i++) {
-          const handle = botNames[(currentCount + i) % botNames.length];
-          const agentId = `bot_${lobby.gameType.substring(0, 4)}_${currentCount + i}`;
-          this.joinSimpleLobby(req.params.id, agentId, handle);
-          added.push({ agentId, handle });
-        }
-        return res.status(201).json({ added, filledSlots: added.length });
-      }
-    });
-
     // Disable lobby timeout (keep lobby open indefinitely)
     router.post('/lobbies/:id/no-timeout', (req, res) => {
       const lobby = this.lobbies.get(req.params.id);
@@ -477,20 +418,6 @@ export class GameServer {
       }
 
       res.json({ ok: true, index: msg.index });
-    });
-
-    // Create a bot game (requires admin password since bots use API credits)
-    router.post('/games/start', (req, res) => {
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      if (adminPassword && req.body?.password !== adminPassword) {
-        return res.status(401).json({ error: 'Admin password required to start bot games (they use API credits).' });
-      }
-      if (this.activeGameCount() >= this.maxConcurrentGames) {
-        return res.status(429).json({ error: 'Server busy — a lobby or game is already running. Wait for it to finish.' });
-      }
-      const teamSize = (req.body?.teamSize as number) || 4;
-      const { gameId } = this.createBotGame(teamSize);
-      res.status(201).json({ gameId });
     });
 
     // Leaderboard
@@ -1380,10 +1307,6 @@ export class GameServer {
           for (const [slotAgentId] of relayRoom.externalSlots) {
             if (slotAgentId !== agentId) notifyAgent(slotAgentId);
           }
-          // Also notify bot sessions
-          for (const bot of relayRoom.botSessions) {
-            if (bot.id !== agentId) notifyAgent(bot.id);
-          }
         } else if (lobby) {
           // Lobby phase: route through lobby's message system
           if (relayData.type === 'messaging' && relayData.data?.body) {
@@ -1610,59 +1533,6 @@ export class GameServer {
     return count;
   }
 
-  createBotGame(teamSize: number = 4): { gameId: string; game: GameRoom<any, any, any, any> } {
-    const gameId = crypto.randomUUID();
-    const plugin = getGame('capture-the-lobster')!;
-
-    // Generate bot players (generic — plugin assigns teams/roles)
-    const playerCount = teamSize * 2;
-    const botHandles: string[] = [];
-    const handleMap: Record<string, string> = {};
-    const inputPlayers: { id: string; handle: string }[] = [];
-
-    for (let i = 0; i < playerCount; i++) {
-      const id = `bot_${i + 1}`;
-      botHandles.push(id);
-      handleMap[id] = BOT_DISPLAY_NAMES[i % BOT_DISPLAY_NAMES.length];
-      inputPlayers.push({ id, handle: handleMap[id] });
-    }
-
-    // Plugin builds config (assigns teams, roles, map params)
-    const setup = plugin.createConfig!(inputPlayers, gameId, { teamSize });
-    const game = GameRoom.create(plugin, setup.config, gameId, setup.players.map(p => p.id));
-    const relay = new GameRelay(setup.players);
-
-    const room: GameRoomData = {
-      gameType: 'capture-the-lobster',
-      plugin,
-      game,
-      spectators: new Set(),
-      finished: false,
-      externalSlots: new Map(),
-      handleMap,
-      relay,
-      botSessions: createBotSessions(
-        setup.players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
-        this.serverUrl,
-        (id, handle) => createBotToken(id, handle),
-        [BasicChatPlugin],
-      ),
-      lobbyChat: [],
-      preGameChatA: [],
-      preGameChatB: [],
-      botHandles,
-      turnTimeoutMs: 30000,
-    };
-
-    this.games.set(gameId, room);
-
-    // Wire callbacks and start the game
-    this.wireCallbacks(gameId, room);
-    game.handleAction(null, { type: 'game_start' });
-
-    return { gameId, game };
-  }
-
   // ---------------------------------------------------------------------------
   // Simple lobby creation + management (for FFA games without phases)
   // ---------------------------------------------------------------------------
@@ -1780,28 +1650,15 @@ export class GameServer {
     const game = GameRoom.create(plugin, setup.config, gameId, setup.players.map(p => p.id));
     const relay = new GameRelay(setup.players);
 
-    // Create bot sessions for bot players (IDs starting with 'bot_')
-    const botPlayers = players.filter(p => p.id.startsWith('bot_'));
-    const externalPlayers = players.filter(p => !p.id.startsWith('bot_'));
-    const botSessions = botPlayers.length > 0
-      ? createBotSessions(
-          botPlayers.map(p => ({ id: p.id, handle: p.handle, team: '' })),
-          this.serverUrl,
-          (id, handle) => createBotToken(id, handle),
-          [BasicChatPlugin],
-        )
-      : [];
-
     const room: GameRoomData = {
       gameType,
       plugin,
       game,
       spectators: lobby.spectators, // Transfer spectators from lobby
       finished: false,
-      externalSlots: new Map(externalPlayers.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
+      externalSlots: new Map(players.map(p => [p.id, { token: '', agentId: p.id, connected: true }])),
       handleMap,
       relay,
-      botSessions,
       lobbyChat: [],
       preGameChatA: [],
       preGameChatB: [],
@@ -1881,36 +1738,11 @@ export class GameServer {
         notifyAgent(agentId);
       }
 
-      // Run bots if the plugin defines getPlayersNeedingAction
-      this.runBotsGeneric(room, gameId);
     };
 
     game.onGameOver = () => {
       this.finishGameGeneric(gameId, room);
     };
-  }
-
-  /**
-   * Run bots generically — uses plugin.getPlayersNeedingAction to determine which bots need to act.
-   */
-  private runBotsGeneric(room: GameRoomData, gameId: string): void {
-    if (room.botSessions.length === 0) { console.log(`[Bots] ${gameId}: no bot sessions`); return; }
-    if (room.finished || room.game.isOver()) return;
-    if (!room.plugin.getPlayersNeedingAction) { console.log(`[Bots] ${gameId}: no getPlayersNeedingAction`); return; }
-
-    const needsAction = new Set<string>(room.plugin.getPlayersNeedingAction(room.game.state));
-    const activeBots = room.botSessions.filter(bot => needsAction.has(bot.id));
-    console.log(`[Bots] ${gameId}: needsAction=${[...needsAction].join(',')}, botIds=${room.botSessions.map(b=>b.id).join(',')}, active=${activeBots.length}`);
-    if (activeBots.length === 0) return;
-
-    // Run bots with timeout
-    const timeoutMs = (room.turnTimeoutMs ?? 30000) - 2000;
-    const turn = room.game.progressCounter;
-
-    Promise.race([
-      runAllBotsTurn(activeBots, turn, needsAction),
-      new Promise<void>((resolve) => setTimeout(resolve, Math.max(5000, timeoutMs))),
-    ]).catch(err => console.error(`[Bots] Error in game ${gameId}:`, err));
   }
 
   /**
@@ -2048,7 +1880,7 @@ export class GameServer {
         const preGameChatB = runner.lobby.preGameChat?.B ?? [];
         this.createGameFromLobby(gameId, teamPlayers, handles, lobbyChat, preGameChatA, preGameChatB);
       },
-    }, this.serverUrl);
+    });
 
     const lobbyId = runner.lobby.lobbyId;
     const plugin = getGame('capture-the-lobster');
@@ -2088,22 +1920,17 @@ export class GameServer {
     preGameChatB: { from: string; message: string; timestamp: number }[] = [],
   ): void {
     const players = teamPlayers;
-    const botHandles: string[] = [];
     const externalSlots = new Map<string, ExternalSlot>();
     const handleMap: Record<string, string> = { ...handles };
 
-    // Map all players to this game and separate bot/external slots
+    // Map all players to this game
     for (const p of players) {
       this.agentToGame.set(p.id, gameId);
-      if (p.id.startsWith('ext_')) {
-        externalSlots.set(p.id, {
-          token: '',
-          agentId: p.id,
-          connected: true,
-        });
-      } else {
-        botHandles.push(p.id);
-      }
+      externalSlots.set(p.id, {
+        token: '',
+        agentId: p.id,
+        connected: true,
+      });
     }
 
     // Plugin builds config from lobby-assigned teams and roles
@@ -2130,18 +1957,9 @@ export class GameServer {
       externalSlots,
       handleMap,
       relay,
-      botSessions: createBotSessions(
-        players.filter((p) => !p.id.startsWith('ext_')).map(p => ({
-          id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team,
-        })),
-        this.serverUrl,
-        (id, handle) => createBotToken(id, handle),
-        [BasicChatPlugin],
-      ),
       lobbyChat,
       preGameChatA,
       preGameChatB,
-      botHandles,
       turnTimeoutMs: 30000,
     };
 
@@ -2150,11 +1968,9 @@ export class GameServer {
     // Wire callbacks and start the game
     this.wireCallbacks(gameId, room);
 
-    // Notify external agents that the game has started (wakes wait_for_update)
+    // Notify all agents that the game has started (wakes wait_for_update)
     for (const p of players) {
-      if (p.id.startsWith('ext_')) {
-        notifyAgent(p.id);
-      }
+      notifyAgent(p.id);
     }
 
     // Start the game (triggers first deadline)

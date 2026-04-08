@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1 Migration Plan
 
-**Status:** Proposed, not started
+**Status:** Phase 0 complete. Phase 1 not started.
 **Audience:** Mid-level engineer picking this up cold
 **Estimated effort:** 4–5 weeks (after bot removal is done on main)
 

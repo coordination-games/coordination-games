@@ -45,20 +45,6 @@ export function getAgentIdFromToken(token: string): string | null {
   return entry.agentId;
 }
 
-/**
- * Create a pre-registered auth token for an internal bot.
- * This bypasses the signin() flow — the bot can use this token immediately
- * on all MCP tool calls without needing to call signin() first.
- */
-export function createBotToken(agentId: string, name: string): string {
-  const token = crypto.randomBytes(5).toString('hex');
-  const expiresAt = Date.now() + TOKEN_TTL_MS;
-  tokenRegistry.set(token, { agentId, name, expiresAt });
-  handleRegistry.set(name, agentId);
-  console.log(`[MCP] Bot token created for "${name}" (agentId: ${agentId})`);
-  return token;
-}
-
 // ---------------------------------------------------------------------------
 // Session registry (MCP session ID -> agentId binding)
 // ---------------------------------------------------------------------------

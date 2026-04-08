@@ -1,23 +1,14 @@
 /**
- * Lobby runner: orchestrates a lobby with Claude Agent SDK bots.
- * Creates a LobbyManager, waits for agents to join (bots or external),
- * handles team formation, pre-game class selection, and game creation.
- *
- * Bots use in-process MCP via Agent SDK, backed by GameClient (REST + pipeline).
- * Same code path as real players via CLI.
+ * Lobby runner: orchestrates a lobby through team formation and pre-game phases.
+ * Creates a LobbyManager, waits for external agents to join, handles team formation,
+ * pre-game class selection, and game creation.
  */
 
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import {
   LobbyManager,
   LobbyAgent,
   UnitClass,
 } from '@coordination-games/game-ctl';
-import { GameClient } from './game-client.js';
-import { createBotToken } from './mcp-http.js';
-import { createBotMcpServer } from './claude-bot.js';
-import { BasicChatPlugin } from '@coordination-games/plugin-chat';
-import type { ToolPlugin } from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,7 +16,7 @@ import type { ToolPlugin } from '@coordination-games/engine';
 
 export type LobbyRunnerPhase =
   | 'forming'    // waiting for agents to join / negotiate teams
-  | 'pre_game'   // bots picking classes
+  | 'pre_game'   // agents picking classes
   | 'starting'   // game being created
   | 'game'       // game is running
   | 'failed';    // lobby failed
@@ -55,39 +46,6 @@ export interface LobbyRunnerCallbacks {
 }
 
 // ---------------------------------------------------------------------------
-// Bot names for flavor
-// ---------------------------------------------------------------------------
-
-const BOT_NAMES = [
-  'Pinchy', 'Clawdia', 'Sheldon', 'Snappy',
-  'Bubbles', 'Coral', 'Neptune', 'Triton',
-  'Marina', 'Squidward', 'Barnacle', 'Anchovy',
-];
-
-// ---------------------------------------------------------------------------
-// System prompts
-// ---------------------------------------------------------------------------
-
-const LOBBY_SYSTEM_PROMPT = `You are a competitive AI agent in a game lobby.
-
-## What to do:
-1. Use get_guide() on your first round to learn about the game
-2. Check lobby state and chat with others
-3. Form teams by proposing/accepting team invitations
-4. Be social and decisive — the lobby has a time limit!
-
-Keep your messages short and fun. You're a competitive AI with personality.`;
-
-const PREGAME_SYSTEM_PROMPT = `You are picking your class/role for a team game.
-
-## What to do:
-1. Check your team state to see teammates and their picks
-2. Chat with teammates to coordinate
-3. Pick your class/role based on team composition
-
-Be quick and coordinate with your team!`;
-
-// ---------------------------------------------------------------------------
 // Lobby Runner
 // ---------------------------------------------------------------------------
 
@@ -102,33 +60,17 @@ export class LobbyRunner {
   private abortController: AbortController;
   private teamSize: number;
   private createdAt: number = Date.now();
-  /** Tracks which agent IDs are bots (vs external agents) */
-  private botIds: Set<string> = new Set();
-  /** Auth tokens for bot REST API access */
-  private botTokens: Map<string, string> = new Map();
-  /** GameClient instances for bot API access */
-  private botClients: Map<string, GameClient> = new Map();
-  /** Agent SDK session IDs for lobby-phase bot conversations */
-  private lobbySessionIds: Map<string, string> = new Map();
-  /** Agent SDK session IDs for pre-game bot conversations */
-  private preGameSessionIds: Map<string, string> = new Map();
-  /** Counter for unique bot names */
-  private botIndex: number = 0;
-  /** Server URL for bot REST API calls */
-  private serverUrl: string;
 
   constructor(
     teamSize: number = 2,
     timeoutMs: number = 240000,
     callbacks: LobbyRunnerCallbacks,
-    serverUrl?: string,
   ) {
     this.lobby = new LobbyManager(undefined, teamSize);
     this.callbacks = callbacks;
     this.timeoutMs = timeoutMs;
     this.teamSize = teamSize;
     this.abortController = new AbortController();
-    this.serverUrl = serverUrl ?? `http://localhost:${process.env.PORT || 5173}`;
   }
 
   disableTimeout(): void {
@@ -187,63 +129,6 @@ export class LobbyRunner {
     this.callbacks.onStateChange(this.getState());
   }
 
-  addBot(): { agentId: string; handle: string } {
-    const handle = BOT_NAMES[this.botIndex % BOT_NAMES.length];
-    const id = `agent_${this.botIndex + 1}`;
-    this.botIndex++;
-
-    const agent: LobbyAgent = {
-      id,
-      handle,
-      elo: 1000 + Math.floor(Math.random() * 200),
-    };
-    this.lobby.addAgent(agent);
-    this.botIds.add(id);
-
-    // Create auth token and GameClient for this bot
-    const token = createBotToken(id, handle);
-    this.botTokens.set(id, token);
-    this.botClients.set(id, new GameClient(this.serverUrl, { token }));
-
-    this.emitState();
-
-    if (this.phase === 'forming') {
-      this.runBotLobbyBehavior(id).catch((err) => {
-        console.error(`Bot ${id} lobby behavior error:`, err.message ?? err);
-      });
-    }
-
-    return { agentId: id, handle };
-  }
-
-  isBot(agentId: string): boolean {
-    return this.botIds.has(agentId);
-  }
-
-  private async runBotLobbyBehavior(botId: string): Promise<void> {
-    const maxRounds = 4 + this.teamSize * 3;
-    for (let round = 0; round < maxRounds; round++) {
-      if (this.abortController.signal.aborted) return;
-      if (this.phase !== 'forming') return;
-
-      const teamId = this.lobby.agentTeam.get(botId);
-      if (teamId) {
-        const team = this.lobby.teams.get(teamId);
-        if (team && team.members.length >= this.teamSize) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          continue;
-        }
-      }
-
-      await this.runLobbyBot(botId, round + 1).catch((err) => {
-        if (err.name !== 'AbortError') {
-          console.error(`Lobby bot ${botId} round ${round + 1} error:`, err.message ?? err);
-        }
-      });
-      this.emitState();
-    }
-  }
-
   async run(): Promise<void> {
     try {
       this.emitState();
@@ -271,9 +156,11 @@ export class LobbyRunner {
       this.phase = 'pre_game';
       this.emitState();
 
-      const botPlayerIds = [...teamA, ...teamB].filter((id) => this.botIds.has(id));
-      await this.runPreGamePhase(botPlayerIds);
+      await this.waitForPreGame();
       if (this.abortController.signal.aborted) return;
+
+      this.assignDefaultClasses();
+      this.emitState();
 
       this.phase = 'starting';
       this.emitState();
@@ -324,12 +211,6 @@ export class LobbyRunner {
         console.log('2 full teams formed!');
         return;
       }
-      const totalAgents = this.lobby.agents.size;
-      if (totalAgents >= this.teamSize * 2) {
-        const allBots = [...this.lobby.agents.keys()].every((id) => this.botIds.has(id));
-        if (allBots && Date.now() - startTime > 5000) return;
-        if (this.getFullTeams().length >= 2) return;
-      }
       if (!this.noTimeout && Date.now() - startTime > this.timeoutMs) {
         console.log('Lobby timeout reached');
         return;
@@ -338,96 +219,17 @@ export class LobbyRunner {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Lobby bot round — Agent SDK + in-process MCP backed by GameClient
-  // ---------------------------------------------------------------------------
-
-  private async runLobbyBot(botId: string, round: number): Promise<void> {
-    const agent = this.lobby.agents.get(botId);
-    const handle = agent?.handle ?? botId;
-    const client = this.botClients.get(botId);
-    if (!client) return;
-
-    const mcpServer = createBotMcpServer(client, [BasicChatPlugin]);
-    const serverName = 'game-server';
-
-    const prompt = round === 1
-      ? `You just joined a lobby. You are ${handle} (${botId}). Call get_guide() first, then check lobby state, chat with others, and form a team of ${this.teamSize}.`
-      : `Round ${round}. You are ${handle} (${botId}). Check lobby state, chat, and form a team of ${this.teamSize}.`;
-
-    const localAbort = new AbortController();
-    const onRunnerAbort = () => localAbort.abort();
-    this.abortController.signal.addEventListener('abort', onRunnerAbort);
-    const timeout = setTimeout(() => localAbort.abort(), 20000);
-
-    try {
-      const existingSession = this.lobbySessionIds.get(botId);
-      const q = query({
-        prompt,
-        options: {
-          systemPrompt: LOBBY_SYSTEM_PROMPT,
-          model: 'haiku',
-          tools: [],
-          mcpServers: { [serverName]: mcpServer },
-          allowedTools: [`mcp__${serverName}__*`],
-          maxTurns: 6,
-          abortController: localAbort,
-          cwd: '/tmp',
-          ...(existingSession ? { resume: existingSession } : { persistSession: true }),
-        },
-      });
-
-      for await (const msg of q) {
-        if ('session_id' in msg && (msg as any).session_id && !existingSession) {
-          this.lobbySessionIds.set(botId, (msg as any).session_id);
-        }
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') throw err;
-      this.lobbySessionIds.delete(botId);
-    } finally {
-      clearTimeout(timeout);
-      this.abortController.signal.removeEventListener('abort', onRunnerAbort);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Pre-game phase — Agent SDK + in-process MCP backed by GameClient
-  // ---------------------------------------------------------------------------
-
-  private async runPreGamePhase(botPlayerIds: string[]): Promise<void> {
-    if (botPlayerIds.length === 0) {
-      await new Promise<void>((resolve) => {
-        let done = false;
-        const finish = () => { if (!done) { done = true; resolve(); } };
-        const check = setInterval(() => {
-          const allPicked = [...this.lobby.preGamePlayers.values()].every(p => p.unitClass);
-          if (allPicked) { clearInterval(check); finish(); }
-        }, 1000);
-        if (!this.noTimeout) setTimeout(() => { clearInterval(check); finish(); }, 300000);
-        this.abortController.signal.addEventListener('abort', () => { clearInterval(check); finish(); }, { once: true });
-      });
-      this.assignDefaultClasses();
-      this.emitState();
-      return;
-    }
-
-    console.log('[PreGame] Round 1: Discussion');
-    await Promise.all(botPlayerIds.map((id) =>
-      this.runPreGameBot(id, 'discuss').catch((err) => {
-        if (err.name !== 'AbortError') console.error(`Pre-game discuss bot ${id} error:`, err.message ?? err);
-      }),
-    ));
-
-    console.log('[PreGame] Round 2: Class selection');
-    await Promise.all(botPlayerIds.map((id) =>
-      this.runPreGameBot(id, 'pick').catch((err) => {
-        if (err.name !== 'AbortError') console.error(`Pre-game pick bot ${id} error:`, err.message ?? err);
-      }),
-    ));
-
-    this.assignDefaultClasses();
-    this.emitState();
+  private async waitForPreGame(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      const check = setInterval(() => {
+        const allPicked = [...this.lobby.preGamePlayers.values()].every(p => p.unitClass);
+        if (allPicked) { clearInterval(check); finish(); }
+      }, 1000);
+      if (!this.noTimeout) setTimeout(() => { clearInterval(check); finish(); }, 300000);
+      this.abortController.signal.addEventListener('abort', () => { clearInterval(check); finish(); }, { once: true });
+    });
   }
 
   private assignDefaultClasses(): void {
@@ -438,57 +240,6 @@ export class LobbyRunner {
         player.unitClass = classes[idx % classes.length];
         idx++;
       }
-    }
-  }
-
-  private async runPreGameBot(botId: string, mode: 'discuss' | 'pick'): Promise<void> {
-    const agent = this.lobby.agents.get(botId);
-    const handle = agent?.handle ?? botId;
-    const player = this.lobby.preGamePlayers.get(botId);
-    const team = player?.team ?? 'A';
-    const client = this.botClients.get(botId);
-    if (!client) return;
-
-    const mcpServer = createBotMcpServer(client, [BasicChatPlugin]);
-    const serverName = 'game-server';
-
-    const prompt = mode === 'discuss'
-      ? `Pre-game discussion. You are ${handle} (${botId}) on Team ${team}. Check team state, chat about strategy and class composition. DON'T pick your class yet — just discuss!`
-      : `Time to pick! You are ${handle} (${botId}) on Team ${team}. Check teammates' picks, then choose your class.`;
-
-    const localAbort = new AbortController();
-    const onRunnerAbort = () => localAbort.abort();
-    this.abortController.signal.addEventListener('abort', onRunnerAbort);
-    const timeout = setTimeout(() => localAbort.abort(), 25000);
-
-    try {
-      const existingSession = this.preGameSessionIds.get(botId);
-      const q = query({
-        prompt,
-        options: {
-          systemPrompt: PREGAME_SYSTEM_PROMPT,
-          model: 'haiku',
-          tools: [],
-          mcpServers: { [serverName]: mcpServer },
-          allowedTools: [`mcp__${serverName}__*`],
-          maxTurns: 5,
-          abortController: localAbort,
-          cwd: '/tmp',
-          ...(existingSession ? { resume: existingSession } : { persistSession: true }),
-        },
-      });
-
-      for await (const msg of q) {
-        if ('session_id' in msg && (msg as any).session_id && !existingSession) {
-          this.preGameSessionIds.set(botId, (msg as any).session_id);
-        }
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') throw err;
-      this.preGameSessionIds.delete(botId);
-    } finally {
-      clearTimeout(timeout);
-      this.abortController.signal.removeEventListener('abort', onRunnerAbort);
     }
   }
 }
