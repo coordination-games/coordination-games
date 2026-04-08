@@ -29,6 +29,9 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 ## Running
 
 ```bash
+# Runtime baseline
+nvm use 22
+
 # Install (MUST use --include=dev due to npm workspaces bug)
 npm install --include=dev
 
@@ -65,6 +68,10 @@ TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
 ### npm workspaces won't install devDependencies
 **Problem:** `npm install` in this repo does NOT install devDependencies (vite, typescript, @types/*) for workspace packages. This is a known npm 10 bug with workspaces.
 **Workaround:** Always run `npm install --include=dev`. The root package.json has build tools in `dependencies` (not `devDependencies`) as a second workaround.
+
+### Node runtime baseline
+**Problem:** Native dependencies like `better-sqlite3` can fail unpredictably on newer Node majors during local installs.
+**Workaround:** Use Node 22.x for local development (`nvm use 22`). A root `.nvmrc` is provided for this repo.
 
 ### @types/node won't install via npm
 **Problem:** Even with `--include=dev`, `@types/node` and other `@types/*` packages sometimes don't appear in `node_modules/@types/`. npm says "up to date" but the directory is empty.
