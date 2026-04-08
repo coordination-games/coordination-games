@@ -16,6 +16,192 @@ Migrate `packages/server` from Node.js + Express + WebSocket + in-memory state t
 - **No feature changes.** This is infrastructure-only. The game rules, plugin API, CLI, and REST contract should be identical to users.
 - **No on-chain changes.** The relay contracts stay where they are on OP Sepolia.
 
+## Codebase Research Notes
+
+### Phase 0 Verification (confirmed complete as of 2026-04-08)
+- `packages/server/src/claude-bot.ts` — deleted ✓
+- `packages/web/src/components/lobby/FillBotsPanel.tsx` — deleted ✓
+- All bot endpoints (`/fill-bots`, `/games/start`), imports (`runAllBotsTurn`, `createBotSessions`, `BotSession`, `createBotToken`), and `@anthropic-ai/claude-agent-sdk` dep — all gone ✓
+- `packages/server/src/lobby-runner.ts` — bot methods removed, external-agents-only ✓
+- `docs/external-bots.md` and `scripts/spawn-bots.sh` — exist (Phase 0.5 done) ✓
+- `e2e-local.sh` — does NOT reference `/fill-bots` or `/games/start` ✓
+
+### Merkle tree risk (Risk #2 — pre-resolved)
+- `packages/engine/src/merkle.ts` uses **SHA-256** (not keccak256): `crypto.createHash('sha256')`
+- `packages/contracts/contracts/GameAnchor.sol` — does NOT compute the hash; it only stores `bytes32 movesRoot` as submitted by the relayer. There is no on-chain hash mismatch today.
+- **Risk #2 is a non-issue as long as the relayer submits the same SHA-256 root it always has.** Do not change the hash function during migration.
+
+### Full REST API surface (packages/server/src/api.ts)
+
+**Public (no auth):**
+- `GET /api/framework` — server info + registered games
+- `GET /api/lobbies` — list lobbies
+- `GET /api/lobbies/:id` — lobby state
+- `POST /api/lobbies/create` — create lobby
+- `DELETE /api/lobbies/:id` — disband lobby
+- `GET /api/games` — list active games
+- `GET /api/games/:id` — spectator game state
+- `GET /api/games/:id/state` — current state only
+- `GET /api/games/:id/bundle` — full game bundle for verification
+- `GET /api/games/:id/result` — result + Merkle root
+- `GET /api/leaderboard` — ELO leaderboard
+- `GET /api/replays/:id` — replay data
+- `POST /api/player/auth/challenge` — issue nonce for wallet challenge
+- `POST /api/player/auth/verify` — verify EIP-712 signature → session token
+- Relay endpoints: `POST /api/relay/register`, `POST /api/relay/topup`, `GET /api/relay/faucet/:address`, `POST /api/relay/burn-request`, `POST /api/relay/burn-execute`, `POST /api/relay/settle`
+
+**Auth-required (session token in `Authorization: Bearer <token>`):**
+- `GET /api/player/guide` — dynamic playbook from game plugin
+- `GET /api/player/state` — fog-filtered state for this player
+- `GET /api/player/wait` — long-poll for updates (25s timeout)
+- `POST /api/player/move` — submit move or lobby action
+- `POST /api/player/lobby/join` — join lobby
+- `POST /api/player/lobby/create` — create lobby
+- `POST /api/player/team/propose` — propose team
+- `POST /api/player/team/accept` — accept team invite
+- `POST /api/player/team/leave` — leave team
+- `POST /api/player/class` — choose class (rogue/knight/mage)
+- `POST /api/player/tool` — plugin tool invocation (chat, ELO, etc.)
+- `GET /api/player/leaderboard` — leaderboard (auth required)
+- `GET /api/player/stats` — player's own stats
+
+**WebSocket:**
+- `GET /ws/game/:id` — spectator feed
+- `GET /ws/lobby/:id` — lobby updates
+
+### Key TypeScript interfaces (packages/server/src/api.ts)
+
+```typescript
+export interface GameRoomData {
+  gameType: string;
+  plugin: any;
+  game: GameRoom<any, any, any, any>;
+  spectators: Set<WebSocket>;
+  finished: boolean;
+  externalSlots: Map<string, ExternalSlot>;
+  handleMap: Record<string, string>;
+  relay: GameRelay;
+  lobbyChat: ChatMessage[];
+  preGameChatA: ChatMessage[];
+  preGameChatB: ChatMessage[];
+  turnTimeoutMs?: number;
+}
+
+export interface Lobby {
+  id: string;
+  gameType: string;
+  plugin: any;
+  players: { id: string; handle: string }[];
+  targetPlayers: number;
+  spectators: Set<WebSocket>;
+  runner?: LobbyRunner;       // team games with phases
+  lobbyManager?: EngineLobbyManager;
+  externalSlots: Map<string, ExternalSlot>;
+  createdAt: number;
+}
+
+export interface ExternalSlot {
+  token: string;
+  agentId: string;
+  connected: boolean;
+}
+```
+
+### LobbyRunner phase machine (packages/server/src/lobby-runner.ts)
+```
+forming (240s) → pre_game (300s) → starting → game
+                                 ↘ failed
+```
+- Auto-merges teams on timeout
+- `onGameCreated` callback fires when `starting` completes
+
+### mcp-http.ts — NOT an MCP server
+`packages/server/src/mcp-http.ts` is a **utility module only**. It provides:
+- `tokenRegistry: Map<token, {agentId, name, expiresAt}>` — `TOKEN_TTL_MS = 24 * 60 * 60 * 1000`
+- `handleRegistry: Map<display_name, agentId>` — persistent across sessions
+- `notifyAgent()`, `waitForAgentUpdate()` — long-poll wakeups via internal Promises
+- `agentMessageCursor`, `agentLastKnownTurn` — per-agent message tracking
+- `getNewMessages()`, `peekNewMessages()` — cursor advancement
+
+**In the Worker:** These in-memory maps must move to DO storage. Long-poll Promises become DO alarms.
+
+### ELO plugin — existing SQLite schema (packages/plugins/elo/src/tracker.ts)
+The D1 migration SQL in Phase 1 must match this schema:
+
+```sql
+CREATE TABLE players (
+  id TEXT PRIMARY KEY,
+  handle TEXT UNIQUE NOT NULL,
+  elo INTEGER DEFAULT 1200,
+  games_played INTEGER DEFAULT 0,
+  wins INTEGER DEFAULT 0,
+  created_at TEXT
+);
+
+CREATE TABLE matches (
+  id TEXT PRIMARY KEY,
+  map_seed TEXT,
+  turns INTEGER,
+  winner_team TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  replay_data TEXT
+);
+
+CREATE TABLE match_players (
+  match_id TEXT REFERENCES matches(id),
+  player_id TEXT REFERENCES players(id),
+  team TEXT,
+  class TEXT,
+  elo_before INTEGER,
+  elo_after INTEGER,
+  PRIMARY KEY (match_id, player_id)
+);
+```
+
+**Note:** D1 migration `0001_init.sql` in Phase 1 plan also specifies `auth_nonces` and a slightly different `players` schema. Merge carefully — preserve both `elo`/`games_played`/`wins` columns AND `wallet_address`/`created_at` columns.
+
+### Auth flow (packages/engine/src/server/auth.ts + packages/server/src/api.ts)
+- `POST /auth/challenge`: generates a random nonce, stores `{ nonce, walletAddress, expiresAt }` (TTL ~5 min), returns `{ nonce }`
+- `POST /auth/verify`: reads nonce from store, verifies EIP-712 signature with ethers v6, checks ERC-8004 registry (skipped if `REGISTRY_ADDRESS` not set), issues session token stored in `tokenRegistry`
+- In the Worker: nonces go to D1 `auth_nonces` table; session tokens go to DO or KV
+
+### GameRoom — how progress/spectator delay works (packages/engine/src/game-session.ts)
+- `_progressCounter`: incremented only when `ActionResult.progressIncrement === true`
+- `_progressSnapshots`: state history indices at each progress point
+- `getSpectatorView(delay, context)` uses `_progressSnapshots[current - delay]` to serve a delayed view
+- **In the Worker:** `_stateHistory` + `_progressSnapshots` must live in DO transactional storage
+
+### typed-relay.ts
+`packages/server/src/typed-relay.ts` handles scoped relay message routing (team vs all). This is separate from `relay.ts` (on-chain relayer). Don't confuse the two. During migration, the typed relay buffer moves to DO storage.
+
+### Packages that need Worker-compatible replacements
+| Current | Replacement in Worker |
+|---|---|
+| `better-sqlite3` | D1 via `env.DB` binding |
+| `express` | Manual `fetch()` handler + URL routing |
+| `ws` | DO hibernatable WS (`state.acceptWebSocket()`) |
+| `setTimeout` for timers | `state.storage.setAlarm()` |
+| In-memory `Map` for games/lobbies | One DO per game/lobby |
+| In-memory `tokenRegistry` | D1 `auth_nonces` table |
+
+### Key file locations for migration implementors
+```
+packages/engine/src/types.ts               — CoordinationGame, GameRoom, ToolPlugin interfaces
+packages/engine/src/game-session.ts        — GameRoom implementation (port to DO)
+packages/engine/src/merkle.ts              — SHA-256 Merkle tree (copy as-is)
+packages/engine/src/server/auth.ts         — Auth logic (port to D1 nonces)
+packages/server/src/api.ts                 — Full Express server (replace with CF Worker)
+packages/server/src/lobby-runner.ts        — Phase machine (port to LobbyDO alarms)
+packages/server/src/mcp-http.ts            — Token/cursor/waiter utils (port to DO storage)
+packages/server/src/relay.ts               — On-chain relayer (copy as-is, works in Workers)
+packages/server/src/typed-relay.ts         — Scoped relay routing (port to DO storage)
+packages/plugins/elo/src/tracker.ts        — SQLite ELO (needs D1 async variant)
+packages/plugins/basic-chat/src/index.ts   — Chat plugin (pure, copy as-is)
+```
+
+---
+
 ## Why we're doing this
 
 - Eliminates the "one bare server on a box" operational burden
@@ -287,7 +473,7 @@ All figures from the current Cloudflare pricing docs (as of 2026-04-08):
 
 1. **DO hibernation billing semantics.** The docs say WS messages bill 20:1 and hibernation reduces duration costs, but the exact interaction between "idle hibernated DO with 3 WS connections" and duration billing is not 100% clear from the pricing page alone. **Mitigation:** ship it, watch the dashboard, optimize.
 
-2. **Merkle hash function audit.** Before the migration, verify `packages/engine/src/merkle.ts` uses the same hash function (keccak256 vs SHA-256) as the on-chain `GameAnchor` contract expects. If it's wrong today, this is the time to fix it — not mid-migration. **Check with:** compare the hash function in `merkle.ts` against `packages/contracts/contracts/GameAnchor.sol`.
+2. **~~Merkle hash function audit.~~ RESOLVED (2026-04-08).** `packages/engine/src/merkle.ts` uses SHA-256. `GameAnchor.sol` only stores the root — it does not recompute or verify the hash function. No mismatch. Copy `merkle.ts` as-is during migration.
 
 3. **ethers v6 in Workers.** Widely reported to work, but specifically verify EIP-712 signing with a server-held relayer private key works under Workers' WebCrypto constraints. A 30-minute spike in Phase 1 rather than discovering it in Phase 6.
 
