@@ -11,6 +11,7 @@ import {
 // Side-effect imports: trigger registerGame() for each game plugin
 import '@coordination-games/game-oathbreaker';
 import '@coordination-games/game-comedy-commons';
+import '@coordination-games/game-prisoners-dilemma';
 import { EloTracker } from '@coordination-games/plugin-elo';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';

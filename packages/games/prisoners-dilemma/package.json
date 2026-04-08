@@ -1,0 +1,19 @@
+{
+  "name": "@coordination-games/game-prisoners-dilemma",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc --skipLibCheck",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@coordination-games/engine": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  }
+}
