@@ -5,7 +5,7 @@ Agent SDK for Comedy of the Commons. Build a playing agent in 5 minutes.
 ## Features
 
 - **Minimal interface** — implement 2 methods: `negotiate()` and `act()`
-- **Built-in LLM support** — plug in an Anthropic API key and a persona markdown file
+- **Multi-provider LLM support** — Anthropic (Claude), Minimax (OpenAI-compatible), or any custom provider
 - **6 pre-built strategies** — cooperator, defector, tit_for_tat, builder, diplomat, opportunist
 - **MCP transport** — connects to the arena over stdio JSON-RPC
 - **Full state types** — `ComedyAgentView` with all resources, structures, ecosystems, and trust
@@ -36,7 +36,14 @@ bot.run();
 
 Run: `npx tsx src/cli.ts --simple cooperator`
 
-### LLM Agent
+### LLM Agent (Minimax — recommended)
+
+```bash
+MINIMAX_API_KEY=<your-key> \
+npx tsx src/cli.ts --persona personas/strategic.md
+```
+
+### LLM Agent (Anthropic)
 
 ```bash
 ANTHROPIC_API_KEY=sk-... \
@@ -71,7 +78,8 @@ agent-sdk/
 │   ├── agent-base.ts     # ComedyAgentBase — lifecycle management
 │   ├── mcp-client.ts     # MCP stdio client
 │   ├── types.ts           # Shared types
-│   ├── llm-agent.ts       # Claude-powered agent
+│   ├── providers.ts       # LLM provider interface + Anthropic + Minimax
+│   ├── llm-agent.ts       # LLM-powered agent
 │   ├── simple-agent.ts    # Rule-based agents
 │   └── cli.ts             # CLI entry point
 ├── personas/

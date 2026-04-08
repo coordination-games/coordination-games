@@ -14,9 +14,10 @@
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
+    "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "openai": "^4.85.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
