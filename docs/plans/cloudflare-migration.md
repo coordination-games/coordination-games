@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1 Migration Plan
 
-**Status:** Phase 0 complete. Phase 1 not started.
+**Status:** Phase 1 complete. Phase 2 not started.
 **Audience:** Mid-level engineer picking this up cold
 **Estimated effort:** 4–5 weeks (after bot removal is done on main)
 
@@ -331,6 +331,64 @@ Not part of the migration itself, but worth doing alongside Phase 0:
 8. **Sanity-check `docs/README.md` and `docs/building-a-game.md`** — both currently point at `CLAUDE.md` for build commands. That pointer stays correct, no edits needed. But verify nothing else in `docs/` hardcodes `node dist/index.js` or Express references; if it does, update it in place.
 
 **Exit criteria:** `curl https://ctl-beta.capturethelobster.com/health` returns 200 from Cloudflare's edge, AND a fresh developer following the updated root `CLAUDE.md` can get the worker running locally in under 10 minutes without asking for help.
+
+## Phase 1 Handoff Notes
+
+**Completed:** 2026-04-08  
+**Commit:** c354d7f (and the Phase 1 scaffold commit on top of it)
+
+### What exists in `packages/workers-server/`
+
+```
+packages/workers-server/
+  package.json                  — @coordination-games/workers-server, type: module
+  tsconfig.json                 — ES2022, ESNext modules, bundler resolution, strict: false
+  wrangler.toml                 — ctl-server worker, D1 binding (ctl-db), GameRoomDO + LobbyDO bindings, route ctl-beta.capturethelobster.com/*
+  src/
+    index.ts                    — fetch() handler: GET /health → {ok,build}, GET / → redirect, 404 fallback. Exports GameRoomDO + LobbyDO.
+    do/
+      GameRoomDO.ts             — Stub: extends DurableObject, fetch() returns 501
+      LobbyDO.ts                — Stub: extends DurableObject, fetch() returns 501
+  migrations/
+    0001_init.sql               — Applied to production D1. Tables: players, matches, match_players, auth_nonces
+```
+
+### Live infrastructure
+
+- **Worker:** `ctl-server` deployed to Cloudflare Workers
+- **D1 database:** `ctl-db`, id `a16be595-731c-4b55-8c4a-d937c142c2da`, region WNAM — **already has the schema applied**
+- **DNS:** `ctl-beta.capturethelobster.com` → orange-clouded AAAA `100::` → Worker. Fully propagated.
+- **Health check:** `curl https://ctl-beta.capturethelobster.com/health` → `{"ok":true,"build":"c354d7f"}` HTTP 200
+
+### How to deploy changes
+
+```bash
+cd packages/workers-server
+wrangler dev              # local dev on :8787
+wrangler deploy           # push to production
+wrangler tail             # stream production logs
+```
+
+### D1 migration notes
+
+- `0001_init.sql` is already applied to production — do NOT re-run it
+- Phase 2 should add a new file `migrations/0002_auth.sql` if schema changes are needed (auth_nonces is already in 0001)
+- To apply a new migration: `wrangler d1 execute ctl-db --remote --file=migrations/0002_something.sql`
+- Local dev D1 state: `packages/workers-server/.wrangler/state/` (wipe with `rm -rf` to reset)
+
+### DO exports — critical gotcha
+
+`src/index.ts` MUST export `GameRoomDO` and `LobbyDO` at the top level. If you add more DO classes in Phase 3+, export them from `index.ts` too or the Worker will fail to deploy.
+
+### Wrangler auth
+
+Wrangler is already authenticated on this machine (`wrangler whoami` to verify). The OAuth token has `workers:write`, `d1:write`, `workers_routes:write` — sufficient for all remaining phases.
+
+### What Phase 2 should NOT change
+
+- Do not touch `wrangler.toml` D1 binding or DO bindings — they're correct
+- Do not re-run `0001_init.sql` — auth_nonces table is already there
+- The `nodejs_compat` flag in `wrangler.toml` is load-bearing for ethers v6 later — do not remove it
 
 ### Phase 2 — Auth and read-only state (3–4 days)
 
