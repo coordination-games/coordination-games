@@ -432,12 +432,14 @@ This is the hard phase. Plan carefully.
 
 1. **Design the DO interface** first, before coding:
    - `POST /create` — initializes game state from config, stores in `state.storage`
-   - `POST /action` — validates and applies an action, broadcasts to spectators, updates turn state
-   - `GET /state?playerId=X` — returns fog-of-war view for player X
-   - `GET /wait?playerId=X&since=N` — long-poll for updates (implement via internal promise, 25s timeout)
-   - WS upgrade — spectator feed with delay
-2. **State model:** Everything lives in `state.storage` (DO transactional storage). On first request, load state into memory; on write, persist. Use `blockConcurrencyWhile()` for transactional updates.
-3. **Spectator WebSockets:** Use hibernatable WS API (`state.acceptWebSocket()`) — this is critical for cost. Hibernating WS does not incur duration charges while idle.
+   - `POST /action` — validates and applies an action, broadcasts to all WS subscribers
+   - `GET /state?playerId=X` — returns fog-of-war view for player X (HTTP snapshot)
+   - `GET /result` — Merkle root + outcome when finished
+   - WS upgrade (no `X-Player-Id` header) — spectator: delayed view, no auth
+   - WS upgrade (with `X-Player-Id` header set by Worker) — player: real-time fog-filtered view
+2. **No `/wait` endpoint.** Real-time updates for both players and spectators go through WebSockets. The Worker validates the Bearer token before forwarding a player WS upgrade and adds `X-Player-Id`; the DO never sees raw tokens. See "WS auth" note below.
+3. **State model:** Everything lives in `state.storage` (DO transactional storage). On first request, load state into memory; on write, persist. Use `blockConcurrencyWhile()` for transactional updates.
+4. **Hibernatable WS for everything real-time:** `state.acceptWebSocket(ws, [tag])` — tag is `'spectator'` or the playerId. On each state change, push spectator view to `getWebSockets('spectator')` and fog-filtered view to `getWebSockets(playerId)` for each player. Hibernating WS does not incur duration charges while idle.
 4. **Alarms for timeouts:** Turn deadlines, lobby phase transitions, challenge cleanup — all use `state.storage.setAlarm()`. The `alarm()` handler dispatches by a stored "alarm type" field.
 5. **On game end:** Write final state + Merkle root + action log to D1 (`matches` table), then delete DO storage. The DO becomes idle and Cloudflare reclaims it.
 6. Worker entry point: when a request arrives for `/games/:id/*`, forward to `env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId)).fetch(req)`.
@@ -454,20 +456,22 @@ This is the hard phase. Plan carefully.
 
 **`src/do/GameRoomDO.ts`** — full implementation:
 - `POST /` — create game from `{ gameType, config, playerIds, handleMap, teamMap }`
-- `POST /action` — `validateAction` + `applyAction` via the game plugin, persist to DO storage, broadcast to spectator WS
-- `GET /state?playerId=X` — fog-of-war visible state per player
-- `GET /wait?playerId=X&since=N` — poll (see long-poll note below)
+- `POST /action` — `validateAction` + `applyAction` via the game plugin, persist to DO storage, push to all WS subscribers
+- `GET /state?playerId=X` — fog-of-war visible state per player (HTTP snapshot)
 - `GET /result` — Merkle root + outcome (only when `isOver()`)
-- `GET /spectator` — delayed spectator view
-- WS upgrade — hibernatable spectator WebSocket via `ctx.acceptWebSocket()`
+- `GET /spectator` — HTTP snapshot of delayed spectator view
+- WS (no `X-Player-Id`) — hibernatable spectator WS tagged `'spectator'`, delayed view
+- WS (with `X-Player-Id`) — hibernatable player WS tagged with playerId, fog-filtered real-time view; Worker validates Bearer token before forwarding
+- On each action: pushes spectator view to `getWebSockets('spectator')`, fog-filtered view to `getWebSockets(playerId)` for each player
+- On WS connect: sends current state immediately so client has it without a separate HTTP call
 - `alarm()` — fires deadline actions (replaces `setTimeout` from `GameRoom`)
 - Lazy state load via `ctx.blockConcurrencyWhile()` on first request
-- Game plugins loaded by importing `@coordination-games/game-ctl` and `@coordination-games/game-oathbreaker` as side-effects; `getGame(gameType)` from engine registry resolves them
+- Game plugins loaded by importing `@coordination-games/game-ctl` and `@coordination-games/game-oathbreaker` as side-effects
 
 **DO storage keys:**
 - `meta` — `{ gameType, playerIds, handleMap, teamMap, createdAt, finished }`
 - `state` — current game state (JSON)
-- `prevProgressState` — state at last progress point (for spectator delay=1)
+- `prevProgressState` — state at last progress point (for spectator delay)
 - `actionLog` — `{ playerId, action }[]`
 - `progress` — `{ counter, snapshots[] }`
 - `deadline` — `{ action, deadlineMs }` (present only when alarm is armed)
@@ -476,30 +480,23 @@ This is the hard phase. Plan carefully.
 - `POST /api/games/create` — creates game, inserts `game_sessions` rows in D1
 - `GET  /api/games` — lists active games
 - `/api/games/:id[/sub]` — forwarded to GameRoomDO for any method
-- `GET  /api/player/state` — auth-gated, looks up player's game from `game_sessions`
+- `GET  /api/player/state` — auth-gated, HTTP snapshot of player's fog-filtered state
 - `POST /api/player/move` — auth-gated, forwards to player's game DO
-- `GET  /api/player/wait` — auth-gated, forwards to player's game DO
-- `WS /ws/game/:id` — upgrades to hibernatable spectator WS on the DO
+- `WS /ws/game/:id` — unauthenticated spectator WebSocket (delayed view)
+- `WS /ws/game/:id/player` — authenticated player WebSocket (real-time fog-filtered view); Worker validates Bearer token, strips it, adds `X-Player-Id` header
 
 **`migrations/0003_game_sessions.sql`** — `game_sessions (player_id PK, game_id, game_type, joined_at)` — applied to production.
 
 **`package.json`** — added `@coordination-games/engine`, `game-ctl`, `game-oathbreaker` as workspace deps.
 
-### Critical: `/wait` does not long-poll
+### WS auth pattern
 
-The original plan called for `/wait` to block for up to 25s via an internal Promise. **This is not possible in Durable Objects.** DO requests are processed sequentially — a 25s blocking request would prevent all other requests (including `POST /action`) from reaching the same DO instance.
+There is no `/wait` HTTP endpoint. Real-time updates flow through WebSockets:
 
-**Actual behavior:** `/wait` returns immediately:
-- `{ reason: 'turn_changed', ... }` if `progressCounter > since` (new state available)
-- `{ reason: 'no_update', progressCounter }` if nothing changed
+- **Spectator** (`/ws/game/:id`): no auth, delayed view. Browser connects here.
+- **Player** (`/ws/game/:id/player`): `Authorization: Bearer <token>` header on the WS upgrade request — same as every other authenticated call. The Worker validates it, removes it, adds a trusted `X-Player-Id` header, then forwards to the DO. The DO never sees raw tokens.
 
-**What the CLI must do:** short-poll with a 1–2s retry interval on `no_update`. This is a permanent architectural constraint, not a temporary gap.
-
-**Two separate clients, two separate paths — do not conflate them:**
-- `/wait` (HTTP poll) is for **agent CLI** (`coga wait`). It returns `no_update` immediately if nothing changed; the CLI retries after a short delay. This endpoint stays permanently and is not replaced by anything.
-- WebSocket (`/ws/game/:id`) is for **browser spectators**. The DO pushes state after every action. Has nothing to do with the CLI.
-
-The behavioral difference from the old Node server is only that the old server blocked for up to 25s before returning `no_update`, saving some HTTP round-trips. The DO version returns immediately and the CLI polls more frequently. For a turn-based game this is imperceptible.
+Tokens are never in URLs. The CLI opens the player WS connection with the Bearer header (Node.js `ws` client supports custom headers on upgrade). On connect, the DO immediately pushes the player's current fog-filtered state. The CLI's `wait_for_update` tool just connects to this WS and waits for the next push.
 
 ### D1 migration state
 

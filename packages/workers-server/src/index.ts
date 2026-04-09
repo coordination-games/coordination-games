@@ -80,10 +80,28 @@ export default {
       return forwardToGameDO(env, gameId, sub, request);
     }
 
-    // WS /ws/game/:id — spectator WebSocket
-    const wsGameMatch = pathname.match(/^\/ws\/game\/([^/]+)$/);
-    if (wsGameMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      return forwardToGameDO(env, wsGameMatch[1], '/', request);
+    // WS /ws/game/:id — unauthenticated spectator WebSocket (delayed view)
+    const wsSpectatorMatch = pathname.match(/^\/ws\/game\/([^/]+)$/);
+    if (wsSpectatorMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+      return forwardToGameDO(env, wsSpectatorMatch[1], '/', request);
+    }
+
+    // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered view)
+    // Worker validates the Bearer token here and passes playerId via X-Player-Id header.
+    // The DO never sees raw tokens.
+    const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
+    if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      const session = await getPlayerGameSession(playerId, env);
+      if (!session || session.game_id !== wsPlayerMatch[1]) {
+        return Response.json({ error: 'Not a player in this game' }, { status: 403 });
+      }
+      // Strip Authorization, add trusted X-Player-Id for the DO
+      const forwarded = new Request(request.url, request);
+      forwarded.headers.delete('Authorization');
+      forwarded.headers.set('X-Player-Id', playerId);
+      return forwardToGameDO(env, wsPlayerMatch[1], '/', forwarded);
     }
 
     // ------------------------------------------------------------------
@@ -109,13 +127,6 @@ export default {
       const playerId = await validateBearerToken(request, env);
       if (!playerId) return authRequired();
       return handlePlayerState(playerId, env);
-    }
-
-    // GET /api/player/wait
-    if (pathname === '/api/player/wait' && method === 'GET') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerWait(playerId, url, env);
     }
 
     // POST /api/player/move
@@ -206,20 +217,6 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
   const doStub = getGameDO(env, session.game_id);
   return doStub.fetch(new Request(
     `https://do/state?playerId=${encodeURIComponent(playerId)}`,
-    { method: 'GET' },
-  ));
-}
-
-async function handlePlayerWait(playerId: string, url: URL, env: Env): Promise<Response> {
-  const session = await getPlayerGameSession(playerId, env);
-  if (!session) {
-    return Response.json({ reason: 'no_game', error: 'Not in an active game' }, { status: 404 });
-  }
-
-  const since = url.searchParams.get('since') ?? '-1';
-  const doStub = getGameDO(env, session.game_id);
-  return doStub.fetch(new Request(
-    `https://do/wait?playerId=${encodeURIComponent(playerId)}&since=${encodeURIComponent(since)}`,
     { method: 'GET' },
   ));
 }
