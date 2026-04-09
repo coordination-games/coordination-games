@@ -24,21 +24,12 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import { getGame, buildActionMerkleTree } from '@coordination-games/engine';
-import type { CoordinationGame, MerkleLeafData, ToolPlugin } from '@coordination-games/engine';
-import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engine';
 import type { Env } from '../env.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
-
-// ---------------------------------------------------------------------------
-// Server-side plugin registry
-// ---------------------------------------------------------------------------
-
-const PLUGINS: Record<string, ToolPlugin> = {
-  'basic-chat': BasicChatPlugin,
-};
 
 // ---------------------------------------------------------------------------
 // WS tags
@@ -302,6 +293,14 @@ export class GameRoomDO extends DurableObject<Env> {
   // Plugin tool call handler
   // ─────────────────────────────────────────────────────────────────────────
 
+  /**
+   * POST /tool — accepts a pre-formed relay envelope from the CLI.
+   * Body: { relay: { type, data, scope, pluginId }, playerId }
+   *
+   * The CLI calls plugin.handleCall() locally and sends us the result.
+   * We are a dumb pipe: store it, route it by scope, push WS updates.
+   * No server-side plugin registry needed.
+   */
   private async handleTool(request: Request): Promise<Response> {
     await this.ensureLoaded();
     if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
@@ -310,49 +309,29 @@ export class GameRoomDO extends DurableObject<Env> {
     try { body = await request.json(); }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { pluginId, tool, args, playerId } = body ?? {};
-    if (!pluginId || !tool || !playerId) {
-      return Response.json({ error: 'pluginId, tool, and playerId are required' }, { status: 400 });
+    const { relay, playerId } = body ?? {};
+    if (!relay || !playerId) {
+      return Response.json({ error: 'relay envelope and playerId are required' }, { status: 400 });
+    }
+    if (!relay.type || !relay.pluginId) {
+      return Response.json({ error: 'relay must have type and pluginId' }, { status: 400 });
     }
 
-    const plugin = PLUGINS[pluginId];
-    if (!plugin) {
-      return Response.json({ error: `Unknown plugin: ${pluginId}` }, { status: 404 });
-    }
-
-    const callerInfo = {
-      agentId: playerId,
-      handle: this._meta.handleMap[playerId] ?? playerId,
-      team: this._meta.teamMap[playerId] ?? null,
+    const msg: RelayMessage = {
+      index: this._relay.length,
+      type: relay.type,
+      data: relay.data ?? null,
+      scope: relay.scope ?? 'all',
+      pluginId: relay.pluginId,
+      sender: playerId,
+      turn: this._progress.counter,
+      timestamp: Date.now(),
     };
+    this._relay.push(msg);
+    await this.ctx.storage.put('relay', this._relay);
+    this.broadcastRelayMessage(msg);
 
-    let result: any;
-    try {
-      result = plugin.handleCall(tool, args ?? {}, callerInfo as any);
-    } catch (err: any) {
-      return Response.json({ error: `Plugin error: ${err.message}` }, { status: 500 });
-    }
-
-    // If the plugin returned relay data, route and store it
-    if (result?.relay) {
-      const msg: RelayMessage = {
-        index: this._relay.length,
-        type: result.relay.type,
-        data: result.relay.data,
-        scope: result.relay.scope ?? 'all',
-        pluginId: result.relay.pluginId ?? pluginId,
-        sender: playerId,
-        turn: this._progress.counter,
-        timestamp: Date.now(),
-      };
-      this._relay.push(msg);
-      await this.ctx.storage.put('relay', this._relay);
-
-      // Push relay-aware state updates to affected players
-      this.broadcastRelayMessage(msg);
-    }
-
-    return Response.json({ ok: true, result });
+    return Response.json({ ok: true, index: msg.index });
   }
 
   // ─────────────────────────────────────────────────────────────────────────

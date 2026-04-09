@@ -416,20 +416,19 @@ async function handlePlayerTool(playerId: string, request: Request, env: Env): P
   try { body = await request.json(); }
   catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-  const { pluginId, tool, args } = body ?? {};
-  if (!pluginId || !tool) {
-    return Response.json({ error: 'pluginId and tool are required' }, { status: 400 });
+  // Body is { relay: { type, data, scope, pluginId } } — produced by the CLI
+  // calling plugin.handleCall() locally. We just store and route it.
+  const { relay } = body ?? {};
+  if (!relay?.type || !relay?.pluginId) {
+    return Response.json({ error: 'Body must be { relay: { type, data, scope, pluginId } }' }, { status: 400 });
   }
 
-  // Plugin tools operate on the player's active game session
   const session = await getPlayerGameSession(playerId, env);
   if (!session) {
-    return Response.json({ error: 'Not in an active game. Plugin tools require an active game session.' }, { status: 404 });
+    return Response.json({ error: 'Not in an active game' }, { status: 404 });
   }
 
-  return forwardToGameDO(env, session.game_id, '/tool', makeRequest('POST', {
-    pluginId, tool, args: args ?? {}, playerId,
-  }));
+  return forwardToGameDO(env, session.game_id, '/tool', makeRequest('POST', { relay, playerId }));
 }
 
 // Common dispatch for lobby actions coming from either /move or dedicated endpoints
