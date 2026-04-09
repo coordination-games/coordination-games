@@ -7,7 +7,7 @@ import type { Env } from './env.js';
 // Re-export DO classes — required for Durable Object bindings to work
 export { GameRoomDO, LobbyDO };
 
-const GIT_SHA = 'e5e2ebd';
+const GIT_SHA = '7a28a2a';  // updated in Phase 4
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -57,22 +57,46 @@ export default {
     }
 
     // ------------------------------------------------------------------
+    // Lobby endpoints — /api/lobbies
+    // ------------------------------------------------------------------
+
+    if (pathname === '/api/lobbies' && method === 'GET') {
+      return handleListLobbies(env);
+    }
+
+    if (pathname === '/api/lobbies/create' && method === 'POST') {
+      return handleCreateLobby(request, env);
+    }
+
+    // /api/lobbies/:id[/subpath] — forward to LobbyDO
+    const lobbyRestMatch = pathname.match(/^\/api\/lobbies\/([^/]+)(\/.*)?$/);
+    if (lobbyRestMatch) {
+      const lobbyId = lobbyRestMatch[1];
+      // DELETE without subpath → disband ('/')
+      // Everything else without subpath → state ('/state')
+      const sub = lobbyRestMatch[2] ?? (method === 'DELETE' ? '/' : '/state');
+      return forwardToLobbyDO(env, lobbyId, sub, request);
+    }
+
+    // WS /ws/lobby/:id — unauthenticated spectator WebSocket for lobby updates
+    const wsLobbyMatch = pathname.match(/^\/ws\/lobby\/([^/]+)$/);
+    if (wsLobbyMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+      return forwardToLobbyDO(env, wsLobbyMatch[1], '/', request);
+    }
+
+    // ------------------------------------------------------------------
     // Game endpoints — /api/games
     // ------------------------------------------------------------------
 
-    // GET /api/games — list active games from D1 game_sessions
     if (pathname === '/api/games' && method === 'GET') {
       return handleListGames(env);
     }
 
-    // POST /api/games/create — create a game directly (Phase 3, no lobby required)
-    // Body: { gameType, config, playerIds, handleMap?, teamMap? }
     if (pathname === '/api/games/create' && method === 'POST') {
       return handleCreateGame(request, env);
     }
 
     // /api/games/:id[/subpath] — forward to GameRoomDO
-    // GET → spectator/state/result, POST → action (used directly for Phase 3 testing)
     const gameMatch = pathname.match(/^\/api\/games\/([^/]+)(\/.*)?$/);
     if (gameMatch) {
       const gameId = gameMatch[1];
@@ -86,9 +110,7 @@ export default {
       return forwardToGameDO(env, wsSpectatorMatch[1], '/', request);
     }
 
-    // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered view)
-    // Worker validates the Bearer token here and passes playerId via X-Player-Id header.
-    // The DO never sees raw tokens.
+    // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered)
     const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
     if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       const playerId = await validateBearerToken(request, env);
@@ -97,7 +119,6 @@ export default {
       if (!session || session.game_id !== wsPlayerMatch[1]) {
         return Response.json({ error: 'Not a player in this game' }, { status: 403 });
       }
-      // Strip Authorization, add trusted X-Player-Id for the DO
       const forwarded = new Request(request.url, request);
       forwarded.headers.delete('Authorization');
       forwarded.headers.set('X-Player-Id', playerId);
@@ -108,32 +129,58 @@ export default {
     // Authenticated player endpoints
     // ------------------------------------------------------------------
 
-    // GET /api/player/stats
     if (pathname === '/api/player/stats' && method === 'GET') {
       const playerId = await validateBearerToken(request, env);
       if (!playerId) return authRequired();
       return handlePlayerStats(playerId, env);
     }
 
-    // GET /api/player/guide
     if (pathname === '/api/player/guide' && method === 'GET') {
       const playerId = await validateBearerToken(request, env);
       if (!playerId) return authRequired();
       return handlePlayerGuide(playerId, url, env);
     }
 
-    // GET /api/player/state
     if (pathname === '/api/player/state' && method === 'GET') {
       const playerId = await validateBearerToken(request, env);
       if (!playerId) return authRequired();
       return handlePlayerState(playerId, env);
     }
 
-    // POST /api/player/move
+    // POST /api/player/move — game actions AND lobby actions (propose-team, choose-class, etc.)
     if (pathname === '/api/player/move' && method === 'POST') {
       const playerId = await validateBearerToken(request, env);
       if (!playerId) return authRequired();
       return handlePlayerMove(playerId, request, env);
+    }
+
+    // POST /api/player/lobby/join — join a lobby
+    if (pathname === '/api/player/lobby/join' && method === 'POST') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      return handlePlayerLobbyJoin(playerId, request, env);
+    }
+
+    // Dedicated lobby action shortcuts (same as via /move but explicit endpoints)
+    if (pathname === '/api/player/team/propose' && method === 'POST') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      return handlePlayerLobbyActionDedicated(playerId, 'propose-team', request, env);
+    }
+    if (pathname === '/api/player/team/accept' && method === 'POST') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      return handlePlayerLobbyActionDedicated(playerId, 'accept-team', request, env);
+    }
+    if (pathname === '/api/player/team/leave' && method === 'POST') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      return handlePlayerLobbyActionDedicated(playerId, 'leave-team', request, env);
+    }
+    if (pathname === '/api/player/class' && method === 'POST') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      return handlePlayerLobbyActionDedicated(playerId, 'choose-class', request, env);
     }
 
     // ------------------------------------------------------------------
@@ -144,7 +191,66 @@ export default {
 };
 
 // ---------------------------------------------------------------------------
-// Game management handlers
+// Lobby management handlers
+// ---------------------------------------------------------------------------
+
+async function handleListLobbies(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare(
+    "SELECT id, game_type, team_size, phase, created_at, game_id FROM lobbies " +
+    "WHERE phase NOT IN ('failed', 'game') ORDER BY created_at DESC LIMIT 50"
+  ).all<{ id: string; game_type: string; team_size: number; phase: string; created_at: string; game_id: string | null }>();
+
+  return Response.json(rows.results.map(r => ({
+    lobbyId: r.id,
+    gameType: r.game_type,
+    teamSize: r.team_size,
+    phase: r.phase,
+    createdAt: r.created_at,
+    gameId: r.game_id,
+  })));
+}
+
+async function handleCreateLobby(request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); }
+  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+
+  const gameType  = (body?.gameType as string) ?? 'capture-the-lobster';
+  const teamSize  = Math.min(6, Math.max(2, Math.floor((body?.teamSize as number) ?? 2)));
+  const noTimeout = !!body?.noTimeout;
+
+  const lobbyId = crypto.randomUUID();
+
+  // Write the discovery row to D1 first
+  try {
+    await env.DB.prepare(
+      'INSERT INTO lobbies (id, game_type, team_size, phase, created_at) VALUES (?, ?, ?, ?, ?)',
+    ).bind(lobbyId, gameType, teamSize, 'forming', new Date().toISOString()).run();
+  } catch (err) {
+    return Response.json({ error: 'Failed to create lobby record' }, { status: 500 });
+  }
+
+  // Create LobbyDO
+  const doStub = getLobbyDO(env, lobbyId);
+  const createResp = await doStub.fetch(new Request('https://do/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lobbyId, gameType, teamSize, noTimeout }),
+  }));
+
+  if (!createResp.ok) {
+    // Roll back D1 row
+    await env.DB.prepare('DELETE FROM lobbies WHERE id = ?').bind(lobbyId).run().catch(() => {});
+    const err = await createResp.json() as any;
+    return Response.json({ error: err.error ?? 'Lobby creation failed' }, { status: createResp.status });
+  }
+
+  console.log(`[Worker] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize})`);
+  return Response.json({ lobbyId, gameType, teamSize }, { status: 201 });
+}
+
+// ---------------------------------------------------------------------------
+// Game management handlers (Phase 3, preserved)
 // ---------------------------------------------------------------------------
 
 async function handleListGames(env: Env): Promise<Response> {
@@ -171,7 +277,6 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 
   const gameId = crypto.randomUUID();
 
-  // Create game in the GameRoomDO
   const doStub = getGameDO(env, gameId);
   const createResp = await doStub.fetch(new Request('https://do/', {
     method: 'POST',
@@ -184,7 +289,6 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: err.error ?? 'Game creation failed' }, { status: createResp.status });
   }
 
-  // Store player → game mapping in D1
   const now = new Date().toISOString();
   const stmt = env.DB.prepare(
     'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)'
@@ -194,7 +298,6 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
   );
 
   console.log(`[Worker] Created ${gameType} game ${gameId} for ${playerIds.length} players`);
-
   return Response.json({ gameId, gameType, playerCount: playerIds.length }, { status: 201 });
 }
 
@@ -204,33 +307,48 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 
 async function handlePlayerGuide(playerId: string, url: URL, env: Env): Promise<Response> {
   const gameType = url.searchParams.get('game') ?? 'capture-the-lobster';
-  // For now return a minimal guide; Phase 5 will wire up plugin.guide
   return Response.json({ guide: `# ${gameType}\nGame guide coming in Phase 5.` });
 }
 
 async function handlePlayerState(playerId: string, env: Env): Promise<Response> {
-  const session = await getPlayerGameSession(playerId, env);
-  if (!session) {
-    return Response.json({ error: 'No active lobby or game. Join a lobby first.' }, { status: 404 });
+  // Active game takes priority
+  const gameSession = await getPlayerGameSession(playerId, env);
+  if (gameSession) {
+    const doStub = getGameDO(env, gameSession.game_id);
+    return doStub.fetch(new Request(
+      `https://do/state?playerId=${encodeURIComponent(playerId)}`,
+      { method: 'GET' },
+    ));
   }
 
-  const doStub = getGameDO(env, session.game_id);
-  return doStub.fetch(new Request(
-    `https://do/state?playerId=${encodeURIComponent(playerId)}`,
-    { method: 'GET' },
-  ));
+  // Lobby session
+  const lobbySession = await getPlayerLobbySession(playerId, env);
+  if (lobbySession) {
+    const doStub = getLobbyDO(env, lobbySession.lobby_id);
+    return doStub.fetch(new Request(
+      `https://do/state?playerId=${encodeURIComponent(playerId)}`,
+      { method: 'GET' },
+    ));
+  }
+
+  return Response.json({ error: 'No active lobby or game. Join a lobby first.' }, { status: 404 });
 }
 
 async function handlePlayerMove(playerId: string, request: Request, env: Env): Promise<Response> {
-  const session = await getPlayerGameSession(playerId, env);
-  if (!session) {
-    return Response.json({ error: 'Not in an active game' }, { status: 404 });
-  }
-
   let body: any;
   try { body = await request.json(); }
   catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
+  // Lobby action: body has an `action` string field (not `type`)
+  if (body?.action && typeof body.action === 'string') {
+    return dispatchLobbyAction(playerId, body, env);
+  }
+
+  // Game action: forward to GameRoomDO
+  const session = await getPlayerGameSession(playerId, env);
+  if (!session) {
+    return Response.json({ error: 'Not in an active game' }, { status: 404 });
+  }
   const doStub = getGameDO(env, session.game_id);
   return doStub.fetch(new Request('https://do/action', {
     method: 'POST',
@@ -239,14 +357,96 @@ async function handlePlayerMove(playerId: string, request: Request, env: Env): P
   }));
 }
 
+async function handlePlayerLobbyJoin(playerId: string, request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); }
+  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+
+  const lobbyId = body?.lobbyId ?? body?.gameId;
+  if (!lobbyId) return Response.json({ error: 'lobbyId is required' }, { status: 400 });
+
+  // Fetch handle + ELO from D1 players table
+  const player = await env.DB.prepare(
+    'SELECT handle, elo FROM players WHERE id = ?'
+  ).bind(playerId).first<{ handle: string; elo: number }>();
+  const handle = player?.handle ?? playerId;
+  const elo    = player?.elo    ?? 1000;
+
+  // Forward join to LobbyDO
+  const doStub = getLobbyDO(env, lobbyId);
+  const joinResp = await doStub.fetch(new Request('https://do/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, handle, elo }),
+  }));
+
+  if (!joinResp.ok) return joinResp;
+
+  // Write lobby_sessions row to D1 (INSERT OR REPLACE handles re-joins)
+  await env.DB.prepare(
+    'INSERT OR REPLACE INTO lobby_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
+  ).bind(playerId, lobbyId, new Date().toISOString()).run();
+
+  return joinResp;
+}
+
+// Dedicated endpoints for team/class actions (same logic as through /move)
+async function handlePlayerLobbyActionDedicated(
+  playerId: string,
+  action: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); }
+  catch { body = {}; }
+
+  return dispatchLobbyAction(playerId, { action, ...body }, env);
+}
+
+// Common dispatch for lobby actions coming from either /move or dedicated endpoints
+async function dispatchLobbyAction(playerId: string, body: any, env: Env): Promise<Response> {
+  const lobbySession = await getPlayerLobbySession(playerId, env);
+  if (!lobbySession) {
+    return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
+  }
+  const lobbyId = lobbySession.lobby_id;
+
+  const { action, target } = body;
+  const unitClass = body.class ?? body.unitClass;
+
+  switch (action) {
+    case 'propose-team': {
+      if (!target) return Response.json({ error: 'propose-team requires "target" (agentId or handle)' }, { status: 400 });
+      return forwardToLobbyDO(env, lobbyId, '/team/propose', makeRequest('POST', { fromId: playerId, toId: target }));
+    }
+    case 'accept-team': {
+      if (!target) return Response.json({ error: 'accept-team requires "target" (teamId)' }, { status: 400 });
+      return forwardToLobbyDO(env, lobbyId, '/team/accept', makeRequest('POST', { agentId: playerId, teamId: target }));
+    }
+    case 'leave-team': {
+      return forwardToLobbyDO(env, lobbyId, '/team/leave', makeRequest('POST', { agentId: playerId }));
+    }
+    case 'choose-class': {
+      const cls = unitClass ?? target;
+      if (!cls) return Response.json({ error: 'choose-class requires "class" (rogue, knight, or mage)' }, { status: 400 });
+      return forwardToLobbyDO(env, lobbyId, '/class', makeRequest('POST', { agentId: playerId, unitClass: cls }));
+    }
+    default:
+      return Response.json({
+        error: `Unknown lobby action "${action}". Valid: propose-team, accept-team, leave-team, choose-class`,
+      }, { status: 400 });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Leaderboard / profile handlers (Phase 2, preserved)
 // ---------------------------------------------------------------------------
 
 async function handleLeaderboard(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const limit  = Math.min(parseInt(url.searchParams.get('limit')  ?? '50', 10), 200);
-  const offset = Math.max(parseInt(url.searchParams.get('offset') ?? '0',  10), 0);
+  const url     = new URL(request.url);
+  const limit   = Math.min(parseInt(url.searchParams.get('limit')  ?? '50', 10), 200);
+  const offset  = Math.max(parseInt(url.searchParams.get('offset') ?? '0',  10), 0);
   const tracker = D1EloTracker.fromEnv(env);
   const players = await tracker.getLeaderboard(limit, offset);
   return Response.json(players);
@@ -254,7 +454,7 @@ async function handleLeaderboard(request: Request, env: Env): Promise<Response> 
 
 async function handleProfile(handle: string, env: Env): Promise<Response> {
   const tracker = D1EloTracker.fromEnv(env);
-  const player = await tracker.getPlayerByHandle(decodeURIComponent(handle));
+  const player  = await tracker.getPlayerByHandle(decodeURIComponent(handle));
   if (!player) return Response.json({ error: 'Player not found' }, { status: 404 });
   const { walletAddress: _omit, ...publicProfile } = player;
   return Response.json(publicProfile);
@@ -262,7 +462,7 @@ async function handleProfile(handle: string, env: Env): Promise<Response> {
 
 async function handlePlayerStats(playerId: string, env: Env): Promise<Response> {
   const tracker = D1EloTracker.fromEnv(env);
-  const player = await tracker.getPlayer(playerId);
+  const player  = await tracker.getPlayer(playerId);
   if (!player) return Response.json({ error: 'Player not found' }, { status: 404 });
   const matches = await tracker.getPlayerMatches(playerId, 20);
   const { walletAddress: _omit, ...stats } = player;
@@ -277,6 +477,10 @@ function getGameDO(env: Env, gameId: string): DurableObjectStub {
   return env.GAME_ROOM.get(env.GAME_ROOM.idFromName(gameId));
 }
 
+function getLobbyDO(env: Env, lobbyId: string): DurableObjectStub {
+  return env.LOBBY.get(env.LOBBY.idFromName(lobbyId));
+}
+
 async function getPlayerGameSession(
   playerId: string,
   env: Env,
@@ -286,11 +490,36 @@ async function getPlayerGameSession(
   ).bind(playerId).first<{ game_id: string; game_type: string }>();
 }
 
+async function getPlayerLobbySession(
+  playerId: string,
+  env: Env,
+): Promise<{ lobby_id: string } | null> {
+  return env.DB.prepare(
+    'SELECT lobby_id FROM lobby_sessions WHERE player_id = ?'
+  ).bind(playerId).first<{ lobby_id: string }>();
+}
+
 function forwardToGameDO(env: Env, gameId: string, subPath: string, request: Request): Promise<Response> {
   const stub = getGameDO(env, gameId);
   const url = new URL(request.url);
   url.pathname = subPath;
   return stub.fetch(new Request(url.toString(), request));
+}
+
+function forwardToLobbyDO(env: Env, lobbyId: string, subPath: string, request: Request): Promise<Response> {
+  const stub = getLobbyDO(env, lobbyId);
+  const url = new URL(request.url);
+  url.pathname = subPath;
+  return stub.fetch(new Request(url.toString(), request));
+}
+
+/** Build a simple POST Request with a JSON body to forward to a DO. */
+function makeRequest(method: string, body: unknown): Request {
+  return new Request('https://do/', {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }
 
 function authRequired(): Response {

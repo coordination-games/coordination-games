@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1 Migration Plan
 
-**Status:** Phase 1 complete. Phase 2 not started.
+**Status:** Phase 4 complete. Phase 5 not started.
 **Audience:** Mid-level engineer picking this up cold
 **Estimated effort:** 4–5 weeks (after bot removal is done on main)
 
@@ -535,6 +535,83 @@ curl -s -X POST https://ctl-beta.capturethelobster.com/api/games/<GAME_ID>/actio
 5. Spectator broadcast for lobbies (chat, timer updates) via hibernatable WS
 
 **Exit criteria:** Two CLI processes can join a lobby, form teams, start a game, play to completion. End-to-end test passes.
+
+## Phase 4 Handoff Notes
+
+**Completed:** 2026-04-09
+**Commit:** (Phase 4)
+
+### What was added
+
+**`src/do/LobbyDO.ts`** — full implementation replacing the Phase 1 stub:
+- `POST /` — create lobby `{ lobbyId, gameType, teamSize, noTimeout? }`
+- `GET /state` — lobby state with optional `?playerId=X` for player-specific view (includes `myTeam`, `teamChat` during pre_game)
+- `POST /join` — `{ playerId, handle, elo? }` — idempotent; returns lobby state
+- `POST /chat` — lobby chat or team chat during pre_game `{ playerId, message, team? }`
+- `POST /team/propose` — `{ fromId, toId }` — resolves toId by handle if needed; auto-advances to pre_game when 2 full teams form
+- `POST /team/accept` — `{ agentId, teamId }` — auto-advances to pre_game when complete
+- `POST /team/leave` — `{ agentId }`
+- `POST /class` — `{ agentId, unitClass }` — immediately creates game when all players chosen
+- `POST /no-timeout` — disables forming alarm
+- `DELETE /` — disbands lobby, closes all WS connections
+- WS / — hibernatable spectator WS tagged `'spectator'`; receives all state updates
+- `alarm()` — `'forming_timeout'` (240s) auto-merges teams + transitions to pre_game or fails; `'pregame_timeout'` (300s) assigns default classes + creates game
+
+**Game creation flow (from LobbyDO):**
+1. Assigns default classes (rogue/knight/mage cycling)
+2. Builds `CtlConfig` using `getMapRadiusForTeamSize` + `getTurnLimitForRadius` from `@coordination-games/game-ctl`
+3. Creates `GameRoomDO` via `this.env.GAME_ROOM`
+4. Sends `game_start` system action to GameRoomDO
+5. Writes `game_sessions` rows to D1
+6. Deletes `lobby_sessions` rows from D1
+7. Updates `lobbies` D1 row (phase, game_id)
+8. Broadcasts final state to WS spectators
+
+**`src/index.ts`** additions:
+- `GET  /api/lobbies` — lists active lobbies from D1 (excludes failed/game phases)
+- `POST /api/lobbies/create` — creates LobbyDO + D1 row
+- `GET  /api/lobbies/:id` — forwarded to LobbyDO `/state`
+- `DELETE /api/lobbies/:id` — forwarded to LobbyDO `DELETE /`
+- `POST /api/lobbies/:id/no-timeout` — forwarded to LobbyDO
+- `WS /ws/lobby/:id` — spectator WS, forwarded to LobbyDO
+- `POST /api/player/lobby/join` — auth-gated; fetches handle+ELO from D1 `players`, calls LobbyDO `/join`, writes `lobby_sessions` row
+- `POST /api/player/move` — now handles lobby actions (`action` string field) AND game actions (`type` field):
+  - `propose-team` → LobbyDO `/team/propose`
+  - `accept-team` → LobbyDO `/team/accept`
+  - `leave-team` → LobbyDO `/team/leave`
+  - `choose-class` → LobbyDO `/class`
+- `POST /api/player/team/propose|accept|leave`, `/api/player/class` — dedicated shortcuts for the same actions
+- `GET /api/player/state` — now checks `lobby_sessions` after `game_sessions`; lobby players get LobbyDO state
+
+**`migrations/0004_lobby_sessions.sql`** — applied to production:
+- `lobbies (id, game_type, team_size, phase, created_at, game_id)` — lobby discovery table
+- `lobby_sessions (player_id, lobby_id, joined_at)` — player→lobby session tracking
+
+### D1 migration state
+
+- `0001_init.sql` — players, matches, match_players, auth_nonces ✓
+- `0002_sessions.sql` — auth_sessions ✓
+- `0003_game_sessions.sql` — game_sessions ✓
+- `0004_lobby_sessions.sql` — lobbies, lobby_sessions ✓
+- Do NOT re-run any of these
+
+### Smoke test
+
+```bash
+# Create a lobby (no timeout for testing)
+LOBBY=$(curl -s -X POST https://ctl-beta.capturethelobster.com/api/lobbies/create \
+  -H 'Content-Type: application/json' \
+  -d '{"gameType":"capture-the-lobster","teamSize":2,"noTimeout":true}' | jq -r .lobbyId)
+
+# Get lobby state
+curl -s "https://ctl-beta.capturethelobster.com/api/lobbies/$LOBBY" | jq .
+
+# List active lobbies
+curl -s "https://ctl-beta.capturethelobster.com/api/lobbies" | jq .
+
+# Disband
+curl -s -X DELETE "https://ctl-beta.capturethelobster.com/api/lobbies/$LOBBY"
+```
 
 ### Phase 5 — Plugin pipeline and tool calls (2–3 days)
 
