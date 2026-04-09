@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import HexGrid from '../../components/HexGrid';
 import type { SpectatorViewProps } from '../types';
+import { getWsUrl } from '../../config.js';
 import type {
   SpectatorGameState,
   KillEvent,
@@ -268,8 +269,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       .catch(() => {});
 
     // Connect WebSocket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/game/${gameId}`;
+    const wsUrl = getWsUrl(`/ws/game/${gameId}`);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

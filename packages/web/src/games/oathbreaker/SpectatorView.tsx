@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { getWsUrl } from '../../config.js';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
 import { ArcadeOverview } from './components/ArcadeOverview';
@@ -95,8 +96,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
       })
       .catch(() => {});
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/game/${gameId}`;
+    const wsUrl = getWsUrl(`/ws/game/${gameId}`);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

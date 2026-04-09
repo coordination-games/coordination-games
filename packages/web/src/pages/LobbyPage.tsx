@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { getWsUrl } from '../config.js';
 import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, JoinInstructions, TeamPanel } from '../components/lobby';
 
 // ---------------------------------------------------------------------------
@@ -134,8 +135,7 @@ export default function LobbyPage() {
     }).catch(() => {});
 
     // Connect to unified /ws/lobby/:id
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/lobby/${id}`);
+    const ws = new WebSocket(getWsUrl(`/ws/lobby/${id}`));
     wsRef.current = ws;
     ws.onopen = () => setConnected(true);
     ws.onmessage = (e) => {

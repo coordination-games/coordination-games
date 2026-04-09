@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1 Migration Plan
 
-**Status:** Phase 5 complete. Phase 6 not started.
+**Status:** Phase 6 complete (DNS pending manual update). Phase 7 not started.
 **Audience:** Mid-level engineer picking this up cold
 **Estimated effort:** 4–5 weeks (after bot removal is done on main)
 
@@ -674,6 +674,61 @@ Add to the `PLUGINS` map in `GameRoomDO.ts`. The plugin's `handleCall()` must be
 4. Verify the Cloudflare tunnel for `capturethelobster.com` points at the Pages project (may need a DNS update — the tunnel goes away entirely, Pages handles the domain directly)
 
 **Exit criteria:** Loading `capturethelobster.com` shows the lobby browser, joining a game from the UI works end-to-end.
+
+## Phase 6 Handoff Notes
+
+**Completed:** 2026-04-09
+**Commit:** (Phase 6)
+
+### What was added
+
+**`packages/web/src/config.ts`** — centralized API/WS URL config:
+- `API_BASE` — reads `VITE_API_URL` env var at build time; falls back to relative `/api` for local dev
+- `getWsUrl(path)` — builds WS URL from the same env var (replaces scattered `window.location.host` constructions)
+
+**`packages/web/.env.production`** — sets `VITE_API_URL=https://ctl-beta.capturethelobster.com` for production builds
+
+**Updated to use `config.ts`:**
+- `src/api.ts` — `API_BASE` instead of hardcoded `'/api'`
+- `src/hooks/useGameSocket.ts` — `getWsUrl()` instead of `window.location.host`
+- `src/pages/GamePage.tsx` — same
+- `src/pages/LobbyPage.tsx` — same
+- `src/games/capture-the-lobster/SpectatorView.tsx` — same
+- `src/games/oathbreaker/SpectatorView.tsx` — same
+
+**`packages/workers-server/src/index.ts`** — added CORS support:
+- `CORS_HEADERS` object with `Access-Control-Allow-Origin: *`
+- `OPTIONS` preflight handler returns 204
+- All responses wrapped with `withCors()` — adds CORS headers
+
+**Pages deployment:**
+- Project `ctl-web` created, deployed to `ctl-web-23u.pages.dev`
+- Custom domain `capturethelobster.com` added to project (status: pending DNS)
+
+### Remaining manual step — DNS
+
+The Pages domain is configured but waiting for a DNS record. In the Cloudflare dashboard:
+1. Go to DNS for `capturethelobster.com`
+2. Delete existing AAAA records for the root domain (pointing to the old tunnel)
+3. Add CNAME: `@` → `ctl-web-23u.pages.dev` (proxied)
+
+OR open Pages → ctl-web → Custom Domains — it will show the pending domain and offer auto-update.
+
+Once DNS is live, retire the named Cloudflare tunnel (it's no longer needed).
+
+### To redeploy frontend
+
+```bash
+cd packages/web && npx vite build
+wrangler pages deploy dist --project-name=ctl-web --commit-dirty=true
+```
+
+### D1 migration state (unchanged from Phase 5)
+
+- `0001_init.sql` — players, matches, match_players, auth_nonces ✓
+- `0002_sessions.sql` — auth_sessions ✓
+- `0003_game_sessions.sql` — game_sessions ✓
+- `0004_lobby_sessions.sql` — lobbies, lobby_sessions ✓
 
 ### Phase 7 — Cutover and cleanup (2–3 days)
 

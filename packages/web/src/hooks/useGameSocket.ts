@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { getWsUrl } from '../config.js';
 
 export interface GameSocketState {
   gameState: any | null;
@@ -15,8 +16,7 @@ export function useGameSocket(gameId: string): GameSocketState {
   const reconnectDelay = useRef(1000);
 
   const connect = useCallback(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/ws/game/${gameId}`;
+    const url = getWsUrl(`/ws/game/${gameId}`);
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

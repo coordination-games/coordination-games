@@ -7,10 +7,34 @@ import type { Env } from './env.js';
 // Re-export DO classes — required for Durable Object bindings to work
 export { GameRoomDO, LobbyDO };
 
-const GIT_SHA = 'phase-5';  // updated in Phase 5
+const GIT_SHA = 'phase-6';
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+  'Access-Control-Max-Age': '86400',
+};
+
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    const response = await handleRequest(request, env);
+    return withCors(response);
+  },
+};
+
+async function handleRequest(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const method = request.method;
     const { pathname } = url;
@@ -194,8 +218,7 @@ export default {
     // Not found
     // ------------------------------------------------------------------
     return new Response('Not found', { status: 404 });
-  },
-};
+}
 
 // ---------------------------------------------------------------------------
 // Lobby management handlers

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { getSpectatorPlugin } from '../games/registry';
+import { getWsUrl } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — extract platform data (handles, chat) from server payloads
@@ -65,8 +66,7 @@ export default function GamePage() {
       });
 
     // Connect WebSocket for live updates
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/game/${id}`;
+    const wsUrl = getWsUrl(`/ws/game/${id}`);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
