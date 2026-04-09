@@ -401,6 +401,29 @@ Wrangler is already authenticated on this machine (`wrangler whoami` to verify).
 
 **Exit criteria:** A test player with a fresh `ethers.Wallet.createRandom()` can complete challenge/verify, receive a token, and hit an authenticated endpoint.
 
+## Phase 2 Handoff Notes
+
+**Completed:** 2026-04-09
+**Commit:** e5e2ebd
+
+### What was added
+
+- `src/auth.ts` — `POST /api/player/auth/challenge` (writes nonce to D1), `POST /api/player/auth/verify` (EIP-712 verify via ethers v6, optional ERC-8004 on-chain check, issues 24h session token to D1), `validateBearerToken()` helper
+- `src/env.ts` — `Env` interface extracted from `index.ts`; includes optional `RPC_URL`, `REGISTRY_ADDRESS`, `ERC8004_ADDRESS` for on-chain mode
+- `src/db/elo.ts` — `D1EloTracker`: async D1 variant of `EloTracker` from `packages/plugins/elo`; same `recordGameResult(payout)` interface
+- `migrations/0002_sessions.sql` — `auth_sessions` table (token → player_id with TTL); applied to production
+- `index.ts` additions: `GET /api/leaderboard`, `GET /api/profile/:handle`, `GET /api/player/stats`
+
+### D1 migration state
+
+- `0001_init.sql` — players, matches, match_players, auth_nonces ✓
+- `0002_sessions.sql` — auth_sessions ✓
+- Do NOT re-run either of these
+
+### On-chain ERC-8004 check
+
+Auth verify skips the on-chain check unless `RPC_URL`, `REGISTRY_ADDRESS`, and `ERC8004_ADDRESS` are all set. In local dev / beta, they are not set, so any valid signature is accepted. To enable on-chain mode: `wrangler secret put RPC_URL` etc.
+
 ### Phase 3 — GameRoomDO (1 week)
 
 **Goal:** One game, single player, can create a game, submit a move, get state back.
@@ -421,6 +444,82 @@ This is the hard phase. Plan carefully.
 7. Port `applyAction()` from existing `packages/engine/src/game-session.ts`. The game plugins themselves need zero changes — they're pure functions.
 
 **Exit criteria:** A single-player game can be created, a move submitted, state fetched back with correct fog-of-war. Run the existing CtL game logic tests against the new path.
+
+## Phase 3 Handoff Notes
+
+**Completed:** 2026-04-09
+**Commit:** 7a28a2a
+
+### What was added
+
+**`src/do/GameRoomDO.ts`** — full implementation:
+- `POST /` — create game from `{ gameType, config, playerIds, handleMap, teamMap }`
+- `POST /action` — `validateAction` + `applyAction` via the game plugin, persist to DO storage, broadcast to spectator WS
+- `GET /state?playerId=X` — fog-of-war visible state per player
+- `GET /wait?playerId=X&since=N` — poll (see long-poll note below)
+- `GET /result` — Merkle root + outcome (only when `isOver()`)
+- `GET /spectator` — delayed spectator view
+- WS upgrade — hibernatable spectator WebSocket via `ctx.acceptWebSocket()`
+- `alarm()` — fires deadline actions (replaces `setTimeout` from `GameRoom`)
+- Lazy state load via `ctx.blockConcurrencyWhile()` on first request
+- Game plugins loaded by importing `@coordination-games/game-ctl` and `@coordination-games/game-oathbreaker` as side-effects; `getGame(gameType)` from engine registry resolves them
+
+**DO storage keys:**
+- `meta` — `{ gameType, playerIds, handleMap, teamMap, createdAt, finished }`
+- `state` — current game state (JSON)
+- `prevProgressState` — state at last progress point (for spectator delay=1)
+- `actionLog` — `{ playerId, action }[]`
+- `progress` — `{ counter, snapshots[] }`
+- `deadline` — `{ action, deadlineMs }` (present only when alarm is armed)
+
+**`src/index.ts`** additions:
+- `POST /api/games/create` — creates game, inserts `game_sessions` rows in D1
+- `GET  /api/games` — lists active games
+- `/api/games/:id[/sub]` — forwarded to GameRoomDO for any method
+- `GET  /api/player/state` — auth-gated, looks up player's game from `game_sessions`
+- `POST /api/player/move` — auth-gated, forwards to player's game DO
+- `GET  /api/player/wait` — auth-gated, forwards to player's game DO
+- `WS /ws/game/:id` — upgrades to hibernatable spectator WS on the DO
+
+**`migrations/0003_game_sessions.sql`** — `game_sessions (player_id PK, game_id, game_type, joined_at)` — applied to production.
+
+**`package.json`** — added `@coordination-games/engine`, `game-ctl`, `game-oathbreaker` as workspace deps.
+
+### Critical: `/wait` does not long-poll
+
+The original plan called for `/wait` to block for up to 25s via an internal Promise. **This is not possible in Durable Objects.** DO requests are processed sequentially — a 25s blocking request would prevent all other requests (including `POST /action`) from reaching the same DO instance.
+
+**Actual behavior:** `/wait` returns immediately:
+- `{ reason: 'turn_changed', ... }` if `progressCounter > since` (new state available)
+- `{ reason: 'no_update', progressCounter }` if nothing changed
+
+**What the CLI must do:** short-poll with a 1–2s retry interval on `no_update`. This is a permanent architectural constraint, not a temporary gap. The equivalent of the old 25s long-poll is achieved via the spectator WebSocket — once a player upgrades to WS, the DO pushes state on every action without polling. Phase 4 should wire the CLI's wait loop to use the WS path instead.
+
+### D1 migration state
+
+- `0001_init.sql` — players, matches, match_players, auth_nonces ✓
+- `0002_sessions.sql` — auth_sessions ✓
+- `0003_game_sessions.sql` — game_sessions ✓
+- Do NOT re-run any of these
+
+### Smoke test
+
+```bash
+# Create a game
+curl -s -X POST https://ctl-beta.capturethelobster.com/api/games/create \
+  -H 'Content-Type: application/json' \
+  -d '{"gameType":"capture-the-lobster","config":{"mapSeed":"test","teamSize":2,"players":[{"id":"p1","team":"A","unitClass":"knight"},{"id":"p2","team":"A","unitClass":"mage"},{"id":"p3","team":"B","unitClass":"knight"},{"id":"p4","team":"B","unitClass":"mage"}]},"playerIds":["p1","p2","p3","p4"]}'
+
+# Start game (system action, playerId null)
+curl -s -X POST https://ctl-beta.capturethelobster.com/api/games/<GAME_ID>/action \
+  -H 'Content-Type: application/json' \
+  -d '{"playerId":null,"action":{"type":"game_start"}}'
+
+# Submit moves (action field uses {type:"move", agentId, path})
+curl -s -X POST https://ctl-beta.capturethelobster.com/api/games/<GAME_ID>/action \
+  -H 'Content-Type: application/json' \
+  -d '{"playerId":"p1","action":{"type":"move","agentId":"p1","path":["N"]}}'
+```
 
 ### Phase 4 — LobbyDO and full game flow (3–4 days)
 
