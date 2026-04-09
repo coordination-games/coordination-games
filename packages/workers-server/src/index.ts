@@ -7,7 +7,7 @@ import type { Env } from './env.js';
 // Re-export DO classes — required for Durable Object bindings to work
 export { GameRoomDO, LobbyDO };
 
-const GIT_SHA = '7a28a2a';  // updated in Phase 4
+const GIT_SHA = 'phase-5';  // updated in Phase 5
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -159,6 +159,13 @@ export default {
       const playerId = await validateBearerToken(request, env);
       if (!playerId) return authRequired();
       return handlePlayerLobbyJoin(playerId, request, env);
+    }
+
+    // POST /api/player/tool — plugin tool calls (chat, etc.)
+    if (pathname === '/api/player/tool' && method === 'POST') {
+      const playerId = await validateBearerToken(request, env);
+      if (!playerId) return authRequired();
+      return handlePlayerTool(playerId, request, env);
     }
 
     // Dedicated lobby action shortcuts (same as via /move but explicit endpoints)
@@ -402,6 +409,27 @@ async function handlePlayerLobbyActionDedicated(
   catch { body = {}; }
 
   return dispatchLobbyAction(playerId, { action, ...body }, env);
+}
+
+async function handlePlayerTool(playerId: string, request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try { body = await request.json(); }
+  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+
+  const { pluginId, tool, args } = body ?? {};
+  if (!pluginId || !tool) {
+    return Response.json({ error: 'pluginId and tool are required' }, { status: 400 });
+  }
+
+  // Plugin tools operate on the player's active game session
+  const session = await getPlayerGameSession(playerId, env);
+  if (!session) {
+    return Response.json({ error: 'Not in an active game. Plugin tools require an active game session.' }, { status: 404 });
+  }
+
+  return forwardToGameDO(env, session.game_id, '/tool', makeRequest('POST', {
+    pluginId, tool, args: args ?? {}, playerId,
+  }));
 }
 
 // Common dispatch for lobby actions coming from either /move or dedicated endpoints

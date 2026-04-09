@@ -24,12 +24,21 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import { getGame, buildActionMerkleTree } from '@coordination-games/engine';
-import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engine';
+import type { CoordinationGame, MerkleLeafData, ToolPlugin } from '@coordination-games/engine';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type { Env } from '../env.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
+
+// ---------------------------------------------------------------------------
+// Server-side plugin registry
+// ---------------------------------------------------------------------------
+
+const PLUGINS: Record<string, ToolPlugin> = {
+  'basic-chat': BasicChatPlugin,
+};
 
 // ---------------------------------------------------------------------------
 // WS tags
@@ -66,6 +75,18 @@ interface DeadlineEntry {
   deadlineMs: number;
 }
 
+/** A relay message stored in the DO. Mirrors the client-side RelayMessage shape. */
+interface RelayMessage {
+  index: number;
+  type: string;
+  data: unknown;
+  scope: string;       // 'all' | 'team' | handle (DM to a specific player)
+  pluginId: string;
+  sender: string;      // playerId of the sender
+  turn: number;        // progress counter at time of send
+  timestamp: number;
+}
+
 // ---------------------------------------------------------------------------
 // GameRoomDO
 // ---------------------------------------------------------------------------
@@ -79,6 +100,7 @@ export class GameRoomDO extends DurableObject<Env> {
   private _prevProgressState: unknown = null;  // state at last progress point (spectator delay)
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0, snapshots: [0] };
+  private _relay: RelayMessage[] = [];
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -95,6 +117,7 @@ export class GameRoomDO extends DurableObject<Env> {
 
     if (method === 'POST' && path === '/') return this.handleCreate(request);
     if (method === 'POST' && path === '/action') return this.handleAction(request);
+    if (method === 'POST' && path === '/tool') return this.handleTool(request);
     if (method === 'GET'  && path === '/state') return this.handleState(url);
     if (method === 'GET'  && path === '/result') return this.handleResult();
     if (method === 'GET'  && path === '/spectator') return this.handleSpectator();
@@ -179,6 +202,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.storage.put('prevProgressState', null),
       this.ctx.storage.put('actionLog', []),
       this.ctx.storage.put('progress', progress),
+      this.ctx.storage.put('relay', []),
     ]);
 
     this._meta = meta;
@@ -187,6 +211,7 @@ export class GameRoomDO extends DurableObject<Env> {
     this._prevProgressState = null;
     this._actionLog = [];
     this._progress = progress;
+    this._relay = [];
     this._loaded = true;
 
     console.log(`[GameRoomDO] Created ${gameType} game, ${playerIds.length} players`);
@@ -274,6 +299,138 @@ export class GameRoomDO extends DurableObject<Env> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Plugin tool call handler
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async handleTool(request: Request): Promise<Response> {
+    await this.ensureLoaded();
+    if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
+
+    let body: any;
+    try { body = await request.json(); }
+    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+
+    const { pluginId, tool, args, playerId } = body ?? {};
+    if (!pluginId || !tool || !playerId) {
+      return Response.json({ error: 'pluginId, tool, and playerId are required' }, { status: 400 });
+    }
+
+    const plugin = PLUGINS[pluginId];
+    if (!plugin) {
+      return Response.json({ error: `Unknown plugin: ${pluginId}` }, { status: 404 });
+    }
+
+    const callerInfo = {
+      agentId: playerId,
+      handle: this._meta.handleMap[playerId] ?? playerId,
+      team: this._meta.teamMap[playerId] ?? null,
+    };
+
+    let result: any;
+    try {
+      result = plugin.handleCall(tool, args ?? {}, callerInfo as any);
+    } catch (err: any) {
+      return Response.json({ error: `Plugin error: ${err.message}` }, { status: 500 });
+    }
+
+    // If the plugin returned relay data, route and store it
+    if (result?.relay) {
+      const msg: RelayMessage = {
+        index: this._relay.length,
+        type: result.relay.type,
+        data: result.relay.data,
+        scope: result.relay.scope ?? 'all',
+        pluginId: result.relay.pluginId ?? pluginId,
+        sender: playerId,
+        turn: this._progress.counter,
+        timestamp: Date.now(),
+      };
+      this._relay.push(msg);
+      await this.ctx.storage.put('relay', this._relay);
+
+      // Push relay-aware state updates to affected players
+      this.broadcastRelayMessage(msg);
+    }
+
+    return Response.json({ ok: true, result });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Relay helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns relay messages visible to a given player, based on scope:
+   *   'all'   → everyone
+   *   'team'  → sender's teammates (same teamMap value)
+   *   <other> → treat as a display handle; also accept exact playerId match
+   *             (DM: only sender and recipient see it)
+   */
+  private getVisibleRelay(playerId: string | null): RelayMessage[] {
+    if (!this._meta) return [];
+    const team = playerId ? this._meta.teamMap[playerId] : null;
+    const handle = playerId ? (this._meta.handleMap[playerId] ?? playerId) : null;
+
+    return this._relay.filter(msg => {
+      if (msg.scope === 'all') return true;
+
+      if (msg.scope === 'team') {
+        if (!playerId || !team) return false;
+        const senderTeam = this._meta!.teamMap[msg.sender];
+        return senderTeam && senderTeam === team;
+      }
+
+      // DM: scope is a handle or playerId
+      // Visible to the sender and the recipient
+      if (playerId === msg.sender) return true;
+      // Scope matches recipient's handle
+      if (handle && msg.scope === handle) return true;
+      // Scope matches recipient's playerId directly
+      if (msg.scope === playerId) return true;
+
+      return false;
+    });
+  }
+
+  /**
+   * Resolve which playerIds should receive a relay message push.
+   * Same scoping rules as getVisibleRelay, but returns the set of pids to push to.
+   */
+  private resolveRelayRecipients(msg: RelayMessage): string[] {
+    if (!this._meta) return [];
+    const { playerIds, teamMap, handleMap } = this._meta;
+
+    if (msg.scope === 'all') return playerIds;
+
+    if (msg.scope === 'team') {
+      const senderTeam = teamMap[msg.sender];
+      if (!senderTeam) return [];
+      return playerIds.filter(pid => teamMap[pid] === senderTeam);
+    }
+
+    // DM: scope is a handle or playerId — find the recipient
+    const recipientId = playerIds.find(pid =>
+      pid === msg.scope || (handleMap[pid] ?? pid) === msg.scope
+    );
+    // Sender always sees their own DM; recipient gets it too
+    const recipients = new Set<string>([msg.sender]);
+    if (recipientId) recipients.add(recipientId);
+    return [...recipients];
+  }
+
+  private broadcastRelayMessage(msg: RelayMessage): void {
+    const recipients = this.resolveRelayRecipients(msg);
+    for (const pid of recipients) {
+      const conns = this.ctx.getWebSockets(pid);
+      if (conns.length === 0) continue;
+      const payload = JSON.stringify(this.buildPlayerMessage(pid));
+      for (const ws of conns) {
+        try { ws.send(payload); } catch {}
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Core game logic
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -338,20 +495,23 @@ export class GameRoomDO extends DurableObject<Env> {
   private buildPlayerMessage(playerId: string | null): object {
     const finished = this._plugin!.isOver(this._state as any);
     const visible = this._plugin!.getVisibleState(this._state, playerId);
+    const relayMessages = this.getVisibleRelay(playerId);
     return {
       type: 'state_update',
       gameOver: finished,
       gameType: this._meta!.gameType,
       handles: this._meta!.handleMap,
       progressCounter: this._progress.counter,
-      relayMessages: [],  // Phase 5 wires relay messages
+      relayMessages,
       ...(visible as any),
     };
   }
 
   private buildSpectatorMessage(): object {
     const delay = this._plugin!.spectatorDelay ?? 0;
-    const ctx = { handles: this._meta!.handleMap, relayMessages: [] };
+    // Spectators see only 'all'-scoped relay messages (no team chat)
+    const relayMessages = this._relay.filter(m => m.scope === 'all');
+    const ctx = { handles: this._meta!.handleMap, relayMessages };
     const view = delay > 0 && this._prevProgressState
       ? this._plugin!.buildSpectatorView(this._prevProgressState, null, ctx)
       : this._plugin!.buildSpectatorView(this._state, this._prevProgressState, ctx);
@@ -392,12 +552,13 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, prevProgressState, actionLog, progress] = await Promise.all([
+      const [meta, state, prevProgressState, actionLog, progress, relay] = await Promise.all([
         this.ctx.storage.get<GameMeta>('meta'),
         this.ctx.storage.get<unknown>('state'),
         this.ctx.storage.get<unknown>('prevProgressState'),
         this.ctx.storage.get<ActionEntry[]>('actionLog'),
         this.ctx.storage.get<ProgressState>('progress'),
+        this.ctx.storage.get<RelayMessage[]>('relay'),
       ]);
 
       if (!meta) { this._loaded = true; return; }
@@ -415,6 +576,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this._prevProgressState = prevProgressState ?? null;
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0, snapshots: [0] };
+      this._relay = relay ?? [];
       this._loaded = true;
     });
   }

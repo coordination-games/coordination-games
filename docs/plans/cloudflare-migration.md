@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1 Migration Plan
 
-**Status:** Phase 4 complete. Phase 5 not started.
+**Status:** Phase 5 complete. Phase 6 not started.
 **Audience:** Mid-level engineer picking this up cold
 **Estimated effort:** 4–5 weeks (after bot removal is done on main)
 
@@ -622,6 +622,49 @@ curl -s -X DELETE "https://ctl-beta.capturethelobster.com/api/lobbies/$LOBBY"
 3. Wire up the BasicChatPlugin and ELO plugin to work inside the Worker (server-side — client-side pipeline in the CLI is untouched)
 
 **Exit criteria:** `coga tool basic-chat chat "test" team` from a CLI player lands in the other team member's next `get_state` response.
+
+## Phase 5 Handoff Notes
+
+**Completed:** 2026-04-09
+**Commit:** (Phase 5)
+
+### What was added
+
+**`src/do/GameRoomDO.ts`** additions:
+- `RelayMessage` interface: `{ index, type, data, scope, pluginId, sender, turn, timestamp }`
+- `PLUGINS` registry: `{ 'basic-chat': BasicChatPlugin }` — server-side plugin registry, static map
+- `_relay: RelayMessage[]` in-memory cache, stored under DO key `relay`
+- `POST /tool` handler: parses `{ pluginId, tool, args, playerId }`, calls `plugin.handleCall()`, appends relay message to storage, calls `broadcastRelayMessage()`
+- `getVisibleRelay(playerId)` — filters relay buffer per player:
+  - `scope='all'` → visible to everyone
+  - `scope='team'` → visible to teammates (same `teamMap` value)
+  - anything else → DM: treat scope as a handle or playerId; visible only to sender and recipient
+- `resolveRelayRecipients(msg)` — returns playerIds to push WS updates to for a relay message
+- `broadcastRelayMessage(msg)` — pushes updated player state to affected WS connections
+- `buildPlayerMessage()` now includes `relayMessages` from `getVisibleRelay(playerId)`
+- `buildSpectatorMessage()` now includes `relayMessages` filtered to `scope='all'` only
+- Relay loaded in `ensureLoaded()`, initialized in `handleCreate()`
+
+**`src/index.ts`** additions:
+- `POST /api/player/tool` — auth-gated; looks up player's active `game_sessions`, forwards `{ pluginId, tool, args, playerId }` to `GameRoomDO /tool`
+- `handlePlayerTool()` function
+
+**`package.json`** — added `@coordination-games/plugin-chat: "*"` workspace dep
+
+### Relay scope rules
+
+| scope value | Who sees the message |
+|---|---|
+| `'all'` | All players in the game + spectators |
+| `'team'` | Sender's teammates only (same `teamMap[pid]` value) |
+| `<handle>` | Sender + recipient whose `handleMap[pid]` matches |
+| `<playerId>` | Sender + recipient whose `id` matches directly |
+
+Spectators always see `scope='all'` messages only. Team chat and DMs are never sent to spectator WS connections.
+
+### Adding more plugins
+
+Add to the `PLUGINS` map in `GameRoomDO.ts`. The plugin's `handleCall()` must be pure (no SQLite, no Node APIs). The ELO plugin is already D1-backed via `D1EloTracker` — wire it in Phase 7 cleanup when you want `recordGameResult` called automatically on game end.
 
 ### Phase 6 — Frontend on Pages (1 day)
 
