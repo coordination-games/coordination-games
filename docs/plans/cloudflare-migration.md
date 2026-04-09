@@ -493,7 +493,13 @@ The original plan called for `/wait` to block for up to 25s via an internal Prom
 - `{ reason: 'turn_changed', ... }` if `progressCounter > since` (new state available)
 - `{ reason: 'no_update', progressCounter }` if nothing changed
 
-**What the CLI must do:** short-poll with a 1–2s retry interval on `no_update`. This is a permanent architectural constraint, not a temporary gap. The equivalent of the old 25s long-poll is achieved via the spectator WebSocket — once a player upgrades to WS, the DO pushes state on every action without polling. Phase 4 should wire the CLI's wait loop to use the WS path instead.
+**What the CLI must do:** short-poll with a 1–2s retry interval on `no_update`. This is a permanent architectural constraint, not a temporary gap.
+
+**Two separate clients, two separate paths — do not conflate them:**
+- `/wait` (HTTP poll) is for **agent CLI** (`coga wait`). It returns `no_update` immediately if nothing changed; the CLI retries after a short delay. This endpoint stays permanently and is not replaced by anything.
+- WebSocket (`/ws/game/:id`) is for **browser spectators**. The DO pushes state after every action. Has nothing to do with the CLI.
+
+The behavioral difference from the old Node server is only that the old server blocked for up to 25s before returning `no_update`, saving some HTTP round-trips. The DO version returns immediately and the CLI polls more frequently. For a turn-based game this is imperceptible.
 
 ### D1 migration state
 
