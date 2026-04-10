@@ -39,6 +39,7 @@
  */
 
 import { ethers } from 'ethers';
+import { randomUUID } from 'crypto';
 import { spawn } from 'child_process';
 
 const SERVER    = process.env.GAME_SERVER ?? 'http://localhost:8787';
@@ -95,11 +96,13 @@ async function authenticate(
 // finds the lobby/game session created above by the script.
 // ---------------------------------------------------------------------------
 
+const MAX_RESUMES = 20;  // safety cap — don't loop forever
+
 async function runClaudeAgent(
   botName: string,
   privateKey: string,
 ): Promise<void> {
-  // coga serve --stdio is the MCP server; claude starts it as a child process
+  const sessionId = randomUUID();
   const mcpConfig = JSON.stringify({
     mcpServers: {
       game: {
@@ -107,58 +110,88 @@ async function runClaudeAgent(
         args: [
           'coga', 'serve', '--stdio', '--bot-mode',
           '--key', privateKey,
-          '--name', botName,   // must pass explicitly — Commander v4 bug if omitted
+          '--name', botName,
           '--server-url', SERVER,
         ],
       },
     },
   });
 
-  const prompt = `You are an AI agent playing a coordination game (${GAME_TYPE}). You are already authenticated and in an active game.
+  const initialPrompt = `You are ${botName}, an AI agent playing ${GAME_TYPE}. You are in an active game.
 
-Your job: play the game to completion using the tools provided by the "game" MCP server.
+Play the game to completion using the "game" MCP server tools.
 
-1. Start with get_guide to understand the rules and what actions are available
-2. Use get_state to see the current board/state
-3. Use submit_move to take actions each turn
-4. Use wait_for_update to block efficiently until the next turn rather than polling
-5. Keep playing until you see gameOver: true in the state, then stop
+1. Call get_guide ONCE to learn the rules
+2. Call get_state to see the current state
+3. Take actions with submit_move based on the current phase
+4. Keep calling get_state and submit_move until gameOver: true
+5. Do NOT stop early or summarize — keep playing every round`;
 
-The lobby and team formation phases are already complete — you are in the game.`;
+  const resumePrompt = `The game is still in progress. Continue playing — call get_state, then keep submitting moves until gameOver: true. Do NOT summarize or stop early.`;
 
-  return new Promise((resolve, reject) => {
-    const proc = spawn('claude', [
-      '--print',
-      '--no-session-persistence',
-      '--dangerously-skip-permissions',  // allow MCP server subprocess to start unattended
-      '--strict-mcp-config',             // only use our game MCP, not project .mcp.json
-      '--mcp-config', mcpConfig,
-      '--model', MODEL,
-      prompt,
-    ], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+  /** Run one claude --print invocation; resolves with stdout text. */
+  function runOnce(prompt: string, isResume: boolean): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '--print',
+        '--dangerously-skip-permissions',
+        '--strict-mcp-config',
+        '--mcp-config', mcpConfig,
+        '--model', MODEL,
+        '--max-turns', '50',
+      ];
+      if (isResume) {
+        args.push('--resume', sessionId);
+      } else {
+        args.push('--session-id', sessionId);
+      }
+      args.push(prompt);
+
+      const proc = spawn('claude', args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+
+      let output = '';
+      proc.stdout?.on('data', (d: Buffer) => {
+        const text = d.toString();
+        output += text;
+        text.split('\n').filter(Boolean).forEach(line =>
+          console.log(`[${botName}] ${line.slice(0, 140)}`)
+        );
+      });
+
+      proc.stderr?.on('data', (d: Buffer) => {
+        d.toString().split('\n').filter(Boolean).forEach(line =>
+          process.stderr.write(`[${botName}!] ${line.slice(0, 140)}\n`)
+        );
+      });
+
+      proc.on('close', () => resolve(output));
+      proc.on('error', reject);
     });
+  }
 
-    proc.stdout?.on('data', (d: Buffer) => {
-      d.toString().split('\n').filter(Boolean).forEach(line =>
-        console.log(`[${botName}] ${line.slice(0, 140)}`)
-      );
-    });
+  // Initial run
+  let output = await runOnce(initialPrompt, false);
 
-    proc.stderr?.on('data', (d: Buffer) => {
-      d.toString().split('\n').filter(Boolean).forEach(line =>
-        process.stderr.write(`[${botName}!] ${line.slice(0, 140)}\n`)
-      );
-    });
-
-    proc.on('close', (code) => {
-      console.log(`[${botName}] done (exit ${code ?? '?'})`);
-      resolve();
-    });
-
-    proc.on('error', reject);
-  });
+  // Resume loop — keep going until game over or safety cap
+  for (let i = 0; i < MAX_RESUMES; i++) {
+    const lower = output.toLowerCase();
+    if (lower.includes('gameover: true') || lower.includes('game over') ||
+        lower.includes('game complete') || lower.includes('game completed') ||
+        lower.includes('phase: "finished"') || lower.includes("phase: 'finished'") ||
+        lower.includes('game is over') || lower.includes('game has ended') ||
+        lower.includes('final results') || lower.includes('final balance') ||
+        lower.includes('tournament concluded') || lower.includes('tournament has finished') ||
+        lower.includes('all 12 rounds') || lower.includes('round 12')) {
+      console.log(`[${botName}] Game finished after ${i + 1} session(s)`);
+      return;
+    }
+    console.log(`[${botName}] Resuming (session ${i + 2})...`);
+    output = await runOnce(resumePrompt, true);
+  }
+  console.log(`[${botName}] Hit resume cap (${MAX_RESUMES})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +306,7 @@ async function main() {
     ? { gameType: GAME_TYPE, teamSize: BOT_COUNT }
     : { gameType: GAME_TYPE, teamSize: TEAM_SIZE };
 
-  const lobby = await api('/api/lobbies/create', { method: 'POST', body: lobbyBody });
+  const lobby = await api('/api/lobbies/create', { method: 'POST', body: lobbyBody, token: bots[0].token });
   const lobbyId = lobby.lobbyId;
   console.log(`  Lobby: ${lobbyId}`);
 

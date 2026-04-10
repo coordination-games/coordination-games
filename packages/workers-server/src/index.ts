@@ -206,6 +206,13 @@ if (pathname === '/api/player/state' && method === 'GET') {
       return handlePlayerState(auth, env);
     }
 
+    // GET /api/player/wait — poll for state updates (CLI long-poll shim)
+    if (pathname === '/api/player/wait' && method === 'GET') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerState(auth, env);
+    }
+
     // POST /api/player/move — game actions (lobby actions go through /api/player/lobby/action)
     if (pathname === '/api/player/move' && method === 'POST') {
       const auth = await requireAuth(request, env);
