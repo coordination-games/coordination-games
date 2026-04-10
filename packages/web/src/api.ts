@@ -12,6 +12,18 @@ export interface GameSummary {
   gameId: string;
   gameType: string;
   playerCount: number;
+  finished: boolean;
+  progressCounter: number;
+  // CtL fields (from getSummary)
+  turn?: number;
+  maxTurns?: number;
+  phase?: string;
+  winner?: string;
+  teams?: { A: string[]; B: string[] };
+  // OATHBREAKER fields (from getSummary)
+  round?: number;
+  maxRounds?: number;
+  players?: string[];
 }
 
 export async function fetchLobbies(): Promise<any[]> {

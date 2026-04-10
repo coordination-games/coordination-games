@@ -318,21 +318,56 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
 // ---------------------------------------------------------------------------
 
 async function handleListGames(env: Env): Promise<Response> {
+  await ensureGameSummariesTable(env);
+
+  // Auto-cleanup: mark stale unfinished games with no summary as finished
+  // (Games write a summary on creation; no summary = failed/orphaned)
+  await env.DB.prepare(
+    `UPDATE games SET finished = 1
+     WHERE finished = 0
+       AND game_id NOT IN (SELECT game_id FROM game_summaries)`
+  ).run().catch(() => {});
+
   const rows = await env.DB.prepare(
-    `SELECT g.game_id, g.game_type, COUNT(s.player_id) AS player_count
+    `SELECT g.game_id, g.game_type, g.finished,
+            COUNT(s.player_id) AS player_count,
+            gs.progress_counter, gs.summary_json
      FROM games g
      LEFT JOIN game_sessions s ON s.game_id = g.game_id
-     WHERE g.finished = 0
+     LEFT JOIN game_summaries gs ON gs.game_id = g.game_id
      GROUP BY g.game_id
-     ORDER BY g.created_at DESC
+     ORDER BY g.finished ASC, g.created_at DESC
      LIMIT 50`
-  ).all<{ game_id: string; game_type: string; player_count: number }>();
+  ).all<{ game_id: string; game_type: string; finished: number; player_count: number; progress_counter: number | null; summary_json: string | null }>();
 
-  return Response.json(rows.results.map(r => ({
-    gameId: r.game_id,
-    gameType: r.game_type,
-    playerCount: r.player_count,
-  })));
+  return Response.json(rows.results.map(r => {
+    const summary = r.summary_json ? JSON.parse(r.summary_json) : {};
+    return {
+      gameId: r.game_id,
+      gameType: r.game_type,
+      playerCount: r.player_count,
+      finished: r.finished === 1,
+      progressCounter: r.progress_counter ?? 0,
+      ...summary,
+    };
+  }));
+}
+
+let _summariesTableReady = false;
+async function ensureGameSummariesTable(env: Env): Promise<void> {
+  if (_summariesTableReady) return;
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS game_summaries (
+        game_id TEXT PRIMARY KEY REFERENCES games(game_id),
+        progress_counter INTEGER NOT NULL DEFAULT 0,
+        summary_json TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')))`
+    ).run();
+    _summariesTableReady = true;
+  } catch (err) {
+    console.error('[Worker] Failed to ensure game_summaries table:', err);
+  }
 }
 
 async function handleCreateGame(request: Request, env: Env): Promise<Response> {

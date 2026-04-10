@@ -82,14 +82,14 @@ export default function LobbiesPage() {
           const mapped = gamesData.map((g: GameSummary) => ({
             id: g.gameId,
             gameType: g.gameType,
-            turn: 0,
-            maxTurns: 30,
-            phase: 'in_progress' as const,
-            winner: undefined,
-            teamsA: 0,
-            teamsB: 0,
-            round: undefined,
-            maxRounds: undefined,
+            turn: g.turn ?? 0,
+            maxTurns: g.maxTurns ?? 30,
+            phase: g.finished ? 'finished' as const : (g.phase === 'playing' ? 'in_progress' as const : 'in_progress' as const),
+            winner: g.winner,
+            teamsA: g.teams?.A?.length ?? 0,
+            teamsB: g.teams?.B?.length ?? 0,
+            round: g.round,
+            maxRounds: g.maxRounds,
             playerCount: g.playerCount,
           }));
           setGames(mapped);

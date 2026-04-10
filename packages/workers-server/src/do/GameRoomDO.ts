@@ -209,6 +209,9 @@ export class GameRoomDO extends DurableObject<Env> {
     this._relay = [];
     this._loaded = true;
 
+    // Write initial summary to D1 so /api/games shows real data from turn 0
+    this.writeSummaryToD1();
+
     console.log(`[GameRoomDO] Created ${gameType} game, ${playerIds.length} players`);
     return Response.json({ ok: true, gameType, playerCount: playerIds.length });
   }
@@ -430,13 +433,21 @@ export class GameRoomDO extends DurableObject<Env> {
 
     const result = this._plugin.applyAction(this._state, playerId, action);
     const prevState = this._state;
+    const stateChanged = result.state !== this._state;
     this._state = result.state;
     this._actionLog.push({ playerId, action });
+
+    // Debug: log action processing details
+    const actionType = (action as any)?.type ?? 'unknown';
+    const turn = (this._state as any)?.turn ?? '?';
+    console.log(`[GameRoomDO] action=${actionType} player=${playerId?.slice(0,8) ?? 'system'} turn=${turn} stateChanged=${stateChanged} progressInc=${!!result.progressIncrement} deadline=${result.deadline === undefined ? 'unchanged' : result.deadline === null ? 'cleared' : 'set'}`);
 
     if (result.progressIncrement) {
       this._prevProgressState = prevState;
       this._progress.counter++;
       this._progress.snapshots.push(this._actionLog.length - 1);
+      // Update cached summary in D1
+      this.writeSummaryToD1();
     }
 
     // Deadline management
@@ -465,6 +476,8 @@ export class GameRoomDO extends DurableObject<Env> {
       try { await this.ctx.storage.deleteAlarm(); } catch {}
       await this.ctx.storage.delete('deadline');
       console.log(`[GameRoomDO] Game over — ${this._meta.gameType}, ${this._actionLog.length} actions`);
+      // Write final summary (with finished=true reflected in game state)
+      this.writeSummaryToD1();
       // Update D1: mark game finished and free players from game_sessions
       try {
         await this.env.DB.batch([
@@ -483,6 +496,45 @@ export class GameRoomDO extends DurableObject<Env> {
     this.broadcastUpdates();
 
     return { success: true, progressCounter: this._progress.counter };
+  }
+
+  /** Fire-and-forget upsert of game summary into D1 for the listing page. */
+  private writeSummaryToD1(): void {
+    if (!this._meta || !this._plugin) return;
+    const summary = typeof this._plugin.getSummary === 'function'
+      ? this._plugin.getSummary(this._state)
+      : {};
+    const json = JSON.stringify(summary);
+    this.env.DB.prepare(
+      `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
+       VALUES (?1, ?2, ?3, datetime('now'))
+       ON CONFLICT(game_id) DO UPDATE SET
+         progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
+    ).bind(this._meta.gameId, this._progress.counter, json)
+      .run()
+      .catch(async (err) => {
+        // Auto-create table if it doesn't exist yet (migration not applied)
+        if (String(err).includes('no such table')) {
+          try {
+            await this.env.DB.exec(
+              `CREATE TABLE IF NOT EXISTS game_summaries (
+                game_id TEXT PRIMARY KEY REFERENCES games(game_id),
+                progress_counter INTEGER NOT NULL DEFAULT 0,
+                summary_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')))`
+            );
+            // Retry the upsert
+            await this.env.DB.prepare(
+              `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
+               VALUES (?1, ?2, ?3, datetime('now'))
+               ON CONFLICT(game_id) DO UPDATE SET
+                 progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
+            ).bind(this._meta!.gameId, this._progress.counter, json).run();
+          } catch (e) { console.error(`[GameRoomDO] Failed to auto-create game_summaries:`, e); }
+        } else {
+          console.error(`[GameRoomDO] Failed to write summary:`, err);
+        }
+      });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
