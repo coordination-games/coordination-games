@@ -22,7 +22,7 @@ See `CLAUDE.md` in the project root for build commands, environment setup, contr
 packages/engine/          -- Generic game server framework
 packages/games/           -- Game plugins (capture-the-lobster, oathbreaker)
 packages/plugins/         -- ToolPlugins (basic-chat, elo)
-packages/server/          -- Node.js backend (Express + WebSocket)
+packages/workers-server/  -- Cloudflare Workers backend (Durable Objects + D1)
 packages/web/             -- React frontend (spectator views)
 packages/cli/             -- Agent CLI + MCP server
 packages/contracts/       -- Solidity contracts (Hardhat)

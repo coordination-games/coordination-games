@@ -19,7 +19,7 @@ set -euo pipefail
 
 LOBBY_ID="${1:?Usage: $0 <lobby_id> <count>}"
 COUNT="${2:?Usage: $0 <lobby_id> <count>}"
-SERVER="${GAME_SERVER:-http://localhost:5173}"
+SERVER="${GAME_SERVER:-http://localhost:8787}"
 BOT_DIR_BASE="/tmp/ctl-bots"
 
 pids=()

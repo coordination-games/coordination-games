@@ -24,10 +24,9 @@ new_classes = ["GameRoomDO", "LobbyDO"]
 ENVIRONMENT = "production"
 
 [[routes]]
-pattern = "ctl-beta.capturethelobster.com/*"
+pattern = "api.capturethelobster.com/*"
 zone_name = "capturethelobster.com"
 
-# Note: custom domain ctl-beta.capturethelobster.com was set up via:
-#   wrangler deploy --domain ctl-beta.capturethelobster.com
-# This created both the Worker route and the proxied DNS record.
-# Subsequent deploys use `wrangler deploy` (no --domain flag needed).
+[[worker_domains]]
+hostname = "api.capturethelobster.com"
+zone_name = "capturethelobster.com"

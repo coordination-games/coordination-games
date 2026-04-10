@@ -1,6 +1,6 @@
 # Cloudflare Workers + D1 Migration Plan
 
-**Status:** Phase 6 complete (DNS pending manual update). Phase 7 not started.
+**Status:** Phase 7 complete. Migration done — packages/server deleted, all docs updated, everything runs on Cloudflare.
 **Audience:** Mid-level engineer picking this up cold
 **Estimated effort:** 4–5 weeks (after bot removal is done on main)
 

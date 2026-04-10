@@ -25,7 +25,7 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 - `packages/games/oathbreaker` — OATHBREAKER game plugin: iterated prisoner's dilemma. Implements `CoordinationGame` interface.
 - `packages/plugins/basic-chat` — Chat ToolPlugin with team/all scoping and message cursors.
 - `packages/plugins/elo` — ELO ToolPlugin wrapping SQLite-based rating tracker.
-- `packages/server` — Node.js backend (Express + WebSocket). Wires engine + games + plugins.
+- `packages/workers-server` — Cloudflare Workers backend (Durable Objects + D1). Wires engine + games + plugins.
 - `packages/web` — React + Vite frontend. SVG hex grid renderer, spectator view, lobby browser.
 - `packages/cli` — Coordination CLI for player-side agent interface.
 - `packages/contracts` — Solidity contracts (hardhat).
@@ -34,7 +34,7 @@ TypeScript monorepo with npm workspaces. Plugin architecture — CtL is a game p
 
 ### Cloudflare Workers (packages/workers-server)
 
-The target architecture (in progress — see docs/plans/cloudflare-migration.md). Live at `https://ctl-beta.capturethelobster.com`.
+Live at `https://capturethelobster.com` (frontend) and `https://api.capturethelobster.com` (Worker API).
 
 **Local dev:**
 ```bash
@@ -77,28 +77,6 @@ wrangler tail
 wrangler dev --inspect  # then open chrome://inspect
 ```
 
-### Node.js server (packages/server — legacy, still running on demo)
-
-```bash
-# Install (MUST use --include=dev due to npm workspaces bug)
-npm install --include=dev
-
-# Build (order matters: engine first, then game, then server)
-cd packages/engine && tsc --skipLibCheck
-cd packages/games/capture-the-lobster && tsc --skipLibCheck
-cd packages/server && tsc --skipLibCheck
-cd packages/web && npx vite build
-
-# Start server (serves built frontend)
-PORT=5173 node packages/server/dist/index.js
-
-# Cloudflare tunnel (named tunnel, routes capturethelobster.com -> localhost:5173)
-# Binary stored persistently at /app/.borg/persistent/cloudflared
-# Token stored at /app/.borg/persistent/cloudflare-tunnel-token
-TOKEN=$(cat /app/.borg/persistent/cloudflare-tunnel-token)
-/app/.borg/persistent/cloudflared tunnel run --token "$TOKEN"
-```
-
 ## Key Design Decisions
 
 - **Flat-top hexagons** with N/NE/SE/S/SW/NW directions (no E/W)
@@ -124,29 +102,7 @@ cd /tmp && npm pack @types/node@22
 tar -xzf types-node-22.*.tgz
 cp -r "node v22.19/"* /path/to/project/node_modules/@types/node/
 ```
-Same pattern for `@types/express`, `@types/ws`, `@types/better-sqlite3`, `@types/estree`.
-
-### Server tsconfig
-The server `tsconfig.json` uses `strict: false` and `noImplicitAny: false` because @types packages are unreliable in this env. Build with `tsc --skipLibCheck`.
-
-### Express type: `app` is typed as `any`
-In `api.ts`, `this.app` is typed as `any` because `express.Application` type doesn't resolve without `@types/express` properly installed.
-
-### Port stuck / EADDRINUSE when restarting server
-**Problem:** `fuser -k` and `sudo kill` often fail in this container — `kill` command isn't in the sudo PATH, and `fuser` doesn't always find the process.
-**Workaround:** Use Node to send signals:
-```bash
-sudo node -e "
-const fs = require('fs');
-fs.readdirSync('/proc').filter(d => /^\d+$/.test(d)).forEach(pid => {
-  try {
-    const cmd = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8');
-    if (cmd.includes('dist/index.js')) { process.kill(Number(pid), 'SIGKILL'); console.log('killed', pid); }
-  } catch {}
-});
-"
-```
-Wait 2 seconds for the socket to release, then start the new server.
+Same pattern for `@types/estree`.
 
 ## Screenshots (agent-browser)
 
@@ -177,10 +133,9 @@ Deployed 2026-04-03 to OP Sepolia (chain 11155420). Deployer: `0xBD52e1e7bA88933
 
 Deployment record: `packages/contracts/scripts/deployments/op-sepolia.json`
 
-**Architecture:** The server has dual-mode infrastructure — works in-memory for dev/beta and connects to on-chain contracts when env vars are set:
-- `relay.ts` — Gas-paying relayer: agent registration, credit topup/burn, game settlement, EAS attestations
-- `auth.ts` — Challenge-response auth with EIP-712 signing + ERC-8004 verification
-- `balance.ts` — Server-side balance tracking: on-chain balance minus committed to games minus pending burns
+**Architecture:** The Workers server has dual-mode infrastructure — works against D1 for dev/beta and connects to on-chain contracts when env vars are set:
+- `src/relay.ts` (workers-server) — Gas-paying relayer: agent registration, credit topup/burn, game settlement, EAS attestations
+- `src/auth.ts` (workers-server) — Challenge-response auth with EIP-712 signing + ERC-8004 verification
 
 **To enable on-chain mode**, set these env vars when starting the server:
 ```bash
@@ -195,7 +150,6 @@ ERC8004_ADDRESS=0x8004A818BFB912233c491871b3d84c89A494BD9e
 
 ## Environment
 
-- **Env var `PORT`**: Server port. Default: 3000. Use 5173 to match Cloudflare tunnel config.
 - **Claude Agent SDK** uses local `~/.claude` credentials (Max plan). No API key needed.
 
 ## Game Config
@@ -340,15 +294,15 @@ packages/plugins/elo/src/        — ELO plugin (@coordination-games/plugin-elo)
   index.ts                       — ToolPlugin wrapper around EloTracker
   tracker.ts                     — ELO rating system with SQLite. recordGameResult() takes computePayouts output for generic per-game ELO updates.
 
-packages/server/src/             — Server entry point (wires engine + games + plugins)
-  api.ts                         — Express server, REST API, WebSocket spectator feed. Plugin registry discovery via getRegisteredGames(). Unified Lobby type (WaitingRoom merged into Lobby — games with phases get a LobbyRunner, games without phases get a simple lobby that collects players and promotes when full). Generic resolveGameRoom() (typed resolvers killed), typed action passthrough only (no legacy action parsing), spectator broadcast via plugin.buildSpectatorView(). Generic ELO recording via computePayouts(). Config creation via plugin.createConfig() — zero game-specific imports except LobbyManager (deferred). One GameRoomData type, one games map, one lobbies map.
-  lobby-runner.ts                — Lobby phase state machine (team formation + pre-game class selection). External-agents-only; no bots.
-  mcp-http.ts                    — Token registry, turn waiters, message cursors (utility module — MCP endpoint disabled)
-  game-client.ts                 — GameClient (shared with CLI, REST + pipeline)
-  api-client.ts                  — REST client
-  pipeline.ts                    — Pipeline runner
-  relay.ts                       — On-chain gas relayer (registration, credits, settlement, EAS attestations)
-  index.ts                       — Entry point with crash guards
+packages/workers-server/src/     — Cloudflare Workers server (Durable Objects + D1)
+  index.ts                       — fetch() handler: REST routing, CORS, auth middleware, DO forwarding
+  auth.ts                        — POST /auth/challenge + /auth/verify (EIP-712, D1 nonces, session tokens)
+  env.ts                         — Env interface (D1, DO bindings, optional on-chain vars)
+  do/
+    GameRoomDO.ts                — Game room Durable Object: actions, WS spectator/player feeds, alarms, relay buffer
+    LobbyDO.ts                   — Lobby Durable Object: team formation, class selection, phase state machine, alarm-driven transitions
+  db/
+    elo.ts                       — D1EloTracker: async D1 variant of EloTracker
 
 packages/web/src/
   components/HexGrid.tsx         — SVG hex grid renderer (flat-top hexes, fog of war, team colors)
@@ -382,7 +336,5 @@ packages/cli/                    — Coordination CLI + MCP server (THE agent in
 packages/contracts/              — Solidity contracts (hardhat)
 
 scripts/
-  e2e-local.sh                   — End-to-end local test (Hardhat + server + CLI)
-  e2e-local.ts                   — E2E test runner
-  run-server.sh                  — Auto-restart server wrapper
+  spawn-bots.sh                  — Spawn N external Haiku bots into a lobby (dev/testing tool)
 ```

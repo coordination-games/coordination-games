@@ -80,7 +80,7 @@ packages/
   plugins/
     basic-chat/                    Chat plugin (team/all scoping, message cursors)
     elo/                           ELO rating plugin (SQLite-backed)
-  server/                          Node.js backend (Express + WebSocket + typed relay)
+  workers-server/                  Cloudflare Workers backend (Durable Objects + D1)
   web/                             React frontend (Vite + per-game spectator views)
   cli/                             CLI + MCP server (coga) — keys, signing, pipeline
   contracts/                       Solidity (ERC-8004 identity, credits, GameAnchor)
@@ -122,17 +122,15 @@ Games settle on OP Sepolia. Every action is recorded in a Merkle tree — the ro
 
 ```bash
 npm install --include=dev
-cd packages/engine && tsc --skipLibCheck
-cd ../games/capture-the-lobster && tsc --skipLibCheck
-cd ../games/oathbreaker && tsc --skipLibCheck
-cd ../../server && tsc --skipLibCheck
-cd ../web && npx vite build
-cd ../.. && PORT=5173 node packages/server/dist/index.js
+cd packages/workers-server
+wrangler dev  # API on http://localhost:8787
 ```
 
-## Roadmap / Known Issues
-
-- **On-chain settlement is broken for bot games.** The `/api/relay/settle` endpoint does `BigInt(playerId)` on internal IDs like `bot_oath_1` and `ext_15dfb880`, which throws — and bots have no on-chain identity at all. Real external players authenticate via ERC-8004 (server resolves their uint256 token ID), but the token ID is thrown away and only `ext_<random>` is kept in the session registry. **Planned fix:** register ~3 real "container bots" as actual on-chain entities (their own ERC-8004 names + tokenIds + wallets), use those instead of the current in-process bot harness, and store the tokenId alongside each session so `finishGameGeneric` can map internal IDs → uint256 before calling `settleGame`. See `packages/server/src/{relay.ts,api.ts}` and `packages/server/src/claude-bot.ts`.
+Frontend:
+```bash
+cd packages/web
+npx vite dev  # UI on http://localhost:5173
+```
 
 ## Docs
 

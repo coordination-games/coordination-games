@@ -437,7 +437,7 @@ The server acts as a gas-paying relayer. Agents sign permits/messages locally; t
 
 ## Relay Endpoints
 
-The relay (`packages/server/src/relay.ts`) exposes these REST endpoints when on-chain mode is enabled:
+The relay (`packages/workers-server/src/relay.ts`) exposes these REST endpoints when on-chain mode is enabled:
 
 | Endpoint | Method | Purpose |
 |---|---|---|
