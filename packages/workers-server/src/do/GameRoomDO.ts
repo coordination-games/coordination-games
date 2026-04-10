@@ -433,14 +433,8 @@ export class GameRoomDO extends DurableObject<Env> {
 
     const result = this._plugin.applyAction(this._state, playerId, action);
     const prevState = this._state;
-    const stateChanged = result.state !== this._state;
     this._state = result.state;
     this._actionLog.push({ playerId, action });
-
-    // Debug: log action processing details
-    const actionType = (action as any)?.type ?? 'unknown';
-    const turn = (this._state as any)?.turn ?? '?';
-    console.log(`[GameRoomDO] action=${actionType} player=${playerId?.slice(0,8) ?? 'system'} turn=${turn} stateChanged=${stateChanged} progressInc=${!!result.progressIncrement} deadline=${result.deadline === undefined ? 'unchanged' : result.deadline === null ? 'cleared' : 'set'}`);
 
     if (result.progressIncrement) {
       this._prevProgressState = prevState;
@@ -478,16 +472,13 @@ export class GameRoomDO extends DurableObject<Env> {
       console.log(`[GameRoomDO] Game over — ${this._meta.gameType}, ${this._actionLog.length} actions`);
       // Write final summary (with finished=true reflected in game state)
       this.writeSummaryToD1();
-      // Update D1: mark game finished and free players from game_sessions
+      // Update D1: mark game finished. Keep game_sessions so players can
+      // still fetch the final state with gameOver: true. Sessions are replaced
+      // automatically when the player joins a new game (INSERT OR REPLACE).
       try {
-        await this.env.DB.batch([
-          this.env.DB.prepare(
-            'UPDATE games SET finished = 1 WHERE game_id = ?'
-          ).bind(this._meta.gameId),
-          this.env.DB.prepare(
-            'DELETE FROM game_sessions WHERE game_id = ?'
-          ).bind(this._meta.gameId),
-        ]);
+        await this.env.DB.prepare(
+          'UPDATE games SET finished = 1 WHERE game_id = ?'
+        ).bind(this._meta.gameId).run();
       } catch (err) {
         console.error(`[GameRoomDO] Failed to update D1 on game over:`, err);
       }
@@ -505,14 +496,16 @@ export class GameRoomDO extends DurableObject<Env> {
       ? this._plugin.getSummary(this._state)
       : {};
     const json = JSON.stringify(summary);
-    this.env.DB.prepare(
-      `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
-       VALUES (?1, ?2, ?3, datetime('now'))
-       ON CONFLICT(game_id) DO UPDATE SET
-         progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
-    ).bind(this._meta.gameId, this._progress.counter, json)
-      .run()
-      .catch(async (err) => {
+    // Wrap in try-catch to prevent unhandled rejections
+    Promise.resolve().then(async () => {
+      try {
+        await this.env.DB.prepare(
+          `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
+           VALUES (?1, ?2, ?3, datetime('now'))
+           ON CONFLICT(game_id) DO UPDATE SET
+             progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
+        ).bind(this._meta!.gameId, this._progress.counter, json).run();
+      } catch (err: any) {
         // Auto-create table if it doesn't exist yet (migration not applied)
         if (String(err).includes('no such table')) {
           try {
@@ -534,7 +527,10 @@ export class GameRoomDO extends DurableObject<Env> {
         } else {
           console.error(`[GameRoomDO] Failed to write summary:`, err);
         }
-      });
+      }
+    }).catch((err) => {
+      console.error(`[GameRoomDO] Unexpected error in writeSummaryToD1:`, err);
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
