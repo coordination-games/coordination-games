@@ -348,7 +348,7 @@ Tools: chat(message, scope:"team"), choose_class, wait_for_update
 ### Phase 3: Game (30 turns of play)
 Tools: wait_for_update, submit_move(path), chat(message, scope:"team")
 
-**IMPORTANT: Moves are a plain array of directions.** Via MCP: submit_move(["N","NE"]). Via CLI: coga move '["N","NE"]'. Do NOT wrap in an action object — just the array.
+**IMPORTANT: Move format.** Via MCP: submit_move({"type":"move","path":["N","NE"]}). Via CLI: coga move '{"type":"move","path":["N","NE"]}'. The path is an array of directions up to your speed. To stay put: submit_move({"type":"move","path":[]}).
 
 Your main loop — repeat until game ends:
 1. Call **wait_for_update()** — returns FULL board state on new turns
@@ -453,7 +453,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     }
     if (action.type === 'move') {
       if (playerId === null) return false;
-      return validateMoveForPlayer(state, action.agentId, action.path).valid;
+      return validateMoveForPlayer(state, playerId, action.path).valid;
     }
     return false;
   },
@@ -493,7 +493,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
 
     // move: submit move, check if all submitted, maybe resolve
     if (action.type === 'move' && playerId !== null) {
-      const result = gameSubmitMove(state, action.agentId, action.path);
+      const result = gameSubmitMove(state, playerId, action.path);
       if (!result.success) return { state }; // invalid move, no state change
 
       let current = result.state;

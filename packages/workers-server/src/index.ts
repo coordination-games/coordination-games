@@ -246,8 +246,9 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
   const gameType  = (body?.gameType as string) ?? 'capture-the-lobster';
-  const teamSize  = Math.min(6, Math.max(2, Math.floor((body?.teamSize as number) ?? 2)));
   const noTimeout = !!body?.noTimeout;
+  // Broad bounds — LobbyDO enforces per-game limits via plugin.lobby.matchmaking
+  const teamSize  = Math.min(20, Math.max(1, Math.floor((body?.teamSize as number) ?? 2)));
 
   const lobbyId = crypto.randomUUID();
 
@@ -422,12 +423,18 @@ async function handlePlayerLobbyJoin(playerId: string, request: Request, env: En
 
   if (!joinResp.ok) return joinResp;
 
-  // Write lobby_sessions row to D1 (INSERT OR REPLACE handles re-joins)
-  await env.DB.prepare(
-    'INSERT OR REPLACE INTO lobby_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
-  ).bind(playerId, lobbyId, new Date().toISOString()).run();
+  // Clone the response so we can inspect it and still return it
+  const joinBody = await joinResp.json() as any;
 
-  return joinResp;
+  // If the join immediately triggered a game start (e.g. OATHBREAKER reaching min players),
+  // the lobby_sessions row was already deleted by LobbyDO. Don't re-insert it.
+  if (joinBody?.phase !== 'game' && joinBody?.phase !== 'starting') {
+    await env.DB.prepare(
+      'INSERT OR REPLACE INTO lobby_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
+    ).bind(playerId, lobbyId, new Date().toISOString()).run();
+  }
+
+  return Response.json(joinBody, { status: joinResp.status });
 }
 
 // Dedicated endpoints for team/class actions (same logic as through /move)

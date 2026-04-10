@@ -159,11 +159,12 @@ export class GameClient {
   async createLobby(gameType?: string, size?: number): Promise<any> {
     await this.ensureAuth();
     if (gameType === 'oathbreaker') {
-      const playerCount = Math.min(20, Math.max(4, size || 4));
-      return this.api.post('/api/player/lobby/create', { gameType, playerCount });
+      // For OATHBREAKER, teamSize is the total player count to auto-start (4-20)
+      const teamSize = Math.min(20, Math.max(4, size || 4));
+      return this.api.post('/api/lobbies/create', { gameType, teamSize });
     }
     const teamSize = Math.min(6, Math.max(2, size || 2));
-    return this.api.post('/api/player/lobby/create', { gameType, teamSize });
+    return this.api.post('/api/lobbies/create', { gameType, teamSize });
   }
 
   // ---------------------------------------------------------------------------

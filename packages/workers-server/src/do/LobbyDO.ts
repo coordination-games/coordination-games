@@ -30,9 +30,9 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
-import { getMapRadiusForTeamSize, getTurnLimitForRadius } from '@coordination-games/game-ctl';
+import { getGame } from '@coordination-games/engine';
 
-// Side-effect imports — register game plugins
+// Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
 
@@ -55,6 +55,11 @@ interface LobbyMeta {
   lobbyId: string;
   gameType: string;
   teamSize: number;
+  /** Minimum players required to start (from plugin.lobby.matchmaking.minPlayers). */
+  minPlayersToStart: number;
+  /** True if the plugin declares pre-game phases (team formation, class selection, etc.).
+   *  False = open queue: game starts as soon as minPlayersToStart join. */
+  hasPhases: boolean;
   phase: LobbyPhase;
   createdAt: string;
   formingDeadlineMs: number | null;
@@ -153,6 +158,18 @@ export class LobbyDO extends DurableObject<Env> {
 
     if (this._alarmType === 'forming_timeout') {
       if (this._meta.phase !== 'forming') return;
+      if (!this._meta.hasPhases) {
+        // Open-queue game: fail if not enough players joined in time
+        this._meta.phase = 'failed';
+        this._meta.error = `Lobby timed out — need ${this._meta.minPlayersToStart} players, have ${this._agents.length}`;
+        this._alarmType  = null;
+        await this.saveState();
+        await this.updateLobbyPhaseInD1();
+        this.broadcastUpdate();
+        console.log(`[LobbyDO] ${this._meta.lobbyId} timed out (${this._agents.length}/${this._meta.minPlayersToStart} players)`);
+        return;
+      }
+      // Phased lobby (e.g. CtL): auto-merge and move to pre-game
       console.log(`[LobbyDO] Forming timeout — auto-merging for ${this._meta.lobbyId}`);
       await this.transitionToPreGame();
     } else if (this._alarmType === 'pregame_timeout') {
@@ -190,9 +207,20 @@ export class LobbyDO extends DurableObject<Env> {
       return Response.json({ error: 'lobbyId, gameType, and teamSize are required' }, { status: 400 });
     }
 
+    const plugin = getGame(gameType);
+    if (!plugin) {
+      return Response.json({ error: `Unknown game type: ${gameType}` }, { status: 400 });
+    }
+    const matchmaking = plugin.lobby?.matchmaking;
+    const hasPhases   = (plugin.lobby?.phases?.length ?? 0) > 0;
+    // minPlayersToStart: use the plugin's declared minimum, or fall back to teamSize*2 for team games
+    const minPlayersToStart = matchmaking?.minPlayers ?? (hasPhases ? teamSize * 2 : teamSize);
+
     const deadlineMs = noTimeout ? null : Date.now() + FORMING_TIMEOUT_MS;
     this._meta = {
       lobbyId, gameType, teamSize,
+      minPlayersToStart,
+      hasPhases,
       phase: 'forming',
       createdAt: new Date().toISOString(),
       formingDeadlineMs: deadlineMs,
@@ -234,8 +262,15 @@ export class LobbyDO extends DurableObject<Env> {
     if (!this._agents.find(a => a.id === playerId)) {
       this._agents.push({ id: playerId, handle, elo: elo ?? 1000 });
       await this.saveState();
-      this.broadcastUpdate();
       console.log(`[LobbyDO] ${handle} joined lobby ${this._meta.lobbyId}`);
+
+      // Open-queue games (no pre-game phases) auto-start when minPlayersToStart is reached
+      if (!this._meta.hasPhases && this._agents.length >= this._meta.minPlayersToStart) {
+        await this.doCreateGame();
+        return Response.json({ ok: true, phase: this._meta.phase, ...this.buildState(playerId) });
+      }
+
+      this.broadcastUpdate();
     }
 
     return Response.json({ ok: true, phase: this._meta.phase, ...this.buildState(playerId) });
@@ -368,9 +403,6 @@ export class LobbyDO extends DurableObject<Env> {
 
     const { agentId, unitClass } = body ?? {};
     if (!agentId || !unitClass) return Response.json({ error: 'agentId and unitClass are required' }, { status: 400 });
-    if (!['rogue', 'knight', 'mage'].includes(unitClass)) {
-      return Response.json({ error: 'unitClass must be rogue, knight, or mage' }, { status: 400 });
-    }
 
     const player = this._preGame.players.find(p => p.id === agentId);
     if (!player) return Response.json({ error: 'Player not in pre-game' }, { status: 404 });
@@ -554,53 +586,56 @@ export class LobbyDO extends DurableObject<Env> {
   }
 
   private async doCreateGame(): Promise<void> {
-    if (!this._meta || !this._preGame) return;
-
-    // Assign default classes to any player who didn't pick one
-    const defaultClasses = ['rogue', 'knight', 'mage'];
-    let classIdx = 0;
-    for (const player of this._preGame.players) {
-      if (!player.unitClass) {
-        player.unitClass = defaultClasses[classIdx % defaultClasses.length];
-        classIdx++;
-      }
-    }
+    if (!this._meta) return;
 
     this._meta.phase = 'starting';
     this._alarmType  = null;
     try { await this.ctx.storage.deleteAlarm(); } catch {}
     await this.saveState();
 
-    const teamA    = this._preGame.players.filter(p => p.team === 'A');
-    const teamB    = this._preGame.players.filter(p => p.team === 'B');
-    const teamSize = Math.max(teamA.length, teamB.length);
-    const radius   = getMapRadiusForTeamSize(teamSize);
-    const turnLimit = getTurnLimitForRadius(radius);
-    const mapSeed  = `lobby_${this._meta.lobbyId}_${Date.now()}`;
+    const plugin = getGame(this._meta.gameType);
+    if (!plugin?.createConfig) {
+      this._meta.phase = 'failed';
+      this._meta.error = `Game plugin "${this._meta.gameType}" does not implement createConfig`;
+      await this.saveState();
+      await this.updateLobbyPhaseInD1();
+      this.broadcastUpdate();
+      return;
+    }
 
-    const ctlPlayers = this._preGame.players.map(p => ({
-      id: p.id,
-      team: p.team,
-      unitClass: p.unitClass!,
-    }));
+    // Build player list. For phased lobbies (CtL), team/role come from pre-game state.
+    // For open-queue games, just pass the agents — the plugin assigns teams/roles.
+    const playerEntries: { id: string; handle: string; team?: string; role?: string }[] =
+      this._meta.hasPhases && this._preGame
+        ? this._preGame.players.map(p => ({
+            id:     p.id,
+            handle: this._agents.find(a => a.id === p.id)?.handle ?? p.id,
+            team:   p.team,
+            role:   p.unitClass ?? undefined,
+          }))
+        : this._agents.map(a => ({ id: a.id, handle: a.handle }));
+
+    const seed = `lobby_${this._meta.lobbyId}_${Date.now()}`;
+    let setup: { config: unknown; players: { id: string; team: string }[] };
+    try {
+      setup = plugin.createConfig(playerEntries, seed);
+    } catch (err: any) {
+      this._meta.phase = 'failed';
+      this._meta.error = `createConfig failed: ${err.message}`;
+      await this.saveState();
+      await this.updateLobbyPhaseInD1();
+      this.broadcastUpdate();
+      return;
+    }
 
     const handleMap: Record<string, string> = {};
     for (const a of this._agents) handleMap[a.id] = a.handle;
 
     const teamMap: Record<string, string> = {};
-    for (const p of this._preGame.players) teamMap[p.id] = p.team;
-
-    const config = {
-      mapSeed,
-      mapRadius: radius,
-      teamSize,
-      turnLimit,
-      turnTimerSeconds: 30,
-      players: ctlPlayers,
-    };
+    for (const p of setup.players) teamMap[p.id] = p.team;
 
     const gameId    = crypto.randomUUID();
-    const playerIds = this._preGame.players.map(p => p.id);
+    const playerIds = setup.players.map(p => p.id);
 
     try {
       // 1. Create GameRoomDO
@@ -610,7 +645,7 @@ export class LobbyDO extends DurableObject<Env> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           gameType: this._meta.gameType,
-          config,
+          config:   setup.config,
           playerIds,
           handleMap,
           teamMap,
@@ -648,7 +683,7 @@ export class LobbyDO extends DurableObject<Env> {
       await this.saveState();
       await this.updateLobbyPhaseInD1();
       this.broadcastUpdate();
-      console.log(`[LobbyDO] Game ${gameId} created from lobby ${this._meta.lobbyId}`);
+      console.log(`[LobbyDO] ${this._meta.gameType} game ${gameId} created from lobby ${this._meta.lobbyId}`);
     } catch (err: any) {
       console.error(`[LobbyDO] Game creation error:`, err);
       this._meta.phase = 'failed';
