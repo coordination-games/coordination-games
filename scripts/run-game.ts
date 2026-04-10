@@ -214,14 +214,8 @@ const CLASSES = ['rogue', 'knight', 'mage'] as const;
 
 async function waitForPhase(token: string, target: string, maxSecs = 30): Promise<any> {
   for (let i = 0; i < maxSecs * 2; i++) {
-    const state = await api('/api/player/state', { token }).catch((e) => {
-      if (i % 10 === 0) console.log(`    [waitForPhase] poll error: ${e.message}`);
-      return null;
-    });
+    const state = await api('/api/player/state', { token }).catch(() => null);
     if (!state) { await sleep(500); continue; }
-    if (i === 0 || i % 10 === 0) {
-      console.log(`    [waitForPhase] phase=${state.phase}, currentPhase=${state.currentPhase?.id}, type=${state.type}, keys=${Object.keys(state).join(',')}`);
-    }
     const phaseId = state.currentPhase?.id ?? state.phase;
     if (phaseId === target) return state;
     // phase='game' or phase='starting' means the lobby transitioned to a game
