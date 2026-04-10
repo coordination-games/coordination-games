@@ -43,6 +43,7 @@ const TAG_SPECTATOR = 'spectator';
 // ---------------------------------------------------------------------------
 
 interface GameMeta {
+  gameId: string;
   gameType: string;
   playerIds: string[];
   handleMap: Record<string, string>;  // playerId → display handle
@@ -163,7 +164,7 @@ export class GameRoomDO extends DurableObject<Env> {
     try { body = await request.json(); }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { gameType, config, playerIds, handleMap, teamMap } = body ?? {};
+    const { gameType, config, playerIds, handleMap, teamMap, gameId: bodyGameId } = body ?? {};
     if (!gameType || !config || !Array.isArray(playerIds)) {
       return Response.json({ error: 'gameType, config, and playerIds are required' }, { status: 400 });
     }
@@ -177,7 +178,9 @@ export class GameRoomDO extends DurableObject<Env> {
       return Response.json({ error: `createInitialState failed: ${err.message}` }, { status: 400 });
     }
 
+    const gameId = (bodyGameId as string | undefined) ?? (this.ctx.id.name ?? '');
     const meta: GameMeta = {
+      gameId,
       gameType,
       playerIds: playerIds as string[],
       handleMap: handleMap ?? {},
@@ -460,6 +463,19 @@ export class GameRoomDO extends DurableObject<Env> {
       try { await this.ctx.storage.deleteAlarm(); } catch {}
       await this.ctx.storage.delete('deadline');
       console.log(`[GameRoomDO] Game over — ${this._meta.gameType}, ${this._actionLog.length} actions`);
+      // Update D1: mark game finished and free players from game_sessions
+      try {
+        await this.env.DB.batch([
+          this.env.DB.prepare(
+            'UPDATE games SET finished = 1 WHERE game_id = ?'
+          ).bind(this._meta.gameId),
+          this.env.DB.prepare(
+            'DELETE FROM game_sessions WHERE game_id = ?'
+          ).bind(this._meta.gameId),
+        ]);
+      } catch (err) {
+        console.error(`[GameRoomDO] Failed to update D1 on game over:`, err);
+      }
     }
 
     this.broadcastUpdates();

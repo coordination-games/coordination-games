@@ -285,13 +285,19 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
 
 async function handleListGames(env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
-    'SELECT game_id, game_type, GROUP_CONCAT(player_id) AS player_ids FROM game_sessions GROUP BY game_id'
-  ).all<{ game_id: string; game_type: string; player_ids: string }>();
+    `SELECT g.game_id, g.game_type, COUNT(s.player_id) AS player_count
+     FROM games g
+     LEFT JOIN game_sessions s ON s.game_id = g.game_id
+     WHERE g.finished = 0
+     GROUP BY g.game_id
+     ORDER BY g.created_at DESC
+     LIMIT 50`
+  ).all<{ game_id: string; game_type: string; player_count: number }>();
 
   return Response.json(rows.results.map(r => ({
     gameId: r.game_id,
     gameType: r.game_type,
-    playerCount: r.player_ids.split(',').length,
+    playerCount: r.player_count,
   })));
 }
 
@@ -311,7 +317,7 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
   const createResp = await doStub.fetch(new Request('https://do/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameType, config, playerIds, handleMap: handleMap ?? {}, teamMap: teamMap ?? {} }),
+    body: JSON.stringify({ gameId, gameType, config, playerIds, handleMap: handleMap ?? {}, teamMap: teamMap ?? {} }),
   }));
 
   if (!createResp.ok) {
@@ -320,12 +326,16 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
   }
 
   const now = new Date().toISOString();
-  const stmt = env.DB.prepare(
-    'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)'
-  );
-  await env.DB.batch(
-    (playerIds as string[]).map(pid => stmt.bind(pid, gameId, gameType, now))
-  );
+  await env.DB.batch([
+    env.DB.prepare(
+      'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)'
+    ).bind(gameId, gameType, now),
+    ...((playerIds as string[]).map(pid =>
+      env.DB.prepare(
+        'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)'
+      ).bind(pid, gameId, gameType, now)
+    )),
+  ]);
 
   console.log(`[Worker] Created ${gameType} game ${gameId} for ${playerIds.length} players`);
   return Response.json({ gameId, gameType, playerCount: playerIds.length }, { status: 201 });
