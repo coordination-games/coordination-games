@@ -7,14 +7,12 @@ import type {
   AgentInfo,
   ToolDefinition,
   LobbyPhase,
-  PhaseContext,
+  PhaseActionResult,
   PhaseResult,
   GameLobbyConfig,
-  LobbyPhaseConfig,
   MatchmakingConfig,
   Message,
   RelayClient,
-  RelayAccess,
 } from '../types.js';
 
 describe('Type interfaces compile correctly', () => {
@@ -58,32 +56,34 @@ describe('Type interfaces compile correctly', () => {
     expect(plugin.init).toBeDefined();
   });
 
-  it('LobbyPhase can be implemented', async () => {
-    const phase: LobbyPhase = {
+  it('LobbyPhase can be implemented', () => {
+    const phase: LobbyPhase<{ ready: boolean }> = {
       id: 'test-phase',
       name: 'Test Phase',
       timeout: 30,
-      async run(ctx: PhaseContext): Promise<PhaseResult> {
-        return {
-          groups: [ctx.players],
-          metadata: { completed: true },
-        };
+      init(players: AgentInfo[]) {
+        return { ready: false };
+      },
+      handleAction(state, action, players) {
+        return { state: { ready: true }, completed: { groups: [players], metadata: { completed: true } } };
+      },
+      handleJoin(state, player, allPlayers) {
+        return { state };
+      },
+      handleTimeout(state, players) {
+        return { groups: [players], metadata: {} };
+      },
+      getView(state) {
+        return { ready: state.ready };
       },
     };
     expect(phase.id).toBe('test-phase');
 
-    const result = await phase.run({
-      players: [{ id: '1', handle: 'alice' }],
-      gameConfig: {},
-      relay: {
-        send: () => {},
-        broadcast: () => {},
-        receive: () => [],
-      },
-      onTimeout: () => ({ groups: [], metadata: {} }),
-    });
-    expect(result.groups).toHaveLength(1);
-    expect(result.metadata.completed).toBe(true);
+    const players: AgentInfo[] = [{ id: '1', handle: 'alice' }];
+    const state = phase.init(players);
+    const result = phase.handleAction(state, { type: 'ready', playerId: '1' }, players);
+    expect(result.completed?.groups).toHaveLength(1);
+    expect(result.completed?.metadata.completed).toBe(true);
   });
 
   it('GameLobbyConfig structures correctly', () => {

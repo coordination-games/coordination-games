@@ -25,46 +25,6 @@ const WAIT_TOOL: ToolDefinition = {
   inputSchema: { type: 'object', properties: {} },
 };
 
-/** Platform tools available during team formation. */
-const TEAM_FORMATION_TOOLS: ToolDefinition[] = [
-  {
-    name: 'propose_team',
-    description: 'Propose a team with another player',
-    inputSchema: {
-      type: 'object',
-      properties: { targetPlayerId: { type: 'string' } },
-      required: ['targetPlayerId'],
-    },
-  },
-  {
-    name: 'accept_team',
-    description: 'Accept a team invitation',
-    inputSchema: {
-      type: 'object',
-      properties: { teamId: { type: 'string' } },
-      required: ['teamId'],
-    },
-  },
-  {
-    name: 'leave_team',
-    description: 'Leave your current team',
-    inputSchema: { type: 'object', properties: {} },
-  },
-];
-
-/** Platform tools available during class selection. */
-const CLASS_SELECTION_TOOLS: ToolDefinition[] = [
-  {
-    name: 'choose_class',
-    description: 'Choose your unit class (rogue, knight, or mage)',
-    inputSchema: {
-      type: 'object',
-      properties: { unitClass: { type: 'string', enum: ['rogue', 'knight', 'mage'] } },
-      required: ['unitClass'],
-    },
-  },
-];
-
 /** Platform tools available during gameplay. */
 const GAMEPLAY_TOOLS: ToolDefinition[] = [
   {
@@ -83,11 +43,15 @@ const GAMEPLAY_TOOLS: ToolDefinition[] = [
   },
 ];
 
-/** Map of phase -> platform tools. */
+/**
+ * Map of phase -> platform tools.
+ *
+ * Lobby phases (team-formation, class-selection, etc.) are NOT listed here.
+ * Their tools come dynamically from each LobbyPhase's `tools` array, surfaced
+ * to agents via the CLI's `lobby_action` tool.
+ */
 const PHASE_TOOLS: Record<string, ToolDefinition[]> = {
   'lobby': [],
-  'team-formation': TEAM_FORMATION_TOOLS,
-  'class-selection': CLASS_SELECTION_TOOLS,
   'in_progress': GAMEPLAY_TOOLS,
   'finished': [],
 };
@@ -111,8 +75,8 @@ export function getAvailableTools(
 
   const tools = [GUIDE_TOOL, ...platformTools, ...pluginTools];
 
-  // Add wait_for_update during gameplay
-  if (phase === 'in_progress' || phase === 'team-formation' || phase === 'class-selection') {
+  // Add wait_for_update during any active phase (gameplay or lobby phases)
+  if (phase !== 'lobby' && phase !== 'finished') {
     tools.push(WAIT_TOOL);
   }
 

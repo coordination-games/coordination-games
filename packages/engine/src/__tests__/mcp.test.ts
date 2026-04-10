@@ -19,30 +19,22 @@ describe('Platform MCP', () => {
       expect(tools.find((t) => t.name === 'get_guide')).toBeDefined();
     });
 
-    it('returns team formation tools during team-formation phase', () => {
+    it('returns only guide and wait during lobby phases (tools come from phase.tools dynamically)', () => {
       const tools = getAvailableTools('team-formation', []);
       const names = tools.map((t) => t.name);
-      expect(names).toContain('propose_team');
-      expect(names).toContain('accept_team');
-      expect(names).toContain('leave_team');
+      expect(names).toContain('get_guide');
       expect(names).toContain('wait_for_update');
-    });
-
-    it('returns class selection tools during class-selection phase', () => {
-      const tools = getAvailableTools('class-selection', []);
-      const names = tools.map((t) => t.name);
-      expect(names).toContain('choose_class');
+      // No hardcoded lobby tools — phases provide their own via phase.tools
       expect(names).not.toContain('propose_team');
+      expect(names).not.toContain('choose_class');
     });
 
     it('returns gameplay tools during in_progress phase', () => {
       const tools = getAvailableTools('in_progress', []);
       const names = tools.map((t) => t.name);
       expect(names).toContain('get_state');
-      expect(names).toContain('submit_move');
+      expect(names).toContain('submit_action');
       expect(names).toContain('wait_for_update');
-      expect(names).not.toContain('propose_team');
-      expect(names).not.toContain('choose_class');
     });
 
     it('includes plugin tools when active', () => {
@@ -64,10 +56,12 @@ describe('Platform MCP', () => {
 
     it('handles unknown phase gracefully', () => {
       const tools = getAvailableTools('unknown-phase', []);
-      // Should still have get_guide
-      expect(tools.find((t) => t.name === 'get_guide')).toBeDefined();
-      // No phase-specific tools
-      expect(tools).toHaveLength(1);
+      const names = tools.map((t) => t.name);
+      // Should still have get_guide + wait_for_update (active phase)
+      expect(names).toContain('get_guide');
+      expect(names).toContain('wait_for_update');
+      // No phase-specific platform tools
+      expect(tools).toHaveLength(2);
     });
 
     it('returns no wait_for_update during lobby', () => {
@@ -134,7 +128,7 @@ describe('Platform MCP', () => {
         phase: 'in_progress',
       });
       expect(guide).toContain('`get_state`');
-      expect(guide).toContain('`submit_move`');
+      expect(guide).toContain('`submit_action`');
     });
   });
 });

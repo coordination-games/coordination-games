@@ -4,4 +4,3 @@ export {
   GameFramework,
   buildGameResult,
 } from './framework.js';
-export { LobbyPipeline } from './lobby-pipeline.js';

@@ -21,11 +21,17 @@ interface Game {
 interface Lobby {
   lobbyId: string;
   gameType?: string;
-  phase: string;
+  phase: 'running' | 'starting' | 'game' | 'failed';
+  currentPhase?: {
+    id: string;
+    name: string;
+    view: any;
+  } | null;
   agents: any[];
-  teams: Record<string, any>;
-  targetPlayers?: number;
-  gameId?: string;
+  deadlineMs?: number | null;
+  gameId?: string | null;
+  error?: string | null;
+  noTimeout?: boolean;
 }
 
 function phaseBadge(phase: string) {
@@ -87,7 +93,7 @@ export default function LobbiesPage() {
             playerCount: g.playerCount,
           }));
           setGames(mapped);
-          setLobbies((lobbiesData as Lobby[]).filter(l => l.phase !== 'game' && l.phase !== 'finished'));
+          setLobbies((lobbiesData as Lobby[]).filter(l => l.phase !== 'game' && l.phase !== 'failed'));
         }
       } catch {}
     }
@@ -259,46 +265,52 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
   );
 }
 
-function lobbyPhaseBadge(phase: string) {
+function lobbyPhaseBadge(lobby: Lobby) {
+  const phase = lobby.phase;
+  const phaseId = lobby.currentPhase?.id;
+  const phaseName = lobby.currentPhase?.name;
+
   switch (phase) {
-    case 'forming':
+    case 'running':
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.2)' }}>
           <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-amber)' }} />
-          Forming
+          {phaseName ?? 'In Progress'}
         </span>
       );
-    case 'pre_game':
+    case 'starting':
       return (
-        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(139, 32, 32, 0.06)', color: 'var(--color-blood)', border: '1px solid rgba(139, 32, 32, 0.15)' }}>
-          <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-blood-light)' }} />
-          Picking Classes
+        <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: '1px solid rgba(58, 90, 42, 0.2)' }}>
+          <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-forest-light)' }} />
+          Starting...
         </span>
       );
     default:
       return (
         <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-heading font-medium" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}>
-          {phase}
+          {phaseName ?? phase}
         </span>
       );
   }
 }
 
 function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
-  const teamCount = Object.keys(lobby.teams).length;
   const agentCount = lobby.agents.length;
   const gameType = lobby.gameType ?? 'capture-the-lobster';
-  const isSimple = !lobby.teams || Object.keys(lobby.teams).length === 0;
+  const phaseView = lobby.currentPhase?.view;
+
+  // Extract team count from team-formation phase view if available
+  const teams: any[] = phaseView?.teams ?? [];
+  const teamCount = teams.length;
 
   return (
     <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between">
         <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>{lobby.lobbyId}</span>
-        {lobbyPhaseBadge(lobby.phase)}
+        {lobbyPhaseBadge(lobby)}
       </div>
       <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agentCount}</span> {isSimple ? 'players' : 'agents'}
-        {lobby.targetPlayers && <span className="ml-1" style={{ color: 'var(--color-ink-faint)' }}>/ {lobby.targetPlayers}</span>}
+        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agentCount}</span> agents
         {teamCount > 0 && <span className="ml-2">· <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{teamCount}</span> teams formed</span>}
       </div>
       <div className="flex items-center justify-between">

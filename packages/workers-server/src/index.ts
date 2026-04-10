@@ -2,12 +2,11 @@ import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
 import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
 import { D1EloTracker } from './db/elo.js';
+import { getRegisteredGames } from '@coordination-games/engine';
 import type { Env } from './env.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
 export { GameRoomDO, LobbyDO };
-
-const GIT_SHA = 'phase-6';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -20,6 +19,31 @@ function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+// ---------------------------------------------------------------------------
+// Extracted helpers
+// ---------------------------------------------------------------------------
+
+/** Parse JSON body from a request, returning the parsed object or an error Response. */
+async function parseJsonBody<T = any>(request: Request): Promise<T | Response> {
+  try {
+    return await request.json() as T;
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+}
+
+/** Validate bearer token and return playerId, or return a 401 Response. */
+async function requireAuth(request: Request, env: Env): Promise<string | Response> {
+  const playerId = await validateBearerToken(request, env);
+  if (!playerId) {
+    return Response.json(
+      { error: 'auth_required', message: 'Missing or invalid Authorization: Bearer <token> header' },
+      { status: 401 },
+    );
+  }
+  return playerId;
 }
 
 export default {
@@ -43,7 +67,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     // Health / root
     // ------------------------------------------------------------------
     if (pathname === '/health') {
-      return Response.json({ ok: true, build: GIT_SHA });
+      return Response.json({ ok: true, games: getRegisteredGames() });
     }
 
     if (pathname === '/') {
@@ -65,7 +89,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     // Framework info
     // ------------------------------------------------------------------
     if (pathname === '/api/framework' && method === 'GET') {
-      return Response.json({ version: '0.1.0', games: ['capture-the-lobster', 'oathbreaker'], status: 'active' });
+      return Response.json({ version: '0.1.0', games: getRegisteredGames(), status: 'active' });
     }
 
     // ------------------------------------------------------------------
@@ -89,6 +113,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
 
     if (pathname === '/api/lobbies/create' && method === 'POST') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
       return handleCreateLobby(request, env);
     }
 
@@ -121,11 +147,25 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
 
     // /api/games/:id[/subpath] — forward to GameRoomDO
+    // Only allow unauthenticated access to spectator-safe paths
     const gameMatch = pathname.match(/^\/api\/games\/([^/]+)(\/.*)?$/);
     if (gameMatch) {
       const gameId = gameMatch[1];
       const sub = gameMatch[2] ?? '/spectator';
-      return forwardToGameDO(env, gameId, sub, request);
+
+      // Spectator-safe paths (no auth required)
+      const spectatorPaths = ['/spectator', '/replay'];
+      if (spectatorPaths.includes(sub)) {
+        return forwardToGameDO(env, gameId, sub, request);
+      }
+
+      // All other game sub-paths require auth
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      const playerId = auth;
+      const forwarded = new Request(request.url, request);
+      forwarded.headers.set('X-Player-Id', playerId);
+      return forwardToGameDO(env, gameId, sub, forwarded);
     }
 
     // WS /ws/game/:id — unauthenticated spectator WebSocket (delayed view)
@@ -137,8 +177,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered)
     const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
     if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      const playerId = auth;
       const session = await getPlayerGameSession(playerId, env);
       if (!session || session.game_id !== wsPlayerMatch[1]) {
         return Response.json({ error: 'Not a player in this game' }, { status: 403 });
@@ -154,64 +195,50 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     // ------------------------------------------------------------------
 
     if (pathname === '/api/player/stats' && method === 'GET') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerStats(playerId, env);
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerStats(auth, env);
     }
 
-    if (pathname === '/api/player/guide' && method === 'GET') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerGuide(playerId, url, env);
+if (pathname === '/api/player/state' && method === 'GET') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerState(auth, env);
     }
 
-    if (pathname === '/api/player/state' && method === 'GET') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerState(playerId, env);
-    }
-
-    // POST /api/player/move — game actions AND lobby actions (propose-team, choose-class, etc.)
+    // POST /api/player/move — game actions (lobby actions go through /api/player/lobby/action)
     if (pathname === '/api/player/move' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerMove(playerId, request, env);
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerMove(auth, request, env);
     }
 
     // POST /api/player/lobby/join — join a lobby
     if (pathname === '/api/player/lobby/join' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerLobbyJoin(playerId, request, env);
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerLobbyJoin(auth, request, env);
     }
 
-    // POST /api/player/tool — plugin tool calls (chat, etc.)
+    // POST /api/player/lobby/action — generic lobby phase action
+    if (pathname === '/api/player/lobby/action' && method === 'POST') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerLobbyAction(auth, request, env);
+    }
+
+    // POST /api/player/lobby/tool — plugin tool call during lobby (chat, etc.)
+    if (pathname === '/api/player/lobby/tool' && method === 'POST') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerLobbyTool(auth, request, env);
+    }
+
+    // POST /api/player/tool — plugin tool calls during game (chat, etc.)
     if (pathname === '/api/player/tool' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerTool(playerId, request, env);
-    }
-
-    // Dedicated lobby action shortcuts (same as via /move but explicit endpoints)
-    if (pathname === '/api/player/team/propose' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerLobbyActionDedicated(playerId, 'propose-team', request, env);
-    }
-    if (pathname === '/api/player/team/accept' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerLobbyActionDedicated(playerId, 'accept-team', request, env);
-    }
-    if (pathname === '/api/player/team/leave' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerLobbyActionDedicated(playerId, 'leave-team', request, env);
-    }
-    if (pathname === '/api/player/class' && method === 'POST') {
-      const playerId = await validateBearerToken(request, env);
-      if (!playerId) return authRequired();
-      return handlePlayerLobbyActionDedicated(playerId, 'choose-class', request, env);
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerTool(auth, request, env);
     }
 
     // ------------------------------------------------------------------
@@ -241,9 +268,8 @@ async function handleListLobbies(env: Env): Promise<Response> {
 }
 
 async function handleCreateLobby(request: Request, env: Env): Promise<Response> {
-  let body: any;
-  try { body = await request.json(); }
-  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
 
   const gameType  = (body?.gameType as string) ?? 'capture-the-lobster';
   const noTimeout = !!body?.noTimeout;
@@ -256,7 +282,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   try {
     await env.DB.prepare(
       'INSERT INTO lobbies (id, game_type, team_size, phase, created_at) VALUES (?, ?, ?, ?, ?)',
-    ).bind(lobbyId, gameType, teamSize, 'forming', new Date().toISOString()).run();
+    ).bind(lobbyId, gameType, teamSize, 'running', new Date().toISOString()).run();
   } catch (err) {
     return Response.json({ error: 'Failed to create lobby record' }, { status: 500 });
   }
@@ -281,7 +307,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
 }
 
 // ---------------------------------------------------------------------------
-// Game management handlers (Phase 3, preserved)
+// Game management handlers
 // ---------------------------------------------------------------------------
 
 async function handleListGames(env: Env): Promise<Response> {
@@ -303,9 +329,8 @@ async function handleListGames(env: Env): Promise<Response> {
 }
 
 async function handleCreateGame(request: Request, env: Env): Promise<Response> {
-  let body: any;
-  try { body = await request.json(); }
-  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
 
   const { gameType, config, playerIds, handleMap, teamMap } = body ?? {};
   if (!gameType || !config || !Array.isArray(playerIds) || playerIds.length === 0) {
@@ -346,11 +371,6 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 // Player-scoped handlers (auth required)
 // ---------------------------------------------------------------------------
 
-async function handlePlayerGuide(playerId: string, url: URL, env: Env): Promise<Response> {
-  const gameType = url.searchParams.get('game') ?? 'capture-the-lobster';
-  return Response.json({ guide: `# ${gameType}\nGame guide coming in Phase 5.` });
-}
-
 async function handlePlayerState(playerId: string, env: Env): Promise<Response> {
   // Active game takes priority
   const gameSession = await getPlayerGameSession(playerId, env);
@@ -376,13 +396,22 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
 }
 
 async function handlePlayerMove(playerId: string, request: Request, env: Env): Promise<Response> {
-  let body: any;
-  try { body = await request.json(); }
-  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
 
-  // Lobby action: body has an `action` string field (not `type`)
+  // Lobby action via /move (legacy compatibility) — forward to generic lobby action handler
   if (body?.action && typeof body.action === 'string') {
-    return dispatchLobbyAction(playerId, body, env);
+    const lobbySession = await getPlayerLobbySession(playerId, env);
+    if (!lobbySession) {
+      return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
+    }
+    const lobbyId = lobbySession.lobby_id;
+    // Map legacy action format to generic { playerId, type, payload }
+    return forwardToLobbyDO(env, lobbyId, '/action', makeRequest('POST', {
+      playerId,
+      type: body.action,
+      payload: body,
+    }));
   }
 
   // Game action: forward to GameRoomDO
@@ -399,9 +428,8 @@ async function handlePlayerMove(playerId: string, request: Request, env: Env): P
 }
 
 async function handlePlayerLobbyJoin(playerId: string, request: Request, env: Env): Promise<Response> {
-  let body: any;
-  try { body = await request.json(); }
-  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
 
   const lobbyId = body?.lobbyId ?? body?.gameId;
   if (!lobbyId) return Response.json({ error: 'lobbyId is required' }, { status: 400 });
@@ -437,24 +465,52 @@ async function handlePlayerLobbyJoin(playerId: string, request: Request, env: En
   return Response.json(joinBody, { status: joinResp.status });
 }
 
-// Dedicated endpoints for team/class actions (same logic as through /move)
-async function handlePlayerLobbyActionDedicated(
-  playerId: string,
-  action: string,
-  request: Request,
-  env: Env,
-): Promise<Response> {
-  let body: any;
-  try { body = await request.json(); }
-  catch { body = {}; }
+/** Generic lobby phase action — forwards to LobbyDO POST /action */
+async function handlePlayerLobbyAction(playerId: string, request: Request, env: Env): Promise<Response> {
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
 
-  return dispatchLobbyAction(playerId, { action, ...body }, env);
+  const lobbySession = await getPlayerLobbySession(playerId, env);
+  if (!lobbySession) {
+    return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
+  }
+
+  const { type, payload } = body ?? {};
+  if (!type) {
+    return Response.json({ error: 'type is required' }, { status: 400 });
+  }
+
+  return forwardToLobbyDO(env, lobbySession.lobby_id, '/action', makeRequest('POST', {
+    playerId,
+    type,
+    payload: payload ?? {},
+  }));
+}
+
+/** Plugin tool call during lobby (chat, etc.) — forwards to LobbyDO POST /tool */
+async function handlePlayerLobbyTool(playerId: string, request: Request, env: Env): Promise<Response> {
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
+
+  const lobbySession = await getPlayerLobbySession(playerId, env);
+  if (!lobbySession) {
+    return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
+  }
+
+  const { relay } = body ?? {};
+  if (!relay?.type || !relay?.pluginId) {
+    return Response.json({ error: 'Body must be { relay: { type, data, scope, pluginId } }' }, { status: 400 });
+  }
+
+  return forwardToLobbyDO(env, lobbySession.lobby_id, '/tool', makeRequest('POST', {
+    playerId,
+    relay,
+  }));
 }
 
 async function handlePlayerTool(playerId: string, request: Request, env: Env): Promise<Response> {
-  let body: any;
-  try { body = await request.json(); }
-  catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+  const body = await parseJsonBody(request);
+  if (body instanceof Response) return body;
 
   // Body is { relay: { type, data, scope, pluginId } } — produced by the CLI
   // calling plugin.handleCall() locally. We just store and route it.
@@ -471,43 +527,8 @@ async function handlePlayerTool(playerId: string, request: Request, env: Env): P
   return forwardToGameDO(env, session.game_id, '/tool', makeRequest('POST', { relay, playerId }));
 }
 
-// Common dispatch for lobby actions coming from either /move or dedicated endpoints
-async function dispatchLobbyAction(playerId: string, body: any, env: Env): Promise<Response> {
-  const lobbySession = await getPlayerLobbySession(playerId, env);
-  if (!lobbySession) {
-    return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
-  }
-  const lobbyId = lobbySession.lobby_id;
-
-  const { action, target } = body;
-  const unitClass = body.class ?? body.unitClass;
-
-  switch (action) {
-    case 'propose-team': {
-      if (!target) return Response.json({ error: 'propose-team requires "target" (agentId or handle)' }, { status: 400 });
-      return forwardToLobbyDO(env, lobbyId, '/team/propose', makeRequest('POST', { fromId: playerId, toId: target }));
-    }
-    case 'accept-team': {
-      if (!target) return Response.json({ error: 'accept-team requires "target" (teamId)' }, { status: 400 });
-      return forwardToLobbyDO(env, lobbyId, '/team/accept', makeRequest('POST', { agentId: playerId, teamId: target }));
-    }
-    case 'leave-team': {
-      return forwardToLobbyDO(env, lobbyId, '/team/leave', makeRequest('POST', { agentId: playerId }));
-    }
-    case 'choose-class': {
-      const cls = unitClass ?? target;
-      if (!cls) return Response.json({ error: 'choose-class requires "class" (rogue, knight, or mage)' }, { status: 400 });
-      return forwardToLobbyDO(env, lobbyId, '/class', makeRequest('POST', { agentId: playerId, unitClass: cls }));
-    }
-    default:
-      return Response.json({
-        error: `Unknown lobby action "${action}". Valid: propose-team, accept-team, leave-team, choose-class`,
-      }, { status: 400 });
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Leaderboard / profile handlers (Phase 2, preserved)
+// Leaderboard / profile handlers
 // ---------------------------------------------------------------------------
 
 async function handleLeaderboard(request: Request, env: Env): Promise<Response> {
@@ -587,11 +608,4 @@ function makeRequest(method: string, body: unknown): Request {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-}
-
-function authRequired(): Response {
-  return Response.json(
-    { error: 'auth_required', message: 'Missing or invalid Authorization: Bearer <token> header' },
-    { status: 401 },
-  );
 }

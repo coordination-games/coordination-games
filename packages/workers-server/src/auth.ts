@@ -32,20 +32,24 @@ export async function handleAuthChallenge(_request: Request, env: Env): Promise<
 // ---------------------------------------------------------------------------
 
 export async function handleAuthVerify(request: Request, env: Env): Promise<Response> {
-  let body: any;
+  let body: Record<string, unknown>;
   try {
-    body = await request.json();
+    body = await request.json() as Record<string, unknown>;
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { nonce, signature, address, name } = body ?? {};
-  if (!nonce || !signature || !address || !name) {
+  const { nonce: rawNonce, signature: rawSig, address: rawAddr, name: rawName } = body ?? {} as Record<string, unknown>;
+  if (!rawNonce || !rawSig || !rawAddr || !rawName) {
     return Response.json(
       { error: 'nonce, signature, address, and name are all required' },
       { status: 400 },
     );
   }
+  const nonce = rawNonce as string;
+  const signature = rawSig as string;
+  const address = rawAddr as string;
+  const name = rawName as string;
 
   // Look up and consume nonce (one-time use)
   const nonceRow = await env.DB.prepare(

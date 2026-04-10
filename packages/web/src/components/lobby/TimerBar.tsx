@@ -18,7 +18,7 @@ export default function TimerBar({
           {noTimeout ? '--:--' : timeRemaining !== null ? `${Math.floor(timeRemaining / 60)}:${String(timeRemaining % 60).padStart(2, '0')}` : '--:--'}
         </span>
         <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          {noTimeout ? 'No time limit' : phase === 'pre_game' ? 'to pick classes' : 'until lobby closes'}
+          {noTimeout ? 'No time limit' : phase === 'class-selection' ? 'to pick classes' : 'until lobby closes'}
         </span>
         <button onClick={onPauseTimer} disabled={noTimeout}
           className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95 disabled:cursor-default"

@@ -1,48 +1,176 @@
 /**
- * Class Selection Phase — wraps existing LobbyManager pre-game logic
- * as a LobbyPhase for the plugin pipeline.
+ * Class Selection Phase — request-driven LobbyPhase implementation.
+ *
+ * Players pick their unit class (rogue/knight/mage). No new joins allowed.
+ * On timeout, unassigned players get classes via round-robin from validClasses.
  */
 
-import type { LobbyPhase, PhaseContext, PhaseResult, AgentInfo } from '@coordination-games/engine';
-import type { UnitClass } from '../movement.js';
+import type {
+  LobbyPhase,
+  PhaseActionResult,
+  PhaseResult,
+  AgentInfo,
+  ToolDefinition,
+} from '@coordination-games/engine';
 
-export interface ClassPick {
-  playerId: string;
-  unitClass: UnitClass;
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+export interface ClassSelectionState {
+  /** playerId -> chosen class */
+  classPicks: Record<string, string>;
+  /** All player IDs that need to pick */
+  playerIds: string[];
 }
 
-export const ClassSelectionPhase: LobbyPhase = {
-  id: 'class-selection',
-  name: 'Class Selection',
-  timeout: 30,
+// ---------------------------------------------------------------------------
+// Phase
+// ---------------------------------------------------------------------------
 
-  async run(ctx: PhaseContext): Promise<PhaseResult> {
-    // In the automated flow, assign default classes
-    // The real interactive flow would wait for player input via relay
-    const classPicks: ClassPick[] = [];
-    const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
+export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
+  readonly id = 'class-selection';
+  readonly name = 'Class Selection';
+  readonly acceptsJoins = false;
+  readonly timeout = 30;
 
-    for (let i = 0; i < ctx.players.length; i++) {
-      const player = ctx.players[i];
-      // Check if a class was pre-assigned via gameConfig
-      const preAssigned = ctx.gameConfig.classPicks?.[player.id] as
-        | UnitClass
-        | undefined;
-      const unitClass = preAssigned ?? classes[i % classes.length];
-      classPicks.push({ playerId: player.id, unitClass });
+  readonly tools: ToolDefinition[] = [
+    {
+      name: 'choose_class',
+      description: 'Pick your unit class for the game.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          unitClass: {
+            type: 'string',
+            description: 'The class to play as.',
+          },
+        },
+        required: ['unitClass'],
+      },
+      mcpExpose: true,
+    },
+  ];
+
+  private readonly validClasses: string[];
+
+  constructor(config: { validClasses: string[] }) {
+    this.validClasses = config.validClasses;
+  }
+
+  // -------------------------------------------------------------------------
+  // Lifecycle
+  // -------------------------------------------------------------------------
+
+  init(players: AgentInfo[], _config: Record<string, any>): ClassSelectionState {
+    return {
+      classPicks: {},
+      playerIds: players.map((p) => p.id),
+    };
+  }
+
+  handleAction(
+    state: ClassSelectionState,
+    action: { type: string; playerId: string; payload?: any },
+    players: AgentInfo[],
+  ): PhaseActionResult<ClassSelectionState> {
+    if (action.type !== 'choose_class') {
+      return {
+        state,
+        error: { message: `Unknown action type: ${action.type}`, status: 400 },
+      };
     }
 
+    const { playerId, payload } = action;
+    const unitClass: string | undefined = payload?.unitClass;
+
+    // Validate player is in this phase
+    if (!state.playerIds.includes(playerId)) {
+      return {
+        state,
+        error: { message: 'Player not in class selection', status: 404 },
+      };
+    }
+
+    // Validate class name
+    if (!unitClass || !this.validClasses.includes(unitClass)) {
+      return {
+        state,
+        error: {
+          message: `Invalid class. Valid classes: ${this.validClasses.join(', ')}`,
+          status: 400,
+        },
+      };
+    }
+
+    // Record pick (allows changing pick)
+    const newState: ClassSelectionState = {
+      ...state,
+      classPicks: { ...state.classPicks, [playerId]: unitClass },
+    };
+
+    // Check completion
+    const allPicked = newState.playerIds.every((id) => id in newState.classPicks);
+    if (allPicked) {
+      return {
+        state: newState,
+        completed: this.buildResult(newState, players),
+      };
+    }
+
+    return { state: newState };
+  }
+
+  // No handleJoin — acceptsJoins is false
+
+  handleTimeout(
+    state: ClassSelectionState,
+    players: AgentInfo[],
+  ): PhaseResult | null {
+    // Auto-assign round-robin for anyone who hasn't picked
+    const filled: Record<string, string> = { ...state.classPicks };
+    let idx = 0;
+    for (const id of state.playerIds) {
+      if (!(id in filled)) {
+        filled[id] = this.validClasses[idx % this.validClasses.length];
+        idx++;
+      }
+    }
+
+    const filledState: ClassSelectionState = {
+      ...state,
+      classPicks: filled,
+    };
+
+    return this.buildResult(filledState, players);
+  }
+
+  getView(state: ClassSelectionState, _playerId?: string): unknown {
     return {
-      groups: [ctx.players],
+      validClasses: this.validClasses,
+      classPicks: state.classPicks,
+      playerIds: state.playerIds,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Helpers
+  // -------------------------------------------------------------------------
+
+  private buildResult(
+    state: ClassSelectionState,
+    players: AgentInfo[],
+  ): PhaseResult {
+    // Single flat group — team assignments persist from previous phase metadata
+    const allPlayers = state.playerIds
+      .map((id) => players.find((p) => p.id === id))
+      .filter((p): p is AgentInfo => p != null);
+
+    return {
+      groups: [allPlayers],
       metadata: {
-        classPicks: classPicks.reduce(
-          (acc, pick) => {
-            acc[pick.playerId] = pick.unitClass;
-            return acc;
-          },
-          {} as Record<string, UnitClass>,
-        ),
+        classPicks: state.classPicks,
       },
     };
-  },
-};
+  }
+}

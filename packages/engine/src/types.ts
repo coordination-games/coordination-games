@@ -316,55 +316,99 @@ export interface ToolDefinition {
 }
 
 // ---------------------------------------------------------------------------
-// LobbyPhase — pre-game pipeline stages
+// LobbyPhase — pre-game pipeline stages (request-driven)
 // ---------------------------------------------------------------------------
 
-/** A single phase in the lobby pipeline. */
+/** A single phase in the lobby pipeline (request-driven). */
 export interface LobbyPhase<TPhaseState = any> {
-  /** Unique phase identifier */
   readonly id: string;
-
-  /** Human-readable phase name */
   readonly name: string;
 
-  /** Min players needed (null = whatever it receives) */
-  readonly minPlayers?: number;
-
-  /** Max players allowed */
-  readonly maxPlayers?: number;
-
-  /** Timeout in seconds before auto-advance */
-  readonly timeout?: number;
-
-  /** MCP tools available during this phase */
+  /** Tools available during this phase (beyond always-on plugin tools). */
   readonly tools?: ToolDefinition[];
 
-  /** Run the phase */
-  run(ctx: PhaseContext): Promise<PhaseResult>;
+  /** Timeout in seconds. null = no timeout (rely on lobby-level timeout). */
+  readonly timeout?: number | null;
+
+  /**
+   * Does this phase accept new players mid-phase?
+   * true = handleJoin() will be called. false = joins rejected during this phase.
+   * Default: false.
+   */
+  readonly acceptsJoins?: boolean;
+
+  /** Create initial state for this phase. */
+  init(players: AgentInfo[], config: Record<string, any>): TPhaseState;
+
+  /**
+   * Handle a player action during this phase.
+   * Returns updated state + optional phase completion signal.
+   *
+   * Errors should be returned via the `error` field, not thrown.
+   * The LobbyDO translates `error` into an HTTP 400/409 response.
+   */
+  handleAction(
+    state: TPhaseState,
+    action: { type: string; playerId: string; payload?: any },
+    players: AgentInfo[],
+  ): PhaseActionResult<TPhaseState>;
+
+  /**
+   * Handle a player joining mid-phase.
+   * Only called if `acceptsJoins` is true.
+   */
+  handleJoin?(
+    state: TPhaseState,
+    player: AgentInfo,
+    allPlayers: AgentInfo[],
+  ): PhaseActionResult<TPhaseState>;
+
+  /**
+   * Handle timeout expiry.
+   * Must produce a PhaseResult (possibly with removed players) or null to fail the lobby.
+   */
+  handleTimeout(state: TPhaseState, players: AgentInfo[]): PhaseResult | null;
+
+  /**
+   * Build the lobby state view for a given player (or spectator if undefined).
+   * This is what gets returned in GET /state under `currentPhase.view`.
+   */
+  getView(state: TPhaseState, playerId?: string): unknown;
+
+  /**
+   * Optional: resolve team membership for relay routing.
+   * If omitted, team-scoped messages fall back to "all" scope.
+   */
+  getTeamForPlayer?(state: TPhaseState, playerId: string): string | null;
 }
 
-/** Context passed to a lobby phase's run method. */
-export interface PhaseContext {
-  players: AgentInfo[];
-  gameConfig: Record<string, any>;
-  relay: RelayAccess;
-  onTimeout(): PhaseResult;
+/** Result of handling an action within a phase. */
+export interface PhaseActionResult<TPhaseState = any> {
+  /** Updated phase state. */
+  state: TPhaseState;
+  /** If set, this phase is complete. Advance to next or start game. */
+  completed?: PhaseResult;
+  /** Relay messages to broadcast (chat, team updates, etc.). */
+  relay?: Array<{ type: string; data: unknown; scope: string; pluginId: string }>;
+  /** If set, the action failed. LobbyDO returns this as an HTTP error response. */
+  error?: { message: string; status?: number };
 }
 
-/** Relay access scoped to a lobby phase. */
-export interface RelayAccess {
-  send(playerId: string, data: unknown): void;
-  broadcast(data: unknown): void;
-  receive(playerId: string): unknown[];
-}
-
-/** Result produced by a lobby phase. */
+/** Result when a phase completes. */
 export interface PhaseResult {
-  /** Players grouped for next phase or game start */
+  /** Players grouped for next phase or game start.
+   *  For team games: each group = a team.
+   *  For FFA: single group with all players.
+   */
   groups: AgentInfo[][];
-  /** Data collected during the phase (class picks, stakes, etc.) */
+  /**
+   * Data collected during the phase.
+   * MUST include player-level assignments that createConfig() needs.
+   * E.g. TeamFormation: { teams: [{ id, members }] }
+   * E.g. ClassSelection: { classPicks: { [playerId]: 'rogue' | 'knight' | 'mage' } }
+   */
   metadata: Record<string, any>;
-  /** Players removed during this phase */
+  /** Players removed during this phase. */
   removed?: AgentInfo[];
 }
 
@@ -375,14 +419,9 @@ export interface PhaseResult {
 /** Lobby configuration declared by a game plugin. */
 export interface GameLobbyConfig {
   queueType: 'open' | 'stake-tiered' | 'invite';
-  phases: LobbyPhaseConfig[];
+  /** Phase instances. Every game must have at least one. */
+  phases: LobbyPhase[];
   matchmaking: MatchmakingConfig;
-}
-
-/** Reference to a lobby phase with its configuration. */
-export interface LobbyPhaseConfig {
-  phaseId: string;
-  config: Record<string, any>;
 }
 
 /** Matchmaking parameters. */

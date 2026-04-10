@@ -168,31 +168,24 @@ export class GameClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Team operations
+  // Generic lobby operations
   // ---------------------------------------------------------------------------
 
-  /** Invite an agent to your team by display name. */
-  async proposeTeam(name: string): Promise<any> {
+  /**
+   * Submit a lobby phase action (generic — replaces proposeTeam, acceptTeam, etc.).
+   * The server routes the action to the current phase's handler.
+   */
+  async lobbyAction(type: string, payload?: any): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/team/propose', { name });
+    return this.api.post('/api/player/lobby/action', { type, payload });
   }
 
-  /** Accept a team invite. */
-  async acceptTeam(teamId: string): Promise<any> {
+  /**
+   * Call a lobby plugin tool (e.g. chat during lobby phases).
+   */
+  async lobbyTool(pluginId: string, tool: string, args: any): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/team/accept', { teamId });
-  }
-
-  /** Leave your current team. */
-  async leaveTeam(): Promise<any> {
-    await this.ensureAuth();
-    return this.api.post('/api/player/team/leave');
-  }
-
-  /** Choose your unit class (rogue, knight, mage). */
-  async chooseClass(cls: string): Promise<any> {
-    await this.ensureAuth();
-    return this.api.post('/api/player/class', { class: cls });
+    return this.api.post('/api/player/lobby/tool', { pluginId, tool, args });
   }
 
   // ---------------------------------------------------------------------------

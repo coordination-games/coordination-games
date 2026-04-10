@@ -1,36 +1,34 @@
 /**
- * LobbyDO — Durable Object for a single lobby.
+ * LobbyDO — Generic phase-running Durable Object for lobbies.
  *
- * Manages the full lobby lifecycle for a team-based game (CtL):
- *   forming → pre_game → starting → game
- *                                 ↘ failed
+ * Zero game-specific code. Delegates all game logic to LobbyPhase instances
+ * declared by the game plugin via `plugin.lobby.phases[]`.
+ *
+ * Lifecycle: running → starting → game
+ *                              ↘ failed
  *
  * HTTP routes (sub-path, forwarded from the main Worker):
- *   POST /             — create lobby { lobbyId, gameType, teamSize, noTimeout? }
- *   GET  /state        — lobby state (?playerId=X for player-specific view)
- *   POST /join         — { playerId, handle, elo? }
- *   POST /chat         — { playerId, message, team? }
- *   POST /team/propose — { fromId, toId }
- *   POST /team/accept  — { agentId, teamId }
- *   POST /team/leave   — { agentId }
- *   POST /class        — { agentId, unitClass }
- *   POST /no-timeout   — disable the forming timer
- *   DELETE /           — disband lobby
+ *   POST /           — create lobby { lobbyId, gameType, noTimeout? }
+ *   GET  /state      — lobby state (?playerId=X for player-specific view)
+ *   POST /join       — { playerId, handle, elo? }
+ *   POST /action     — generic phase action { playerId, type, payload }
+ *   POST /tool       — plugin tool call { playerId, pluginId, tool, args }
+ *   POST /no-timeout — disable the phase timer
+ *   DELETE /         — disband lobby
  *
  * WebSocket:
- *   WS / — spectator WS (no auth, receives lobby state updates)
- *
- * On game creation the DO:
- *   1. Creates a GameRoomDO via env.GAME_ROOM
- *   2. Sends game_start action to the GameRoomDO
- *   3. Writes game_sessions rows to D1
- *   4. Deletes lobby_sessions rows from D1
- *   5. Updates the lobbies row in D1
+ *   WS / — spectator (no auth, receives lobby state updates)
  */
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
 import { getGame } from '@coordination-games/engine';
+import type {
+  LobbyPhase,
+  PhaseActionResult,
+  PhaseResult,
+  AgentInfo,
+} from '@coordination-games/engine';
 
 // Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
@@ -41,64 +39,39 @@ import '@coordination-games/game-oathbreaker';
 // ---------------------------------------------------------------------------
 
 const TAG_SPECTATOR = 'spectator';
-const FORMING_TIMEOUT_MS  = 240_000;  // 4 min
-const PREGAME_TIMEOUT_MS  = 300_000;  // 5 min
 
 // ---------------------------------------------------------------------------
 // Storage types
 // ---------------------------------------------------------------------------
 
-type LobbyPhase = 'forming' | 'pre_game' | 'starting' | 'game' | 'failed';
-type AlarmType  = 'forming_timeout' | 'pregame_timeout';
-
 interface LobbyMeta {
   lobbyId: string;
   gameType: string;
-  teamSize: number;
-  /** Minimum players required to start (from plugin.lobby.matchmaking.minPlayers). */
-  minPlayersToStart: number;
-  /** True if the plugin declares pre-game phases (team formation, class selection, etc.).
-   *  False = open queue: game starts as soon as minPlayersToStart join. */
-  hasPhases: boolean;
-  phase: LobbyPhase;
-  createdAt: string;
-  formingDeadlineMs: number | null;
+  currentPhaseIndex: number;
+  accumulatedMetadata: Record<string, any>;
+  phase: 'running' | 'starting' | 'game' | 'failed';
+  deadlineMs: number | null;
   gameId: string | null;
   error: string | null;
   noTimeout: boolean;
+  createdAt: number;
 }
 
 interface AgentEntry {
   id: string;
   handle: string;
   elo: number;
+  joinedAt: number;
 }
 
-interface TeamEntry {
-  id: string;
-  members: string[];
-  invites: string[];
-}
-
-interface ChatMessage {
-  from: string;
-  message: string;
+interface RelayMessage {
+  index: number;
+  type: string;
+  data: unknown;
+  scope: string;
+  pluginId: string;
+  sender: string;
   timestamp: number;
-}
-
-interface PreGamePlayer {
-  id: string;
-  team: 'A' | 'B';
-  unitClass: string | null;
-  ready: boolean;
-}
-
-interface PreGameState {
-  players: PreGamePlayer[];
-  chatA: ChatMessage[];
-  chatB: ChatMessage[];
-  startedAt: number;
-  deadlineMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,24 +79,20 @@ interface PreGameState {
 // ---------------------------------------------------------------------------
 
 export class LobbyDO extends DurableObject<Env> {
-  private _loaded       = false;
+  private _loaded = false;
   private _meta: LobbyMeta | null = null;
-  private _agents: AgentEntry[]   = [];
-  private _agentTeam: Record<string, string> = {};  // agentId → teamId
-  private _teams: TeamEntry[]     = [];
-  private _teamCounter            = 0;
-  private _chat: ChatMessage[]    = [];
-  private _preGame: PreGameState | null = null;
-  private _alarmType: AlarmType | null = null;
+  private _agents: AgentEntry[] = [];
+  private _phaseState: any = null;
+  private _relay: RelayMessage[] = [];
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
   // ─────────────────────────────────────────────────────────────────────────
 
   override async fetch(request: Request): Promise<Response> {
-    const url    = new URL(request.url);
+    const url = new URL(request.url);
     const method = request.method;
-    const path   = url.pathname.replace(/\/$/, '') || '/';
+    const path = url.pathname.replace(/\/$/, '') || '/';
 
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       await this.ensureLoaded();
@@ -135,47 +104,41 @@ export class LobbyDO extends DurableObject<Env> {
 
     await this.ensureLoaded();
 
-    if (method === 'GET'    && path === '/state')        return this.handleGetState(url);
-    if (method === 'POST'   && path === '/join')         return this.handleJoin(request);
-    if (method === 'POST'   && path === '/chat')         return this.handleChat(request);
-    if (method === 'POST'   && path === '/team/propose') return this.handleProposeTeam(request);
-    if (method === 'POST'   && path === '/team/accept')  return this.handleAcceptTeam(request);
-    if (method === 'POST'   && path === '/team/leave')   return this.handleLeaveTeam(request);
-    if (method === 'POST'   && path === '/class')        return this.handleChooseClass(request);
-    if (method === 'POST'   && path === '/no-timeout')   return this.handleNoTimeout();
-    if (method === 'DELETE' && path === '/')             return this.handleDisband();
+    if (method === 'GET' && path === '/state') return this.handleGetState(url);
+    if (method === 'POST' && path === '/join') return this.handleJoin(request);
+    if (method === 'POST' && path === '/action') return this.handleAction(request);
+    if (method === 'POST' && path === '/tool') return this.handleTool(request);
+    if (method === 'POST' && path === '/no-timeout') return this.handleNoTimeout();
+    if (method === 'DELETE' && path === '/') return this.handleDisband();
 
     return new Response('Not found', { status: 404 });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // alarm() — forming/pregame timeout
+  // alarm() — phase timeout
   // ─────────────────────────────────────────────────────────────────────────
 
   override async alarm(): Promise<void> {
     await this.ensureLoaded();
-    if (!this._meta) return;
+    if (!this._meta || this._meta.phase !== 'running') return;
 
-    if (this._alarmType === 'forming_timeout') {
-      if (this._meta.phase !== 'forming') return;
-      if (!this._meta.hasPhases) {
-        // Open-queue game: fail if not enough players joined in time
-        this._meta.phase = 'failed';
-        this._meta.error = `Lobby timed out — need ${this._meta.minPlayersToStart} players, have ${this._agents.length}`;
-        this._alarmType  = null;
-        await this.saveState();
-        await this.updateLobbyPhaseInD1();
-        this.broadcastUpdate();
-        console.log(`[LobbyDO] ${this._meta.lobbyId} timed out (${this._agents.length}/${this._meta.minPlayersToStart} players)`);
-        return;
+    const phase = this.getCurrentPhase();
+    if (!phase) {
+      await this.failLobby('No current phase for timeout');
+      return;
+    }
+
+    console.log(`[LobbyDO] Phase "${phase.id}" timeout — lobby ${this._meta.lobbyId}`);
+
+    try {
+      const result = phase.handleTimeout(this._phaseState, this.agentInfos());
+      if (result) {
+        await this.advancePhase(result);
+      } else {
+        await this.failLobby('Lobby timed out');
       }
-      // Phased lobby (e.g. CtL): auto-merge and move to pre-game
-      console.log(`[LobbyDO] Forming timeout — auto-merging for ${this._meta.lobbyId}`);
-      await this.transitionToPreGame();
-    } else if (this._alarmType === 'pregame_timeout') {
-      if (this._meta.phase !== 'pre_game') return;
-      console.log(`[LobbyDO] Pre-game timeout — creating game for ${this._meta.lobbyId}`);
-      await this.doCreateGame();
+    } catch (err: any) {
+      await this.failLobby(`Phase timeout error: ${err.message}`);
     }
   }
 
@@ -183,13 +146,9 @@ export class LobbyDO extends DurableObject<Env> {
   // WS lifecycle (hibernatable)
   // ─────────────────────────────────────────────────────────────────────────
 
-  async webSocketClose(_ws: WebSocket): Promise<void> {
-    // CF removes closed sockets from getWebSockets() automatically
-  }
+  async webSocketClose(_ws: WebSocket): Promise<void> {}
 
-  async webSocketMessage(_ws: WebSocket, _msg: string | ArrayBuffer): Promise<void> {
-    // Spectator WS is receive-only
-  }
+  async webSocketMessage(_ws: WebSocket, _msg: string | ArrayBuffer): Promise<void> {}
 
   // ─────────────────────────────────────────────────────────────────────────
   // Route handlers
@@ -198,43 +157,65 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleCreate(request: Request): Promise<Response> {
     if (this._meta) return Response.json({ error: 'Lobby already created' }, { status: 409 });
 
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+    const body = await this.parseJson(request);
+    if (body instanceof Response) return body;
 
-    const { lobbyId, gameType, teamSize, noTimeout } = body ?? {};
-    if (!lobbyId || !gameType || typeof teamSize !== 'number') {
-      return Response.json({ error: 'lobbyId, gameType, and teamSize are required' }, { status: 400 });
+    const { lobbyId, gameType, noTimeout } = body;
+    if (!lobbyId || !gameType) {
+      return Response.json({ error: 'lobbyId and gameType are required' }, { status: 400 });
     }
 
     const plugin = getGame(gameType);
     if (!plugin) {
       return Response.json({ error: `Unknown game type: ${gameType}` }, { status: 400 });
     }
-    const matchmaking = plugin.lobby?.matchmaking;
-    const hasPhases   = (plugin.lobby?.phases?.length ?? 0) > 0;
-    // minPlayersToStart: use the plugin's declared minimum, or fall back to teamSize*2 for team games
-    const minPlayersToStart = matchmaking?.minPlayers ?? (hasPhases ? teamSize * 2 : teamSize);
 
-    const deadlineMs = noTimeout ? null : Date.now() + FORMING_TIMEOUT_MS;
+    const lobbyConfig = plugin.lobby;
+    if (!lobbyConfig || !lobbyConfig.phases.length) {
+      return Response.json({ error: `Game "${gameType}" has no lobby phases configured` }, { status: 400 });
+    }
+
+    const phases = lobbyConfig.phases;
+    const firstPhase = phases[0];
+
+    // Initialize first phase with empty player list
+    let phaseState: any;
+    try {
+      phaseState = firstPhase.init([], {});
+    } catch (err: any) {
+      return Response.json({ error: `Phase init failed: ${err.message}` }, { status: 500 });
+    }
+
+    const now = Date.now();
+    const deadlineMs = noTimeout
+      ? null
+      : firstPhase.timeout != null
+        ? now + firstPhase.timeout * 1000
+        : null;
+
     this._meta = {
-      lobbyId, gameType, teamSize,
-      minPlayersToStart,
-      hasPhases,
-      phase: 'forming',
-      createdAt: new Date().toISOString(),
-      formingDeadlineMs: deadlineMs,
+      lobbyId,
+      gameType,
+      currentPhaseIndex: 0,
+      accumulatedMetadata: {},
+      phase: 'running',
+      deadlineMs,
       gameId: null,
       error: null,
       noTimeout: !!noTimeout,
+      createdAt: now,
     };
-    this._alarmType = noTimeout ? null : 'forming_timeout';
+    this._agents = [];
+    this._phaseState = phaseState;
+    this._relay = [];
 
     await this.saveState();
-    if (!noTimeout) await this.ctx.storage.setAlarm(deadlineMs!);
+    if (deadlineMs && !noTimeout) {
+      await this.ctx.storage.setAlarm(deadlineMs);
+    }
 
-    console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize})`);
-    return Response.json({ ok: true, lobbyId, gameType, teamSize });
+    console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId}`);
+    return Response.json({ ok: true, lobbyId, gameType });
   }
 
   private async handleGetState(url: URL): Promise<Response> {
@@ -245,189 +226,129 @@ export class LobbyDO extends DurableObject<Env> {
 
   private async handleJoin(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'forming') {
+    if (this._meta.phase !== 'running') {
       return Response.json({ error: `Cannot join lobby in phase: ${this._meta.phase}` }, { status: 409 });
     }
 
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+    const body = await this.parseJson(request);
+    if (body instanceof Response) return body;
 
-    const { playerId, handle, elo } = body ?? {};
+    const { playerId, handle, elo } = body;
     if (!playerId || !handle) {
       return Response.json({ error: 'playerId and handle are required' }, { status: 400 });
     }
 
     // Idempotent — don't add twice
-    if (!this._agents.find(a => a.id === playerId)) {
-      this._agents.push({ id: playerId, handle, elo: elo ?? 1000 });
-      await this.saveState();
-      console.log(`[LobbyDO] ${handle} joined lobby ${this._meta.lobbyId}`);
+    if (this._agents.find(a => a.id === playerId)) {
+      return Response.json({ ok: true, ...this.buildState(playerId) });
+    }
 
-      // Open-queue games (no pre-game phases) auto-start when minPlayersToStart is reached
-      if (!this._meta.hasPhases && this._agents.length >= this._meta.minPlayersToStart) {
-        await this.doCreateGame();
-        return Response.json({ ok: true, phase: this._meta.phase, ...this.buildState(playerId) });
+    const agent: AgentEntry = { id: playerId, handle, elo: elo ?? 1000, joinedAt: Date.now() };
+    this._agents.push(agent);
+
+    const phase = this.getCurrentPhase();
+    if (!phase) {
+      await this.failLobby('No current phase');
+      return Response.json({ error: 'Lobby failed: no current phase' }, { status: 500 });
+    }
+
+    if (phase.acceptsJoins && phase.handleJoin) {
+      const agentInfo: AgentInfo = { id: playerId, handle };
+      try {
+        const result = phase.handleJoin(this._phaseState, agentInfo, this.agentInfos());
+        await this.processActionResult(result);
+      } catch (err: any) {
+        await this.failLobby(`Phase handleJoin error: ${err.message}`);
+        return Response.json({ error: 'Lobby failed during join' }, { status: 500 });
       }
-
-      this.broadcastUpdate();
     }
 
-    return Response.json({ ok: true, phase: this._meta.phase, ...this.buildState(playerId) });
+    await this.saveState();
+    this.broadcastUpdate();
+
+    console.log(`[LobbyDO] ${handle} joined lobby ${this._meta.lobbyId}`);
+    return Response.json({ ok: true, ...this.buildState(playerId) });
   }
 
-  private async handleChat(request: Request): Promise<Response> {
+  private async handleAction(request: Request): Promise<Response> {
+    if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
+    if (this._meta.phase !== 'running') {
+      return Response.json({ error: `Cannot perform actions in phase: ${this._meta.phase}` }, { status: 409 });
+    }
+
+    const body = await this.parseJson(request);
+    if (body instanceof Response) return body;
+
+    const { playerId, type, payload } = body;
+    if (!playerId || !type) {
+      return Response.json({ error: 'playerId and type are required' }, { status: 400 });
+    }
+
+    const phase = this.getCurrentPhase();
+    if (!phase) {
+      return Response.json({ error: 'No current phase' }, { status: 500 });
+    }
+
+    let result: PhaseActionResult;
+    try {
+      result = phase.handleAction(
+        this._phaseState,
+        { type, playerId, payload },
+        this.agentInfos(),
+      );
+    } catch (err: any) {
+      return Response.json({ error: `Phase action error: ${err.message}` }, { status: 500 });
+    }
+
+    if (result.error) {
+      return Response.json(
+        { error: result.error.message },
+        { status: result.error.status ?? 400 },
+      );
+    }
+
+    await this.processActionResult(result);
+    await this.saveState();
+    this.broadcastUpdate();
+
+    return Response.json({ ok: true, ...this.buildState(playerId) });
+  }
+
+  private async handleTool(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
 
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
+    const body = await this.parseJson(request);
+    if (body instanceof Response) return body;
 
-    const { playerId, message, team } = body ?? {};
-    if (!playerId || !message) {
-      return Response.json({ error: 'playerId and message are required' }, { status: 400 });
+    const { playerId, relay } = body;
+    if (!playerId || !relay?.type || !relay?.pluginId) {
+      return Response.json(
+        { error: 'Body must be { playerId, relay: { type, data, scope, pluginId } }' },
+        { status: 400 },
+      );
     }
 
-    const msg: ChatMessage = { from: playerId, message, timestamp: Date.now() };
-
-    if (this._meta.phase === 'pre_game' && this._preGame && team) {
-      // Team-scoped chat during pre_game
-      const player = this._preGame.players.find(p => p.id === playerId);
-      if (!player) return Response.json({ error: 'Player not in pre-game' }, { status: 403 });
-      if (player.team === 'A') this._preGame.chatA.push(msg);
-      else                      this._preGame.chatB.push(msg);
-    } else {
-      this._chat.push(msg);
-    }
+    // Store relay message with team routing
+    const msg: RelayMessage = {
+      index: this._relay.length,
+      type: relay.type,
+      data: relay.data,
+      scope: relay.scope ?? 'all',
+      pluginId: relay.pluginId,
+      sender: playerId,
+      timestamp: Date.now(),
+    };
+    this._relay.push(msg);
 
     await this.saveState();
     this.broadcastUpdate();
     return Response.json({ ok: true });
-  }
-
-  private async handleProposeTeam(request: Request): Promise<Response> {
-    if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'forming') {
-      return Response.json({ error: 'Team proposals only during forming phase' }, { status: 409 });
-    }
-
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
-
-    const { fromId, toId } = body ?? {};
-    if (!fromId || !toId) return Response.json({ error: 'fromId and toId are required' }, { status: 400 });
-
-    // Resolve toId: could be agentId or handle
-    let resolvedToId = toId;
-    if (!this._agents.find(a => a.id === toId)) {
-      const byHandle = this._agents.find(a => a.handle === toId);
-      if (byHandle) resolvedToId = byHandle.id;
-      else return Response.json({ error: `Agent "${toId}" not found in lobby` }, { status: 404 });
-    }
-
-    const result = this.proposeTeamLogic(fromId, resolvedToId);
-    if (!result.success) return Response.json({ error: result.error }, { status: 400 });
-
-    await this.saveState();
-    await this.checkAndTransitionIfReady();
-    this.broadcastUpdate();
-    return Response.json({ ok: true, teamId: result.teamId, ...this.buildState(fromId) });
-  }
-
-  private async handleAcceptTeam(request: Request): Promise<Response> {
-    if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'forming') {
-      return Response.json({ error: 'Team acceptance only during forming phase' }, { status: 409 });
-    }
-
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
-
-    const { agentId, teamId } = body ?? {};
-    if (!agentId || !teamId) return Response.json({ error: 'agentId and teamId are required' }, { status: 400 });
-
-    const team = this._teams.find(t => t.id === teamId);
-    if (!team) return Response.json({ error: 'Team not found' }, { status: 404 });
-    if (!team.invites.includes(agentId)) return Response.json({ error: 'Not invited to this team' }, { status: 403 });
-    if (team.members.length >= this._meta.teamSize) return Response.json({ error: 'Team is full' }, { status: 409 });
-
-    team.invites = team.invites.filter(id => id !== agentId);
-    team.members.push(agentId);
-    this._agentTeam[agentId] = teamId;
-
-    await this.saveState();
-    await this.checkAndTransitionIfReady();
-    this.broadcastUpdate();
-    return Response.json({ ok: true, ...this.buildState(agentId) });
-  }
-
-  private async handleLeaveTeam(request: Request): Promise<Response> {
-    if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'forming') {
-      return Response.json({ error: 'Can only leave teams during forming phase' }, { status: 409 });
-    }
-
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
-
-    const { agentId } = body ?? {};
-    if (!agentId) return Response.json({ error: 'agentId is required' }, { status: 400 });
-
-    const teamId = this._agentTeam[agentId];
-    if (!teamId) return Response.json({ error: 'Not on a team' }, { status: 400 });
-
-    const team = this._teams.find(t => t.id === teamId);
-    if (team) {
-      team.members = team.members.filter(id => id !== agentId);
-      if (team.members.length === 0) this._teams = this._teams.filter(t => t.id !== teamId);
-    }
-    delete this._agentTeam[agentId];
-
-    await this.saveState();
-    this.broadcastUpdate();
-    return Response.json({ ok: true });
-  }
-
-  private async handleChooseClass(request: Request): Promise<Response> {
-    if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'pre_game' || !this._preGame) {
-      return Response.json({ error: 'Class selection only during pre-game phase' }, { status: 409 });
-    }
-
-    let body: any;
-    try { body = await request.json(); }
-    catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
-
-    const { agentId, unitClass } = body ?? {};
-    if (!agentId || !unitClass) return Response.json({ error: 'agentId and unitClass are required' }, { status: 400 });
-
-    const player = this._preGame.players.find(p => p.id === agentId);
-    if (!player) return Response.json({ error: 'Player not in pre-game' }, { status: 404 });
-
-    player.unitClass = unitClass;
-    player.ready = true;
-
-    await this.saveState();
-
-    // All players chosen → create game immediately (don't wait for alarm)
-    const allChosen = this._preGame.players.every(p => p.unitClass !== null);
-    if (allChosen) {
-      await this.doCreateGame();
-    } else {
-      this.broadcastUpdate();
-    }
-
-    return Response.json({ ok: true, unitClass });
   }
 
   private async handleNoTimeout(): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
     this._meta.noTimeout = true;
-    this._meta.formingDeadlineMs = null;
-    this._alarmType = null;
+    this._meta.deadlineMs = null;
     try { await this.ctx.storage.deleteAlarm(); } catch {}
     await this.saveState();
     return Response.json({ ok: true });
@@ -437,7 +358,6 @@ export class LobbyDO extends DurableObject<Env> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
     this._meta.phase = 'failed';
     this._meta.error = 'Disbanded';
-    this._alarmType = null;
     try { await this.ctx.storage.deleteAlarm(); } catch {}
     await this.saveState();
     await this.updateLobbyPhaseInD1();
@@ -459,172 +379,121 @@ export class LobbyDO extends DurableObject<Env> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Team formation logic
+  // Phase advancement
   // ─────────────────────────────────────────────────────────────────────────
 
-  private proposeTeamLogic(
-    fromId: string,
-    toId: string,
-  ): { success: boolean; teamId?: string; error?: string } {
-    const fromTeamId = this._agentTeam[fromId];
-    const toTeamId   = this._agentTeam[toId];
-    const teamSize   = this._meta!.teamSize;
+  private async processActionResult(result: PhaseActionResult): Promise<void> {
+    this._phaseState = result.state;
 
-    if (fromTeamId && toTeamId) {
-      if (fromTeamId === toTeamId) return { success: false, error: 'Already on the same team' };
-      return { success: false, error: 'Both agents already on different teams — use leave-team first' };
-    }
-
-    if (toTeamId && !fromTeamId) {
-      const team = this._teams.find(t => t.id === toTeamId)!;
-      if (team.members.length >= teamSize) return { success: false, error: 'Team is full' };
-      if (!team.invites.includes(fromId)) team.invites.push(fromId);
-      return { success: true, teamId: toTeamId };
-    }
-
-    if (fromTeamId && !toTeamId) {
-      const team = this._teams.find(t => t.id === fromTeamId)!;
-      if (team.members.length >= teamSize) return { success: false, error: 'Team is full' };
-      if (!team.invites.includes(toId)) team.invites.push(toId);
-      return { success: true, teamId: fromTeamId };
-    }
-
-    // Neither on a team: create a new team with fromId, invite toId
-    const teamId = `team_${++this._teamCounter}`;
-    this._teams.push({ id: teamId, members: [fromId], invites: [toId] });
-    this._agentTeam[fromId] = teamId;
-    return { success: true, teamId };
-  }
-
-  private getFullTeams(): TeamEntry[] {
-    return this._teams.filter(t => t.members.length >= this._meta!.teamSize);
-  }
-
-  private autoMergeTeams(): void {
-    const teamSize   = this._meta!.teamSize;
-    const freeAgents = this._agents
-      .filter(a => !this._agentTeam[a.id])
-      .map(a => a.id);
-
-    // Fill incomplete teams with free agents
-    let freeIdx = 0;
-    for (const team of this._teams) {
-      while (team.members.length < teamSize && freeIdx < freeAgents.length) {
-        const agentId = freeAgents[freeIdx++];
-        team.members.push(agentId);
-        this._agentTeam[agentId] = team.id;
+    // Buffer any relay messages from the phase
+    if (result.relay) {
+      for (const r of result.relay) {
+        this._relay.push({
+          index: this._relay.length,
+          type: r.type,
+          data: r.data,
+          scope: r.scope,
+          pluginId: r.pluginId,
+          sender: 'system',
+          timestamp: Date.now(),
+        });
       }
     }
 
-    // Form new full teams from remaining free agents
-    while (freeIdx + teamSize <= freeAgents.length) {
-      const teamId  = `team_${++this._teamCounter}`;
-      const members = freeAgents.slice(freeIdx, freeIdx + teamSize);
-      freeIdx += teamSize;
-      this._teams.push({ id: teamId, members, invites: [] });
-      for (const m of members) this._agentTeam[m] = teamId;
+    if (result.completed) {
+      await this.advancePhase(result.completed);
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Phase transitions
-  // ─────────────────────────────────────────────────────────────────────────
-
-  private async checkAndTransitionIfReady(): Promise<void> {
-    if (!this._meta || this._meta.phase !== 'forming') return;
-    const full = this.getFullTeams();
-    if (full.length >= 2) await this.transitionToPreGame(full.slice(0, 2));
-  }
-
-  private async transitionToPreGame(fullTeams?: TeamEntry[]): Promise<void> {
+  private async advancePhase(phaseResult: PhaseResult): Promise<void> {
     if (!this._meta) return;
 
-    // On timeout: auto-merge first
-    if (!fullTeams) {
-      this.autoMergeTeams();
-      fullTeams = this.getFullTeams();
+    // Merge metadata from completed phase
+    Object.assign(this._meta.accumulatedMetadata, phaseResult.metadata);
+
+    // Remove ejected agents
+    if (phaseResult.removed?.length) {
+      const removedIds = new Set(phaseResult.removed.map(a => a.id));
+      this._agents = this._agents.filter(a => !removedIds.has(a.id));
     }
 
-    if (fullTeams.length < 2) {
-      this._meta.phase = 'failed';
-      this._meta.error = 'Not enough agents to form 2 teams';
-      this._alarmType  = null;
-      try { await this.ctx.storage.deleteAlarm(); } catch {}
-      await this.saveState();
-      await this.updateLobbyPhaseInD1();
-      this.broadcastUpdate();
-      console.log(`[LobbyDO] ${this._meta.lobbyId} failed: not enough agents`);
+    // Cancel current alarm
+    try { await this.ctx.storage.deleteAlarm(); } catch {}
+
+    // Check if there are more phases
+    const plugin = getGame(this._meta.gameType);
+    const phases = plugin?.lobby?.phases;
+    if (!phases) {
+      await this.failLobby('Game plugin has no lobby phases');
       return;
     }
 
-    const teamA = fullTeams[0].members;
-    const teamB = fullTeams[1].members;
-    const deadlineMs = Date.now() + PREGAME_TIMEOUT_MS;
+    const nextIndex = this._meta.currentPhaseIndex + 1;
 
-    this._preGame = {
-      players: [
-        ...teamA.map(id => ({ id, team: 'A' as const, unitClass: null, ready: false })),
-        ...teamB.map(id => ({ id, team: 'B' as const, unitClass: null, ready: false })),
-      ],
-      chatA: [],
-      chatB: [],
-      startedAt: Date.now(),
-      deadlineMs,
-    };
+    if (nextIndex < phases.length) {
+      // Init next phase
+      this._meta.currentPhaseIndex = nextIndex;
+      const nextPhase = phases[nextIndex];
 
-    this._meta.phase            = 'pre_game';
-    this._meta.formingDeadlineMs = null;
-    this._alarmType              = 'pregame_timeout';
+      // Build AgentInfo list from current agents for the new phase
+      const players = this.agentInfos();
 
-    try { await this.ctx.storage.deleteAlarm(); } catch {}
-    if (!this._meta.noTimeout) await this.ctx.storage.setAlarm(deadlineMs);
+      try {
+        this._phaseState = nextPhase.init(players, this._meta.accumulatedMetadata);
+      } catch (err: any) {
+        await this.failLobby(`Phase init error: ${err.message}`);
+        return;
+      }
 
-    await this.saveState();
-    await this.updateLobbyPhaseInD1();
-    this.broadcastUpdate();
-    console.log(`[LobbyDO] ${this._meta.lobbyId} → pre_game (${teamA.length}v${teamB.length})`);
+      // Set alarm for next phase timeout
+      if (!this._meta.noTimeout && nextPhase.timeout != null) {
+        const deadlineMs = Date.now() + nextPhase.timeout * 1000;
+        this._meta.deadlineMs = deadlineMs;
+        await this.ctx.storage.setAlarm(deadlineMs);
+      } else {
+        this._meta.deadlineMs = null;
+      }
+
+      await this.saveState();
+      await this.updateLobbyPhaseInD1();
+      this.broadcastUpdate();
+
+      console.log(`[LobbyDO] ${this._meta.lobbyId} → phase "${nextPhase.id}"`);
+    } else {
+      // All phases complete — start game
+      await this.doCreateGame();
+    }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Game creation
+  // ─────────────────────────────────────────────────────────────────────────
 
   private async doCreateGame(): Promise<void> {
     if (!this._meta) return;
 
     this._meta.phase = 'starting';
-    this._alarmType  = null;
     try { await this.ctx.storage.deleteAlarm(); } catch {}
     await this.saveState();
 
     const plugin = getGame(this._meta.gameType);
     if (!plugin?.createConfig) {
-      this._meta.phase = 'failed';
-      this._meta.error = `Game plugin "${this._meta.gameType}" does not implement createConfig`;
-      await this.saveState();
-      await this.updateLobbyPhaseInD1();
-      this.broadcastUpdate();
+      await this.failLobby(`Game plugin "${this._meta.gameType}" does not implement createConfig`);
       return;
     }
 
-    // Build player list. For phased lobbies (CtL), team/role come from pre-game state.
-    // For open-queue games, just pass the agents — the plugin assigns teams/roles.
-    const playerEntries: { id: string; handle: string; team?: string; role?: string }[] =
-      this._meta.hasPhases && this._preGame
-        ? this._preGame.players.map(p => ({
-            id:     p.id,
-            handle: this._agents.find(a => a.id === p.id)?.handle ?? p.id,
-            team:   p.team,
-            role:   p.unitClass ?? undefined,
-          }))
-        : this._agents.map(a => ({ id: a.id, handle: a.handle }));
+    // Pass plain player entries + all accumulated phase metadata to the plugin.
+    // The plugin's createConfig knows what metadata keys its own phases produce
+    // and enriches players accordingly.
+    const metadata = this._meta.accumulatedMetadata;
+    const playerEntries = this._agents.map(a => ({ id: a.id, handle: a.handle }));
 
     const seed = `lobby_${this._meta.lobbyId}_${Date.now()}`;
     let setup: { config: unknown; players: { id: string; team: string }[] };
     try {
-      setup = plugin.createConfig(playerEntries, seed);
+      setup = plugin.createConfig(playerEntries, seed, metadata);
     } catch (err: any) {
-      this._meta.phase = 'failed';
-      this._meta.error = `createConfig failed: ${err.message}`;
-      await this.saveState();
-      await this.updateLobbyPhaseInD1();
-      this.broadcastUpdate();
+      await this.failLobby(`createConfig failed: ${err.message}`);
       return;
     }
 
@@ -634,7 +503,7 @@ export class LobbyDO extends DurableObject<Env> {
     const teamMap: Record<string, string> = {};
     for (const p of setup.players) teamMap[p.id] = p.team;
 
-    const gameId    = crypto.randomUUID();
+    const gameId = crypto.randomUUID();
     const playerIds = setup.players.map(p => p.id);
 
     try {
@@ -645,7 +514,7 @@ export class LobbyDO extends DurableObject<Env> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           gameType: this._meta.gameType,
-          config:   setup.config,
+          config: setup.config,
           playerIds,
           handleMap,
           teamMap,
@@ -666,31 +535,37 @@ export class LobbyDO extends DurableObject<Env> {
         console.warn(`[LobbyDO] game_start action failed for game ${gameId}`);
       }
 
-      // 3. Write game_sessions rows in D1
-      const now  = new Date().toISOString();
-      const stmt = this.env.DB.prepare(
-        'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)',
-      );
-      await this.env.DB.batch(playerIds.map(pid => stmt.bind(pid, gameId, this._meta!.gameType, now)));
+      // 3. Write game_sessions + games rows in D1
+      const now = new Date().toISOString();
+      const stmts = [
+        this.env.DB.prepare(
+          'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)',
+        ).bind(gameId, this._meta.gameType, now),
+        ...playerIds.map(pid =>
+          this.env.DB.prepare(
+            'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)',
+          ).bind(pid, gameId, this._meta!.gameType, now),
+        ),
+      ];
 
       // 4. Remove lobby_sessions rows
-      const delStmt = this.env.DB.prepare('DELETE FROM lobby_sessions WHERE player_id = ?');
-      await this.env.DB.batch(playerIds.map(pid => delStmt.bind(pid)));
+      for (const pid of playerIds) {
+        stmts.push(
+          this.env.DB.prepare('DELETE FROM lobby_sessions WHERE player_id = ?').bind(pid),
+        );
+      }
+      await this.env.DB.batch(stmts);
 
-      // 5. Finalise lobby metadata
+      // 5. Finalize lobby metadata
       this._meta.gameId = gameId;
-      this._meta.phase  = 'game';
+      this._meta.phase = 'game';
       await this.saveState();
       await this.updateLobbyPhaseInD1();
       this.broadcastUpdate();
       console.log(`[LobbyDO] ${this._meta.gameType} game ${gameId} created from lobby ${this._meta.lobbyId}`);
     } catch (err: any) {
       console.error(`[LobbyDO] Game creation error:`, err);
-      this._meta.phase = 'failed';
-      this._meta.error = err.message ?? String(err);
-      await this.saveState();
-      await this.updateLobbyPhaseInD1();
-      this.broadcastUpdate();
+      await this.failLobby(err.message ?? String(err));
     }
   }
 
@@ -701,63 +576,56 @@ export class LobbyDO extends DurableObject<Env> {
   private buildState(playerId?: string): object {
     if (!this._meta) return { error: 'Lobby not found' };
 
-    const agents = this._agents.map(a => ({
-      id: a.id,
-      handle: a.handle,
-      elo: a.elo,
-      team: this._agentTeam[a.id] ?? null,
-      pendingInvites: this._teams
-        .filter(t => t.invites.includes(a.id))
-        .map(t => t.id),
-    }));
+    const plugin = getGame(this._meta.gameType);
+    const phases = plugin?.lobby?.phases ?? [];
+    const currentPhase = phases[this._meta.currentPhaseIndex];
 
-    const teams: Record<string, { members: string[]; invites: string[] }> = {};
-    for (const t of this._teams) {
-      teams[t.id] = { members: [...t.members], invites: [...t.invites] };
-    }
+    // Filter relay messages by scope for the requesting player
+    const filteredRelay = playerId
+      ? this._relay.filter(msg => this.isRelayVisible(msg, playerId, currentPhase))
+      : this._relay;
 
-    const timeRemainingSeconds = this._meta.noTimeout
-      ? -1
-      : this._meta.formingDeadlineMs
-        ? Math.max(0, Math.round((this._meta.formingDeadlineMs - Date.now()) / 1000))
-        : 0;
-
-    const state: any = {
+    const state: Record<string, any> = {
       lobbyId: this._meta.lobbyId,
       gameType: this._meta.gameType,
+      agents: this._agents.map(a => ({
+        id: a.id,
+        handle: a.handle,
+        elo: a.elo,
+      })),
+      currentPhase: currentPhase
+        ? {
+            id: currentPhase.id,
+            name: currentPhase.name,
+            view: currentPhase.getView(this._phaseState, playerId),
+            tools: currentPhase.tools ?? [],
+          }
+        : null,
+      relay: filteredRelay,
       phase: this._meta.phase,
-      teamSize: this._meta.teamSize,
-      agents,
-      teams,
-      chat: this._chat,
-      timeRemainingSeconds,
+      deadlineMs: this._meta.deadlineMs,
       gameId: this._meta.gameId,
       error: this._meta.error,
       noTimeout: this._meta.noTimeout,
     };
 
-    if (this._meta.phase === 'pre_game' && this._preGame) {
-      const preGameRemaining = this._meta.noTimeout
-        ? -1
-        : Math.max(0, Math.round((this._preGame.deadlineMs - Date.now()) / 1000));
+    return state;
+  }
 
-      state.preGame = {
-        players: this._preGame.players,
-        timeRemainingSeconds: preGameRemaining,
-        chatA: this._preGame.chatA,
-        chatB: this._preGame.chatB,
-      };
+  private isRelayVisible(msg: RelayMessage, playerId: string, currentPhase?: LobbyPhase): boolean {
+    if (msg.scope === 'all') return true;
+    if (msg.sender === playerId) return true;
 
-      if (playerId) {
-        const player = this._preGame.players.find(p => p.id === playerId);
-        if (player) {
-          state.myTeam   = player.team;
-          state.teamChat = player.team === 'A' ? this._preGame.chatA : this._preGame.chatB;
-        }
-      }
+    if (msg.scope === 'team' && currentPhase?.getTeamForPlayer) {
+      const senderTeam = currentPhase.getTeamForPlayer(this._phaseState, msg.sender);
+      const playerTeam = currentPhase.getTeamForPlayer(this._phaseState, playerId);
+      return senderTeam != null && senderTeam === playerTeam;
     }
 
-    return state;
+    // If phase doesn't implement getTeamForPlayer, team-scoped falls back to all
+    if (msg.scope === 'team') return true;
+
+    return false;
   }
 
   private broadcastUpdate(): void {
@@ -765,6 +633,41 @@ export class LobbyDO extends DurableObject<Env> {
     const msg = JSON.stringify(this.buildState());
     for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
       try { ws.send(msg); } catch {}
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private getCurrentPhase(): LobbyPhase | null {
+    if (!this._meta) return null;
+    const plugin = getGame(this._meta.gameType);
+    const phases = plugin?.lobby?.phases;
+    if (!phases || this._meta.currentPhaseIndex >= phases.length) return null;
+    return phases[this._meta.currentPhaseIndex];
+  }
+
+  private agentInfos(): AgentInfo[] {
+    return this._agents.map(a => ({ id: a.id, handle: a.handle }));
+  }
+
+  private async failLobby(error: string): Promise<void> {
+    if (!this._meta) return;
+    this._meta.phase = 'failed';
+    this._meta.error = error;
+    try { await this.ctx.storage.deleteAlarm(); } catch {}
+    await this.saveState();
+    await this.updateLobbyPhaseInD1();
+    this.broadcastUpdate();
+    console.log(`[LobbyDO] ${this._meta.lobbyId} failed: ${error}`);
+  }
+
+  private async parseJson(request: Request): Promise<any | Response> {
+    try {
+      return await request.json();
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
   }
 
@@ -789,14 +692,10 @@ export class LobbyDO extends DurableObject<Env> {
 
   private async saveState(): Promise<void> {
     await Promise.all([
-      this.ctx.storage.put('meta',         this._meta),
-      this.ctx.storage.put('agents',       this._agents),
-      this.ctx.storage.put('agentTeam',    this._agentTeam),
-      this.ctx.storage.put('teams',        this._teams),
-      this.ctx.storage.put('teamCounter',  this._teamCounter),
-      this.ctx.storage.put('chat',         this._chat),
-      this.ctx.storage.put('preGame',      this._preGame),
-      this.ctx.storage.put('alarmType',    this._alarmType),
+      this.ctx.storage.put('meta', this._meta),
+      this.ctx.storage.put('agents', this._agents),
+      this.ctx.storage.put('phaseState', this._phaseState),
+      this.ctx.storage.put('relay', this._relay),
     ]);
   }
 
@@ -804,26 +703,18 @@ export class LobbyDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, agents, agentTeam, teams, teamCounter, chat, preGame, alarmType] = await Promise.all([
+      const [meta, agents, phaseState, relay] = await Promise.all([
         this.ctx.storage.get<LobbyMeta>('meta'),
         this.ctx.storage.get<AgentEntry[]>('agents'),
-        this.ctx.storage.get<Record<string, string>>('agentTeam'),
-        this.ctx.storage.get<TeamEntry[]>('teams'),
-        this.ctx.storage.get<number>('teamCounter'),
-        this.ctx.storage.get<ChatMessage[]>('chat'),
-        this.ctx.storage.get<PreGameState | null>('preGame'),
-        this.ctx.storage.get<AlarmType | null>('alarmType'),
+        this.ctx.storage.get<any>('phaseState'),
+        this.ctx.storage.get<RelayMessage[]>('relay'),
       ]);
 
-      this._meta         = meta        ?? null;
-      this._agents       = agents      ?? [];
-      this._agentTeam    = agentTeam   ?? {};
-      this._teams        = teams       ?? [];
-      this._teamCounter  = teamCounter ?? 0;
-      this._chat         = chat        ?? [];
-      this._preGame      = preGame     ?? null;
-      this._alarmType    = alarmType   ?? null;
-      this._loaded       = true;
+      this._meta = meta ?? null;
+      this._agents = agents ?? [];
+      this._phaseState = phaseState ?? null;
+      this._relay = relay ?? [];
+      this._loaded = true;
     });
   }
 }

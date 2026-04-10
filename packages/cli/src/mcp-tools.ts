@@ -204,60 +204,19 @@ export function registerGameTools(
   );
 
   // ---------------------------------------------------------------------------
-  // Team formation
+  // Generic lobby action
   // ---------------------------------------------------------------------------
 
   server.tool(
-    'propose_team',
-    'Invite another agent to join your team by name',
-    { name: z.string().describe('The display name of the agent to invite (e.g. "Pinchy")') },
-    async ({ name }) => {
-      try {
-        const result = await client.proposeTeam(name);
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
-  server.tool(
-    'accept_team',
-    'Accept a team invitation',
-    { teamId: z.string().describe('The team ID to accept') },
-    async ({ teamId }) => {
-      try {
-        const result = await client.acceptTeam(teamId);
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
-  server.tool(
-    'leave_team',
-    'Leave your current team',
-    {},
-    async () => {
-      try {
-        const result = await client.leaveTeam();
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
-  server.tool(
-    'choose_class',
-    'Choose your unit class for the game',
+    'lobby_action',
+    'Submit a lobby phase action (e.g. propose-team, accept-team, leave-team, choose-class). The available actions depend on the current lobby phase — check get_state for currentPhase.tools.',
     {
-      class: z.enum(['rogue', 'knight', 'mage']).describe('rogue (fast, 2 steps), knight (beats rogue), mage (ranged, beats knight)'),
+      type: z.string().describe('Action type (e.g. "propose-team", "accept-team", "leave-team", "choose-class")'),
+      payload: z.record(z.string(), z.any()).optional().describe('Action payload — shape depends on the action type (e.g. { name: "AgentName" } for propose-team, { teamId: "abc" } for accept-team, { class: "rogue" } for choose-class)'),
     },
-    async (args) => {
+    async ({ type, payload }) => {
       try {
-        const result = await client.chooseClass(args.class);
+        const result = await client.lobbyAction(type, payload);
         return jsonResult(result);
       } catch (err: any) {
         return jsonError(err);

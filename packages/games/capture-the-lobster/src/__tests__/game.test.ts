@@ -75,6 +75,19 @@ function makePlayers(teamSize = 1) {
   return players;
 }
 
+/**
+ * Create a game state and transition it to 'in_progress' for gameplay tests.
+ * createGameState() returns 'pre_game' (the framework handles the transition),
+ * but pure game-logic tests need 'in_progress' to submit moves and resolve turns.
+ */
+function createInProgressState(
+  map: GameMap,
+  players: { id: string; team: 'A' | 'B'; unitClass: UnitClass }[],
+  config?: import('../game.js').GameConfig,
+): CtlGameState {
+  return { ...createGameState(map, players, config), phase: 'in_progress' };
+}
+
 describe('Game (pure functions)', () => {
   let map: GameMap;
 
@@ -114,9 +127,9 @@ describe('Game (pure functions)', () => {
       expect(state.config.teamSize).toBe(4);
     });
 
-    it('starts in_progress phase at turn 0', () => {
+    it('starts in pre_game phase at turn 0', () => {
       const state = createGameState(map, makePlayers(1));
-      expect(state.phase).toBe('in_progress');
+      expect(state.phase).toBe('pre_game');
       expect(state.turn).toBe(0);
       expect(state.winner).toBeNull();
     });
@@ -124,20 +137,20 @@ describe('Game (pure functions)', () => {
 
   describe('submitMove', () => {
     it('accepts a valid move', () => {
-      const state = createGameState(map, makePlayers(1));
+      const state = createInProgressState(map, makePlayers(1));
       const result = submitMove(state, 'a0', ['N']);
       expect(result.success).toBe(true);
     });
 
     it('rejects a move that exceeds speed', () => {
-      const state = createGameState(map, makePlayers(1));
+      const state = createInProgressState(map, makePlayers(1));
       const result = submitMove(state, 'a0', ['N', 'N', 'N', 'N']);
       expect(result.success).toBe(false);
       expect(result.error).toContain('speed limit');
     });
 
     it('rejects move from dead unit', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       const units = state.units.map(u =>
         u.id === 'a0' ? { ...u, alive: false } : u,
       );
@@ -148,7 +161,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('rejects move when game is finished', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       state = { ...state, phase: 'finished' };
       const result = submitMove(state, 'a0', ['N']);
       expect(result.success).toBe(false);
@@ -158,7 +171,7 @@ describe('Game (pure functions)', () => {
 
   describe('resolveTurn', () => {
     it('moves units to new positions', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       state = submitMove(state, 'a0', ['N']).state;
       const { state: newState, record } = resolveTurn(state);
 
@@ -169,7 +182,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('units without submissions stay in place', () => {
-      const state = createGameState(map, makePlayers(1));
+      const state = createInProgressState(map, makePlayers(1));
       const { state: newState } = resolveTurn(state);
 
       const a0 = newState.units.find((u) => u.id === 'a0')!;
@@ -181,7 +194,7 @@ describe('Game (pure functions)', () => {
         { id: 'rogue_a', team: 'A' as const, unitClass: 'rogue' as UnitClass },
         { id: 'mage_b', team: 'B' as const, unitClass: 'mage' as UnitClass },
       ];
-      let state = createGameState(map, players);
+      let state = createInProgressState(map, players);
 
       // Place them adjacent: rogue at (0,0), mage at (0,1)
       state = {
@@ -199,12 +212,12 @@ describe('Game (pure functions)', () => {
       expect(record.kills.some((k) => k.killerId === 'rogue_a' && k.victimId === 'mage_b')).toBe(true);
     });
 
-    it('dead unit respawns at base next turn', () => {
+    it('dead unit respawns at base after death penalty (2 turns)', () => {
       const players = [
         { id: 'rogue_a', team: 'A' as const, unitClass: 'rogue' as UnitClass },
         { id: 'mage_b', team: 'B' as const, unitClass: 'mage' as UnitClass },
       ];
-      let state = createGameState(map, players);
+      let state = createInProgressState(map, players);
 
       state = {
         ...state,
@@ -215,9 +228,22 @@ describe('Game (pure functions)', () => {
         }),
       };
 
-      const { state: newState } = resolveTurn(state);
+      // Turn 0: mage dies, respawnTurn = 2
+      state = resolveTurn(state).state;
+      let mage = state.units.find((u) => u.id === 'mage_b')!;
+      expect(mage.alive).toBe(false);
+      expect(mage.respawnTurn).toBe(2);
+      // Moved to spawn position immediately (for spectator visibility)
+      expect(hexEquals(mage.position, map.bases.B[0].spawns[0])).toBe(true);
 
-      const mage = newState.units.find((u) => u.id === 'mage_b')!;
+      // Turn 1: still dead
+      state = resolveTurn(state).state;
+      mage = state.units.find((u) => u.id === 'mage_b')!;
+      expect(mage.alive).toBe(false);
+
+      // Turn 2: respawns
+      state = resolveTurn(state).state;
+      mage = state.units.find((u) => u.id === 'mage_b')!;
       expect(mage.alive).toBe(true);
       expect(hexEquals(mage.position, map.bases.B[0].spawns[0])).toBe(true);
     });
@@ -227,7 +253,7 @@ describe('Game (pure functions)', () => {
         { id: 'fast', team: 'A' as const, unitClass: 'rogue' as UnitClass },
         { id: 'far', team: 'B' as const, unitClass: 'rogue' as UnitClass },
       ];
-      let state = createGameState(map, players);
+      let state = createInProgressState(map, players);
 
       // Place team A rogue next to team B flag, team B far away
       state = {
@@ -255,7 +281,7 @@ describe('Game (pure functions)', () => {
         { id: 'cap', team: 'A' as const, unitClass: 'rogue' as UnitClass },
         { id: 'def', team: 'B' as const, unitClass: 'rogue' as UnitClass },
       ];
-      let state = createGameState(map, players);
+      let state = createInProgressState(map, players);
 
       // Give unit the flag and put it one step from home base
       state = {
@@ -285,7 +311,7 @@ describe('Game (pure functions)', () => {
         { id: 'carrier', team: 'A' as const, unitClass: 'mage' as UnitClass },
         { id: 'killer', team: 'B' as const, unitClass: 'rogue' as UnitClass },
       ];
-      let state = createGameState(map, players);
+      let state = createInProgressState(map, players);
 
       state = {
         ...state,
@@ -309,7 +335,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('draw on turn limit', () => {
-      let state = createGameState(map, makePlayers(1), { turnLimit: 2 });
+      let state = createInProgressState(map, makePlayers(1), { turnLimit: 2 });
 
       state = resolveTurn(state).state; // turn 0 -> 1
       state = resolveTurn(state).state; // turn 1 -> 2
@@ -321,7 +347,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('increments turn counter', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       expect(state.turn).toBe(0);
       state = resolveTurn(state).state;
       expect(state.turn).toBe(1);
@@ -330,7 +356,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('clears move submissions after resolving', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       state = submitMove(state, 'a0', ['N']).state;
       expect(allMovesSubmitted(state)).toBe(false); // b0 hasn't submitted
       state = submitMove(state, 'b0', ['S']).state;
@@ -342,7 +368,7 @@ describe('Game (pure functions)', () => {
 
   describe('getStateForAgent', () => {
     it('returns fog of war — only visible tiles', () => {
-      const state = createGameState(map, makePlayers(1));
+      const state = createInProgressState(map, makePlayers(1));
       const agentState = getStateForAgent(state, 'a0');
 
       expect(agentState.visibleTiles.length).toBeGreaterThan(0);
@@ -355,7 +381,7 @@ describe('Game (pure functions)', () => {
         { id: 'a1', team: 'A' as const, unitClass: 'knight' as UnitClass },
         { id: 'b0', team: 'B' as const, unitClass: 'mage' as UnitClass },
       ];
-      let state = createGameState(map, players);
+      let state = createInProgressState(map, players);
 
       state = {
         ...state,
@@ -383,7 +409,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('reports correct unit status', () => {
-      const state = createGameState(map, makePlayers(1));
+      const state = createInProgressState(map, makePlayers(1));
       const agentState = getStateForAgent(state, 'a0');
 
       expect(agentState.yourUnit.id).toBe('a0');
@@ -393,7 +419,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('reports enemy flag as carried_by_you when agent carries it', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       state = {
         ...state,
         units: state.units.map(u =>
@@ -410,7 +436,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('reports move submission status', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       let agentState = getStateForAgent(state, 'a0');
       expect(agentState.moveSubmitted).toBe(false);
 
@@ -422,7 +448,7 @@ describe('Game (pure functions)', () => {
 
   describe('allMovesSubmitted', () => {
     it('returns true when all alive units have submitted', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       expect(allMovesSubmitted(state)).toBe(false);
 
       state = submitMove(state, 'a0', ['N']).state;
@@ -433,7 +459,7 @@ describe('Game (pure functions)', () => {
     });
 
     it('ignores dead units', () => {
-      let state = createGameState(map, makePlayers(1));
+      let state = createInProgressState(map, makePlayers(1));
       state = {
         ...state,
         units: state.units.map(u =>
@@ -448,12 +474,12 @@ describe('Game (pure functions)', () => {
 
   describe('isGameOver', () => {
     it('returns false during play', () => {
-      const state = createGameState(map, makePlayers(1));
+      const state = createInProgressState(map, makePlayers(1));
       expect(isGameOver(state)).toBe(false);
     });
 
     it('returns true after game ends', () => {
-      let state = createGameState(map, makePlayers(1), { turnLimit: 0 });
+      let state = createInProgressState(map, makePlayers(1), { turnLimit: 0 });
       state = resolveTurn(state).state;
       expect(isGameOver(state)).toBe(true);
     });

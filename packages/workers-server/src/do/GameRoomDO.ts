@@ -160,14 +160,15 @@ export class GameRoomDO extends DurableObject<Env> {
   private async handleCreate(request: Request): Promise<Response> {
     if (this._meta) return Response.json({ error: 'Game already created' }, { status: 409 });
 
-    let body: any;
-    try { body = await request.json(); }
+    let body: Record<string, unknown>;
+    try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { gameType, config, playerIds, handleMap, teamMap, gameId: bodyGameId } = body ?? {};
-    if (!gameType || !config || !Array.isArray(playerIds)) {
+    const { gameType: rawGameType, config, playerIds, handleMap, teamMap, gameId: bodyGameId } = body ?? {} as Record<string, unknown>;
+    if (!rawGameType || !config || !Array.isArray(playerIds)) {
       return Response.json({ error: 'gameType, config, and playerIds are required' }, { status: 400 });
     }
+    const gameType = rawGameType as string;
 
     const plugin = getGame(gameType);
     if (!plugin) return Response.json({ error: `Unknown game type: ${gameType}` }, { status: 400 });
@@ -183,8 +184,8 @@ export class GameRoomDO extends DurableObject<Env> {
       gameId,
       gameType,
       playerIds: playerIds as string[],
-      handleMap: handleMap ?? {},
-      teamMap: teamMap ?? {},
+      handleMap: (handleMap as Record<string, string>) ?? {},
+      teamMap: (teamMap as Record<string, string>) ?? {},
       createdAt: new Date().toISOString(),
       finished: false,
     };
@@ -217,14 +218,14 @@ export class GameRoomDO extends DurableObject<Env> {
     if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
     if (this._meta.finished) return Response.json({ error: 'Game already finished' }, { status: 410 });
 
-    let body: any;
-    try { body = await request.json(); }
+    let body: Record<string, unknown>;
+    try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { playerId, action } = body ?? {};
+    const { playerId, action } = body ?? {} as Record<string, unknown>;
     if (action === undefined) return Response.json({ error: 'action is required' }, { status: 400 });
 
-    return Response.json(await this.applyActionInternal(playerId ?? null, action));
+    return Response.json(await this.applyActionInternal((playerId as string) ?? null, action));
   }
 
   private async handleState(url: URL): Promise<Response> {
@@ -308,25 +309,26 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    let body: any;
-    try { body = await request.json(); }
+    let body: Record<string, unknown>;
+    try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { relay, playerId } = body ?? {};
+    const { relay, playerId } = body ?? {} as Record<string, unknown>;
     if (!relay || !playerId) {
       return Response.json({ error: 'relay envelope and playerId are required' }, { status: 400 });
     }
-    if (!relay.type || !relay.pluginId) {
+    const relayObj = relay as Record<string, unknown>;
+    if (!relayObj.type || !relayObj.pluginId) {
       return Response.json({ error: 'relay must have type and pluginId' }, { status: 400 });
     }
 
     const msg: RelayMessage = {
       index: this._relay.length,
-      type: relay.type,
-      data: relay.data ?? null,
-      scope: relay.scope ?? 'all',
-      pluginId: relay.pluginId,
-      sender: playerId,
+      type: relayObj.type as string,
+      data: relayObj.data ?? null,
+      scope: (relayObj.scope as string) ?? 'all',
+      pluginId: relayObj.pluginId as string,
+      sender: playerId as string,
       turn: this._progress.counter,
       timestamp: Date.now(),
     };
@@ -498,7 +500,7 @@ export class GameRoomDO extends DurableObject<Env> {
       handles: this._meta!.handleMap,
       progressCounter: this._progress.counter,
       relayMessages,
-      ...(visible as any),
+      ...(visible as Record<string, unknown>),
     };
   }
 
@@ -515,7 +517,7 @@ export class GameRoomDO extends DurableObject<Env> {
       gameType: this._meta!.gameType,
       handles: this._meta!.handleMap,
       progressCounter: this._progress.counter,
-      ...(view as any),
+      ...(view as Record<string, unknown>),
     };
   }
 

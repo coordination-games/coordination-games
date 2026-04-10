@@ -4,81 +4,68 @@ import { getWsUrl } from '../config.js';
 import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, JoinInstructions, TeamPanel } from '../components/lobby';
 
 // ---------------------------------------------------------------------------
-// Shared types
+// Shared types — matches the new generic LobbyDO state shape
 // ---------------------------------------------------------------------------
 
-interface LobbyAgent { id: string; handle: string; team: string | null; }
-interface PreGamePlayer { id: string; team: 'A' | 'B'; unitClass: string | null; ready: boolean; }
+interface LobbyAgent { id: string; handle: string; elo?: number; }
 interface ChatMessage { from: string; message: string; timestamp: number; }
 
-// Unified lobby state (from /ws/lobby/:id — both runner and simple lobbies)
+// Relay messages from the typed relay (e.g. basic-chat plugin)
+interface RelayMessage {
+  type: string;
+  data: any;
+  scope: string;
+  pluginId: string;
+  sender: string;
+  timestamp: number;
+}
+
 interface LobbyState {
   lobbyId: string;
-  gameType?: string;
-  phase: 'forming' | 'pre_game' | 'starting' | 'game' | 'failed';
+  gameType: string;
   agents: LobbyAgent[];
-  teams: Record<string, string[]>;
-  chat: ChatMessage[];
-  preGame: { players: PreGamePlayer[]; timeRemainingSeconds: number; chatA: ChatMessage[]; chatB: ChatMessage[]; } | null;
+  currentPhase: {
+    id: string;      // e.g. 'team-formation', 'class-selection', 'open-queue'
+    name: string;    // e.g. 'Team Formation'
+    view: any;       // phase-specific view data from phase.getView()
+    tools: any[];    // available tools in this phase
+  } | null;
+  relay: RelayMessage[];
+  phase: 'running' | 'starting' | 'game' | 'failed';
+  deadlineMs: number | null;
   gameId: string | null;
   error: string | null;
-  teamSize: number;
-  targetPlayers?: number;
   noTimeout?: boolean;
-  timeRemainingSeconds?: number;
 }
 
 // ---------------------------------------------------------------------------
-// CtL-specific: PreGamePanel (class selection — only used for CtL)
+// CtL-specific: ClassSelectionPanel — renders currentPhase.view from ClassSelectionPhase
+// view shape: { validClasses: string[], classPicks: Record<string, string>, playerIds: string[] }
 // ---------------------------------------------------------------------------
 
-function PreGamePanel({ preGame, agents }: { preGame: NonNullable<LobbyState['preGame']>; agents: LobbyAgent[]; }) {
+function ClassSelectionPanel({ view, agents }: { view: any; agents: LobbyAgent[] }) {
   const classColors: Record<string, string> = { rogue: 'var(--color-forest)', knight: '#3a6aaa', mage: '#7a4aaa' };
-  const teamA = preGame.players.filter((p) => p.team === 'A');
-  const teamB = preGame.players.filter((p) => p.team === 'B');
-
-  function TeamCol({ label, color, players, chat }: { label: string; color: string; players: PreGamePlayer[]; chat: ChatMessage[] }) {
-    return (
-      <div>
-        <h4 className="mb-2 text-sm font-heading font-bold" style={{ color }}>{label}</h4>
-        {players.map((p) => {
-          const agent = agents.find((a) => a.id === p.id);
-          return (
-            <div key={p.id} className="mb-1 flex items-center justify-between rounded parchment px-3 py-2">
-              <span className="text-sm" style={{ color: 'var(--color-ink)' }}>{agent?.handle ?? p.id}</span>
-              <span className="text-xs font-semibold" style={{ color: p.unitClass ? (classColors[p.unitClass] ?? 'var(--color-ink-faint)') : 'var(--color-ink-faint)' }}>
-                {p.unitClass ?? 'choosing...'}
-              </span>
-            </div>
-          );
-        })}
-        {chat.length > 0 && (
-          <AutoScrollChat deps={chat.length}>
-            <div className="mt-2 rounded p-2" style={{ background: 'rgba(42, 31, 14, 0.04)' }}>
-              {chat.map((m, i) => {
-                const agent = agents.find((a) => a.id === m.from);
-                return (
-                  <div key={i} className="text-xs mb-0.5">
-                    <span className="font-semibold" style={{ color }}>{agent?.handle ?? m.from}:</span>{' '}
-                    <span style={{ color: 'var(--color-ink-light)' }}>{m.message}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </AutoScrollChat>
-        )}
-      </div>
-    );
-  }
+  const classPicks: Record<string, string> = view?.classPicks ?? {};
+  const playerIds: string[] = view?.playerIds ?? [];
 
   return (
     <div className="space-y-4">
       <div className="text-center text-sm font-heading font-semibold" style={{ color: 'var(--color-amber)' }}>
         Class Selection
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <TeamCol label="Team A" color="#3a6aaa" players={teamA} chat={preGame.chatA} />
-        <TeamCol label="Team B" color="var(--color-blood)" players={teamB} chat={preGame.chatB} />
+      <div className="space-y-1">
+        {playerIds.map((pid) => {
+          const agent = agents.find((a) => a.id === pid);
+          const cls = classPicks[pid];
+          return (
+            <div key={pid} className="flex items-center justify-between rounded parchment px-3 py-2">
+              <span className="text-sm" style={{ color: 'var(--color-ink)' }}>{agent?.handle ?? pid}</span>
+              <span className="text-xs font-semibold" style={{ color: cls ? (classColors[cls] ?? 'var(--color-ink-faint)') : 'var(--color-ink-faint)' }}>
+                {cls ?? 'choosing...'}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -88,21 +75,26 @@ function PreGamePanel({ preGame, agents }: { preGame: NonNullable<LobbyState['pr
 // Phase badge (shared)
 // ---------------------------------------------------------------------------
 
-function phaseBadge(phase: string) {
+function phaseBadge(phase: string, currentPhaseId?: string) {
   const styles: Record<string, { bg: string; color: string; border: string }> = {
-    forming: { bg: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: 'rgba(184, 134, 11, 0.2)' },
-    waiting: { bg: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: 'rgba(184, 134, 11, 0.2)' },
-    pre_game: { bg: 'rgba(58, 106, 170, 0.08)', color: '#3a6aaa', border: 'rgba(58, 106, 170, 0.2)' },
+    running: { bg: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: 'rgba(184, 134, 11, 0.2)' },
     starting: { bg: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: 'rgba(58, 90, 42, 0.2)' },
     game: { bg: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: 'rgba(58, 90, 42, 0.2)' },
-    playing: { bg: 'rgba(58, 90, 42, 0.08)', color: 'var(--color-forest)', border: 'rgba(58, 90, 42, 0.2)' },
     failed: { bg: 'rgba(139, 32, 32, 0.08)', color: 'var(--color-blood)', border: 'rgba(139, 32, 32, 0.2)' },
   };
-  const labels: Record<string, string> = {
-    forming: 'Forming', waiting: 'Waiting for Players', pre_game: 'Class Selection',
-    starting: 'Starting...', game: 'Game Started', playing: 'Game Started', failed: 'Failed',
+  // For 'running', show the current phase name if available
+  const phaseLabels: Record<string, string> = {
+    'team-formation': 'Team Formation',
+    'class-selection': 'Class Selection',
+    'open-queue': 'Waiting for Players',
   };
-  const s = styles[phase] ?? styles.forming;
+  const labels: Record<string, string> = {
+    running: (currentPhaseId && phaseLabels[currentPhaseId]) || 'In Progress',
+    starting: 'Starting...',
+    game: 'Game Started',
+    failed: 'Failed',
+  };
+  const s = styles[phase] ?? styles.running;
 
   return (
     <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
@@ -112,7 +104,21 @@ function phaseBadge(phase: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Unified Lobby View (works for both runner-based and simple lobbies)
+// Helper: extract chat messages from relay messages
+// ---------------------------------------------------------------------------
+
+function extractChatMessages(relay: RelayMessage[]): ChatMessage[] {
+  return relay
+    .filter(r => r.type === 'messaging')
+    .map(r => ({
+      from: r.sender,
+      message: r.data?.body ?? r.data?.message ?? '',
+      timestamp: r.timestamp,
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Unified Lobby View (works for all game types via generic phase runner)
 // ---------------------------------------------------------------------------
 
 export default function LobbyPage() {
@@ -123,7 +129,6 @@ export default function LobbyPage() {
   const [noTimeout, setNoTimeout] = useState(false);
   const [lobbyTimer, setLobbyTimer] = useState<number | null>(null);
   const [gameStarted, setGameStarted] = useState<string | null>(null);
-  const serverTimeRef = useRef<{ value: number; at: number }>({ value: 0, at: Date.now() });
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -134,24 +139,19 @@ export default function LobbyPage() {
       if (d?.lobbyId) setState(d);
     }).catch(() => {});
 
-    // Connect to unified /ws/lobby/:id
+    // Connect to unified /ws/lobby/:id — new LobbyDO sends raw state (no wrapper)
     const ws = new WebSocket(getWsUrl(`/ws/lobby/${id}`));
     wsRef.current = ws;
     ws.onopen = () => setConnected(true);
     ws.onmessage = (e) => {
       try {
-        const r = JSON.parse(e.data);
-        if (r.type === 'lobby_update' && r.data) {
-          const d = r.data;
-          // Check if the lobby was promoted to a game (state_update from game)
+        const d = JSON.parse(e.data);
+        if (d?.lobbyId) {
+          // Raw lobby state from new LobbyDO
           if (d.phase === 'game' && d.gameId) {
             setGameStarted(d.gameId);
           }
           setState(d);
-        }
-        // Handle game promotion via state_update (spectators transferred)
-        if (r.type === 'state_update' && r.data) {
-          setGameStarted(id);
         }
       } catch {}
     };
@@ -164,27 +164,20 @@ export default function LobbyPage() {
     if (state?.noTimeout) setNoTimeout(true);
   }, [state?.noTimeout]);
 
+  // Compute client-side timer from server deadlineMs
   useEffect(() => {
-    if (state?.phase === 'pre_game' && state.preGame) {
-      serverTimeRef.current = { value: state.preGame.timeRemainingSeconds, at: Date.now() };
-    } else if (state?.timeRemainingSeconds !== undefined && state.timeRemainingSeconds >= 0) {
-      serverTimeRef.current = { value: state.timeRemainingSeconds, at: Date.now() };
-    }
-  }, [state?.timeRemainingSeconds, state?.preGame?.timeRemainingSeconds, state?.phase]);
-
-  useEffect(() => {
-    if (noTimeout || !state || (state.phase !== 'forming' && state.phase !== 'pre_game')) {
+    if (noTimeout || !state || state.phase !== 'running' || !state.deadlineMs) {
       setLobbyTimer(null);
       return;
     }
     const tick = () => {
-      const elapsed = Math.floor((Date.now() - serverTimeRef.current.at) / 1000);
-      setLobbyTimer(Math.max(0, serverTimeRef.current.value - elapsed));
+      const remaining = Math.max(0, Math.floor((state.deadlineMs! - Date.now()) / 1000));
+      setLobbyTimer(remaining);
     };
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [state?.phase, noTimeout]);
+  }, [state?.phase, state?.deadlineMs, noTimeout]);
 
   // Redirect when game starts
   useEffect(() => {
@@ -233,17 +226,21 @@ export default function LobbyPage() {
 
   if (!state) return null;
 
-  // Determine lobby characteristics
-  const isSimpleLobby = !state.teamSize || state.teamSize === 0;
+  // Derive display info from the new state shape
   const gameType = state.gameType ?? 'capture-the-lobster';
   const gameLabel = gameType === 'oathbreaker' ? 'OATHBREAKER' : 'Capture the Lobster';
-  const totalSlots = isSimpleLobby
-    ? (state.targetPlayers ?? state.agents.length)
-    : (state.teamSize || 2) * 2;
-  const teamEntries = Object.entries(state.teams);
-  const isFull = state.agents.length >= totalSlots;
-  const hasExternalAgents = state.agents.some((a: any) => a.id?.startsWith('ext_'));
-  const showTimer = !isSimpleLobby && (state.phase === 'forming' || state.phase === 'pre_game');
+  const phaseId = state.currentPhase?.id;
+  const phaseView = state.currentPhase?.view;
+  const chatMessages = extractChatMessages(state.relay ?? []);
+
+  // Determine if this is a team-based or simple lobby from phase view data
+  const isTeamPhase = phaseId === 'team-formation';
+  const isClassSelection = phaseId === 'class-selection';
+  const isOpenQueue = phaseId === 'open-queue';
+  const showTimer = state.phase === 'running' && state.deadlineMs != null;
+
+  // Team formation view: { teams: [{id, members, invites}], unassigned, teamSize, numTeams }
+  const teams: Array<{ id: string; members: string[]; invites: string[] }> = isTeamPhase ? (phaseView?.teams ?? []) : [];
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -255,25 +252,25 @@ export default function LobbyPage() {
             <span className="font-heading text-sm font-medium" style={{ color: 'var(--color-blood)' }}>{gameLabel}</span>
           )}
           <span className="font-mono text-sm" style={{ color: 'var(--color-ink-faint)' }}>{state.lobbyId}</span>
-          {phaseBadge(state.phase)}
-          <span className="text-sm" style={{ color: 'var(--color-ink-light)' }}>{state.agents.length} / {totalSlots} {isSimpleLobby ? 'players' : 'agents'}</span>
+          {phaseBadge(state.phase, phaseId)}
+          <span className="text-sm" style={{ color: 'var(--color-ink-light)' }}>{state.agents.length} agents</span>
         </div>
         {!connected && <span className="text-xs" style={{ color: 'var(--color-amber)' }}>disconnected</span>}
       </div>
 
-      {/* Timer bar (runner lobbies only) */}
+      {/* Timer bar */}
       {showTimer && (
         <TimerBar
           timeRemaining={lobbyTimer}
           noTimeout={noTimeout}
-          phase={state.phase}
+          phase={phaseId ?? state.phase}
           onPauseTimer={handleNoTimeout}
           onCloseLobby={handleCloseLobby}
         />
       )}
 
-      {/* Close button for simple lobbies */}
-      {isSimpleLobby && (
+      {/* Close button (always available for non-timer lobbies) */}
+      {!showTimer && (
         <div className="flex justify-end">
           <button
             onClick={handleCloseLobby}
@@ -285,8 +282,8 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Forming phase: Join instructions */}
-      {state.phase === 'forming' && (
+      {/* Running phase: Join instructions */}
+      {state.phase === 'running' && (
         <JoinInstructions lobbyId={state.lobbyId} />
       )}
 
@@ -298,13 +295,6 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Full lobby message (simple lobbies) */}
-      {isSimpleLobby && isFull && state.phase === 'forming' && (
-        <div className="rounded-lg p-4 text-center" style={{ background: 'rgba(58, 90, 42, 0.08)', border: '1px solid rgba(58, 90, 42, 0.2)' }}>
-          <p className="font-heading font-semibold" style={{ color: 'var(--color-forest)' }}>All players joined! Starting game...</p>
-        </div>
-      )}
-
       {/* Error */}
       {state.phase === 'failed' && state.error && (
         <div className="rounded-lg p-4 text-center" style={{ background: 'rgba(139, 32, 32, 0.06)', border: '1px solid rgba(139, 32, 32, 0.2)' }}>
@@ -312,29 +302,29 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Pre-game (CtL only) */}
-      {state.phase === 'pre_game' && state.preGame && (
+      {/* Class selection phase (CtL) */}
+      {isClassSelection && phaseView && (
         <div className="rounded-lg parchment-strong p-4">
-          <PreGamePanel preGame={state.preGame} agents={state.agents} />
+          <ClassSelectionPanel view={phaseView} agents={state.agents} />
         </div>
       )}
 
-      {/* Agents & Teams */}
-      {(state.phase === 'forming' || state.phase === 'pre_game') && (
-        <div className={teamEntries.length > 0 ? "grid gap-6 md:grid-cols-2" : ""}>
+      {/* Agents & Teams — shown during running phase */}
+      {state.phase === 'running' && (
+        <div className={teams.length > 0 ? "grid gap-6 md:grid-cols-2" : ""}>
           <PlayerList agents={state.agents} />
-          {teamEntries.length > 0 && (
+          {teams.length > 0 && (
             <div>
-              <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Teams ({teamEntries.length})</h3>
-              <div className="space-y-2">{teamEntries.map(([tid, t]) => <TeamPanel key={tid} teamId={tid} team={t as any} agents={state.agents} />)}</div>
+              <h3 className="mb-3 font-heading text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--color-ink-faint)' }}>Teams ({teams.length})</h3>
+              <div className="space-y-2">{teams.map((t) => <TeamPanel key={t.id} teamId={t.id} team={t} agents={state.agents} />)}</div>
             </div>
           )}
         </div>
       )}
 
-      {/* Chat (runner lobbies) */}
-      {state.chat.length > 0 && (
-        <ChatPanel messages={state.chat} agents={state.agents} />
+      {/* Chat (from relay messages) */}
+      {chatMessages.length > 0 && (
+        <ChatPanel messages={chatMessages} agents={state.agents} />
       )}
     </div>
   );

@@ -1,7 +1,8 @@
 interface Agent {
   id: string;
   handle: string;
-  team: string | null;
+  team?: string | null;
+  elo?: number;
 }
 
 function AgentCard({ agent }: { agent: Agent }) {

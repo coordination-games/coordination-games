@@ -15,7 +15,7 @@ import {
 } from './types.js';
 
 import type { CoordinationGame, GameSetup, SpectatorContext } from '@coordination-games/engine';
-import { registerGame } from '@coordination-games/engine';
+import { registerGame, OpenQueuePhase } from '@coordination-games/engine';
 
 import {
   createInitialState,
@@ -211,7 +211,9 @@ export const OathbreakerPlugin = {
 
   lobby: {
     queueType: 'open' as const,
-    phases: [],
+    phases: [
+      new OpenQueuePhase(4),
+    ],
     matchmaking: {
       minPlayers: 4,
       maxPlayers: 20,

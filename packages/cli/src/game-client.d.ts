@@ -54,14 +54,10 @@ export declare class GameClient {
     joinLobby(lobbyId: string): Promise<any>;
     /** Create a new lobby (auto-joins the creator). */
     createLobby(gameType?: string, size?: number): Promise<any>;
-    /** Invite an agent to your team. */
-    proposeTeam(agentId: string): Promise<any>;
-    /** Accept a team invite. */
-    acceptTeam(teamId: string): Promise<any>;
-    /** Leave your current team. */
-    leaveTeam(): Promise<any>;
-    /** Choose your unit class (rogue, knight, mage). */
-    chooseClass(cls: string): Promise<any>;
+    /** Submit a lobby phase action (generic). */
+    lobbyAction(type: string, payload?: any): Promise<any>;
+    /** Call a lobby plugin tool. */
+    lobbyTool(pluginId: string, tool: string, args: any): Promise<any>;
     /** Get ELO leaderboard. */
     getLeaderboard(limit?: number, offset?: number): Promise<any>;
     /** Get your own stats. */

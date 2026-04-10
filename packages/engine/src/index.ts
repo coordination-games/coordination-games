@@ -40,13 +40,15 @@ export {
   getAllGames,
 } from './registry.js';
 
+// Built-in lobby phases
+export { OpenQueuePhase, type OpenQueueState } from './phases/open-queue.js';
+
 // Server-side framework
 export {
   GameFramework,
   AuthManager,
   BalanceTracker,
   buildGameResult,
-  LobbyPipeline,
   type AuthConfig,
   type BalanceConfig,
 } from './server/index.js';

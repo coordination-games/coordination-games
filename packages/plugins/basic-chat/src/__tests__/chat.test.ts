@@ -92,7 +92,7 @@ describe('extractMessages', () => {
 describe('BasicChatPlugin', () => {
   it('has correct metadata', () => {
     expect(BasicChatPlugin.id).toBe('basic-chat');
-    expect(BasicChatPlugin.version).toBe('0.2.0');
+    expect(BasicChatPlugin.version).toBe('0.3.0');
     expect(BasicChatPlugin.purity).toBe('pure');
     expect(BasicChatPlugin.modes).toHaveLength(1);
     expect(BasicChatPlugin.modes[0].consumes).toEqual([]);

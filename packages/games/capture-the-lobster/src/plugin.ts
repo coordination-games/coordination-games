@@ -32,6 +32,8 @@ import { generateMap, getMapRadiusForTeamSize, MapConfig, TileType } from './map
 import { Hex, Direction } from './hex.js';
 import { UnitClass } from './movement.js';
 import { getUnitVision } from './fog.js';
+import { TeamFormationPhase } from './phases/team-formation.js';
+import { ClassSelectionPhase } from './phases/class-selection.js';
 
 // ---------------------------------------------------------------------------
 // CtL-specific types
@@ -606,8 +608,8 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   lobby: {
     queueType: 'open',
     phases: [
-      { phaseId: 'team-formation', config: {} },
-      { phaseId: 'class-selection', config: {} },
+      new TeamFormationPhase({ teamSize: 2, numTeams: 2 }),
+      new ClassSelectionPhase({ validClasses: ['rogue', 'knight', 'mage'] }),
     ],
     matchmaking: {
       minPlayers: 4,
@@ -646,20 +648,37 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   ): GameSetup<CtlConfig> {
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
-    // If players already have team/role assignments (from lobby), use them.
-    // Otherwise assign teams and classes automatically (bot games).
-    const hasTeams = players.some(p => p.team);
+    // Extract team/role from accumulated lobby metadata (options) if available.
+    // Lobby phases produce `teams: [{ id, members }]` and `classPicks: { [playerId]: string }`.
+    // If no lobby metadata, fall back to any pre-set player.team/role, then auto-assign.
+    const teams = options?.teams as Array<{ id: string; members: string[] }> | undefined;
+    const classPicks = options?.classPicks as Record<string, string> | undefined;
+
+    const enrichedPlayers = players.map(p => {
+      let team = p.team;
+      let role = p.role;
+      if (!team && teams) {
+        const found = teams.find(t => t.members.includes(p.id));
+        if (found) team = found.id;
+      }
+      if (!role && classPicks) {
+        role = classPicks[p.id];
+      }
+      return { ...p, team, role };
+    });
+
+    const hasTeams = enrichedPlayers.some(p => p.team);
     let ctlPlayers: CtlPlayerConfig[];
 
     if (hasTeams) {
-      ctlPlayers = players.map(p => ({
+      ctlPlayers = enrichedPlayers.map(p => ({
         id: p.id,
         team: (p.team as 'A' | 'B') ?? 'A',
         unitClass: (p.role as UnitClass) ?? classes[0],
       }));
     } else {
       // Auto-assign: alternate A/B, cycle through classes
-      ctlPlayers = players.map((p, i) => ({
+      ctlPlayers = enrichedPlayers.map((p, i) => ({
         id: p.id,
         team: (i % 2 === 0 ? 'A' : 'B') as 'A' | 'B',
         unitClass: classes[Math.floor(i / 2) % classes.length],

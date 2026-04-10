@@ -173,8 +173,11 @@ async function waitForPhase(token: string, target: string, maxSecs = 30): Promis
   for (let i = 0; i < maxSecs * 2; i++) {
     const state = await api('/api/player/state', { token }).catch(() => null);
     if (!state) { await sleep(500); continue; }
-    if (state.phase === target || state.gameType /* game started */) return state;
-    if (state.phase === 'failed') throw new Error(`Lobby failed: ${state.error}`);
+    const phaseId = state.currentPhase?.id ?? state.phase;
+    if (phaseId === target) return state;
+    // phase='game' or phase='starting' means the lobby transitioned to a game
+    if (state.phase === 'game' || state.phase === 'starting') return state;
+    if (phaseId === 'failed') throw new Error(`Lobby failed: ${state.error}`);
     await sleep(500);
   }
   throw new Error(`Timed out waiting for phase "${target}"`);
@@ -198,27 +201,27 @@ async function completeLobbyPhases(
     // Proposer invites each teammate one by one
     for (let i = 1; i < team.length; i++) {
       const invitee = team[i];
-      const res = await api('/api/player/team/propose', {
+      const res = await api('/api/player/lobby/action', {
         method: 'POST',
         token: proposer.token,
-        body: { target: invitee.playerId },
+        body: { type: 'propose-team', payload: { target: invitee.playerId } },
       });
       const teamId = res.teamId;
       console.log(`    ${proposer.name} proposed → ${invitee.name} (team ${teamId?.slice(0,8)})`);
 
       // Invitee accepts
-      await api('/api/player/team/accept', {
+      await api('/api/player/lobby/action', {
         method: 'POST',
         token: invitee.token,
-        body: { target: teamId },
+        body: { type: 'accept-team', payload: { target: teamId } },
       });
       console.log(`    ${invitee.name} accepted`);
     }
   }
 
-  // ---- Wait for pre_game phase ----
-  console.log('  Waiting for pre_game...');
-  await waitForPhase(bots[0].token, 'pre_game');
+  // ---- Wait for class-selection phase ----
+  console.log('  Waiting for class-selection...');
+  await waitForPhase(bots[0].token, 'class-selection');
 
   // ---- Class selection ----
   console.log('  Selecting classes...');
@@ -226,10 +229,10 @@ async function completeLobbyPhases(
     const bot = bots[i];
     // Use position within team so each team gets the same class mix
     const unitClass = CLASSES[(i % teamSize) % CLASSES.length];
-    await api('/api/player/class', {
+    await api('/api/player/lobby/action', {
       method: 'POST',
       token: bot.token,
-      body: { unitClass },
+      body: { type: 'choose-class', payload: { class: unitClass } },
     });
     console.log(`    ${bot.name} → ${unitClass}`);
   }
@@ -289,8 +292,9 @@ async function main() {
   //    For OATHBREAKER, the 4th join already started the game — skip.
   //    For CtL: do team formation + class selection programmatically so
   //    Claude agents only see the game phase, not the lengthy lobby flow.
-  const lastPhase = (await api('/api/player/state', { token: bots[0].token })).phase;
-  if (lastPhase === 'forming' || lastPhase === 'pre_game') {
+  const lobbyState = await api('/api/player/state', { token: bots[0].token });
+  const hasLobbyPhases = lobbyState.currentPhase?.id === 'team-formation';
+  if (hasLobbyPhases) {
     console.log('\nPre-completing lobby phases...');
     await completeLobbyPhases(bots, TEAM_SIZE);
   }
