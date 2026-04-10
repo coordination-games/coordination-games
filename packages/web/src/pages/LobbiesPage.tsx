@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { fetchGames } from '../api';
+import { fetchGames, type GameSummary } from '../api';
 
 interface Game {
   id: string;
@@ -73,18 +73,18 @@ export default function LobbiesPage() {
           fetch('/api/lobbies').then(r => r.json()).catch(() => []),
         ]);
         if (!cancelled) {
-          const mapped = (gamesData as any[]).map((g: any) => ({
-            id: g.id,
-            gameType: g.gameType ?? 'capture-the-lobster',
-            turn: g.turn ?? g.round ?? 0,
-            maxTurns: g.maxTurns ?? g.turnLimit ?? g.maxRounds ?? 30,
-            phase: g.phase ?? 'in_progress',
-            winner: g.winner,
-            teamsA: Array.isArray(g.teams?.A) ? g.teams.A.length : (g.teamsA ?? 0),
-            teamsB: Array.isArray(g.teams?.B) ? g.teams.B.length : (g.teamsB ?? 0),
-            round: g.round,
-            maxRounds: g.maxRounds,
-            playerCount: Array.isArray(g.players) ? g.players.length : 0,
+          const mapped = gamesData.map((g: GameSummary) => ({
+            id: g.gameId,
+            gameType: g.gameType,
+            turn: 0,
+            maxTurns: 30,
+            phase: 'in_progress' as const,
+            winner: undefined,
+            teamsA: 0,
+            teamsB: 0,
+            round: undefined,
+            maxRounds: undefined,
+            playerCount: g.playerCount,
           }));
           setGames(mapped);
           setLobbies((lobbiesData as Lobby[]).filter(l => l.phase !== 'game' && l.phase !== 'finished'));

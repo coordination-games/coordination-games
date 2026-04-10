@@ -8,12 +8,18 @@ async function request<T>(path: string): Promise<T> {
   return res.json();
 }
 
+export interface GameSummary {
+  gameId: string;
+  gameType: string;
+  playerCount: number;
+}
+
 export async function fetchLobbies(): Promise<any[]> {
   return request<any[]>('/lobbies');
 }
 
-export async function fetchGames(): Promise<any[]> {
-  return request<any[]>('/games');
+export async function fetchGames(): Promise<GameSummary[]> {
+  return request<GameSummary[]>('/games');
 }
 
 export async function fetchGame(id: string): Promise<any> {
