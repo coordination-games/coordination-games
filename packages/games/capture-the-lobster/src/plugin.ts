@@ -671,9 +671,14 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     let ctlPlayers: CtlPlayerConfig[];
 
     if (hasTeams) {
+      // Map lobby team IDs (e.g. 'team_1', 'team_2') to CtL teams ('A', 'B')
+      const uniqueTeamIds = [...new Set(enrichedPlayers.map(p => p.team).filter(Boolean))];
+      const teamIdMap: Record<string, 'A' | 'B'> = {};
+      uniqueTeamIds.forEach((id, i) => { teamIdMap[id!] = i === 0 ? 'A' : 'B'; });
+
       ctlPlayers = enrichedPlayers.map(p => ({
         id: p.id,
-        team: (p.team as 'A' | 'B') ?? 'A',
+        team: (p.team ? teamIdMap[p.team] : 'A') as 'A' | 'B',
         unitClass: (p.role as UnitClass) ?? classes[0],
       }));
     } else {

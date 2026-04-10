@@ -117,8 +117,16 @@ async function runClaudeAgent(
     },
   });
 
-  const initialPrompt = `You are ${botName}, an AI agent playing ${GAME_TYPE}. You are in an active game.
+  const ctlHints = GAME_TYPE === 'capture-the-lobster' ? `
+This is Capture the Lobster — a hex-grid tactical game. Key rules:
+- You move by submitting a direction array like ["N"], ["NE"], or ["STAY"]
+- You have fog of war — use the chat tool to coordinate with teammates
+- Win by capturing the enemy flag and bringing it to your base
+- Check get_state for your position, visible enemies, and flag locations
+` : '';
 
+  const initialPrompt = `You are ${botName}, an AI agent playing ${GAME_TYPE}. You are in an active game.
+${ctlHints}
 Play the game to completion using the "game" MCP server tools.
 
 1. Call get_guide ONCE to learn the rules
@@ -184,7 +192,9 @@ Play the game to completion using the "game" MCP server tools.
         lower.includes('game is over') || lower.includes('game has ended') ||
         lower.includes('final results') || lower.includes('final balance') ||
         lower.includes('tournament concluded') || lower.includes('tournament has finished') ||
-        lower.includes('all 12 rounds') || lower.includes('round 12')) {
+        lower.includes('all 12 rounds') || lower.includes('round 12') ||
+        lower.includes('captured the flag') || lower.includes('"winner"') ||
+        lower.includes('winner:') || lower.includes('game finished')) {
       console.log(`[${botName}] Game finished after ${i + 1} session(s)`);
       return;
     }
@@ -204,12 +214,20 @@ const CLASSES = ['rogue', 'knight', 'mage'] as const;
 
 async function waitForPhase(token: string, target: string, maxSecs = 30): Promise<any> {
   for (let i = 0; i < maxSecs * 2; i++) {
-    const state = await api('/api/player/state', { token }).catch(() => null);
+    const state = await api('/api/player/state', { token }).catch((e) => {
+      if (i % 10 === 0) console.log(`    [waitForPhase] poll error: ${e.message}`);
+      return null;
+    });
     if (!state) { await sleep(500); continue; }
+    if (i === 0 || i % 10 === 0) {
+      console.log(`    [waitForPhase] phase=${state.phase}, currentPhase=${state.currentPhase?.id}, type=${state.type}, keys=${Object.keys(state).join(',')}`);
+    }
     const phaseId = state.currentPhase?.id ?? state.phase;
     if (phaseId === target) return state;
     // phase='game' or phase='starting' means the lobby transitioned to a game
     if (state.phase === 'game' || state.phase === 'starting') return state;
+    // type='state_update' means we're already in the game (GameRoomDO response)
+    if (state.type === 'state_update') return state;
     if (phaseId === 'failed') throw new Error(`Lobby failed: ${state.error}`);
     await sleep(500);
   }
@@ -237,16 +255,19 @@ async function completeLobbyPhases(
       const res = await api('/api/player/lobby/action', {
         method: 'POST',
         token: proposer.token,
-        body: { type: 'propose-team', payload: { target: invitee.playerId } },
+        body: { type: 'propose_team', payload: { targetHandle: invitee.name } },
       });
-      const teamId = res.teamId;
+      // Extract the team ID from the phase view — proposer's team has them as a member
+      const phaseTeams = res.currentPhase?.view?.teams ?? [];
+      const proposerTeam = phaseTeams.find((t: any) => t.members.includes(proposer.playerId));
+      const teamId = proposerTeam?.id;
       console.log(`    ${proposer.name} proposed → ${invitee.name} (team ${teamId?.slice(0,8)})`);
 
       // Invitee accepts
       await api('/api/player/lobby/action', {
         method: 'POST',
         token: invitee.token,
-        body: { type: 'accept-team', payload: { target: teamId } },
+        body: { type: 'accept_team', payload: { teamId } },
       });
       console.log(`    ${invitee.name} accepted`);
     }
@@ -265,7 +286,7 @@ async function completeLobbyPhases(
     await api('/api/player/lobby/action', {
       method: 'POST',
       token: bot.token,
-      body: { type: 'choose-class', payload: { class: unitClass } },
+      body: { type: 'choose_class', payload: { unitClass } },
     });
     console.log(`    ${bot.name} → ${unitClass}`);
   }
