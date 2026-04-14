@@ -137,8 +137,6 @@ export interface SpectatorState {
   visibleA: string[];
   visibleB: string[];
   visibleByUnit: Record<string, string[]>;
-  turnTimeoutMs: number;
-  turnStartedAt: number;
   handles: Record<string, string>;
   relayMessages?: any[];
 }
@@ -286,8 +284,6 @@ function buildCtlSpectatorView(
     visibleA: [...visibleA],
     visibleB: [...visibleB],
     visibleByUnit,
-    turnTimeoutMs: (config.turnTimerSeconds ?? 30) * 1000,
-    turnStartedAt: 0,  // Deprecated: frontend should use turnDeadlineMs from DO message
     handles: context.handles,
   };
 }

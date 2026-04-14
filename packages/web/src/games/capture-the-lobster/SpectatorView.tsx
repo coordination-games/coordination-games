@@ -83,9 +83,6 @@ function mapServerState(raw: any): SpectatorGameState | null {
     visibleByUnit: Object.fromEntries(
       Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [id, new Set(hexes as string[])])
     ),
-    turnTimeoutMs: data.turnTimeoutMs ?? 30000,
-    turnDeadlineMs: data.turnDeadlineMs ?? (Date.now() + (data.turnTimeoutMs ?? 30000)),
-    turnStartedAt: data.turnStartedAt ?? Date.now(),
     handles: data.handles ?? {},
   };
 }
@@ -94,34 +91,6 @@ function mapServerState(raw: any): SpectatorGameState | null {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function TurnTimer({ deadlineMs, timeoutMs }: { deadlineMs: number; timeoutMs: number }) {
-  const [remaining, setRemaining] = useState(timeoutMs);
-
-  useEffect(() => {
-    const tick = () => {
-      setRemaining(Math.max(0, deadlineMs - Date.now()));
-    };
-    tick();
-    const interval = setInterval(tick, 200);
-    return () => clearInterval(interval);
-  }, [deadlineMs]);
-
-  const seconds = Math.ceil(remaining / 1000);
-  const pct = (remaining / timeoutMs) * 100;
-  const color = seconds <= 5 ? 'text-red-400' : seconds <= 10 ? 'text-yellow-400' : 'text-gray-400';
-
-  return (
-    <span className={`text-xs font-mono ${color}`}>
-      {seconds}s
-      <span className="ml-1 inline-block w-12 h-1.5 bg-gray-800 rounded-full overflow-hidden align-middle">
-        <span
-          className="block h-full rounded-full transition-all"
-          style={{ width: `${pct}%`, backgroundColor: seconds <= 5 ? '#f87171' : seconds <= 10 ? '#fbbf24' : '#4ade80' }}
-        />
-      </span>
-    </span>
-  );
-}
 
 const CLASS_ICONS: Record<string, string> = {
   rogue: 'R',
@@ -371,9 +340,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
-          {gameState.phase === 'in_progress' && gameState.turnDeadlineMs && (
-            <TurnTimer deadlineMs={gameState.turnDeadlineMs} timeoutMs={gameState.turnTimeoutMs ?? 30000} />
-          )}
           {!connected && (
             <span className="text-xs text-yellow-500">disconnected</span>
           )}

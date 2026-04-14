@@ -52,10 +52,4 @@ export interface SpectatorGameState {
   visibleA?: Set<string>;
   /** Team B visible hex keys */
   visibleB?: Set<string>;
-  /** Timestamp when the current turn started */
-  turnStartedAt?: number;
-  /** Turn timeout in milliseconds */
-  turnTimeoutMs?: number;
-  /** Absolute deadline (ms since epoch) when the current turn expires */
-  turnDeadlineMs?: number;
 }
