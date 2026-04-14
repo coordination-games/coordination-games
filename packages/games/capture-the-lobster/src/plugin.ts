@@ -82,7 +82,7 @@ export interface CtlOutcome {
 /** Actions that can be applied to CtL game state. */
 export type CtlAction =
   | { type: 'game_start' }
-  | { type: 'move'; agentId: string; path: Direction[] }
+  | { type: 'move'; path: Direction[] }
   | { type: 'turn_timeout' };
 
 // ---------------------------------------------------------------------------
@@ -286,8 +286,8 @@ function buildCtlSpectatorView(
     visibleA: [...visibleA],
     visibleB: [...visibleB],
     visibleByUnit,
-    turnTimeoutMs: 30000,
-    turnStartedAt: Date.now(),
+    turnTimeoutMs: (config.turnTimerSeconds ?? 30) * 1000,
+    turnStartedAt: 0,  // Deprecated: frontend should use turnDeadlineMs from DO message
     handles: context.handles,
   };
 }

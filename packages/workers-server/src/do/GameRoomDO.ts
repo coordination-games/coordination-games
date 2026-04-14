@@ -93,6 +93,7 @@ export class GameRoomDO extends DurableObject<Env> {
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0, snapshots: [0] };
   private _relay: RelayMessage[] = [];
+  private _deadlineMs: number | null = null;
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -128,15 +129,17 @@ export class GameRoomDO extends DurableObject<Env> {
     const deadline = await this.ctx.storage.get<DeadlineEntry>('deadline');
     if (!deadline) return;
 
-    await this.ctx.storage.delete('deadline');
     if (Date.now() < deadline.deadlineMs - 500) {
       // Fired too early (clock drift) — re-arm
       await this.ctx.storage.setAlarm(deadline.deadlineMs);
-      await this.ctx.storage.put('deadline', deadline);
       return;
     }
 
     console.log(`[GameRoomDO] Alarm fired — applying deadline action`);
+    // Don't delete deadline before applying — if applyActionInternal throws,
+    // the deadline stays in storage and CF can retry the alarm.
+    // applyActionInternal overwrites the deadline entry when the plugin
+    // returns a new one (next turn) or deletes it (game over).
     await this.applyActionInternal(null, deadline.action);
   }
 
@@ -447,10 +450,12 @@ export class GameRoomDO extends DurableObject<Env> {
     // Deadline management
     if (result.deadline !== undefined) {
       if (result.deadline === null) {
+        this._deadlineMs = null;
         await this.ctx.storage.delete('deadline');
         try { await this.ctx.storage.deleteAlarm(); } catch {}
       } else {
         const deadlineMs = Date.now() + result.deadline.seconds * 1000;
+        this._deadlineMs = deadlineMs;
         await this.ctx.storage.put('deadline', { action: result.deadline.action, deadlineMs });
         await this.ctx.storage.setAlarm(deadlineMs);
       }
@@ -565,6 +570,7 @@ export class GameRoomDO extends DurableObject<Env> {
       gameType: this._meta!.gameType,
       handles: this._meta!.handleMap,
       progressCounter: this._progress.counter,
+      turnDeadlineMs: this._deadlineMs,
       ...(view as Record<string, unknown>),
     };
   }
@@ -597,13 +603,14 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, prevProgressState, actionLog, progress, relay] = await Promise.all([
+      const [meta, state, prevProgressState, actionLog, progress, relay, deadline] = await Promise.all([
         this.ctx.storage.get<GameMeta>('meta'),
         this.ctx.storage.get<unknown>('state'),
         this.ctx.storage.get<unknown>('prevProgressState'),
         this.ctx.storage.get<ActionEntry[]>('actionLog'),
         this.ctx.storage.get<ProgressState>('progress'),
         this.ctx.storage.get<RelayMessage[]>('relay'),
+        this.ctx.storage.get<DeadlineEntry>('deadline'),
       ]);
 
       if (!meta) { this._loaded = true; return; }
@@ -622,6 +629,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0, snapshots: [0] };
       this._relay = relay ?? [];
+      this._deadlineMs = deadline?.deadlineMs ?? null;
       this._loaded = true;
     });
   }

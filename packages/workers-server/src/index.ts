@@ -54,6 +54,9 @@ export default {
     }
 
     const response = await handleRequest(request, env);
+    // WebSocket upgrade responses (101) must be returned as-is —
+    // wrapping them in new Response() strips the webSocket property.
+    if (response.status === 101) return response;
     return withCors(response);
   },
 };

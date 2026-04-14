@@ -56,4 +56,6 @@ export interface SpectatorGameState {
   turnStartedAt?: number;
   /** Turn timeout in milliseconds */
   turnTimeoutMs?: number;
+  /** Absolute deadline (ms since epoch) when the current turn expires */
+  turnDeadlineMs?: number;
 }

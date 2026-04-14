@@ -84,6 +84,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
       Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [id, new Set(hexes as string[])])
     ),
     turnTimeoutMs: data.turnTimeoutMs ?? 30000,
+    turnDeadlineMs: data.turnDeadlineMs ?? (Date.now() + (data.turnTimeoutMs ?? 30000)),
     turnStartedAt: data.turnStartedAt ?? Date.now(),
     handles: data.handles ?? {},
   };
@@ -93,18 +94,17 @@ function mapServerState(raw: any): SpectatorGameState | null {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function TurnTimer({ startedAt, timeoutMs }: { startedAt: number; timeoutMs: number }) {
+function TurnTimer({ deadlineMs, timeoutMs }: { deadlineMs: number; timeoutMs: number }) {
   const [remaining, setRemaining] = useState(timeoutMs);
 
   useEffect(() => {
     const tick = () => {
-      const elapsed = Date.now() - startedAt;
-      setRemaining(Math.max(0, timeoutMs - elapsed));
+      setRemaining(Math.max(0, deadlineMs - Date.now()));
     };
     tick();
     const interval = setInterval(tick, 200);
     return () => clearInterval(interval);
-  }, [startedAt, timeoutMs]);
+  }, [deadlineMs]);
 
   const seconds = Math.ceil(remaining / 1000);
   const pct = (remaining / timeoutMs) * 100;
@@ -371,8 +371,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
-          {gameState.phase === 'in_progress' && gameState.turnStartedAt && (
-            <TurnTimer startedAt={gameState.turnStartedAt} timeoutMs={gameState.turnTimeoutMs ?? 30000} />
+          {gameState.phase === 'in_progress' && gameState.turnDeadlineMs && (
+            <TurnTimer deadlineMs={gameState.turnDeadlineMs} timeoutMs={gameState.turnTimeoutMs ?? 30000} />
           )}
           {!connected && (
             <span className="text-xs text-yellow-500">disconnected</span>
