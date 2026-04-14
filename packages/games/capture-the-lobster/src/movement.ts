@@ -67,6 +67,11 @@ function walkPath(
   path: Direction[],
   validTiles: Set<string>,
 ): { positions: Hex[]; stopped: boolean } {
+  // Guard: if start position is malformed (missing q/r), treat as no movement
+  if (!start || typeof start.q !== 'number' || typeof start.r !== 'number') {
+    return { positions: [start ?? { q: 0, r: 0 }], stopped: true };
+  }
+
   const positions: Hex[] = [start];
   let current = start;
   let stopped = false;

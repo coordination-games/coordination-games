@@ -347,8 +347,11 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     // Move to spawn position immediately (so spectators see where they'll respawn)
     const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
     const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
-    unit.position = { ...spawns[counter.current % spawns.length] };
-    counter.current++;
+    if (spawns && spawns.length > 0) {
+      unit.position = { ...spawns[counter.current % spawns.length] };
+      counter.current++;
+    }
+    // If no spawns available, position remains unchanged (unit stays in place)
 
     if (unit.carryingFlag) {
       unit.carryingFlag = false;
