@@ -187,7 +187,7 @@ interface LobbyChatMessage {
 // ---------------------------------------------------------------------------
 
 export function CtlSpectatorView(props: SpectatorViewProps) {
-  const { gameState: rawGameState, gameId, handles, replaySnapshots, replayIndex } = props;
+  const { gameState: rawGameState, gameId, handles, replaySnapshots } = props;
   const isReplay = replaySnapshots != null;
 
   // Internal state for CtL-specific rendering
@@ -219,37 +219,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     return mapServerState(rawGameState);
   }, [isReplay, rawGameState]);
 
-  // Accumulate kills across replay snapshots up to current index
-  const replayKills = useMemo(() => {
-    if (!isReplay || !replaySnapshots || replayIndex == null) return [];
-    const kills: KillEvent[] = [];
-    for (let i = 0; i <= replayIndex && i < replaySnapshots.length; i++) {
-      const snap = replaySnapshots[i];
-      if (snap.kills && Array.isArray(snap.kills)) {
-        for (const k of snap.kills) {
-          const exists = kills.some(
-            (existing) =>
-              existing.killerId === k.killerId &&
-              existing.victimId === k.victimId &&
-              existing.turn === (k.turn ?? i),
-          );
-          if (!exists) {
-            kills.push({
-              killerId: k.killerId ?? '',
-              killerClass: k.killerClass ?? k.killerUnitClass ?? '',
-              killerTeam: k.killerTeam ?? 'A',
-              victimId: k.victimId ?? '',
-              victimClass: k.victimClass ?? k.victimUnitClass ?? '',
-              victimTeam: k.victimTeam ?? 'A',
-              reason: k.reason ?? '',
-              turn: k.turn ?? i,
-            });
-          }
-        }
-      }
-    }
-    return kills;
-  }, [isReplay, replaySnapshots, replayIndex]);
+  // In replay mode, kills come from the snapshot itself (cumulative since buildSpectatorView includes allKills)
+  // No cross-snapshot accumulation needed — each snapshot is self-contained.
 
   // ---------------------------------------------------------------------------
   // Live mode: fetch initial state + connect WebSocket
@@ -322,7 +293,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   // ---------------------------------------------------------------------------
 
   const gameState = isReplay ? replayState : liveState;
-  const displayKills = isReplay ? replayKills : allKills;
+  const displayKills = isReplay ? (replayState?.kills ?? []) : allKills;
 
   const teamButtons: { label: string; value: 'A' | 'B' | 'all' }[] = [
     { label: 'All', value: 'all' },

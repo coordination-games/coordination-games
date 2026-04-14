@@ -208,11 +208,12 @@ function buildCtlSpectatorView(
     tiles.push(tile);
   }
 
-  // Kills from the last resolved turn (stored in state by resolveTurn)
-  const kills = (state.lastKills ?? []).map((k: any) => ({
+  // All kills up to this point (cumulative — snapshot is self-contained)
+  const kills = (state.allKills ?? state.lastKills ?? []).map((k: any) => ({
     killerId: k.killerId,
     victimId: k.victimId,
     reason: k.reason,
+    turn: k.turn ?? turn,
   }));
 
   // Build flag status summaries
