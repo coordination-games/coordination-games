@@ -139,12 +139,15 @@ export class GameRoomDO extends DurableObject<Env> {
       return;
     }
 
-    console.log(`[GameRoomDO] Alarm fired — applying deadline action`);
-    // Don't delete deadline before applying — if applyActionInternal throws,
-    // the deadline stays in storage and CF can retry the alarm.
-    // applyActionInternal overwrites the deadline entry when the plugin
-    // returns a new one (next turn) or deletes it (game over).
-    await this.applyActionInternal(null, deadline.action);
+    console.log(`[GameRoomDO] Alarm fired — applying deadline action for turn ${this._progress.counter}`);
+    try {
+      await this.applyActionInternal(null, deadline.action);
+    } catch (err: any) {
+      console.error(`[GameRoomDO] Alarm action failed:`, err?.stack ?? err);
+      // Delete the broken deadline to avoid infinite retry loop
+      await this.ctx.storage.delete('deadline');
+      throw err;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -238,8 +241,8 @@ export class GameRoomDO extends DurableObject<Env> {
     try {
       return Response.json(await this.applyActionInternal((playerId as string) ?? null, action));
     } catch (err: any) {
-      console.error(`[GameRoomDO] Error in applyActionInternal:`, err);
-      return Response.json({ error: 'Internal server error', details: String(err) }, { status: 500 });
+      console.error(`[GameRoomDO] Error in applyActionInternal:`, err?.stack ?? err);
+      return Response.json({ error: 'Internal server error', details: String(err), stack: err?.stack ?? '' }, { status: 500 });
     }
   }
 
@@ -615,20 +618,25 @@ export class GameRoomDO extends DurableObject<Env> {
   private broadcastUpdates(): void {
     if (!this._meta || !this._plugin) return;
 
-    // Push delayed spectator view to all spectator connections
-    const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
-    for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
-      try { ws.send(spectatorMsg); } catch {}
-    }
-
-    // Push fog-filtered view to each player's connection(s)
-    for (const pid of this._meta.playerIds) {
-      const playerConns = this.ctx.getWebSockets(pid);
-      if (playerConns.length === 0) continue;
-      const playerMsg = JSON.stringify(this.buildPlayerMessage(pid));
-      for (const ws of playerConns) {
-        try { ws.send(playerMsg); } catch {}
+    try {
+      // Push delayed spectator view to all spectator connections
+      const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
+      for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
+        try { ws.send(spectatorMsg); } catch {}
       }
+
+      // Push fog-filtered view to each player's connection(s)
+      for (const pid of this._meta.playerIds) {
+        const playerConns = this.ctx.getWebSockets(pid);
+        if (playerConns.length === 0) continue;
+        const playerMsg = JSON.stringify(this.buildPlayerMessage(pid));
+        for (const ws of playerConns) {
+          try { ws.send(playerMsg); } catch {}
+        }
+      }
+    } catch (err) {
+      // Don't let broadcast errors crash the alarm handler / action pipeline
+      console.error('[GameRoomDO] broadcastUpdates failed:', err);
     }
   }
 
