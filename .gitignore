@@ -14,3 +14,4 @@ HEARTBEAT.md
 packages/contracts/artifacts/
 packages/contracts/cache/
 packages/contracts/typechain-types/
+core
