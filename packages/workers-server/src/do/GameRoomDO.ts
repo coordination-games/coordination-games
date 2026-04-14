@@ -235,7 +235,12 @@ export class GameRoomDO extends DurableObject<Env> {
     const { playerId, action } = body ?? {} as Record<string, unknown>;
     if (action === undefined) return Response.json({ error: 'action is required' }, { status: 400 });
 
-    return Response.json(await this.applyActionInternal((playerId as string) ?? null, action));
+    try {
+      return Response.json(await this.applyActionInternal((playerId as string) ?? null, action));
+    } catch (err: any) {
+      console.error(`[GameRoomDO] Error in applyActionInternal:`, err);
+      return Response.json({ error: 'Internal server error', details: String(err) }, { status: 500 });
+    }
   }
 
   private async handleState(url: URL): Promise<Response> {
@@ -332,21 +337,26 @@ export class GameRoomDO extends DurableObject<Env> {
       return Response.json({ error: 'relay must have type and pluginId' }, { status: 400 });
     }
 
-    const msg: RelayMessage = {
-      index: this._relay.length,
-      type: relayObj.type as string,
-      data: relayObj.data ?? null,
-      scope: (relayObj.scope as string) ?? 'all',
-      pluginId: relayObj.pluginId as string,
-      sender: playerId as string,
-      turn: this._progress.counter,
-      timestamp: Date.now(),
-    };
-    this._relay.push(msg);
-    await this.ctx.storage.put('relay', this._relay);
-    this.broadcastRelayMessage(msg);
+    try {
+      const msg: RelayMessage = {
+        index: this._relay.length,
+        type: relayObj.type as string,
+        data: relayObj.data ?? null,
+        scope: (relayObj.scope as string) ?? 'all',
+        pluginId: relayObj.pluginId as string,
+        sender: playerId as string,
+        turn: this._progress.counter,
+        timestamp: Date.now(),
+      };
+      this._relay.push(msg);
+      await this.ctx.storage.put('relay', this._relay);
+      this.broadcastRelayMessage(msg);
 
-    return Response.json({ ok: true, index: msg.index });
+      return Response.json({ ok: true, index: msg.index });
+    } catch (err: any) {
+      console.error(`[GameRoomDO] Error in handleTool:`, err);
+      return Response.json({ error: 'Internal server error', details: String(err) }, { status: 500 });
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

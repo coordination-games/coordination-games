@@ -129,13 +129,16 @@ This is Capture the Lobster — a hex-grid tactical game. Key rules:
 ${ctlHints}
 Play the game to completion using the "game" MCP server tools.
 
-1. Call get_guide ONCE to learn the rules
+1. Call get_guide ONCE to learn the rules — read it carefully, it lists ALL available tools
 2. Call get_state to see the current state
-3. Take actions with submit_move based on the current phase
-4. Keep calling get_state and submit_move until gameOver: true
-5. Do NOT stop early or summarize — keep playing every round`;
+3. Explore ALL your available tools — not just submit_move. Use chat to coordinate with teammates, share intel about enemy positions, discuss strategy. Social tools are critical to winning.
+4. Each turn: check state, communicate with your team via chat, THEN submit your move
+5. Keep calling wait_for_update and submitting moves until gameOver: true
+6. Do NOT stop early or summarize — keep playing every round
 
-  const resumePrompt = `The game is still in progress. Continue playing — call get_state, then keep submitting moves until gameOver: true. Do NOT summarize or stop early.`;
+IMPORTANT: You have a chat tool — USE IT EVERY TURN. Tell your teammate what you see, where enemies are, and what you plan to do. Coordinate! Solo play loses.`;
+
+  const resumePrompt = `The game is still in progress. Continue playing — call wait_for_update, chat with your teammate about what you see, then submit_move. Repeat until gameOver: true. Do NOT summarize or stop early. USE THE CHAT TOOL every turn to coordinate.`;
 
   /** Run one claude --print invocation; resolves with stdout text. */
   function runOnce(prompt: string, isResume: boolean): Promise<string> {
