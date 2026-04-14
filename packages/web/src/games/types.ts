@@ -18,10 +18,8 @@ export interface SpectatorViewProps {
   perspective?: 'all' | 'A' | 'B';
   /** Callback to change perspective. */
   onPerspectiveChange?: (perspective: 'all' | 'A' | 'B') => void;
-  /** All replay snapshots (only set in replay mode). Plugins use this for cross-snapshot accumulation (e.g. kill feed). */
+  /** All replay snapshots (only set in replay mode). Each snapshot is self-contained. */
   replaySnapshots?: any[];
-  /** Current replay snapshot index (only set in replay mode). */
-  replayIndex?: number;
 }
 
 /** Props for a compact game card shown in lobby/game lists. */

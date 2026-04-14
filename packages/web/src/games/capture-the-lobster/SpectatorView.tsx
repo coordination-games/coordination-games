@@ -49,7 +49,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
       victimClass: victim?.unitClass ?? k.victimClass ?? k.victimUnitClass ?? 'unknown',
       victimTeam: victim?.team ?? k.victimTeam ?? 'B',
       reason: k.reason,
-      turn: data.turn,
+      turn: k.turn ?? data.turn,
     };
   });
 
@@ -218,9 +218,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     if (!isReplay || !rawGameState) return null;
     return mapServerState(rawGameState);
   }, [isReplay, rawGameState]);
-
-  // In replay mode, kills come from the snapshot itself (cumulative since buildSpectatorView includes allKills)
-  // No cross-snapshot accumulation needed — each snapshot is self-contained.
 
   // ---------------------------------------------------------------------------
   // Live mode: fetch initial state + connect WebSocket

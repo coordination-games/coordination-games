@@ -287,7 +287,6 @@ export interface SpectatorViewProps {
   perspective?: 'all' | 'A' | 'B';
   onPerspectiveChange?: (perspective: 'all' | 'A' | 'B') => void;
   replaySnapshots?: any[];   // all snapshots (only set in replay mode)
-  replayIndex?: number;      // current snapshot index (only set in replay mode)
 }
 ```
 
@@ -379,16 +378,15 @@ Client side:
   1. ReplayPage fetches /replay, gets snapshots array
   2. Scrubber controls currentTurn index (keyboard arrows, play/pause, slider)
   3. ReplayPage passes snapshots[currentTurn] as gameState to plugin.SpectatorView
-  4. Also passes replaySnapshots and replayIndex for cross-snapshot data
 ```
 
 ### Replay mode detection in SpectatorView
 
-Your component receives `replaySnapshots?: any[]` and `replayIndex?: number`. When these are present, you're in replay mode:
+Your component receives `replaySnapshots?: any[]`. When present, you're in replay mode:
 
 ```typescript
 export function YourSpectatorView(props: SpectatorViewProps) {
-  const { gameState, replaySnapshots, replayIndex } = props;
+  const { gameState, replaySnapshots } = props;
   const isReplay = replaySnapshots != null;
 
   // In replay mode: use gameState from props (it's the snapshot)
@@ -401,34 +399,17 @@ export function YourSpectatorView(props: SpectatorViewProps) {
 }
 ```
 
-### Cross-snapshot data
-
-Some games need accumulated data across snapshots (e.g., CtL accumulates kills). Use `replaySnapshots` and `replayIndex` to compute this:
-
-```typescript
-const cumulativeKills = useMemo(() => {
-  if (!replaySnapshots || replayIndex == null) return [];
-  const kills = [];
-  for (let i = 0; i <= replayIndex; i++) {
-    kills.push(...(replaySnapshots[i].kills ?? []));
-  }
-  return kills;
-}, [replaySnapshots, replayIndex]);
-```
-
-If your snapshot data is already cumulative (e.g., OATHBREAKER's `roundResults` grows each round), you don't need this — just render from the current snapshot.
-
 ### What goes in a snapshot
 
-The snapshot is the return value of `buildSpectatorView`. Include everything the spectator view needs to render that point in time:
+The snapshot is the return value of `buildSpectatorView`. Each snapshot must be **self-contained** — include everything the spectator view needs to render that point in time without referencing other snapshots:
 
 - Board/grid state, unit positions, scores
 - Per-team visibility data (for fog-of-war replay)
 - Chat messages up to this point (cumulative)
-- Kills/events from this turn only (the component accumulates if needed)
+- All kills/events up to this point (cumulative, with turn numbers)
 - Player handles (from `context.handles`)
 
-The snapshot should be self-contained — the replay page passes exactly one snapshot at a time as `gameState`. The only cross-snapshot access is through `replaySnapshots`/`replayIndex`.
+The replay page passes exactly one snapshot at a time as `gameState`. Your component should render entirely from that single snapshot.
 
 ## Checklist
 

@@ -126,7 +126,7 @@ export interface SpectatorState {
     carryingFlag: boolean;
     respawnTurn?: number;
   }[];
-  kills: { killerId: string; victimId: string; reason: string }[];
+  kills: { killerId: string; victimId: string; reason: string; turn: number }[];
   chatA: { from: string; message: string; turn: number }[];
   chatB: { from: string; message: string; turn: number }[];
   flagA: { status: 'at_base' | 'carried'; carrier?: string };
@@ -209,11 +209,11 @@ function buildCtlSpectatorView(
   }
 
   // All kills up to this point (cumulative — snapshot is self-contained)
-  const kills = (state.allKills ?? state.lastKills ?? []).map((k: any) => ({
+  const kills = (state.allKills ?? []).map(k => ({
     killerId: k.killerId,
     victimId: k.victimId,
     reason: k.reason,
-    turn: k.turn ?? turn,
+    turn: k.turn,
   }));
 
   // Build flag status summaries

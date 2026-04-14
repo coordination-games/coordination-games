@@ -165,7 +165,6 @@ export default function ReplayPage() {
           gameType={replay.gameType}
           phase={isFinished ? 'finished' : 'in_progress'}
           replaySnapshots={snapshots}
-          replayIndex={currentTurn}
         />
       </div>
     </div>
