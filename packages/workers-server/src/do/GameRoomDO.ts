@@ -55,6 +55,10 @@ interface GameMeta {
 interface ProgressState {
   counter: number;
   snapshots: number[];  // action log index at each progress point
+  /** Absolute timestamp (ms) when each progress point started */
+  startedAtMs: number[];
+  /** Timeout duration (ms) for each progress point (null = no deadline) */
+  timeoutMs: (number | null)[];
 }
 
 interface ActionEntry {
@@ -91,7 +95,7 @@ export class GameRoomDO extends DurableObject<Env> {
   private _state: unknown = null;
   private _prevProgressState: unknown = null;  // state at last progress point (spectator delay)
   private _actionLog: ActionEntry[] = [];
-  private _progress: ProgressState = { counter: 0, snapshots: [0] };
+  private _progress: ProgressState = { counter: 0, snapshots: [0], startedAtMs: [Date.now()], timeoutMs: [null] };
   private _relay: RelayMessage[] = [];
   private _deadlineMs: number | null = null;
 
@@ -192,7 +196,7 @@ export class GameRoomDO extends DurableObject<Env> {
       createdAt: new Date().toISOString(),
       finished: false,
     };
-    const progress: ProgressState = { counter: 0, snapshots: [0] };
+    const progress: ProgressState = { counter: 0, snapshots: [0], startedAtMs: [Date.now()], timeoutMs: [null] };
 
     await Promise.all([
       this.ctx.storage.put('meta', meta),
@@ -439,26 +443,31 @@ export class GameRoomDO extends DurableObject<Env> {
     this._state = result.state;
     this._actionLog.push({ playerId, action });
 
-    if (result.progressIncrement) {
-      this._prevProgressState = prevState;
-      this._progress.counter++;
-      this._progress.snapshots.push(this._actionLog.length - 1);
-      // Update cached summary in D1
-      this.writeSummaryToD1();
-    }
-
-    // Deadline management
+    // Deadline management (before progress tracking so we know the new timeout)
+    let newTimeoutMs: number | null = null;
     if (result.deadline !== undefined) {
       if (result.deadline === null) {
         this._deadlineMs = null;
         await this.ctx.storage.delete('deadline');
         try { await this.ctx.storage.deleteAlarm(); } catch {}
       } else {
-        const deadlineMs = Date.now() + result.deadline.seconds * 1000;
+        newTimeoutMs = result.deadline.seconds * 1000;
+        const deadlineMs = Date.now() + newTimeoutMs;
         this._deadlineMs = deadlineMs;
         await this.ctx.storage.put('deadline', { action: result.deadline.action, deadlineMs });
         await this.ctx.storage.setAlarm(deadlineMs);
       }
+    }
+
+    if (result.progressIncrement) {
+      this._prevProgressState = prevState;
+      this._progress.counter++;
+      this._progress.snapshots.push(this._actionLog.length - 1);
+      // Record when this new progress point starts and its timeout
+      this._progress.startedAtMs.push(Date.now());
+      this._progress.timeoutMs.push(newTimeoutMs);
+      // Update cached summary in D1
+      this.writeSummaryToD1();
     }
 
     await Promise.all([
@@ -562,18 +571,33 @@ export class GameRoomDO extends DurableObject<Env> {
 
   private buildSpectatorMessage(): object {
     const delay = this._plugin!.spectatorDelay ?? 0;
+    const finished = this._meta!.finished;
     // Spectators see only 'all'-scoped relay messages (no team chat)
     const relayMessages = this._relay.filter(m => m.scope === 'all');
     const ctx = { handles: this._meta!.handleMap, relayMessages };
-    const view = delay > 0 && this._prevProgressState
+
+    // Determine which progress point the spectator is viewing
+    const currentIdx = this._progress.counter;
+    const isDelayed = delay > 0 && this._prevProgressState && !finished;
+    const spectatorIdx = isDelayed ? Math.max(0, currentIdx - 1) : currentIdx;
+
+    const view = isDelayed
       ? this._plugin!.buildSpectatorView(this._prevProgressState, null, ctx)
       : this._plugin!.buildSpectatorView(this._state, this._prevProgressState, ctx);
+
+    // Spectator timer: use the delayed progress point's real start time + timeout
+    // so everyone tuning in sees the same countdown position
+    const progressStartedAt = this._progress.startedAtMs[spectatorIdx] ?? 0;
+    const progressTimeoutMs = this._progress.timeoutMs[spectatorIdx] ?? null;
+
     return {
       type: 'state_update',
       gameType: this._meta!.gameType,
       handles: this._meta!.handleMap,
       progressCounter: this._progress.counter,
-      turnDeadlineMs: this._deadlineMs,
+      turnDeadlineMs: progressStartedAt && progressTimeoutMs
+        ? progressStartedAt + progressTimeoutMs
+        : this._deadlineMs,
       ...(view as Record<string, unknown>),
     };
   }
@@ -630,7 +654,12 @@ export class GameRoomDO extends DurableObject<Env> {
       this._state = state ?? null;
       this._prevProgressState = prevProgressState ?? null;
       this._actionLog = actionLog ?? [];
-      this._progress = progress ?? { counter: 0, snapshots: [0] };
+      this._progress = progress ?? { counter: 0, snapshots: [0], startedAtMs: [Date.now()], timeoutMs: [null] };
+      // Backfill for DOs created before startedAtMs/timeoutMs were added
+      if (!this._progress.startedAtMs) {
+        this._progress.startedAtMs = this._progress.snapshots.map(() => 0);
+        this._progress.timeoutMs = this._progress.snapshots.map(() => null);
+      }
       this._relay = relay ?? [];
       this._deadlineMs = deadline?.deadlineMs ?? null;
       this._loaded = true;
