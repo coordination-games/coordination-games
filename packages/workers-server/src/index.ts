@@ -73,6 +73,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return Response.json({ ok: true, games: getRegisteredGames() });
     }
 
+
+
     if (pathname === '/') {
       return Response.redirect(new URL('/health', request.url).toString(), 302);
     }
