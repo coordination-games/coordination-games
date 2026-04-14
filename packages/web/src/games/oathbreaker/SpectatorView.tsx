@@ -73,26 +73,36 @@ function mapServerState(raw: any): OathSpectatorState | null {
 // ---------------------------------------------------------------------------
 
 export function OathbreakerSpectatorView(props: SpectatorViewProps) {
-  // handles and chatMessages come from GamePage via platform (same as CtL)
-  const { gameId, handles, chatMessages } = props;
+  const { gameId, handles, chatMessages, gameState: rawGameState, replaySnapshots } = props;
+  const isReplay = replaySnapshots != null;
 
-  const [state, setState] = useState<OathSpectatorState | null>(null);
+  const [liveState, setLiveState] = useState<OathSpectatorState | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Track the player we're "following" — we resolve their current pairing each round.
-  // Persists across round transitions until the user manually returns to overview.
   const [followedPlayerId, setFollowedPlayerId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Fetch initial state + connect WebSocket (game state only — handles/chat come from props)
+  // ---------------------------------------------------------------------------
+  // Replay mode: derive state from props
+  // ---------------------------------------------------------------------------
+
+  const replayState = useMemo(() => {
+    if (!isReplay || !rawGameState) return null;
+    return mapServerState(rawGameState);
+  }, [isReplay, rawGameState]);
+
+  // ---------------------------------------------------------------------------
+  // Live mode: fetch initial state + connect WebSocket
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
-    if (!gameId) return;
+    if (isReplay || !gameId) return;
 
     fetch(`/api/games/${gameId}`)
       .then(r => r.json())
       .then(data => {
         const mapped = mapServerState(data);
-        if (mapped) setState(mapped);
+        if (mapped) setLiveState(mapped);
       })
       .catch(() => {});
 
@@ -105,7 +115,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
       try {
         const raw = JSON.parse(event.data);
         const mapped = mapServerState(raw);
-        if (mapped) setState(mapped);
+        if (mapped) setLiveState(mapped);
       } catch {
         console.warn('Failed to parse OATHBREAKER WS message');
       }
@@ -114,7 +124,13 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     ws.onclose = () => setConnected(false);
 
     return () => { ws.close(); wsRef.current = null; };
-  }, [gameId]);
+  }, [gameId, isReplay]);
+
+  // ---------------------------------------------------------------------------
+  // Unified state: replay or live
+  // ---------------------------------------------------------------------------
+
+  const state = isReplay ? replayState : liveState;
 
   // Character assignments — seeded, deterministic
   const characters = useMemo(() => {
@@ -127,25 +143,23 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     return (
       <div className="arcade-screen" style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: 'calc(100vh - 5rem)',
+        height: '100%',
       }}>
         <div style={{ textAlign: 'center' }}>
           <div className="pixel-text" style={{ fontSize: 14, color: '#e9d852', letterSpacing: 4, marginBottom: 16 }}>
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />
+          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="&#35475;&#32004;&#30772;&#12426;" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />
           <div className="pixel-text" style={{ fontSize: 9, color: '#d1d5db', marginBottom: 8, letterSpacing: 3 }}>Seiyaku-yaburi</div>
           <p className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb' }}>
-            {error ? error : connected ? 'WAITING FOR GAME DATA...' : 'CONNECTING...'}
+            {error ? error : isReplay ? 'LOADING REPLAY...' : connected ? 'WAITING FOR GAME DATA...' : 'CONNECTING...'}
           </p>
         </div>
       </div>
     );
   }
 
-  // Resolve the followed player to their CURRENT pairing each round.
-  // Pairings change round-to-round, so we look up by player ID, not by pairing identity.
-  // Orient the pairing so the followed player is always on the left (player1).
+  // Resolve followed player to their current pairing
   const rawPairing = followedPlayerId
     ? state.pairings.find(
         p => p.player1 === followedPlayerId || p.player2 === followedPlayerId
@@ -166,10 +180,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   // Battle view
   if (livePairing) {
     return (
-      <div style={{
-        height: 'calc(100vh - 5rem)',
-        margin: '-1rem -1.5rem -2rem',
-      }}>
+      <div style={{ height: '100%' }}>
         <ArcadeBattleView
           pairing={livePairing}
           handles={handles}
@@ -188,10 +199,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
 
   // Tournament overview
   return (
-    <div style={{
-      height: 'calc(100vh - 5rem)',
-      margin: '-1rem -1.5rem -2rem',
-    }}>
+    <div style={{ height: '100%' }}>
       <ArcadeOverview
         players={state.players}
         pairings={state.pairings}

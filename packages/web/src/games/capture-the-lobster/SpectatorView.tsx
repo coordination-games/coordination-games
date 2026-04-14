@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import HexGrid from '../../components/HexGrid';
 import type { SpectatorViewProps } from '../types';
 import { getWsUrl } from '../../config.js';
@@ -9,7 +9,7 @@ import type {
 } from '../../types';
 
 // ---------------------------------------------------------------------------
-// Map server state → frontend types (CtL-specific)
+// Map server state -> frontend types (CtL-specific)
 // ---------------------------------------------------------------------------
 
 function mapServerState(raw: any): SpectatorGameState | null {
@@ -43,11 +43,11 @@ function mapServerState(raw: any): SpectatorGameState | null {
     const victim = unitMap.get(k.victimId);
     return {
       killerId: k.killerId,
-      killerClass: killer?.unitClass ?? 'unknown',
-      killerTeam: killer?.team ?? 'A',
+      killerClass: killer?.unitClass ?? k.killerClass ?? k.killerUnitClass ?? 'unknown',
+      killerTeam: killer?.team ?? k.killerTeam ?? 'A',
       victimId: k.victimId,
-      victimClass: victim?.unitClass ?? 'unknown',
-      victimTeam: victim?.team ?? 'B',
+      victimClass: victim?.unitClass ?? k.victimClass ?? k.victimUnitClass ?? 'unknown',
+      victimTeam: victim?.team ?? k.victimTeam ?? 'B',
       reason: k.reason,
       turn: data.turn,
     };
@@ -90,7 +90,6 @@ function mapServerState(raw: any): SpectatorGameState | null {
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
 
 const CLASS_ICONS: Record<string, string> = {
   rogue: 'R',
@@ -188,12 +187,13 @@ interface LobbyChatMessage {
 // ---------------------------------------------------------------------------
 
 export function CtlSpectatorView(props: SpectatorViewProps) {
-  const { gameState: rawGameState, gameId, handles } = props;
+  const { gameState: rawGameState, gameId, handles, replaySnapshots, replayIndex } = props;
+  const isReplay = replaySnapshots != null;
 
   // Internal state for CtL-specific rendering
   const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>(props.perspective ?? 'all');
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
-  const [ctlState, setCtlState] = useState<SpectatorGameState | null>(null);
+  const [liveState, setLiveState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,17 +210,60 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     }
   }, [props.perspective]);
 
-  // Fetch initial state via REST, then connect WebSocket for live updates
-  useEffect(() => {
-    if (!gameId) return;
+  // ---------------------------------------------------------------------------
+  // Replay mode: derive state from props (no fetch, no websocket)
+  // ---------------------------------------------------------------------------
 
-    // Fetch initial state
+  const replayState = useMemo(() => {
+    if (!isReplay || !rawGameState) return null;
+    return mapServerState(rawGameState);
+  }, [isReplay, rawGameState]);
+
+  // Accumulate kills across replay snapshots up to current index
+  const replayKills = useMemo(() => {
+    if (!isReplay || !replaySnapshots || replayIndex == null) return [];
+    const kills: KillEvent[] = [];
+    for (let i = 0; i <= replayIndex && i < replaySnapshots.length; i++) {
+      const snap = replaySnapshots[i];
+      if (snap.kills && Array.isArray(snap.kills)) {
+        for (const k of snap.kills) {
+          const exists = kills.some(
+            (existing) =>
+              existing.killerId === k.killerId &&
+              existing.victimId === k.victimId &&
+              existing.turn === (k.turn ?? i),
+          );
+          if (!exists) {
+            kills.push({
+              killerId: k.killerId ?? '',
+              killerClass: k.killerClass ?? k.killerUnitClass ?? '',
+              killerTeam: k.killerTeam ?? 'A',
+              victimId: k.victimId ?? '',
+              victimClass: k.victimClass ?? k.victimUnitClass ?? '',
+              victimTeam: k.victimTeam ?? 'A',
+              reason: k.reason ?? '',
+              turn: k.turn ?? i,
+            });
+          }
+        }
+      }
+    }
+    return kills;
+  }, [isReplay, replaySnapshots, replayIndex]);
+
+  // ---------------------------------------------------------------------------
+  // Live mode: fetch initial state + connect WebSocket
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (isReplay || !gameId) return;
+
     fetch(`/api/games/${gameId}`)
       .then((res) => res.json())
       .then((data) => {
         const mapped = mapServerState(data);
         if (mapped) {
-          setCtlState(mapped);
+          setLiveState(mapped);
           if (mapped.kills.length > 0) {
             setAllKills(mapped.kills);
           }
@@ -237,7 +280,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       })
       .catch(() => {});
 
-    // Connect WebSocket
     const wsUrl = getWsUrl(`/ws/game/${gameId}`);
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -252,7 +294,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         const raw = JSON.parse(event.data);
         const mapped = mapServerState(raw);
         if (mapped) {
-          setCtlState(mapped);
+          setLiveState(mapped);
           if (mapped.kills.length > 0) {
             setAllKills((prev) => {
               const existing = new Set(prev.map(k => `${k.turn}:${k.victimId}`));
@@ -273,9 +315,14 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       ws.close();
       wsRef.current = null;
     };
-  }, [gameId]);
+  }, [gameId, isReplay]);
 
-  const gameState = ctlState;
+  // ---------------------------------------------------------------------------
+  // Unified state: replay or live
+  // ---------------------------------------------------------------------------
+
+  const gameState = isReplay ? replayState : liveState;
+  const displayKills = isReplay ? replayKills : allKills;
 
   const teamButtons: { label: string; value: 'A' | 'B' | 'all' }[] = [
     { label: 'All', value: 'all' },
@@ -285,18 +332,33 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
 
   if (!gameState) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+      <div className="flex items-center justify-center h-full">
         <div className="text-center">
           <div className="text-4xl mb-4">🦞</div>
           <p className="text-gray-400">
-            {error ? error : connected ? 'Waiting for game data...' : `Connecting to game ${gameId}...`}
+            {error ? error : connected ? 'Waiting for game data...' : isReplay ? 'Loading replay...' : `Connecting to game ${gameId}...`}
           </p>
         </div>
       </div>
     );
   }
 
-  // Build unit labels (e.g. "R1", "K2") from tile data so chat can reference map
+  // Fog of war for selected team
+  const fogTiles = useMemo(() => {
+    if (selectedTeam === 'all' || !gameState) return undefined;
+
+    const visibleSet = selectedTeam === 'A' ? gameState.visibleA : gameState.visibleB;
+    if (!visibleSet || visibleSet.size === 0) return undefined;
+
+    const fog = new Set<string>();
+    for (const tile of gameState.tiles) {
+      const key = `${tile.q},${tile.r}`;
+      if (!visibleSet.has(key)) fog.add(key);
+    }
+    return fog;
+  }, [gameState, selectedTeam]);
+
+  // Build unit labels (e.g. "R1", "K2") from tile data
   const unitLabels: Record<string, string> = {};
   const teamACounts: string[] = [];
   const teamBCounts: string[] = [];
@@ -333,14 +395,14 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   };
 
   return (
-    <div className="flex flex-col md:h-[calc(100vh-5rem)] -mx-4 sm:-mx-6 -mb-4 sm:-mb-8 px-2 sm:px-4 pt-0 pb-3 gap-2">
+    <div className="flex flex-col h-full -mx-4 sm:-mx-6 px-2 sm:px-4 pt-0 pb-3 gap-2">
       {/* Top bar */}
       <div className="flex flex-wrap items-center justify-between bg-gray-900 rounded-lg px-3 py-2 shrink-0 gap-2">
         <div className="flex items-center gap-2 sm:gap-4">
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
-          {!connected && (
+          {!isReplay && !connected && (
             <span className="text-xs text-yellow-500">disconnected</span>
           )}
           {gameState.phase === 'finished' && (
@@ -356,7 +418,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               onClick={() => setSelectedUnit(null)}
               className="px-2 py-1 text-xs rounded font-medium bg-yellow-900/60 text-yellow-300 hover:bg-yellow-800/60 mr-1 cursor-pointer"
             >
-              {gameState.handles?.[selectedUnit] ?? unitLabels[selectedUnit] ?? selectedUnit} PoV ✕
+              {gameState.handles?.[selectedUnit] ?? unitLabels[selectedUnit] ?? selectedUnit} PoV x
             </button>
           )}
           {teamButtons.map((btn) => (
@@ -379,7 +441,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         </div>
       </div>
 
-      {/* Main content area — stacks on mobile */}
+      {/* Main content area */}
       <div className="flex flex-col md:flex-row gap-2 flex-1 min-h-0 md:overflow-hidden">
         {/* Hex grid */}
         <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 aspect-square md:aspect-auto md:min-h-0 overflow-hidden relative">
@@ -389,10 +451,10 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
                 {gameState.winner ? (
                   <>
                     <div className="text-5xl md:text-7xl font-black mb-3" style={{ color: gameState.winner === 'A' ? '#60a5fa' : '#f87171' }}>
-                      {gameState.winner === 'A' ? '🔵' : '🔴'} TEAM {gameState.winner} WINS!
+                      {gameState.winner === 'A' ? '' : ''} TEAM {gameState.winner} WINS!
                     </div>
                     <div className="text-xl md:text-2xl text-gray-300 font-medium">
-                      captured the lobster 🦞
+                      captured the lobster
                     </div>
                   </>
                 ) : (
@@ -408,7 +470,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               </div>
             </div>
           )}
-          {gameState.turn === 0 && gameState.phase !== 'finished' && (
+          {gameState.turn === 0 && gameState.phase !== 'finished' && !isReplay && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 backdrop-blur-sm rounded-lg">
               <div className="text-center px-8 py-6">
                 <div className="text-5xl md:text-6xl mb-4">🦞</div>
@@ -423,6 +485,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           )}
           <HexGrid
             tiles={gameState.tiles}
+            fogTiles={fogTiles}
             mapRadius={gameState.mapRadius}
             selectedTeam={selectedTeam}
             visibleA={gameState.visibleA}
@@ -440,7 +503,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           />
         </div>
 
-        {/* Sidebar — stacks vertically on mobile and desktop */}
+        {/* Sidebar */}
         <div className="flex flex-col gap-2 md:w-52 shrink-0 min-h-0 overflow-hidden">
           {/* Kill feed */}
           <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-32 md:max-h-[40%] overflow-hidden">
@@ -448,7 +511,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               Kills
             </h3>
             <div className="overflow-y-auto flex-1">
-              <KillFeed kills={allKills} />
+              <KillFeed kills={displayKills} />
             </div>
           </div>
 
@@ -467,8 +530,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             </div>
           </div>
 
-          {/* Pre-game / Lobby chat (collapsible) */}
-          {(() => {
+          {/* Pre-game / Lobby chat (collapsible) — live mode only */}
+          {!isReplay && (() => {
             const preGameChat = selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
             const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
             const chatLabel = preGameChat.length > 0
@@ -511,14 +574,12 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       {/* Bottom bar — flag status */}
       <div className="flex items-center justify-between bg-gray-900 rounded-lg px-3 py-2 shrink-0 text-xs sm:text-sm">
         <div className="flex items-center gap-1 sm:gap-2">
-          <span className="text-lg sm:text-2xl">🦞</span>
           <span className="text-blue-400 font-semibold">A:</span>
           <span className="text-gray-300">{gameState.flagA.status}</span>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           <span className="text-red-400 font-semibold">B:</span>
           <span className="text-gray-300">{gameState.flagB.status}</span>
-          <span className="text-lg sm:text-2xl">🦞</span>
         </div>
       </div>
     </div>

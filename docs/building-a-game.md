@@ -286,6 +286,8 @@ export interface SpectatorViewProps {
   killFeed?: { turn: number; text: string }[];
   perspective?: 'all' | 'A' | 'B';
   onPerspectiveChange?: (perspective: 'all' | 'A' | 'B') => void;
+  replaySnapshots?: any[];   // all snapshots (only set in replay mode)
+  replayIndex?: number;      // current snapshot index (only set in replay mode)
 }
 ```
 
@@ -354,6 +356,80 @@ Every game defines `entryCost` (credits per player) and `computePayouts(outcome,
 
 `applyAction` must be deterministic. Use seeded PRNGs for any randomness (see OATHBREAKER's `mulberry32` implementation for reference). Never use `Math.random()`, `Date.now()`, or any other non-deterministic source. This is required for replay verification and Merkle proof construction.
 
+## Replay Support
+
+Replay is automatic for any game that implements `buildSpectatorView`. The platform stores a snapshot at each progress point and serves them via `/api/games/:id/replay`. The generic `ReplayPage` renders a scrubber bar and delegates all game-specific rendering to your `SpectatorView` component.
+
+### What you need to provide
+
+1. **`buildSpectatorView(state, prevState, context)`** on your `CoordinationGame` — returns a snapshot of the spectator-visible state at this progress point. Called automatically by the engine after each `progressIncrement: true` action. The return value is stored as-is and served to the replay page.
+
+2. **A `SpectatorView` component that handles replay mode** — when `replaySnapshots` is present in props, your component should use `gameState` (the current snapshot) directly instead of fetching from the server or connecting a WebSocket.
+
+### How it works
+
+```
+Server side:
+  1. Game action with progressIncrement: true fires
+  2. Engine calls plugin.buildSpectatorView(state, prevState, context)
+  3. Snapshot is stored in Durable Object storage (snapshot:0, snapshot:1, ...)
+  4. GET /api/games/:id/replay returns { gameType, handles, snapshots: [...] }
+
+Client side:
+  1. ReplayPage fetches /replay, gets snapshots array
+  2. Scrubber controls currentTurn index (keyboard arrows, play/pause, slider)
+  3. ReplayPage passes snapshots[currentTurn] as gameState to plugin.SpectatorView
+  4. Also passes replaySnapshots and replayIndex for cross-snapshot data
+```
+
+### Replay mode detection in SpectatorView
+
+Your component receives `replaySnapshots?: any[]` and `replayIndex?: number`. When these are present, you're in replay mode:
+
+```typescript
+export function YourSpectatorView(props: SpectatorViewProps) {
+  const { gameState, replaySnapshots, replayIndex } = props;
+  const isReplay = replaySnapshots != null;
+
+  // In replay mode: use gameState from props (it's the snapshot)
+  // In live mode: fetch from server + connect WebSocket
+
+  if (isReplay) {
+    const state = mapServerState(gameState);  // your game-specific mapper
+    // render from state — no fetch, no WebSocket
+  }
+}
+```
+
+### Cross-snapshot data
+
+Some games need accumulated data across snapshots (e.g., CtL accumulates kills). Use `replaySnapshots` and `replayIndex` to compute this:
+
+```typescript
+const cumulativeKills = useMemo(() => {
+  if (!replaySnapshots || replayIndex == null) return [];
+  const kills = [];
+  for (let i = 0; i <= replayIndex; i++) {
+    kills.push(...(replaySnapshots[i].kills ?? []));
+  }
+  return kills;
+}, [replaySnapshots, replayIndex]);
+```
+
+If your snapshot data is already cumulative (e.g., OATHBREAKER's `roundResults` grows each round), you don't need this — just render from the current snapshot.
+
+### What goes in a snapshot
+
+The snapshot is the return value of `buildSpectatorView`. Include everything the spectator view needs to render that point in time:
+
+- Board/grid state, unit positions, scores
+- Per-team visibility data (for fog-of-war replay)
+- Chat messages up to this point (cumulative)
+- Kills/events from this turn only (the component accumulates if needed)
+- Player handles (from `context.handles`)
+
+The snapshot should be self-contained — the replay page passes exactly one snapshot at a time as `gameState`. The only cross-snapshot access is through `replaySnapshots`/`replayIndex`.
+
 ## Checklist
 
 To ship a new game:
@@ -367,5 +443,8 @@ To ship a new game:
 - [ ] Create spectator plugin at `packages/web/src/games/your-game/`
 - [ ] Implement `SpectatorView` component
 - [ ] Register in spectator plugin registry (`packages/web/src/games/registry.ts`)
+- [ ] Ensure `SpectatorView` handles replay mode (use `gameState` from props when `replaySnapshots` is present)
+- [ ] Implement `buildSpectatorView` on your game plugin (replay snapshots are stored automatically)
 - [ ] Add REST endpoints for game-specific player actions if needed
 - [ ] Test with bots (the bot harness works with any game that implements the interface)
+- [ ] Test replay: run a bot game, then visit `/replay/{gameId}` and scrub through turns
