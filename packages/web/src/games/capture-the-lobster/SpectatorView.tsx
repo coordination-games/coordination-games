@@ -7,6 +7,7 @@ import type {
   KillEvent,
   ChatMessage,
 } from '../../types';
+import { useHexAnimations } from './useHexAnimations';
 
 // ---------------------------------------------------------------------------
 // Map server state -> frontend types (CtL-specific)
@@ -187,7 +188,7 @@ interface LobbyChatMessage {
 // ---------------------------------------------------------------------------
 
 export function CtlSpectatorView(props: SpectatorViewProps) {
-  const { gameState: rawGameState, gameId, handles, replaySnapshots } = props;
+  const { gameState: rawGameState, gameId, handles, replaySnapshots, prevGameState: rawPrevState, animate } = props;
   const isReplay = replaySnapshots != null;
 
   // Internal state for CtL-specific rendering
@@ -218,6 +219,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     if (!isReplay || !rawGameState) return null;
     return mapServerState(rawGameState);
   }, [isReplay, rawGameState]);
+
+  const prevReplayState = useMemo(() => {
+    if (!isReplay || !rawPrevState) return null;
+    return mapServerState(rawPrevState);
+  }, [isReplay, rawPrevState]);
 
   // ---------------------------------------------------------------------------
   // Live mode: fetch initial state + connect WebSocket
@@ -290,7 +296,16 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   // ---------------------------------------------------------------------------
 
   const gameState = isReplay ? replayState : liveState;
+  const prevGameState = isReplay ? prevReplayState : null;
   const displayKills = isReplay ? (replayState?.kills ?? []) : allKills;
+
+  // Animation — only active in replay mode with animate=true
+  const animState = useHexAnimations(
+    prevGameState?.tiles ?? null,
+    gameState?.tiles ?? [],
+    animate ?? false,
+    displayKills,
+  );
 
   const teamButtons: { label: string; value: 'A' | 'B' | 'all' }[] = [
     { label: 'All', value: 'all' },
@@ -459,6 +474,9 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             visibleA={gameState.visibleA}
             visibleB={gameState.visibleB}
             visibleOverride={selectedUnit && gameState.visibleByUnit?.[selectedUnit] ? gameState.visibleByUnit[selectedUnit] : undefined}
+            floatingUnits={animState.floatingUnits}
+            hiddenUnitIds={animState.hiddenUnitIds.size > 0 ? animState.hiddenUnitIds : undefined}
+            killEffects={animState.killEffects}
             onUnitClick={(unitId, team) => {
               if (selectedUnit === unitId) {
                 setSelectedUnit(null);

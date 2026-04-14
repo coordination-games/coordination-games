@@ -20,7 +20,12 @@ export interface SpectatorViewProps {
   onPerspectiveChange?: (perspective: 'all' | 'A' | 'B') => void;
   /** All replay snapshots (only set in replay mode). Each snapshot is self-contained. */
   replaySnapshots?: any[];
+  /** Previous snapshot for diffing (movement, kills, state changes). Null on first snapshot. */
+  prevGameState?: any;
+  /** Whether to animate the transition from prevGameState to gameState. False during scrubbing. */
+  animate?: boolean;
 }
+
 
 /** Props for a compact game card shown in lobby/game lists. */
 export interface GameCardProps {
@@ -41,4 +46,6 @@ export interface SpectatorPlugin {
   SpectatorView: React.ComponentType<SpectatorViewProps>;
   /** Compact card for lobby/game lists. */
   GameCard?: React.ComponentType<GameCardProps>;
+  /** Total animation duration in ms. ReplayPage waits this + read time before advancing. */
+  animationDuration?: number;
 }

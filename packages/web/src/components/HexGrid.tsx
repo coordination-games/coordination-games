@@ -1,6 +1,28 @@
 import { useMemo, useCallback } from 'react';
 import type { VisibleTile } from '../types';
 
+/** A unit rendered at absolute pixel coordinates (for animations) */
+export interface FloatingUnit {
+  id: string;
+  team: 'A' | 'B';
+  unitClass: 'rogue' | 'knight' | 'mage';
+  carryingFlag: boolean;
+  alive: boolean;
+  x: number;
+  y: number;
+}
+
+/** A kill effect at absolute pixel coordinates */
+export interface KillEffectDisplay {
+  victimId: string;
+  x: number;
+  y: number;
+  killerX: number;
+  killerY: number;
+  /** 0..1 progress through the kill animation */
+  progress: number;
+}
+
 interface HexGridProps {
   tiles: VisibleTile[];
   fogTiles?: Set<string>;
@@ -12,6 +34,12 @@ interface HexGridProps {
   onUnitClick?: (unitId: string, team: 'A' | 'B') => void;
   /** Override visibility — when set, only these hexes are visible (for per-unit view) */
   visibleOverride?: Set<string>;
+  /** Units rendered at animated pixel positions (for movement animations) */
+  floatingUnits?: FloatingUnit[];
+  /** Unit IDs to hide from normal tile rendering (currently floating or being killed) */
+  hiddenUnitIds?: Set<string>;
+  /** Active kill effects to render */
+  killEffects?: KillEffectDisplay[];
 }
 
 const HEX_SIZE = 28;
@@ -71,6 +99,9 @@ export default function HexGrid({
   onHexClick,
   onUnitClick,
   visibleOverride,
+  floatingUnits,
+  hiddenUnitIds,
+  killEffects,
 }: HexGridProps) {
   // Build a lookup of tile data by key
   const tileMap = useMemo(() => {
@@ -401,7 +432,8 @@ export default function HexGrid({
 
             {/* Unit rendering — support multiple units on one hex */}
             {showUnit && !isFog && (() => {
-              const allUnits = (tile as any)?.units ?? (unit ? [unit] : []);
+              const allUnits = ((tile as any)?.units ?? (unit ? [unit] : []))
+                .filter((u: any) => !hiddenUnitIds?.has(u.id));
               if (allUnits.length === 0) return null;
 
               const renderUnit = (u: any, offsetX: number, spriteSize: number, fontSize: number) => {
@@ -561,6 +593,125 @@ export default function HexGrid({
           style={{ pointerEvents: 'none' }}
         />
       )}
+
+      {/* Floating units layer — animated units at sub-tile pixel positions */}
+      {floatingUnits?.map((u) => {
+        const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
+        const unitSprite = `/tiles/units/${u.unitClass}.png`;
+        const isTeamB = u.team === 'B';
+
+        return (
+          <g key={`float-${u.id}`} style={{ pointerEvents: 'none' }}>
+            <circle
+              cx={u.x}
+              cy={u.y}
+              r={unitSpriteSize * 0.38}
+              fill={u.team === 'A' ? '#3b82f6' : '#ef4444'}
+              opacity={dim ? 0.15 : 0.35}
+            />
+            <image
+              href={unitSprite}
+              x={u.x - unitSpriteSize / 2}
+              y={u.y - unitSpriteSize / 2}
+              width={unitSpriteSize}
+              height={unitSpriteSize}
+              style={{
+                filter: isTeamB ? 'hue-rotate(160deg) saturate(1.3)' : 'none',
+              }}
+            />
+            <text
+              x={u.x}
+              y={u.carryingFlag ? u.y + unitSpriteSize * 0.42 : u.y + unitSpriteSize * 0.35}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={HEX_SIZE * 0.45}
+              fontWeight="bold"
+              fill={u.team === 'A' ? '#93c5fd' : '#fca5a5'}
+              stroke="#000"
+              strokeWidth={2.5}
+              paintOrder="stroke"
+            >
+              {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
+            </text>
+            {u.carryingFlag && (
+              <text
+                x={u.x}
+                y={u.y - unitSpriteSize * 0.35}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={HEX_SIZE * 0.4}
+              >🦞</text>
+            )}
+          </g>
+        );
+      })}
+
+      {/* Kill effects layer */}
+      {killEffects?.map((k) => {
+        if (k.progress >= 1) return null; // done
+        // Poof: expanding circle that fades out + skull float-up
+        const poofRadius = 8 + k.progress * 30;
+        const poofOpacity = Math.max(0, 1 - k.progress * 1.5);
+        const skullY = k.y - k.progress * 25;
+        const skullOpacity = k.progress < 0.3 ? k.progress / 0.3
+          : k.progress > 0.7 ? (1 - k.progress) / 0.3
+          : 1;
+        // Spark particles
+        const sparkCount = 6;
+
+        return (
+          <g key={`kill-${k.victimId}`} style={{ pointerEvents: 'none' }}>
+            {/* Expanding poof circle */}
+            <circle
+              cx={k.x}
+              cy={k.y}
+              r={poofRadius}
+              fill="none"
+              stroke="#fbbf24"
+              strokeWidth={2}
+              opacity={poofOpacity}
+            />
+            <circle
+              cx={k.x}
+              cy={k.y}
+              r={poofRadius * 0.6}
+              fill="#fbbf24"
+              opacity={poofOpacity * 0.3}
+            />
+
+            {/* Spark particles flying outward */}
+            {Array.from({ length: sparkCount }, (_, i) => {
+              const angle = (Math.PI * 2 * i) / sparkCount + k.progress * 0.5;
+              const dist = k.progress * 20 + 5;
+              const sx = k.x + Math.cos(angle) * dist;
+              const sy = k.y + Math.sin(angle) * dist;
+              const sparkOpacity = Math.max(0, 1 - k.progress * 2);
+              return (
+                <circle
+                  key={i}
+                  cx={sx}
+                  cy={sy}
+                  r={1.5}
+                  fill="#fcd34d"
+                  opacity={sparkOpacity}
+                />
+              );
+            })}
+
+            {/* Skull float-up */}
+            <text
+              x={k.x}
+              y={skullY}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={HEX_SIZE * 0.6}
+              opacity={skullOpacity}
+            >
+              ☠️
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }

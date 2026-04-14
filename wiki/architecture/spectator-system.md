@@ -25,11 +25,34 @@ interface SpectatorPlugin {
   gameType: string;
   displayName: string;
   SpectatorView: React.ComponentType<SpectatorViewProps>;
-  GameCard?: React.ComponentType<GameCardProps>;  // compact view for listings
+  GameCard?: React.ComponentType<GameCardProps>;
+  animationDuration?: number;  // ms for turn transition animations
 }
 ```
 
-The `SpectatorView` receives raw game state (from `buildSpectatorView()`), chat messages, player handles, kill feed, and perspective controls.
+The `SpectatorView` receives raw game state (from `buildSpectatorView()`), chat messages, player handles, kill feed, perspective controls, and **animation props** for replay mode.
+
+## Replay & Animation
+
+Replay data is fetched via `/api/games/:id/replay` (returns all snapshots). `ReplayPage` is a generic shell that delegates rendering to the plugin's `SpectatorView`.
+
+### Animation Contract
+
+`SpectatorViewProps` includes:
+- `prevGameState?: any` — previous snapshot for diffing (null on first snapshot)
+- `animate?: boolean` — true during auto-play, false during scrubbing/seeking
+- `replaySnapshots?: any[]` — all snapshots (replay mode indicator)
+
+`SpectatorPlugin.animationDuration` tells ReplayPage how long to wait before auto-advancing. Interval = `animationDuration + 700ms` read time. Games without animations leave this unset (defaults to instant transitions).
+
+### CtL Animations
+
+`useHexAnimations` hook (`packages/web/src/games/capture-the-lobster/useHexAnimations.ts`) diffs unit positions between prev/current snapshots:
+
+1. **Movement phase**: Units slide from prev to current positions via requestAnimationFrame. Staggered starts (200ms apart), 600ms per unit, ease-out-back easing for bouncy feel.
+2. **Combat phase**: After movement, kill effects play — expanding poof circle, spark particles, skull float-up. 600ms per kill, staggered 200ms.
+
+HexGrid accepts `floatingUnits` (units at animated pixel positions), `hiddenUnitIds` (units to skip in normal tile rendering), and `killEffects` for the death animations.
 
 ## buildSpectatorView()
 

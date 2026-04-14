@@ -12,7 +12,9 @@ export default function ReplayPage() {
   const { id } = useParams<{ id: string }>();
   const [currentTurn, setCurrentTurn] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Whether the current turn transition should animate (true during auto-play, false during scrubbing)
+  const [animate, setAnimate] = useState(false);
+  const playTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [replay, setReplay] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,43 +39,47 @@ export default function ReplayPage() {
   const snapshots = replay?.snapshots ?? [];
   const totalTurns = snapshots.length;
   const turnState = snapshots[currentTurn] ?? null;
+  const prevTurnState = currentTurn > 0 ? snapshots[currentTurn - 1] ?? null : null;
 
   // Resolve the spectator plugin for this game type
   const plugin = replay ? getSpectatorPlugin(replay.gameType) : null;
 
-  // Auto-play logic
+  // Animation duration from plugin (default 0 = instant transitions)
+  const animationDuration = plugin?.animationDuration ?? 0;
+  const playInterval = animationDuration + 700; // animation + read time
+
+  // Auto-play logic — uses setTimeout chain so each turn waits for animations
   useEffect(() => {
     if (isPlaying && totalTurns > 0) {
-      playIntervalRef.current = setInterval(() => {
+      playTimeoutRef.current = setTimeout(() => {
         setCurrentTurn((prev) => {
           if (prev >= totalTurns - 1) {
             setIsPlaying(false);
             return prev;
           }
+          setAnimate(true);
           return prev + 1;
         });
-      }, 1500);
-    } else {
-      if (playIntervalRef.current) {
-        clearInterval(playIntervalRef.current);
-        playIntervalRef.current = null;
-      }
+      }, playInterval);
     }
     return () => {
-      if (playIntervalRef.current) {
-        clearInterval(playIntervalRef.current);
+      if (playTimeoutRef.current) {
+        clearTimeout(playTimeoutRef.current);
+        playTimeoutRef.current = null;
       }
     };
-  }, [isPlaying, totalTurns]);
+  }, [isPlaying, totalTurns, currentTurn, playInterval]);
 
-  // Navigation
+  // Navigation — scrubbing disables animation
   const goPrev = useCallback(() => {
     setIsPlaying(false);
+    setAnimate(false);
     setCurrentTurn((prev) => Math.max(0, prev - 1));
   }, []);
 
   const goNext = useCallback(() => {
     setIsPlaying(false);
+    setAnimate(false);
     setCurrentTurn((prev) => Math.min(totalTurns - 1, prev + 1));
   }, [totalTurns]);
 
@@ -82,6 +88,7 @@ export default function ReplayPage() {
       if (prev >= totalTurns - 1) return 0;
       return prev;
     });
+    setAnimate(true);
     setIsPlaying((prev) => !prev);
   }, [totalTurns]);
 
@@ -151,6 +158,7 @@ export default function ReplayPage() {
         onTogglePlay={togglePlay}
         onSeek={(t) => {
           setIsPlaying(false);
+          setAnimate(false);
           setCurrentTurn(t);
         }}
       />
@@ -159,6 +167,8 @@ export default function ReplayPage() {
       <div className="flex-1 min-h-0">
         <plugin.SpectatorView
           gameState={turnState}
+          prevGameState={prevTurnState}
+          animate={animate}
           chatMessages={[]}
           handles={replay.handles}
           gameId={id ?? ''}
