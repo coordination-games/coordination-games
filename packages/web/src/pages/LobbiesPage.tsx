@@ -241,7 +241,7 @@ export default function LobbiesPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {finishedGames.map((game, i) => (
               <motion.div key={game.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, duration: 0.4 }}>
-                <GameCard game={game} onClick={() => navigate(`/game/${game.id}`)} />
+                <GameCard game={game} onClick={() => navigate(`/replay/${game.id}`)} />
               </motion.div>
             ))}
           </div>

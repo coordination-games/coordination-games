@@ -42,8 +42,19 @@ export async function fetchLeaderboard(): Promise<any[]> {
   return request<any[]>('/leaderboard');
 }
 
-export async function fetchReplay(id: string): Promise<any> {
-  return request<any>(`/replays/${id}`);
+export interface ReplayData {
+  gameType: string;
+  gameId: string;
+  handles: Record<string, string>;
+  teamMap: Record<string, string>;
+  finished: boolean;
+  progressCounter: number;
+  snapshots: any[];
+  relay: any[];
+}
+
+export async function fetchReplay(id: string): Promise<ReplayData> {
+  return request<ReplayData>(`/games/${id}/replay`);
 }
 
 export interface LobbySummary {
