@@ -501,16 +501,15 @@ export class GameRoomDO extends DurableObject<Env> {
       ? this._plugin.getSummary(this._state)
       : {};
     const json = JSON.stringify(summary);
-    // Wrap in try-catch to prevent unhandled rejections
-    Promise.resolve().then(async () => {
-      try {
-        await this.env.DB.prepare(
-          `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
-           VALUES (?1, ?2, ?3, datetime('now'))
-           ON CONFLICT(game_id) DO UPDATE SET
-             progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
-        ).bind(this._meta!.gameId, this._progress.counter, json).run();
-      } catch (err: any) {
+    // Fire-and-forget: do not await, catch all errors to prevent unhandled rejections
+    this.env.DB.prepare(
+      `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
+       VALUES (?1, ?2, ?3, datetime('now'))
+       ON CONFLICT(game_id) DO UPDATE SET
+         progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
+    ).bind(this._meta.gameId, this._progress.counter, json)
+      .run()
+      .catch(async (err: any) => {
         // Auto-create table if it doesn't exist yet (migration not applied)
         if (String(err).includes('no such table')) {
           try {
@@ -522,20 +521,25 @@ export class GameRoomDO extends DurableObject<Env> {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')))`
             );
             // Retry the upsert
-            await this.env.DB.prepare(
+            return this.env.DB.prepare(
               `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
                VALUES (?1, ?2, ?3, datetime('now'))
                ON CONFLICT(game_id) DO UPDATE SET
                  progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
             ).bind(this._meta!.gameId, this._progress.counter, json).run();
-          } catch (e) { console.error(`[GameRoomDO] Failed to auto-create game_summaries:`, e); }
+          } catch (e) {
+            console.error(`[GameRoomDO] Failed to auto-create game_summaries:`, e);
+            return;
+          }
         } else {
           console.error(`[GameRoomDO] Failed to write summary:`, err);
+          return;
         }
-      }
-    }).catch((err) => {
-      console.error(`[GameRoomDO] Unexpected error in writeSummaryToD1:`, err);
-    });
+      })
+      .catch((err) => {
+        // Final catch-all to prevent unhandled rejections
+        console.error(`[GameRoomDO] Unhandled error in writeSummaryToD1 fallback:`, err);
+      });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
