@@ -42,6 +42,18 @@ export function validatePath(
       error: `Path length ${path.length} exceeds ${unit.unitClass} speed limit of ${maxSpeed}`,
     };
   }
+
+  // Validate that each direction is valid (N, NE, SE, S, SW, NW)
+  const validDirections = new Set(['N', 'NE', 'SE', 'S', 'SW', 'NW']);
+  for (const dir of path) {
+    if (!validDirections.has(dir)) {
+      return {
+        valid: false,
+        error: `Invalid direction: ${dir}. Valid directions are: N, NE, SE, S, SW, NW`,
+      };
+    }
+  }
+
   return { valid: true };
 }
 
