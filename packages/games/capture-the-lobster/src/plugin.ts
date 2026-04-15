@@ -139,6 +139,8 @@ export interface SpectatorState {
   visibleByUnit: Record<string, string[]>;
   handles: Record<string, string>;
   relayMessages?: any[];
+  /** Post-move positions for units killed this turn (for replay animation) */
+  deathPositions?: Record<string, { q: number; r: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +288,8 @@ function buildCtlSpectatorView(
     visibleB: [...visibleB],
     visibleByUnit,
     handles: context.handles,
+    // Post-move positions for units killed this turn (for animation: move → die → respawn)
+    deathPositions: state.lastDeathPositions ?? undefined,
   };
 }
 

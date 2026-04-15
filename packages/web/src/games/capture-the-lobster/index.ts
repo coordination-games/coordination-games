@@ -5,5 +5,5 @@ export const CaptureTheLobsterSpectator: SpectatorPlugin = {
   gameType: 'capture-the-lobster',
   displayName: 'Capture the Lobster',
   SpectatorView: CtlSpectatorView,
-  animationDuration: 4000,
+  animationDuration: 5000,
 };

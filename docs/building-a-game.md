@@ -408,8 +408,17 @@ The snapshot is the return value of `buildSpectatorView`. Each snapshot must be 
 - Chat messages up to this point (cumulative)
 - All kills/events up to this point (cumulative, with turn numbers)
 - Player handles (from `context.handles`)
+- **Animation data** — any intermediate state needed for smooth transitions (e.g., CtL stores `deathPositions` — the post-move positions of killed units so the animation can show movement → death → respawn as a sequence)
 
 The replay page passes exactly one snapshot at a time as `gameState`. Your component should render entirely from that single snapshot.
+
+### Turn Transition Animations
+
+To add animated transitions between turns, set `animationDuration` on your `SpectatorPlugin` (in ms). ReplayPage waits `animationDuration + 700ms` before auto-advancing.
+
+Your `SpectatorView` receives `prevGameState` (previous snapshot) and `animate` (true during auto-play, false when scrubbing). Diff the two snapshots to compute what changed and animate accordingly. The animation runs in the `SpectatorView` — ReplayPage just controls timing.
+
+CtL's `useHexAnimations` hook is a reference implementation: it diffs unit positions, computes movement paths, identifies kills, and orchestrates a multi-phase timeline (vision fade → movement → combat → respawn float → vision restore). See `wiki/architecture/spectator-system.md` for full details.
 
 ## Checklist
 

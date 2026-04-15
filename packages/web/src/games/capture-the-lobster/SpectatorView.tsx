@@ -29,6 +29,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
           team: t.unit.team,
           unitClass: t.unit.unitClass,
           carryingFlag: t.unit.carryingFlag || false,
+          alive: t.unit.alive !== false,
         }
       : undefined,
     flag: t.flag,
@@ -85,6 +86,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
       Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [id, new Set(hexes as string[])])
     ),
     handles: data.handles ?? {},
+    deathPositions: data.deathPositions ?? undefined,
   };
 }
 
@@ -305,6 +307,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     gameState?.tiles ?? [],
     animate ?? false,
     displayKills,
+    gameState?.deathPositions,
   );
 
   const teamButtons: { label: string; value: 'A' | 'B' | 'all' }[] = [
@@ -477,6 +480,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             floatingUnits={animState.floatingUnits}
             hiddenUnitIds={animState.hiddenUnitIds.size > 0 ? animState.hiddenUnitIds : undefined}
             killEffects={animState.killEffects}
+            visionOpacity={animState.visionOpacity}
+            dyingUnitIds={animState.dyingUnitIds.size > 0 ? animState.dyingUnitIds : undefined}
             onUnitClick={(unitId, team) => {
               if (selectedUnit === unitId) {
                 setSelectedUnit(null);

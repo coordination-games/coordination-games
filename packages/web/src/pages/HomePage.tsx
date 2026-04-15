@@ -63,7 +63,7 @@ export default function HomePage() {
       try {
         const games = await fetchGames();
         if (!cancelled) {
-          const active = (games as any[]).filter((g: any) => g.phase === 'in_progress' || g.phase === 'starting');
+          const active = (games as any[]).filter((g: any) => !g.finished);
           setActiveCount(active.length);
         }
       } catch {}

@@ -52,4 +52,6 @@ export interface SpectatorGameState {
   visibleA?: Set<string>;
   /** Team B visible hex keys */
   visibleB?: Set<string>;
+  /** Post-move positions for units killed this turn (unitId → {q, r} where they died) */
+  deathPositions?: Record<string, { q: number; r: number }>;
 }

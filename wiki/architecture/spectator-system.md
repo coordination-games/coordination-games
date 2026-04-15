@@ -47,12 +47,28 @@ Replay data is fetched via `/api/games/:id/replay` (returns all snapshots). `Rep
 
 ### CtL Animations
 
-`useHexAnimations` hook (`packages/web/src/games/capture-the-lobster/useHexAnimations.ts`) diffs unit positions between prev/current snapshots:
+`useHexAnimations` hook (`packages/web/src/games/capture-the-lobster/useHexAnimations.ts`) diffs unit positions between prev/current snapshots and orchestrates a multi-phase timeline:
 
-1. **Movement phase**: Units slide from prev to current positions via requestAnimationFrame. Staggered starts (200ms apart), 600ms per unit, ease-out-back easing for bouncy feel.
-2. **Combat phase**: After movement, kill effects play — expanding poof circle, spark particles, skull float-up. 600ms per kill, staggered 200ms.
+1. **Vision fade-out** (300ms + 150ms pause): Vision boundary paths fade to 0 opacity before units start moving, so the borders don't visually conflict with unit movement.
+2. **Movement phase** (600ms/unit, 400ms stagger): All units slide from prev to current positions, including dying units which move to their **death position** (post-move, pre-respawn). Ease-out-back easing for bouncy feel.
+3. **Combat phase** (700ms/kill, 250ms stagger): Kill effects play at the death position — expanding poof, spark particles, skull float-up.
+4. **Float-to-respawn** (500ms): Ghost skull floats from death position to respawn position.
+5. **Vision fade-in** (300ms): Vision boundaries fade back in with the new turn's visibility.
 
-HexGrid accepts `floatingUnits` (units at animated pixel positions), `hiddenUnitIds` (units to skip in normal tile rendering), and `killEffects` for the death animations.
+Total `animationDuration: 5000ms` configured in the plugin.
+
+#### Death Position Data
+
+The game engine stores `lastDeathPositions` in `CtlGameState` — a map of `{unitId: {q, r}}` capturing where each unit was after movement but before the respawn teleport. This is included in spectator snapshots as `deathPositions` so the animation can show the correct sequence: move to combat position → die there → float to spawn.
+
+#### HexGrid Animation Props
+
+HexGrid accepts:
+- `floatingUnits` — units at animated pixel positions (rendered above tiles)
+- `hiddenUnitIds` — units to skip in normal tile rendering (currently floating or dying)
+- `killEffects` — death animations with `progress`, `floatProgress`, death position, and respawn position
+- `visionOpacity` — opacity for vision boundary paths (0..1, animated by the hook)
+- `dyingUnitIds` — units dying this turn (for any per-tile death state rendering)
 
 ## buildSpectatorView()
 

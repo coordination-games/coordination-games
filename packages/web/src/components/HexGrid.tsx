@@ -15,12 +15,18 @@ export interface FloatingUnit {
 /** A kill effect at absolute pixel coordinates */
 export interface KillEffectDisplay {
   victimId: string;
+  /** Death location */
   x: number;
   y: number;
+  /** Respawn location */
+  respawnX: number;
+  respawnY: number;
   killerX: number;
   killerY: number;
-  /** 0..1 progress through the kill animation */
+  /** 0..1 progress through the kill animation (poof/skull at death spot) */
   progress: number;
+  /** 0..1 progress through float-to-respawn */
+  floatProgress: number;
 }
 
 interface HexGridProps {
@@ -40,6 +46,10 @@ interface HexGridProps {
   hiddenUnitIds?: Set<string>;
   /** Active kill effects to render */
   killEffects?: KillEffectDisplay[];
+  /** Opacity for vision boundary paths during animation (0..1) */
+  visionOpacity?: number;
+  /** Unit IDs dying this turn — render with death overlay */
+  dyingUnitIds?: Set<string>;
 }
 
 const HEX_SIZE = 28;
@@ -102,6 +112,8 @@ export default function HexGrid({
   floatingUnits,
   hiddenUnitIds,
   killEffects,
+  visionOpacity = 1,
+  dyingUnitIds,
 }: HexGridProps) {
   // Build a lookup of tile data by key
   const tileMap = useMemo(() => {
@@ -526,6 +538,7 @@ export default function HexGrid({
         );
       })}
       {/* Vision boundary paths — rendered on top of everything as single paths */}
+      <g opacity={visionOpacity} style={{ pointerEvents: 'none', transition: 'opacity 0.05s linear' }}>
       {(selectedTeam === 'all' || selectedTeam === 'A') && visionBoundaryPaths.pathA && (
         <path
           d={visionBoundaryPaths.pathA}
@@ -534,7 +547,6 @@ export default function HexGrid({
           strokeWidth={2.5}
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={{ pointerEvents: 'none' }}
         />
       )}
       {(selectedTeam === 'all' || selectedTeam === 'B') && visionBoundaryPaths.pathB && (
@@ -545,7 +557,6 @@ export default function HexGrid({
           strokeWidth={2.5}
           strokeLinecap="round"
           strokeLinejoin="round"
-          style={{ pointerEvents: 'none' }}
         />
       )}
       {selectedTeam === 'all' && visionBoundaryPaths.pathBoth && (
@@ -558,7 +569,6 @@ export default function HexGrid({
             strokeDasharray="6 6"
             strokeDashoffset={0}
             strokeLinecap="round"
-            style={{ pointerEvents: 'none' }}
           />
           <path
             d={visionBoundaryPaths.pathBoth}
@@ -568,11 +578,9 @@ export default function HexGrid({
             strokeDasharray="6 6"
             strokeDashoffset={6}
             strokeLinecap="round"
-            style={{ pointerEvents: 'none' }}
           />
         </>
       )}
-      {/* Team-specific view: show only that team's boundary (including shared edges) */}
       {selectedTeam === 'A' && visionBoundaryPaths.pathBoth && (
         <path
           d={visionBoundaryPaths.pathBoth}
@@ -580,7 +588,6 @@ export default function HexGrid({
           stroke="#3b82f6"
           strokeWidth={2.5}
           strokeLinecap="round"
-          style={{ pointerEvents: 'none' }}
         />
       )}
       {selectedTeam === 'B' && visionBoundaryPaths.pathBoth && (
@@ -590,9 +597,9 @@ export default function HexGrid({
           stroke="#ef4444"
           strokeWidth={2.5}
           strokeLinecap="round"
-          style={{ pointerEvents: 'none' }}
         />
       )}
+      </g>
 
       {/* Floating units layer — animated units at sub-tile pixel positions */}
       {floatingUnits?.map((u) => {
@@ -648,67 +655,79 @@ export default function HexGrid({
 
       {/* Kill effects layer */}
       {killEffects?.map((k) => {
-        if (k.progress >= 1) return null; // done
-        // Poof: expanding circle that fades out + skull float-up
+        if (k.progress >= 1 && k.floatProgress >= 1) return null; // fully done
+
+        // Phase 1: Poof + skull at death spot
+        const showPoof = k.progress < 1;
         const poofRadius = 8 + k.progress * 30;
         const poofOpacity = Math.max(0, 1 - k.progress * 1.5);
         const skullY = k.y - k.progress * 25;
         const skullOpacity = k.progress < 0.3 ? k.progress / 0.3
           : k.progress > 0.7 ? (1 - k.progress) / 0.3
           : 1;
-        // Spark particles
         const sparkCount = 6;
+
+        // Phase 2: Ghost float from death spot to respawn spot
+        const showFloat = k.progress >= 0.8 && k.floatProgress < 1;
+        const floatX = k.x + (k.respawnX - k.x) * k.floatProgress;
+        const floatY = k.y + (k.respawnY - k.y) * k.floatProgress;
+        const floatOpacity = k.floatProgress < 0.1
+          ? k.floatProgress / 0.1
+          : k.floatProgress > 0.8
+            ? (1 - k.floatProgress) / 0.2
+            : 0.5;
 
         return (
           <g key={`kill-${k.victimId}`} style={{ pointerEvents: 'none' }}>
-            {/* Expanding poof circle */}
-            <circle
-              cx={k.x}
-              cy={k.y}
-              r={poofRadius}
-              fill="none"
-              stroke="#fbbf24"
-              strokeWidth={2}
-              opacity={poofOpacity}
-            />
-            <circle
-              cx={k.x}
-              cy={k.y}
-              r={poofRadius * 0.6}
-              fill="#fbbf24"
-              opacity={poofOpacity * 0.3}
-            />
-
-            {/* Spark particles flying outward */}
-            {Array.from({ length: sparkCount }, (_, i) => {
-              const angle = (Math.PI * 2 * i) / sparkCount + k.progress * 0.5;
-              const dist = k.progress * 20 + 5;
-              const sx = k.x + Math.cos(angle) * dist;
-              const sy = k.y + Math.sin(angle) * dist;
-              const sparkOpacity = Math.max(0, 1 - k.progress * 2);
-              return (
+            {/* Phase 1: Poof at death spot */}
+            {showPoof && (
+              <>
+                {/* Expanding poof circle */}
                 <circle
-                  key={i}
-                  cx={sx}
-                  cy={sy}
-                  r={1.5}
-                  fill="#fcd34d"
-                  opacity={sparkOpacity}
+                  cx={k.x} cy={k.y} r={poofRadius}
+                  fill="none" stroke="#fbbf24" strokeWidth={2}
+                  opacity={poofOpacity}
                 />
-              );
-            })}
+                <circle
+                  cx={k.x} cy={k.y} r={poofRadius * 0.6}
+                  fill="#fbbf24" opacity={poofOpacity * 0.3}
+                />
 
-            {/* Skull float-up */}
-            <text
-              x={k.x}
-              y={skullY}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fontSize={HEX_SIZE * 0.6}
-              opacity={skullOpacity}
-            >
-              ☠️
-            </text>
+                {/* Spark particles */}
+                {Array.from({ length: sparkCount }, (_, i) => {
+                  const angle = (Math.PI * 2 * i) / sparkCount + k.progress * 0.5;
+                  const dist = k.progress * 20 + 5;
+                  const sx = k.x + Math.cos(angle) * dist;
+                  const sy = k.y + Math.sin(angle) * dist;
+                  const sparkOpacity = Math.max(0, 1 - k.progress * 2);
+                  return (
+                    <circle key={i} cx={sx} cy={sy} r={1.5}
+                      fill="#fcd34d" opacity={sparkOpacity}
+                    />
+                  );
+                })}
+
+                {/* Skull float-up at death spot */}
+                <text
+                  x={k.x} y={skullY}
+                  textAnchor="middle" dominantBaseline="central"
+                  fontSize={HEX_SIZE * 0.6} opacity={skullOpacity}
+                >
+                  ☠️
+                </text>
+              </>
+            )}
+
+            {/* Phase 2: Ghost skull floats from death to respawn */}
+            {showFloat && (
+              <text
+                x={floatX} y={floatY}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={HEX_SIZE * 0.5} opacity={floatOpacity}
+              >
+                ☠️
+              </text>
+            )}
           </g>
         );
       })}

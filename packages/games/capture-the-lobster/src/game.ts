@@ -93,6 +93,8 @@ export interface CtlGameState {
   moveSubmissions: [string, Direction[]][];
   /** All kills across all turns (cumulative, for replay snapshots) */
   allKills: { killerId: string; victimId: string; reason: string; turn: number }[];
+  /** Post-move positions for units that died this turn (for animation: move → die → respawn) */
+  lastDeathPositions?: Record<string, { q: number; r: number }>;
 }
 
 /** Compute turn limit based on map radius */
@@ -331,6 +333,13 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   const combatResult = resolveCombat(combatUnits, wallSet);
 
   // 6. Process deaths — dead units sit out 1 turn, then respawn
+  // Capture post-move positions for dead units (before teleport to spawn)
+  const deathPositions: Record<string, { q: number; r: number }> = {};
+  for (const deadId of combatResult.deaths) {
+    const unit = units.find((u) => u.id === deadId)!;
+    deathPositions[deadId] = { q: unit.position.q, r: unit.position.r };
+  }
+
   const flagEvents: string[] = [];
   const mapBases = state.mapBases;
   const allSpawnsA = mapBases.A.flatMap((b: { spawns: Hex[] }) => b.spawns);
@@ -452,6 +461,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
       ...state.allKills,
       ...combatResult.kills.map(k => ({ ...k, turn: currentTurn })),
     ],
+    lastDeathPositions: Object.keys(deathPositions).length > 0 ? deathPositions : undefined,
   };
 
   return { state: newState, record };
