@@ -49,6 +49,10 @@ Status: **Ready** (CtL animations complete, generic contract in place)
 - Text burst: "BETRAYED!" in red
 - Dollar delta floats appear (existing, keep)
 
+## Chat Bubbles
+
+Show each player's latest chat message as a speech bubble over their character sprite in the fight screen. The spectator view already receives chat data per round — display the most recent message from each player as a comic-book-style bubble (retro pixel font, pointed tail toward the character). Bubbles should appear during the "darken" phase (pre-reveal) and fade during "aftermath". Truncate long messages.
+
 ## Timing
 
 Current reveal animation: darken(1000ms) → reveal(2000ms) → aftermath(2000ms) → none
