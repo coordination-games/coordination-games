@@ -1,6 +1,6 @@
 # OATHBREAKER Animation Plan
 
-Status: **Planned** (CtL animations being built first)
+Status: **Ready** (CtL animations complete, generic contract in place)
 
 ## Current State
 
@@ -57,13 +57,13 @@ Total: ~3.7s per round resolution (vs current 5s)
 
 ## Replay Mode Fix
 
-The `useRevealAnimation` hook uses a `resultKey` string to detect new results. In replay mode:
-1. When `animate=true` (auto-play), derive `resultKey` from `prevGameState` vs `gameState` round diff
+The platform now passes `prevGameState` and `animate` to `SpectatorView` (same contract CtL uses). The `useRevealAnimation` hook should:
+1. When `animate=true` (auto-play), diff `prevGameState` vs `gameState` to detect round transitions and trigger the reveal sequence
 2. When `animate=false` (scrubbing), skip directly to final pose state without animation
-3. Reset `lastResultRef` when replay index changes by more than 1 (scrub detected)
+3. No need for the `resultKey` hack — the platform handles snapshot diffing
 
 ## Dependencies
 
-- Generic animation contract (prevGameState, animate props on SpectatorViewProps) — being built with CtL
-- Decision on Option A vs B for sprite animation approach
-- If Option A: new sprite sheet assets needed
+- ~~Generic animation contract (prevGameState, animate props on SpectatorViewProps)~~ — **Done.** `SpectatorViewProps` has `prevGameState`, `animate`, and plugins set `animationDuration`. See `docs/building-a-game.md` → "Turn Transition Animations" and `wiki/architecture/spectator-system.md`.
+- Sprite frame mapping from `sprites-original.png` (may need Lucian's help identifying character rows and action frame ranges)
+- Set `animationDuration` on the OATHBREAKER `SpectatorPlugin` once timing is finalized
