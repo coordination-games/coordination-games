@@ -73,7 +73,7 @@ function mapServerState(raw: any): OathSpectatorState | null {
 // ---------------------------------------------------------------------------
 
 export function OathbreakerSpectatorView(props: SpectatorViewProps) {
-  const { gameId, handles, chatMessages, gameState: rawGameState, replaySnapshots } = props;
+  const { gameId, handles, chatMessages, gameState: rawGameState, replaySnapshots, prevGameState: rawPrevGameState, animate } = props;
   const isReplay = replaySnapshots != null;
 
   const [liveState, setLiveState] = useState<OathSpectatorState | null>(null);
@@ -90,6 +90,11 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     if (!isReplay || !rawGameState) return null;
     return mapServerState(rawGameState);
   }, [isReplay, rawGameState]);
+
+  const prevReplayState = useMemo(() => {
+    if (!isReplay || !rawPrevGameState) return null;
+    return mapServerState(rawPrevGameState);
+  }, [isReplay, rawPrevGameState]);
 
   // ---------------------------------------------------------------------------
   // Live mode: fetch initial state + connect WebSocket
@@ -131,6 +136,18 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   // ---------------------------------------------------------------------------
 
   const state = isReplay ? replayState : liveState;
+  const prevState = isReplay ? prevReplayState : null;
+
+  // Detect new round results for animation triggering
+  const shouldAnimate = animate !== false;
+  const newRoundResults = useMemo(() => {
+    if (!state || !prevState) return null;
+    // New results appeared if current has more rounds of results
+    if (state.roundResults.length > prevState.roundResults.length) {
+      return state.roundResults[state.roundResults.length - 1] ?? null;
+    }
+    return null;
+  }, [state, prevState]);
 
   // Character assignments — seeded, deterministic
   const characters = useMemo(() => {
@@ -192,6 +209,8 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
           maxRounds={state.maxRounds}
           followedPlayerId={followedPlayerId}
           onBack={() => setFollowedPlayerId(null)}
+          animate={shouldAnimate}
+          newRoundResults={newRoundResults}
         />
       </div>
     );

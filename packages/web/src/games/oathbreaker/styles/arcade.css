@@ -87,6 +87,30 @@
   100% { opacity: 1; }
 }
 
+@keyframes goldenRipple {
+  0% { background: radial-gradient(circle at center, rgba(251, 191, 36, 0.4) 0%, transparent 0%); }
+  50% { background: radial-gradient(circle at center, rgba(251, 191, 36, 0.2) 0%, rgba(251, 191, 36, 0.1) 40%, transparent 70%); }
+  100% { background: radial-gradient(circle at center, transparent 0%, rgba(251, 191, 36, 0.05) 60%, transparent 100%); }
+}
+
+@keyframes sparkBurst {
+  0% { background: radial-gradient(circle at center, rgba(255, 255, 255, 0.8) 0%, transparent 10%); }
+  30% { background: radial-gradient(circle at center, rgba(255, 200, 50, 0.6) 0%, rgba(255, 100, 0, 0.3) 30%, transparent 50%); }
+  100% { background: radial-gradient(circle at center, transparent 0%, transparent 100%); }
+}
+
+@keyframes slashRight {
+  0% { opacity: 0; clip-path: polygon(55% 20%, 55% 20%, 55% 80%, 55% 80%); }
+  40% { opacity: 1; clip-path: polygon(45% 15%, 85% 15%, 85% 85%, 45% 85%); }
+  100% { opacity: 0; clip-path: polygon(45% 15%, 85% 15%, 85% 85%, 45% 85%); }
+}
+
+@keyframes slashLeft {
+  0% { opacity: 0; clip-path: polygon(45% 20%, 45% 20%, 45% 80%, 45% 80%); }
+  40% { opacity: 1; clip-path: polygon(15% 15%, 55% 15%, 55% 85%, 15% 85%); }
+  100% { opacity: 0; clip-path: polygon(15% 15%, 55% 15%, 55% 85%, 15% 85%); }
+}
+
 /* ---- Animation classes ---- */
 
 .shake {
@@ -115,6 +139,24 @@
 
 .fade-in-up {
   animation: fadeInUp 0.4s ease-out;
+}
+
+.golden-ripple {
+  animation: goldenRipple 1s ease-out forwards;
+}
+
+.spark-burst {
+  animation: sparkBurst 0.6s ease-out forwards;
+}
+
+.red-slash-right {
+  background: linear-gradient(135deg, transparent 40%, rgba(255, 50, 50, 0.6) 50%, transparent 60%);
+  animation: slashRight 0.6s ease-out forwards;
+}
+
+.red-slash-left {
+  background: linear-gradient(-135deg, transparent 40%, rgba(255, 50, 50, 0.6) 50%, transparent 60%);
+  animation: slashLeft 0.6s ease-out forwards;
 }
 
 /* ---- Health bar ---- */

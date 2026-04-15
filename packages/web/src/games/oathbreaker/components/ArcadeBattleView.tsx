@@ -38,80 +38,176 @@ interface OathPairingResult {
 }
 
 // ---- Resolution animation state machine ----
+// Phases: none → darken(800ms) → windup(400ms) → action(600ms) → impact(400ms) → aftermath(1500ms) → none
+// Total: ~3.7s per round
 
-type RevealPhase = 'none' | 'darken' | 'reveal' | 'aftermath';
+type RevealPhase = 'none' | 'darken' | 'windup' | 'action' | 'impact' | 'aftermath';
 
-function useRevealAnimation(result?: OathPairingResult): {
+interface RevealState {
   phase: RevealPhase;
   p1Pose: Pose;
   p2Pose: Pose;
   shakeClass: string;
   flashClass: string;
   showDelta: boolean;
-} {
+  /** CSS class for outcome-specific effects (golden-ripple, spark-burst, red-slash) */
+  effectClass: string;
+  /** Outcome banner text + color, shown during action/impact/aftermath */
+  banner: { text: string; color: string } | null;
+  /** Whether fighters should lunge toward center */
+  lunge: 'none' | 'both' | 'p1' | 'p2';
+}
+
+const TIMING = { darken: 800, windup: 400, action: 600, impact: 400, aftermath: 1500 };
+
+function useRevealAnimation(
+  result: OathPairingResult | undefined,
+  animate: boolean,
+  newRoundResults: OathPairingResult[] | null,
+): RevealState {
   const [phase, setPhase] = useState<RevealPhase>('none');
   const lastResultRef = useRef<string>('');
 
-  // Serialize result to detect changes
   const resultKey = result
     ? `${result.player1}-${result.player2}-${result.move1}-${result.move2}-${result.pledge}`
     : '';
 
+  const hasNewRound = newRoundResults != null && newRoundResults.length > 0;
+
   useEffect(() => {
-    if (!result || resultKey === lastResultRef.current) return;
+    if (!result) return;
+
+    if (!animate) {
+      lastResultRef.current = resultKey;
+      setPhase('none');
+      return;
+    }
+
+    if (resultKey === lastResultRef.current && !hasNewRound) return;
     lastResultRef.current = resultKey;
 
-    // Start animation sequence
+    // Sequenced animation
     setPhase('darken');
-    const t1 = setTimeout(() => setPhase('reveal'), 1000);
-    const t2 = setTimeout(() => setPhase('aftermath'), 3000);
-    const t3 = setTimeout(() => setPhase('none'), 5000);
+    let t = TIMING.darken;
+    const t1 = setTimeout(() => setPhase('windup'), t);
+    t += TIMING.windup;
+    const t2 = setTimeout(() => setPhase('action'), t);
+    t += TIMING.action;
+    const t3 = setTimeout(() => setPhase('impact'), t);
+    t += TIMING.impact;
+    const t4 = setTimeout(() => setPhase('aftermath'), t);
+    t += TIMING.aftermath;
+    const t5 = setTimeout(() => setPhase('none'), t);
 
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, [resultKey, result]);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); clearTimeout(t5); };
+  }, [resultKey, result, animate, hasNewRound]);
+
+  const noState: RevealState = {
+    phase: 'none', p1Pose: 'idle', p2Pose: 'idle',
+    shakeClass: '', flashClass: '', showDelta: false,
+    effectClass: '', banner: null, lunge: 'none',
+  };
 
   if (!result || phase === 'none') {
-    return { phase: 'none', p1Pose: 'idle', p2Pose: 'idle', shakeClass: '', flashClass: '', showDelta: false };
+    if (!animate && result) {
+      return getFinalState(result.outcome);
+    }
+    return noState;
   }
+
+  return getPhaseState(phase, result.outcome);
+}
+
+/** Final resting state when not animating (replay scrub). */
+function getFinalState(outcome: string): RevealState {
+  const base: RevealState = {
+    phase: 'none', shakeClass: '', flashClass: '', showDelta: true,
+    effectClass: '', banner: null, lunge: 'none',
+    p1Pose: 'idle', p2Pose: 'idle',
+  };
+  if (outcome === 'cooperation') {
+    return { ...base, p1Pose: 'victory', p2Pose: 'victory' };
+  } else if (outcome === 'betrayal_1') {
+    return { ...base, p1Pose: 'attack', p2Pose: 'hit' };
+  } else if (outcome === 'betrayal_2') {
+    return { ...base, p1Pose: 'hit', p2Pose: 'attack' };
+  } else if (outcome === 'standoff') {
+    return { ...base, p1Pose: 'attack', p2Pose: 'attack' };
+  }
+  return base;
+}
+
+/** Per-phase animation state for each outcome type. */
+function getPhaseState(phase: RevealPhase, outcome: string): RevealState {
+  const base: RevealState = {
+    phase, shakeClass: '', flashClass: '', showDelta: false,
+    effectClass: '', banner: null, lunge: 'none',
+    p1Pose: 'idle', p2Pose: 'idle',
+  };
 
   if (phase === 'darken') {
-    return { phase: 'darken', p1Pose: 'idle', p2Pose: 'idle', shakeClass: '', flashClass: '', showDelta: false };
+    return { ...base, p1Pose: 'idle', p2Pose: 'idle' };
   }
-
-  const { outcome } = result;
-  let p1Pose: Pose = 'idle';
-  let p2Pose: Pose = 'idle';
-  let shakeClass = '';
-  let flashClass = '';
 
   if (outcome === 'cooperation') {
-    p1Pose = 'victory';
-    p2Pose = 'victory';
+    // Bow → victory → golden ripple
+    switch (phase) {
+      case 'windup':
+        return { ...base, p1Pose: 'idle', p2Pose: 'idle' }; // slight bow (CSS handles dip)
+      case 'action':
+        return { ...base, p1Pose: 'victory', p2Pose: 'victory', effectClass: 'golden-ripple',
+          banner: { text: 'HONOR', color: '#fbbf24' } };
+      case 'impact':
+        return { ...base, p1Pose: 'victory', p2Pose: 'victory', effectClass: 'golden-ripple' };
+      case 'aftermath':
+        return { ...base, p1Pose: 'victory', p2Pose: 'victory', showDelta: true,
+          banner: { text: 'OATH HONORED', color: '#4ade80' } };
+    }
   } else if (outcome === 'betrayal_1') {
-    p1Pose = 'attack';
-    p2Pose = 'hit';
-    shakeClass = 'shake';
-    flashClass = 'red-flash';
+    // P1 attacks, P2 gets hit
+    switch (phase) {
+      case 'windup':
+        return { ...base, p1Pose: 'attack', p2Pose: 'idle', lunge: 'p1' };
+      case 'action':
+        return { ...base, p1Pose: 'attack', p2Pose: 'hit', shakeClass: 'shake', flashClass: 'red-flash',
+          effectClass: 'red-slash-right', banner: { text: 'BETRAYED!', color: '#f87171' } };
+      case 'impact':
+        return { ...base, p1Pose: 'attack', p2Pose: 'hit', effectClass: 'red-slash-right' };
+      case 'aftermath':
+        return { ...base, p1Pose: 'attack', p2Pose: 'hit', showDelta: true,
+          banner: { text: 'OATH BROKEN', color: '#f87171' } };
+    }
   } else if (outcome === 'betrayal_2') {
-    p1Pose = 'hit';
-    p2Pose = 'attack';
-    shakeClass = 'shake';
-    flashClass = 'red-flash';
+    // P2 attacks, P1 gets hit
+    switch (phase) {
+      case 'windup':
+        return { ...base, p1Pose: 'idle', p2Pose: 'attack', lunge: 'p2' };
+      case 'action':
+        return { ...base, p1Pose: 'hit', p2Pose: 'attack', shakeClass: 'shake', flashClass: 'red-flash',
+          effectClass: 'red-slash-left', banner: { text: 'BETRAYED!', color: '#f87171' } };
+      case 'impact':
+        return { ...base, p1Pose: 'hit', p2Pose: 'attack', effectClass: 'red-slash-left' };
+      case 'aftermath':
+        return { ...base, p1Pose: 'hit', p2Pose: 'attack', showDelta: true,
+          banner: { text: 'OATH BROKEN', color: '#f87171' } };
+    }
   } else if (outcome === 'standoff') {
-    p1Pose = 'attack';
-    p2Pose = 'attack';
-    shakeClass = 'shake';
-    flashClass = 'red-flash';
+    // Both lunge + clash
+    switch (phase) {
+      case 'windup':
+        return { ...base, p1Pose: 'attack', p2Pose: 'attack', lunge: 'both' };
+      case 'action':
+        return { ...base, p1Pose: 'attack', p2Pose: 'attack', shakeClass: 'shake', flashClass: 'red-flash',
+          effectClass: 'spark-burst', banner: { text: 'CLASH!', color: '#fb923c' } };
+      case 'impact':
+        return { ...base, p1Pose: 'hit', p2Pose: 'hit', shakeClass: 'shake' };
+      case 'aftermath':
+        return { ...base, p1Pose: 'attack', p2Pose: 'attack', showDelta: true,
+          banner: { text: 'BOTH FORSWORN', color: '#fbbf24' } };
+    }
   }
 
-  return {
-    phase,
-    p1Pose,
-    p2Pose,
-    shakeClass: phase === 'reveal' ? shakeClass : '',
-    flashClass: phase === 'reveal' ? flashClass : '',
-    showDelta: phase === 'aftermath',
-  };
+  return base;
 }
 
 // ---- Sub-components ----
@@ -175,25 +271,41 @@ function DollarDelta({ delta, side }: { delta: number; side: 'left' | 'right' })
   );
 }
 
-function OutcomeBanner({ outcome }: { outcome: string }) {
-  const labels: Record<string, { text: string; color: string }> = {
-    cooperation: { text: 'OATH HONORED', color: '#4ade80' },
-    betrayal_1: { text: 'OATH BROKEN', color: '#f87171' },
-    betrayal_2: { text: 'OATH BROKEN', color: '#f87171' },
-    standoff: { text: 'BOTH FORSWORN', color: '#fbbf24' },
-  };
-  const l = labels[outcome] ?? labels.cooperation;
+function ChatBubble({ message, side, visible }: { message: string; side: 'left' | 'right'; visible: boolean }) {
+  if (!message || !visible) return null;
+  const truncated = message.length > 60 ? message.slice(0, 57) + '...' : message;
+  const isLeft = side === 'left';
 
   return (
-    <div className="fade-in-up pixel-text" style={{
-      textAlign: 'center',
-      fontSize: 14,
-      color: l.color,
-      textShadow: `0 0 12px ${l.color}`,
-      letterSpacing: 3,
-      padding: '12px 0',
+    <div className={`chat-bubble chat-bubble-${side}`} style={{
+      position: 'absolute',
+      [isLeft ? 'left' : 'right']: '5%',
+      top: '5%',
+      maxWidth: '40%',
+      background: 'rgba(255,255,255,0.95)',
+      color: '#111',
+      padding: '6px 10px',
+      fontSize: 9,
+      fontFamily: "'Press Start 2P', monospace",
+      lineHeight: 1.5,
+      borderRadius: 4,
+      zIndex: 8,
+      opacity: visible ? 1 : 0,
+      transition: 'opacity 0.3s',
+      wordBreak: 'break-word',
     }}>
-      {l.text}
+      {truncated}
+      {/* Speech bubble tail */}
+      <div style={{
+        position: 'absolute',
+        bottom: -8,
+        [isLeft ? 'left' : 'right']: 16,
+        width: 0,
+        height: 0,
+        borderLeft: '6px solid transparent',
+        borderRight: '6px solid transparent',
+        borderTop: '8px solid rgba(255,255,255,0.95)',
+      }} />
     </div>
   );
 }
@@ -212,6 +324,10 @@ interface ArcadeBattleViewProps {
   /** Player being followed across rounds — shown in the HUD. */
   followedPlayerId?: string | null;
   onBack: () => void;
+  /** Whether to animate transitions. False during replay scrubbing. */
+  animate?: boolean;
+  /** New round results from a replay transition (null if no new round). */
+  newRoundResults?: OathPairingResult[] | null;
 }
 
 export function ArcadeBattleView({
@@ -225,6 +341,8 @@ export function ArcadeBattleView({
   maxRounds,
   followedPlayerId,
   onBack,
+  animate = true,
+  newRoundResults = null,
 }: ArcadeBattleViewProps) {
   const chatRef = useRef<HTMLDivElement>(null);
   const p1 = players.find(p => p.id === pairing.player1);
@@ -244,7 +362,7 @@ export function ArcadeBattleView({
       )
     : undefined;
 
-  const reveal = useRevealAnimation(latestResult);
+  const reveal = useRevealAnimation(latestResult, animate, newRoundResults);
 
   // Determine background
   const bgIdx = (p1.id + p2.id).split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 2;
@@ -254,6 +372,11 @@ export function ArcadeBattleView({
 
   // Filter chat to these two players
   const battleChat = chatMessages.filter(m => m.from === p1.id || m.from === p2.id);
+
+  // Latest chat message per player (for speech bubbles)
+  const p1LastMsg = [...battleChat].reverse().find(m => m.from === p1.id)?.message ?? '';
+  const p2LastMsg = [...battleChat].reverse().find(m => m.from === p2.id)?.message ?? '';
+  const showBubbles = reveal.phase === 'darken' || reveal.phase === 'none';
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -328,6 +451,10 @@ export function ArcadeBattleView({
     </div>
   );
 
+  // Lunge transform for fighters (slide toward center during attack)
+  const p1Lunge = (reveal.lunge === 'both' || reveal.lunge === 'p1') ? 'translateX(30px)' : '';
+  const p2Lunge = (reveal.lunge === 'both' || reveal.lunge === 'p2') ? 'translateX(-30px)' : '';
+
   // Arena panel (reused in both layouts)
   const arenaPanel = (
     <div className={`arena-bg ${reveal.shakeClass}`} style={{
@@ -348,6 +475,10 @@ export function ArcadeBattleView({
         </div>
       )}
 
+      {/* Chat bubbles over fighters */}
+      <ChatBubble message={p1LastMsg} side="left" visible={showBubbles && !!p1LastMsg} />
+      <ChatBubble message={p2LastMsg} side="right" visible={showBubbles && !!p2LastMsg} />
+
       {reveal.showDelta && latestResult && (
         <>
           <DollarDelta delta={latestResult.delta1} side="left" />
@@ -355,9 +486,26 @@ export function ArcadeBattleView({
         </>
       )}
 
-      {(reveal.phase === 'reveal' || reveal.phase === 'aftermath') && latestResult && (
-        <div style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}>
-          <OutcomeBanner outcome={latestResult.outcome} />
+      {/* Outcome-specific effect overlays */}
+      {reveal.effectClass && (
+        <div className={reveal.effectClass} style={{
+          position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none',
+        }} />
+      )}
+
+      {/* Outcome banner (from reveal state) */}
+      {reveal.banner && (
+        <div className="fade-in-up" style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}>
+          <div className="pixel-text" style={{
+            textAlign: 'center',
+            fontSize: 14,
+            color: reveal.banner.color,
+            textShadow: `0 0 12px ${reveal.banner.color}`,
+            letterSpacing: 3,
+            padding: '12px 0',
+          }}>
+            {reveal.banner.text}
+          </div>
         </div>
       )}
 
@@ -368,22 +516,30 @@ export function ArcadeBattleView({
         paddingBottom: 8,
         position: 'relative', zIndex: 2,
       }}>
-        <div className={reveal.phase === 'reveal' && reveal.p1Pose === 'victory' ? 'golden-glow' : ''}>
+        <div
+          className={reveal.p1Pose === 'victory' && reveal.phase !== 'none' ? 'golden-glow' : ''}
+          style={{ transform: p1Lunge, transition: 'transform 0.3s ease-out' }}
+        >
           <CharacterSprite
             character={char1?.characterName ?? 'buchu'}
             pose={reveal.p1Pose}
             faceRight={true}
             scale={5}
             tint={char1?.tint}
+            animated
           />
         </div>
-        <div className={reveal.phase === 'reveal' && reveal.p2Pose === 'victory' ? 'golden-glow' : ''}>
+        <div
+          className={reveal.p2Pose === 'victory' && reveal.phase !== 'none' ? 'golden-glow' : ''}
+          style={{ transform: p2Lunge, transition: 'transform 0.3s ease-out' }}
+        >
           <CharacterSprite
             character={char2?.characterName ?? 'star'}
             pose={reveal.p2Pose}
             faceRight={false}
             scale={5}
             tint={char2?.tint}
+            animated
           />
         </div>
       </div>
