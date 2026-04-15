@@ -45,30 +45,23 @@ Replay data is fetched via `/api/games/:id/replay` (returns all snapshots). `Rep
 
 `SpectatorPlugin.animationDuration` tells ReplayPage how long to wait before auto-advancing. Interval = `animationDuration + 700ms` read time. Games without animations leave this unset (defaults to instant transitions).
 
-### CtL Animations
+### CtL-Specific Animation Implementation
+
+The following is specific to Capture the Lobster's spectator view — other games implement their own animation approach (or none at all). The platform only provides the generic contract above (`prevGameState`, `animate`, `animationDuration`).
 
 `useHexAnimations` hook (`packages/web/src/games/capture-the-lobster/useHexAnimations.ts`) diffs unit positions between prev/current snapshots and orchestrates a multi-phase timeline:
 
-1. **Vision fade-out** (300ms + 150ms pause): Vision boundary paths fade to 0 opacity before units start moving, so the borders don't visually conflict with unit movement.
-2. **Movement phase** (600ms/unit, 400ms stagger): All units slide from prev to current positions, including dying units which move to their **death position** (post-move, pre-respawn). Ease-out-back easing for bouncy feel.
-3. **Combat phase** (700ms/kill, 250ms stagger): Kill effects play at the death position — expanding poof, spark particles, skull float-up.
-4. **Float-to-respawn** (500ms): Ghost skull floats from death position to respawn position.
-5. **Vision fade-in** (300ms): Vision boundaries fade back in with the new turn's visibility.
+1. **Vision fade-out** (300ms + 150ms pause): Vision boundary paths fade to 0 opacity before units start moving.
+2. **Movement phase** (600ms/unit, 400ms stagger): All units slide from prev to current positions, including dying units which move to their **death position** (post-move, pre-respawn). Ease-out-back easing.
+3. **Combat phase** (700ms/kill, 250ms stagger): Kill effects at the death position — poof, sparks, skull float-up.
+4. **Float-to-respawn** (500ms): Ghost skull floats from death position to respawn.
+5. **Vision fade-in** (300ms): Vision boundaries restore with the new turn's visibility.
 
-Total `animationDuration: 5000ms` configured in the plugin.
+Total `animationDuration: 5000ms`.
 
-#### Death Position Data
+**Death position data**: CtL's game engine stores `lastDeathPositions` in `CtlGameState` — post-move coords for killed units before respawn teleport. Exposed as `deathPositions` in spectator snapshots so the animation shows: move → die → float to spawn. This is a CtL-specific field, not a platform concept.
 
-The game engine stores `lastDeathPositions` in `CtlGameState` — a map of `{unitId: {q, r}}` capturing where each unit was after movement but before the respawn teleport. This is included in spectator snapshots as `deathPositions` so the animation can show the correct sequence: move to combat position → die there → float to spawn.
-
-#### HexGrid Animation Props
-
-HexGrid accepts:
-- `floatingUnits` — units at animated pixel positions (rendered above tiles)
-- `hiddenUnitIds` — units to skip in normal tile rendering (currently floating or dying)
-- `killEffects` — death animations with `progress`, `floatProgress`, death position, and respawn position
-- `visionOpacity` — opacity for vision boundary paths (0..1, animated by the hook)
-- `dyingUnitIds` — units dying this turn (for any per-tile death state rendering)
+**HexGrid animation props** (CtL's shared component): `floatingUnits`, `hiddenUnitIds`, `killEffects`, `visionOpacity`, `dyingUnitIds`. Other games would build their own rendering layer.
 
 ## buildSpectatorView()
 
