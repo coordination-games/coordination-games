@@ -2,7 +2,7 @@
  * Merkle tree construction for game action verification.
  *
  * Builds a binary Merkle tree from action data.
- * Used to produce the actionsRoot anchored on-chain via GameAnchor.settleGame().
+ * Used to produce the movesRoot anchored on-chain via GameAnchor.settleGame().
  *
  * Tree structure:
  * - Leaf = sha256(actionIndex | playerId | actionData | stateHash)

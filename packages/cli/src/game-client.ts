@@ -135,7 +135,7 @@ export class GameClient {
   /** Call a plugin tool by plugin ID and tool name. Goes through the generic relay. */
   async callPluginTool(pluginId: string, toolName: string, args: unknown): Promise<any> {
     await this.ensureAuth();
-    const raw = await this.api.post('/api/player/tool', { pluginId, tool: toolName, args });
+    const raw = await this.api.post('/api/player/tool', { relay: { type: toolName, pluginId, data: args, scope: 'all' } });
     return this.processResponse(raw);
   }
 
@@ -185,7 +185,7 @@ export class GameClient {
    */
   async lobbyTool(pluginId: string, tool: string, args: any): Promise<any> {
     await this.ensureAuth();
-    return this.api.post('/api/player/lobby/tool', { pluginId, tool, args });
+    return this.api.post('/api/player/lobby/tool', { relay: { type: tool, pluginId, data: args, scope: 'all' } });
   }
 
   // ---------------------------------------------------------------------------

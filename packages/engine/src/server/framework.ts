@@ -59,9 +59,9 @@ export function buildGameResult<TConfig, TState, TAction, TOutcome>(
     gameType: room.gamePlugin.gameType,
     players: playerIds,
     outcome,
-    actionsRoot: merkleTree.root,
+    movesRoot: merkleTree.root,
     configHash,
-    actionCount: room.actionLog.length,
+    turnCount: room.actionLog.length,
     timestamp: Date.now(),
   };
 }

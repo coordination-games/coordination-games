@@ -280,8 +280,8 @@ export class GameRoomDO extends DurableObject<Env> {
       gameType: this._meta.gameType,
       playerIds: this._meta.playerIds,
       outcome: this._plugin.getOutcome(this._state),
-      actionsRoot: tree.root,
-      actionCount: this._actionLog.length,
+      movesRoot: tree.root,
+      turnCount: this._actionLog.length,
       timestamp: Date.now(),
     });
   }

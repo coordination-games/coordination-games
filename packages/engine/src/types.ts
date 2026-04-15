@@ -152,9 +152,9 @@ export interface GameResult {
   gameType: string;
   players: string[];    // Player IDs (agentIds)
   outcome: unknown;     // Game-specific outcome data
-  actionsRoot: string;  // Merkle root of all actions
+  movesRoot: string;    // Merkle root of all actions
   configHash: string;   // Hash of the game config
-  actionCount: number;
+  turnCount: number;
   timestamp: number;
 }
 

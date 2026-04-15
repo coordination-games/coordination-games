@@ -68,11 +68,9 @@ export function registerGameCommands(program: Command) {
 
         process.stdout.write(`\n  Active Lobbies:\n`);
         for (const lobby of lobbies) {
-          const agentCount = lobby.agents?.length ?? 0;
           const phase = lobby.phase ?? "forming";
-          const externalCount = lobby.externalSlots?.length ?? 0;
           process.stdout.write(
-            `  [${lobby.lobbyId}] phase: ${phase} — ${agentCount} agents, ${externalCount} external slots\n`
+            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`
           );
           if (lobby.gameId) {
             process.stdout.write(`    -> Game started: ${lobby.gameId}\n`);

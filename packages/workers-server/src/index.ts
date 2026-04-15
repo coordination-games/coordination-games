@@ -2,7 +2,7 @@ import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
 import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
 import { D1EloTracker } from './db/elo.js';
-import { getRegisteredGames } from '@coordination-games/engine';
+import { getRegisteredGames, getGame } from '@coordination-games/engine';
 import type { Env } from './env.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
@@ -199,6 +199,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     // Authenticated player endpoints
     // ------------------------------------------------------------------
 
+    if (pathname === '/api/player/leaderboard' && method === 'GET') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handleLeaderboard(request, env);
+    }
+
     if (pathname === '/api/player/stats' && method === 'GET') {
       const auth = await requireAuth(request, env);
       if (auth instanceof Response) return auth;
@@ -253,6 +259,13 @@ if (pathname === '/api/player/state' && method === 'GET') {
       return handlePlayerTool(auth, request, env);
     }
 
+    // GET /api/player/guide — game guide + available tools
+    if (pathname === '/api/player/guide' && method === 'GET') {
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      return handlePlayerGuide(auth, request, env);
+    }
+
     // ------------------------------------------------------------------
     // Not found
     // ------------------------------------------------------------------
@@ -265,9 +278,14 @@ if (pathname === '/api/player/state' && method === 'GET') {
 
 async function handleListLobbies(env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
-    "SELECT id, game_type, team_size, phase, created_at, game_id FROM lobbies " +
-    "WHERE phase NOT IN ('failed', 'game') ORDER BY created_at DESC LIMIT 50"
-  ).all<{ id: string; game_type: string; team_size: number; phase: string; created_at: string; game_id: string | null }>();
+    "SELECT l.id, l.game_type, l.team_size, l.phase, l.created_at, l.game_id, " +
+    "COUNT(ls.player_id) as player_count " +
+    "FROM lobbies l " +
+    "LEFT JOIN lobby_sessions ls ON ls.lobby_id = l.id " +
+    "WHERE l.phase NOT IN ('failed', 'game') " +
+    "GROUP BY l.id " +
+    "ORDER BY l.created_at DESC LIMIT 50"
+  ).all<{ id: string; game_type: string; team_size: number; phase: string; created_at: string; game_id: string | null; player_count: number }>();
 
   return Response.json(rows.results.map(r => ({
     lobbyId: r.id,
@@ -276,6 +294,7 @@ async function handleListLobbies(env: Env): Promise<Response> {
     phase: r.phase,
     createdAt: r.created_at,
     gameId: r.game_id,
+    playerCount: r.player_count,
   })));
 }
 
@@ -572,6 +591,52 @@ async function handlePlayerTool(playerId: string, request: Request, env: Env): P
   }
 
   return forwardToGameDO(env, session.game_id, '/tool', makeRequest('POST', { relay, playerId }));
+}
+
+// ---------------------------------------------------------------------------
+// Guide handler
+// ---------------------------------------------------------------------------
+
+async function handlePlayerGuide(playerId: string, request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  let gameType = url.searchParams.get('game');
+
+  if (!gameType) {
+    // Try active game session first
+    const gameSession = await getPlayerGameSession(playerId, env);
+    if (gameSession) {
+      gameType = gameSession.game_type;
+    } else {
+      // Try lobby session — join to lobbies table to get game_type
+      const lobbyRow = await env.DB.prepare(
+        'SELECT l.game_type FROM lobby_sessions ls JOIN lobbies l ON l.id = ls.lobby_id WHERE ls.player_id = ?'
+      ).bind(playerId).first<{ game_type: string }>();
+      if (lobbyRow) gameType = lobbyRow.game_type;
+    }
+  }
+
+  if (!gameType) {
+    return Response.json({ games: getRegisteredGames() });
+  }
+
+  const plugin = getGame(gameType);
+  if (!plugin) {
+    return Response.json({ error: 'Unknown game', gameType }, { status: 404 });
+  }
+
+  const guide = plugin.guide ?? 'No guide available.';
+
+  // Collect tool names from lobby phases and required/recommended plugins
+  const tools: string[] = [];
+  if (plugin.lobby?.phases) {
+    for (const phase of plugin.lobby.phases) {
+      if (phase.tools) {
+        tools.push(...phase.tools.map((t: any) => t.name ?? t));
+      }
+    }
+  }
+
+  return Response.json({ gameType, guide, tools });
 }
 
 // ---------------------------------------------------------------------------
