@@ -604,6 +604,53 @@ export class GameRoomDO extends DurableObject<Env> {
       } catch (err) {
         console.error(`[GameRoomDO] Failed to update D1 on game over:`, err);
       }
+      // Fire-and-forget: settle game on-chain if relay is configured
+      (async () => {
+        try {
+          const { createRelay } = await import('../chain/index.js');
+          const relay = createRelay(this.env);
+
+          // Build settlement data
+          const leaves: MerkleLeafData[] = this._actionLog.map((e: any, i: number) => ({
+            actionIndex: i,
+            playerId: e.playerId,
+            actionData: JSON.stringify(e.action),
+          }));
+          const tree = buildActionMerkleTree(leaves);
+
+          const config = {
+            gameType: this._meta!.gameType,
+            playerIds: this._meta!.playerIds,
+            handleMap: this._meta!.handleMap,
+            teamMap: this._meta!.teamMap,
+            createdAt: this._meta!.createdAt,
+          };
+          const configJson = JSON.stringify(config, Object.keys(config).sort());
+          const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(configJson));
+          const configHash = '0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+          const outcome = this._plugin!.getOutcome(this._state);
+
+          // Build credit deltas from outcome (game plugin determines who wins/loses credits)
+          // For now, empty deltas — credit changes will be added when games have entry fees
+          const deltas: { agentId: string; delta: number }[] = [];
+
+          await relay.settleGame({
+            gameId: this._meta!.gameId,
+            gameType: this._meta!.gameType,
+            playerIds: this._meta!.playerIds,
+            outcome,
+            movesRoot: tree.root,
+            configHash,
+            turnCount: this._actionLog.length,
+            timestamp: Date.now(),
+          }, deltas);
+
+          console.log(`[GameRoomDO] Game ${this._meta!.gameId} settled on-chain`);
+        } catch (err) {
+          console.error(`[GameRoomDO] On-chain settlement failed (will retry via cron):`, err);
+        }
+      })();
     }
 
     this.broadcastUpdates();
