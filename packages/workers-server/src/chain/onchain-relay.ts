@@ -115,7 +115,7 @@ export class OnChainRelay implements ChainRelay {
 
   // --- Write methods (Phase 3) ---
 
-  async register(params: RegisterParams): Promise<{ agentId: string; credits: string }> {
+  async register(params: RegisterParams): Promise<{ agentId: string; name: string; credits: string }> {
     const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
     const walletClient = createWalletClient({
       account,
@@ -166,7 +166,7 @@ export class OnChainRelay implements ChainRelay {
     // Cache chain_agent_id in D1
     const existing = await this.env.DB.prepare(
       'SELECT id FROM players WHERE wallet_address = ? COLLATE NOCASE'
-    ).bind(params.address).first<{ id: string }>();
+    ).bind(params.address.toLowerCase()).first<{ id: string }>();
 
     if (existing) {
       await this.env.DB.prepare('UPDATE players SET chain_agent_id = ?, handle = ? WHERE id = ?')
@@ -175,7 +175,7 @@ export class OnChainRelay implements ChainRelay {
       const playerId = crypto.randomUUID();
       await this.env.DB.prepare(
         'INSERT INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES (?, ?, ?, ?, 1000, 0, 0, ?)'
-      ).bind(playerId, params.address, params.name, Number(agentId), new Date().toISOString()).run();
+      ).bind(playerId, params.address.toLowerCase(), params.name, Number(agentId), new Date().toISOString()).run();
     }
 
     // Read initial credits
@@ -186,7 +186,7 @@ export class OnChainRelay implements ChainRelay {
       args: [BigInt(agentId)],
     }) as bigint;
 
-    return { agentId, credits: credits.toString() };
+    return { agentId, name: params.name, credits: credits.toString() };
   }
 
   async settleGame(result: GameSettlement, deltas: CreditDelta[]): Promise<SettlementReceipt> {

@@ -147,7 +147,7 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
   const addressLower = address.toLowerCase();
 
   const existing = await env.DB.prepare(
-    'SELECT id FROM players WHERE wallet_address = ?'
+    'SELECT id FROM players WHERE wallet_address = ? COLLATE NOCASE'
   ).bind(addressLower).first<{ id: string }>();
 
   let playerId: string;

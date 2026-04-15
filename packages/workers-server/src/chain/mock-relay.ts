@@ -24,12 +24,12 @@ export class MockRelay implements ChainRelay {
     return { available: !row };
   }
 
-  async register(params: RegisterParams): Promise<{ agentId: string; credits: string }> {
+  async register(params: RegisterParams): Promise<{ agentId: string; name: string; credits: string }> {
     const id = crypto.randomUUID();
     await this.db.prepare(
       'INSERT INTO players (id, wallet_address, handle, elo, games_played, wins, created_at) VALUES (?, ?, ?, 1000, 0, 0, ?)'
-    ).bind(id, params.address, params.name, new Date().toISOString()).run();
-    return { agentId: id, credits: '0' };
+    ).bind(id, params.address.toLowerCase(), params.name, new Date().toISOString()).run();
+    return { agentId: id, name: params.name, credits: '0' };
   }
 
   async getBalance(_agentId: string): Promise<BalanceInfo> {

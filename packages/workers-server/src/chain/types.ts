@@ -70,7 +70,7 @@ export interface ChainRelay {
   // Identity
   getAgentByAddress(address: string): Promise<AgentInfo | null>;
   checkName(name: string): Promise<{ available: boolean }>;
-  register(params: RegisterParams): Promise<{ agentId: string; credits: string }>;
+  register(params: RegisterParams): Promise<{ agentId: string; name: string; credits: string }>;
 
   // Credits
   getBalance(agentId: string): Promise<BalanceInfo>;
