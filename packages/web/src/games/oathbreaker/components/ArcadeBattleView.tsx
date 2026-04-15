@@ -354,13 +354,18 @@ export function ArcadeBattleView({
   const char1 = characters[p1.id];
   const char2 = characters[p2.id];
 
-  // Find latest result for this pairing
-  const latestResult = roundResults.length > 0
-    ? roundResults[roundResults.length - 1]?.find(
-        r => (r.player1 === p1.id && r.player2 === p2.id) ||
-             (r.player1 === p2.id && r.player2 === p1.id)
-      )
-    : undefined;
+  // Find the followed player's most recent result.
+  // Pairings rotate each round — after a round resolves, the snapshot already
+  // has the NEXT round's pairings, so the current p1/p2 pairing won't match
+  // the just-resolved results. Instead, search for any result involving the
+  // followed player (p1, since SpectatorView normalizes pairing order).
+  let latestResult: OathPairingResult | undefined;
+  for (let i = roundResults.length - 1; i >= 0; i--) {
+    const match = roundResults[i]?.find(
+      r => r.player1 === p1.id || r.player2 === p1.id
+    );
+    if (match) { latestResult = match; break; }
+  }
 
   const reveal = useRevealAnimation(latestResult, animate, newRoundResults);
 
