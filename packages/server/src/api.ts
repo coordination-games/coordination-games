@@ -14,6 +14,7 @@ import '@coordination-games/game-comedy-commons';
 import '@coordination-games/game-prisoners-dilemma';
 import { EloTracker } from '@coordination-games/plugin-elo';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import { RationalePlugin } from '@coordination-games/plugin-rationale';
 import { runAllBotsTurn, createBotSessions, BotSession } from './claude-bot.js';
 import { LobbyRunner, LobbyRunnerState } from './lobby-runner.js';
 import {
@@ -1324,6 +1325,7 @@ export class GameServer {
       // Look up the plugin — for now, hardcoded registry. TODO: dynamic plugin loader.
       const pluginRegistry: Record<string, any> = {
         'basic-chat': BasicChatPlugin,
+        'rationale': RationalePlugin,
       };
       const plugin = pluginRegistry[pluginId];
       if (!plugin || !plugin.handleCall) {
@@ -1627,7 +1629,7 @@ export class GameServer {
         setup.players.map(p => ({ id: p.id, handle: handleMap[p.id] ?? p.id, team: p.team })),
         this.serverUrl,
         (id, handle) => createBotToken(id, handle),
-        [BasicChatPlugin],
+        [BasicChatPlugin, RationalePlugin],
       ),
       lobbyChat: [],
       preGameChatA: [],
@@ -1770,7 +1772,7 @@ export class GameServer {
           botPlayers.map(p => ({ id: p.id, handle: p.handle, team: '' })),
           this.serverUrl,
           (id, handle) => createBotToken(id, handle),
-          [BasicChatPlugin],
+          [BasicChatPlugin, RationalePlugin],
         )
       : [];
 
@@ -2102,7 +2104,7 @@ export class GameServer {
         })),
         this.serverUrl,
         (id, handle) => createBotToken(id, handle),
-        [BasicChatPlugin],
+        [BasicChatPlugin, RationalePlugin],
       ),
       lobbyChat,
       preGameChatA,

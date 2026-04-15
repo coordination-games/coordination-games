@@ -14,6 +14,9 @@ import {
 import { z } from 'zod';
 import { GameClient } from './game-client.js';
 import type { ToolPlugin } from '@coordination-games/engine';
+import { RationalePlugin } from '@coordination-games/plugin-rationale';
+
+const DEFAULT_PLUGINS: ToolPlugin[] = [RationalePlugin];
 
 // ---------------------------------------------------------------------------
 // System prompt
@@ -39,7 +42,7 @@ Be decisive and aggressive. You have limited time per turn. Always submit an act
 // Create in-process MCP server backed by GameClient
 // ---------------------------------------------------------------------------
 
-export function createBotMcpServer(client: GameClient, plugins: ToolPlugin[] = []) {
+export function createBotMcpServer(client: GameClient, plugins: ToolPlugin[] = DEFAULT_PLUGINS) {
   // Core platform tools (always available)
   const coreTools = [
     tool('get_guide', 'Game rules, available tools, and your current status. Call this FIRST.', {},
@@ -191,7 +194,7 @@ export function createBotSessions(
   bots: { id: string; handle: string; team: string }[],
   serverUrl: string,
   getToken: (id: string, handle: string) => string,
-  plugins: ToolPlugin[] = [],
+  plugins: ToolPlugin[] = DEFAULT_PLUGINS,
 ): BotSession[] {
   return bots.map((b) => ({
     id: b.id,

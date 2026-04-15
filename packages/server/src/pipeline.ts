@@ -13,10 +13,11 @@
 
 import { PluginLoader, PluginPipeline } from '@coordination-games/engine';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import { RationalePlugin } from '@coordination-games/plugin-rationale';
 import type { ToolPlugin } from '@coordination-games/engine';
 
 // Default plugins — always available
-const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];
+const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin, RationalePlugin];
 
 let loader: PluginLoader | null = null;
 let pipeline: PluginPipeline | null = null;

@@ -19,6 +19,7 @@
     "@coordination-games/game-prisoners-dilemma": "*",
     "@coordination-games/game-oathbreaker": "*",
     "@coordination-games/plugin-chat": "*",
+    "@coordination-games/plugin-rationale": "*",
     "@coordination-games/plugin-elo": "*",
     "@coordination-games/game-comedy-commons": "*",
     "@modelcontextprotocol/sdk": "^1.0.0",
