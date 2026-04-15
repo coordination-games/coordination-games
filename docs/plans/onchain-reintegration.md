@@ -165,7 +165,7 @@ D1 migration: `ALTER TABLE players ADD COLUMN chain_agent_id INTEGER UNIQUE;`
 
 **Goal:** Registration mints ERC-8004 NFTs. Game settlement anchors results on-chain.
 
-**Dependency:** CLI must be updated to generate EIP-2612 permit signatures for USDC approval. This is a breaking change to the registration flow — the CLI sends `{ name, address, permitDeadline, v, r, s }` instead of just `{ name, address }`.
+**CLI is already ready.** `packages/cli/src/commands/names.ts` already generates EIP-2612 permit signatures via `signPermit()` and sends `{ name, address, permitDeadline, v, r, s }`. No CLI changes needed — we just need the server endpoint.
 
 1. Implement `OnChainRelay.register()`:
    - Relayer submits `registry.registerNew()` with user's permit signature
@@ -179,8 +179,6 @@ D1 migration: `ALTER TABLE players ADD COLUMN chain_agent_id INTEGER UNIQUE;`
 3. Add `POST /api/relay/register` endpoint
 4. Wire GameRoomDO game-end to settlement
 5. **Settlement retry:** Add a cron trigger that scans for games marked finished in D1 but not settled on-chain. Retry failed settlements. The contract's `AlreadySettled` check prevents double-settlement.
-6. Update CLI `register` command to generate permit signature
-
 **Relayer security:**
 - The relayer private key is stored as a Wrangler secret
 - The relayer address MUST be separate from the deployer/admin address
@@ -193,12 +191,14 @@ D1 migration: `ALTER TABLE players ADD COLUMN chain_agent_id INTEGER UNIQUE;`
 
 **Goal:** Credit economics fully on-chain.
 
-1. Implement `OnChainRelay.topup()` — accepts permit, calls `credits.mint()`
+**Note:** The CLI already has `signPermit()` in `packages/cli/src/signing.ts` — used by `register`. Reuse it for topup (same EIP-2612 flow, different spender/amount). No new signing code needed.
+
+1. Implement `OnChainRelay.topup()` — accepts permit params, calls `credits.mint()`
 2. Implement `OnChainRelay.requestBurn()` and `OnChainRelay.executeBurn()`
 3. Implement `OnChainRelay.cancelBurn()`
 4. Add endpoints: `/api/relay/topup`, `/api/relay/burn-request`, `/api/relay/burn-execute`, `/api/relay/burn-cancel`
 5. Add `GET /api/relay/faucet/:address` (testnet only — standalone, not on ChainRelay interface)
-6. Update CLI `withdraw` command, add `topup` command — both need permit signature generation
+6. Update CLI `withdraw` and `topup` commands to call new endpoints (permit signing already exists)
 7. Wire CLI end-to-end
 
 ### Phase 5: Verification + Bundle
@@ -243,6 +243,5 @@ D1 migration: `ALTER TABLE players ADD COLUMN chain_agent_id INTEGER UNIQUE;`
 | `packages/workers-server/package.json` | Remove ethers, add viem | 1 |
 | `packages/workers-server/wrangler.toml` | Document required secrets | 2 |
 | `packages/workers-server/migrations/` | Add `chain_agent_id` column | 1 |
-| `packages/cli/src/commands/names.ts` | Add permit signature for registration | 3 |
-| `packages/cli/src/commands/wallet.ts` | Add permit for topup/withdraw | 4 |
+| `packages/cli/src/commands/wallet.ts` | Wire topup/withdraw to new endpoints (permit signing already exists in `signing.ts`) | 4 |
 | `wiki/architecture/dual-mode-infra.md` | Update: interface-based, not branch-based | 1 |
