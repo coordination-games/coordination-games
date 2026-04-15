@@ -117,6 +117,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return Response.json(result);
     }
 
+    // POST /api/relay/register
+    const registerMatch = pathname === '/api/relay/register' && method === 'POST';
+    if (registerMatch) {
+      try {
+        const body = await request.json() as any;
+        const { name, address, agentURI, permitDeadline, v, r, s } = body;
+        if (!name || !address || !agentURI) {
+          return Response.json({ error: 'name, address, and agentURI are required' }, { status: 400 });
+        }
+        const result = await relay.register({ name, address, agentURI, permitDeadline, v, r, s });
+        return Response.json(result);
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // ------------------------------------------------------------------
     // Framework info
     // ------------------------------------------------------------------

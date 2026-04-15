@@ -1,4 +1,5 @@
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, createWalletClient, http, keccak256, toBytes, toHex } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { optimismSepolia } from 'viem/chains';
 import type { Env } from '../env.js';
 import type { ChainRelay, AgentInfo, RegisterParams, BalanceInfo, PermitParams, BurnRequest, CreditDelta, GameSettlement, SettlementReceipt } from './types.js';
@@ -162,23 +163,166 @@ export class OnChainRelay implements ChainRelay {
     }
   }
 
-  // --- Write stubs (Phase 3-4) ---
-  async register(_params: RegisterParams): Promise<{ agentId: string; credits: string }> {
-    throw new Error('OnChainRelay.register not implemented');
+  // --- Write methods (Phase 3) ---
+
+  async register(params: RegisterParams): Promise<{ agentId: string; credits: string }> {
+    const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({
+      account,
+      chain: optimismSepolia,
+      transport: http(this.env.RPC_URL),
+    });
+
+    const registerAbi = [{
+      name: 'registerNew',
+      type: 'function',
+      stateMutability: 'nonpayable',
+      inputs: [
+        { name: 'user', type: 'address' },
+        { name: 'name', type: 'string' },
+        { name: 'agentURI', type: 'string' },
+        { name: 'deadline', type: 'uint256' },
+        { name: 'v', type: 'uint8' },
+        { name: 'r', type: 'bytes32' },
+        { name: 's', type: 'bytes32' },
+      ],
+      outputs: [],
+    }] as const;
+
+    const txHash = await walletClient.writeContract({
+      address: this.env.REGISTRY_ADDRESS as `0x${string}`,
+      abi: registerAbi,
+      functionName: 'registerNew',
+      args: [
+        params.address as `0x${string}`,
+        params.name,
+        params.agentURI,
+        BigInt(params.permitDeadline),
+        params.v,
+        params.r as `0x${string}`,
+        params.s as `0x${string}`,
+      ],
+    } as any);
+
+    // Wait for receipt
+    const receipt = await this.client.waitForTransactionReceipt({ hash: txHash });
+
+    // Parse Registered event to get agentId
+    // Event: Registered(address indexed user, uint256 indexed agentId, string name)
+    const registeredTopic = keccak256(toBytes('Registered(address,uint256,string)'));
+    const registeredLog = receipt.logs.find((l: any) => l.topics[0] === registeredTopic);
+    const agentId = registeredLog ? BigInt(registeredLog.topics[2]).toString() : '0';
+
+    // Cache chain_agent_id in D1
+    const existing = await this.env.DB.prepare(
+      'SELECT id FROM players WHERE wallet_address = ? COLLATE NOCASE'
+    ).bind(params.address).first<{ id: string }>();
+
+    if (existing) {
+      await this.env.DB.prepare('UPDATE players SET chain_agent_id = ?, handle = ? WHERE id = ?')
+        .bind(Number(agentId), params.name, existing.id).run();
+    } else {
+      const playerId = crypto.randomUUID();
+      await this.env.DB.prepare(
+        'INSERT INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES (?, ?, ?, ?, 1000, 0, 0, ?)'
+      ).bind(playerId, params.address, params.name, Number(agentId), new Date().toISOString()).run();
+    }
+
+    // Read initial credits
+    const credits = await this.client.readContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: creditsAbi,
+      functionName: 'balances',
+      args: [BigInt(agentId)],
+    }) as bigint;
+
+    return { agentId, credits: credits.toString() };
   }
+
+  async settleGame(result: GameSettlement, deltas: CreditDelta[]): Promise<SettlementReceipt> {
+    const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({
+      account,
+      chain: optimismSepolia,
+      transport: http(this.env.RPC_URL),
+    });
+
+    // Translate D1 player UUIDs to on-chain agentIds
+    const onChainPlayers: bigint[] = [];
+    for (const pid of result.playerIds) {
+      const row = await this.env.DB.prepare(
+        'SELECT chain_agent_id FROM players WHERE id = ?'
+      ).bind(pid).first<{ chain_agent_id: number | null }>();
+      if (!row?.chain_agent_id) throw new Error(`Player ${pid} has no on-chain identity`);
+      onChainPlayers.push(BigInt(row.chain_agent_id));
+    }
+
+    // Build on-chain deltas (parallel to onChainPlayers)
+    const onChainDeltas = deltas.map(d => {
+      const idx = result.playerIds.indexOf(d.agentId);
+      if (idx === -1) throw new Error(`Delta for unknown player ${d.agentId}`);
+      return BigInt(d.delta);
+    });
+
+    const gameIdBytes = keccak256(toBytes(result.gameId)) as `0x${string}`;
+    const movesRootBytes = result.movesRoot as `0x${string}`;
+    const configHashBytes = result.configHash as `0x${string}`;
+    const outcomeBytes = toHex(JSON.stringify(result.outcome)) as `0x${string}`;
+
+    const gameAnchorAbi = [{
+      name: 'settleGame',
+      type: 'function',
+      stateMutability: 'nonpayable',
+      inputs: [
+        { name: 'result', type: 'tuple', components: [
+          { name: 'gameId', type: 'bytes32' },
+          { name: 'gameType', type: 'string' },
+          { name: 'players', type: 'uint256[]' },
+          { name: 'outcome', type: 'bytes' },
+          { name: 'movesRoot', type: 'bytes32' },
+          { name: 'configHash', type: 'bytes32' },
+          { name: 'turnCount', type: 'uint16' },
+          { name: 'timestamp', type: 'uint64' },
+        ]},
+        { name: 'deltas', type: 'int256[]' },
+      ],
+      outputs: [],
+    }] as const;
+
+    const txHash = await walletClient.writeContract({
+      address: this.env.GAME_ANCHOR_ADDRESS as `0x${string}`,
+      abi: gameAnchorAbi,
+      functionName: 'settleGame',
+      args: [
+        {
+          gameId: gameIdBytes,
+          gameType: result.gameType,
+          players: onChainPlayers,
+          outcome: outcomeBytes,
+          movesRoot: movesRootBytes,
+          configHash: configHashBytes,
+          turnCount: result.turnCount,
+          timestamp: BigInt(result.timestamp),
+        },
+        onChainDeltas,
+      ],
+    } as any);
+
+    await this.client.waitForTransactionReceipt({ hash: txHash });
+    return { txHash };
+  }
+
+  // --- Write stubs (Phase 4) ---
   async topup(_agentId: string, _permit: PermitParams): Promise<{ credits: string }> {
-    throw new Error('OnChainRelay.topup not implemented');
+    throw new Error('OnChainRelay.topup not implemented — Phase 4');
   }
   async requestBurn(_agentId: string, _amount: string): Promise<BurnRequest> {
-    throw new Error('OnChainRelay.requestBurn not implemented');
+    throw new Error('OnChainRelay.requestBurn not implemented — Phase 4');
   }
   async executeBurn(_agentId: string): Promise<{ credits: string }> {
-    throw new Error('OnChainRelay.executeBurn not implemented');
+    throw new Error('OnChainRelay.executeBurn not implemented — Phase 4');
   }
   async cancelBurn(_agentId: string): Promise<void> {
-    throw new Error('OnChainRelay.cancelBurn not implemented');
-  }
-  async settleGame(_result: GameSettlement, _deltas: CreditDelta[]): Promise<SettlementReceipt> {
-    throw new Error('OnChainRelay.settleGame not implemented');
+    throw new Error('OnChainRelay.cancelBurn not implemented — Phase 4');
   }
 }
