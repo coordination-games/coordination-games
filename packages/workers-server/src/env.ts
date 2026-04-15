@@ -7,5 +7,8 @@ export interface Env {
   RPC_URL?: string;
   REGISTRY_ADDRESS?: string;
   ERC8004_ADDRESS?: string;
+  CREDITS_ADDRESS?: string;
+  GAME_ANCHOR_ADDRESS?: string;
+  USDC_ADDRESS?: string;
   RELAYER_PRIVATE_KEY?: string;
 }
