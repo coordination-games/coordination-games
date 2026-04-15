@@ -133,6 +133,82 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       }
     }
 
+    // POST /api/relay/topup
+    if (pathname === '/api/relay/topup' && method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const result = await relay.topup(body.agentId, {
+          deadline: body.permitDeadline,
+          v: body.v, r: body.r, s: body.s,
+          amount: body.amount,
+        });
+        return Response.json(result);
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    // POST /api/relay/burn-request
+    if (pathname === '/api/relay/burn-request' && method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const result = await relay.requestBurn(body.agentId, body.amount);
+        return Response.json(result);
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    // POST /api/relay/burn-execute
+    if (pathname === '/api/relay/burn-execute' && method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const result = await relay.executeBurn(body.agentId);
+        return Response.json(result);
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    // POST /api/relay/burn-cancel
+    if (pathname === '/api/relay/burn-cancel' && method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        await relay.cancelBurn(body.agentId);
+        return Response.json({ ok: true });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
+    // GET /api/relay/faucet/:address — testnet only, mints MockUSDC
+    const faucetMatch = pathname.match(/^\/api\/relay\/faucet\/(.+)$/);
+    if (faucetMatch && method === 'GET') {
+      if (!env.RPC_URL || !env.USDC_ADDRESS || !env.RELAYER_PRIVATE_KEY) {
+        return Response.json({ error: 'Faucet not available' }, { status: 503 });
+      }
+      try {
+        const { createWalletClient, http } = await import('viem');
+        const { privateKeyToAccount } = await import('viem/accounts');
+        const { optimismSepolia } = await import('viem/chains');
+
+        const address = decodeURIComponent(faucetMatch[1]);
+        const account = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as `0x${string}`);
+        const walletClient = createWalletClient({ account, chain: optimismSepolia, transport: http(env.RPC_URL) });
+
+        const txHash = await walletClient.writeContract({
+          address: env.USDC_ADDRESS as `0x${string}`,
+          abi: [{ name: 'mint', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [] }] as const,
+          functionName: 'mint',
+          args: [address as `0x${string}`, 100_000_000n],
+        } as any);
+
+        return Response.json({ txHash, amount: '100000000' });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    }
+
     // ------------------------------------------------------------------
     // Framework info
     // ------------------------------------------------------------------

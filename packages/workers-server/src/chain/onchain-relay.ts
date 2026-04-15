@@ -312,17 +312,82 @@ export class OnChainRelay implements ChainRelay {
     return { txHash };
   }
 
-  // --- Write stubs (Phase 4) ---
-  async topup(_agentId: string, _permit: PermitParams): Promise<{ credits: string }> {
-    throw new Error('OnChainRelay.topup not implemented — Phase 4');
+  // --- Write methods (Phase 4: Credits) ---
+
+  async topup(agentId: string, permit: PermitParams): Promise<{ credits: string }> {
+    const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain: optimismSepolia, transport: http(this.env.RPC_URL) });
+
+    const txHash = await walletClient.writeContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: [{ name: 'mint', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'agentId', type: 'uint256' }, { name: 'usdcAmount', type: 'uint256' }], outputs: [] }] as const,
+      functionName: 'mint',
+      args: [BigInt(agentId), BigInt(permit.amount)],
+    } as any);
+    await this.client.waitForTransactionReceipt({ hash: txHash });
+
+    const credits = await this.client.readContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: creditsAbi,
+      functionName: 'balances',
+      args: [BigInt(agentId)],
+    } as any) as bigint;
+    return { credits: credits.toString() };
   }
-  async requestBurn(_agentId: string, _amount: string): Promise<BurnRequest> {
-    throw new Error('OnChainRelay.requestBurn not implemented — Phase 4');
+
+  async requestBurn(agentId: string, amount: string): Promise<BurnRequest> {
+    const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain: optimismSepolia, transport: http(this.env.RPC_URL) });
+
+    const txHash = await walletClient.writeContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: [{ name: 'requestBurn', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'agentId', type: 'uint256' }, { name: 'amount', type: 'uint256' }], outputs: [] }] as const,
+      functionName: 'requestBurn',
+      args: [BigInt(agentId), BigInt(amount)],
+    } as any);
+    await this.client.waitForTransactionReceipt({ hash: txHash });
+
+    const pending = await this.client.readContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: [{ name: 'pendingBurns', type: 'function', stateMutability: 'view', inputs: [{ name: 'agentId', type: 'uint256' }], outputs: [{ name: 'amount', type: 'uint256' }, { name: 'executeAfter', type: 'uint256' }] }] as const,
+      functionName: 'pendingBurns',
+      args: [BigInt(agentId)],
+    } as any) as [bigint, bigint];
+
+    return { pendingAmount: pending[0].toString(), executeAfter: Number(pending[1]) };
   }
-  async executeBurn(_agentId: string): Promise<{ credits: string }> {
-    throw new Error('OnChainRelay.executeBurn not implemented — Phase 4');
+
+  async executeBurn(agentId: string): Promise<{ credits: string }> {
+    const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain: optimismSepolia, transport: http(this.env.RPC_URL) });
+
+    const txHash = await walletClient.writeContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: [{ name: 'executeBurn', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'agentId', type: 'uint256' }], outputs: [] }] as const,
+      functionName: 'executeBurn',
+      args: [BigInt(agentId)],
+    } as any);
+    await this.client.waitForTransactionReceipt({ hash: txHash });
+
+    const credits = await this.client.readContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: creditsAbi,
+      functionName: 'balances',
+      args: [BigInt(agentId)],
+    } as any) as bigint;
+    return { credits: credits.toString() };
   }
-  async cancelBurn(_agentId: string): Promise<void> {
-    throw new Error('OnChainRelay.cancelBurn not implemented — Phase 4');
+
+  async cancelBurn(agentId: string): Promise<void> {
+    const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
+    const walletClient = createWalletClient({ account, chain: optimismSepolia, transport: http(this.env.RPC_URL) });
+
+    const txHash = await walletClient.writeContract({
+      address: this.env.CREDITS_ADDRESS as `0x${string}`,
+      abi: [{ name: 'cancelBurn', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'agentId', type: 'uint256' }], outputs: [] }] as const,
+      functionName: 'cancelBurn',
+      args: [BigInt(agentId)],
+    } as any);
+    await this.client.waitForTransactionReceipt({ hash: txHash });
   }
 }
