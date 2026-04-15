@@ -60,61 +60,11 @@ export class OnChainRelay implements ChainRelay {
       };
     }
 
-    // Scan ERC-8004 ownership — check recent token IDs
-    try {
-      const totalSupply = await this.client.readContract({
-        address: this.env.ERC8004_ADDRESS as `0x${string}`,
-        abi: erc8004Abi,
-        functionName: 'totalSupply',
-      }) as bigint;
-
-      for (let id = totalSupply; id > 0n; id--) {
-        const owner = await this.client.readContract({
-          address: this.env.ERC8004_ADDRESS as `0x${string}`,
-          abi: erc8004Abi,
-          functionName: 'ownerOf',
-          args: [id],
-        }) as string;
-
-        if (owner.toLowerCase() === address.toLowerCase()) {
-          // Found! Get name and credits
-          const [name, credits] = await Promise.all([
-            this.client.readContract({
-              address: this.env.REGISTRY_ADDRESS as `0x${string}`,
-              abi: registryAbi,
-              functionName: 'displayName',
-              args: [id],
-            }) as Promise<string>,
-            this.client.readContract({
-              address: this.env.CREDITS_ADDRESS as `0x${string}`,
-              abi: creditsAbi,
-              functionName: 'balances',
-              args: [id],
-            }) as Promise<bigint>,
-          ]);
-
-          // Cache in D1
-          if (cached) {
-            await this.env.DB.prepare('UPDATE players SET chain_agent_id = ? WHERE id = ?').bind(Number(id), cached.id).run();
-          }
-
-          return {
-            address,
-            agentId: id.toString(),
-            name: name || cached?.handle || '',
-            credits: credits.toString(),
-            registered: true,
-          };
-        }
-      }
-    } catch (err) {
-      console.error('[OnChainRelay] Error scanning ERC-8004:', err);
-    }
-
-    // Not registered on-chain
+    // D1 player exists but no chain_agent_id — not registered on-chain
     if (cached) {
       return { address, agentId: cached.id, name: cached.handle, credits: '0', registered: false };
     }
+    // Unknown address
     return null;
   }
 

@@ -98,23 +98,38 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     const relayStatusMatch = pathname.match(/^\/api\/relay\/status\/([^/]+)$/);
     if (relayStatusMatch && method === 'GET') {
-      const address = decodeURIComponent(relayStatusMatch[1]);
-      const agent = await relay.getAgentByAddress(address);
-      return Response.json(agent ?? { registered: false });
+      try {
+        const address = decodeURIComponent(relayStatusMatch[1]);
+        const agent = await relay.getAgentByAddress(address);
+        return Response.json(agent ?? { registered: false });
+      } catch (err: any) {
+        console.error('[relay/status] Error:', err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
     }
 
     const relayNameMatch = pathname.match(/^\/api\/relay\/check-name\/([^/]+)$/);
     if (relayNameMatch && method === 'GET') {
-      const name = decodeURIComponent(relayNameMatch[1]);
-      const result = await relay.checkName(name);
-      return Response.json(result);
+      try {
+        const name = decodeURIComponent(relayNameMatch[1]);
+        const result = await relay.checkName(name);
+        return Response.json(result);
+      } catch (err: any) {
+        console.error('[relay/check-name] Error:', err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
     }
 
     const relayBalanceMatch = pathname.match(/^\/api\/relay\/balance\/([^/]+)$/);
     if (relayBalanceMatch && method === 'GET') {
-      const agentId = decodeURIComponent(relayBalanceMatch[1]);
-      const result = await relay.getBalance(agentId);
-      return Response.json(result);
+      try {
+        const agentId = decodeURIComponent(relayBalanceMatch[1]);
+        const result = await relay.getBalance(agentId);
+        return Response.json(result);
+      } catch (err: any) {
+        console.error('[relay/balance] Error:', err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
     }
 
     // POST /api/relay/register
