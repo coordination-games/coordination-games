@@ -11,6 +11,7 @@
  *   GET  /state     — fog-filtered state  ?playerId=X
  *   GET  /result    — Merkle root + outcome (only when finished)
  *   GET  /spectator — current delayed spectator view (HTTP snapshot, no WS)
+ *   GET  /bundle   — full action bundle for verification (only when finished)
  *
  * WebSocket routes (forwarded from main Worker after auth):
  *   WS / (no X-Player-Id header)   — spectator: delayed view, no auth required
@@ -117,6 +118,7 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'GET'  && path === '/result') return this.handleResult();
     if (method === 'GET'  && path === '/spectator') return this.handleSpectator();
     if (method === 'GET'  && path === '/replay') return this.handleReplay();
+    if (method === 'GET'  && path === '/bundle') return this.handleBundle();
 
     return new Response('Not found', { status: 404 });
   }
@@ -276,6 +278,18 @@ export class GameRoomDO extends DurableObject<Env> {
     }));
     const tree = buildActionMerkleTree(leaves);
 
+    const config = {
+      gameType: this._meta.gameType,
+      playerIds: this._meta.playerIds,
+      handleMap: this._meta.handleMap,
+      teamMap: this._meta.teamMap,
+      createdAt: this._meta.createdAt,
+    };
+    const configJson = JSON.stringify(config, Object.keys(config).sort());
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(configJson));
+    const configHash = '0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
     return Response.json({
       gameType: this._meta.gameType,
       playerIds: this._meta.playerIds,
@@ -283,7 +297,36 @@ export class GameRoomDO extends DurableObject<Env> {
       movesRoot: tree.root,
       turnCount: this._actionLog.length,
       timestamp: Date.now(),
+      configHash,
     });
+  }
+
+  private async handleBundle(): Promise<Response> {
+    await this.ensureLoaded();
+    if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
+    if (!this._plugin.isOver(this._state as any)) {
+      return Response.json({ error: 'Game not finished yet' }, { status: 409 });
+    }
+
+    const config = {
+      gameType: this._meta.gameType,
+      playerIds: this._meta.playerIds,
+      handleMap: this._meta.handleMap,
+      teamMap: this._meta.teamMap,
+      createdAt: this._meta.createdAt,
+    };
+
+    const turns = this._actionLog.map((entry, i) => ({
+      turnNumber: i,
+      moves: [{
+        player: this._meta!.handleMap[entry.playerId] || entry.playerId,
+        data: JSON.stringify(entry.action),
+        signature: '',
+      }],
+      result: null,
+    }));
+
+    return Response.json({ config, turns });
   }
 
   private async handleSpectator(): Promise<Response> {

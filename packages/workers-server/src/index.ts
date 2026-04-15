@@ -278,7 +278,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const sub = gameMatch[2] ?? '/spectator';
 
       // Spectator-safe paths (no auth required)
-      const spectatorPaths = ['/spectator', '/replay'];
+      const spectatorPaths = ['/spectator', '/replay', '/bundle'];
       if (spectatorPaths.includes(sub)) {
         return forwardToGameDO(env, gameId, sub, request);
       }
