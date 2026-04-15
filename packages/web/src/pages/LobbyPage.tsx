@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getWsUrl } from '../config.js';
+import { API_BASE, getWsUrl } from '../config.js';
 import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, JoinInstructions, TeamPanel } from '../components/lobby';
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ export default function LobbyPage() {
     if (!id) return;
 
     // Fetch initial state via REST
-    fetch(`/api/lobbies/${id}`).then(r => r.json()).then(d => {
+    fetch(`${API_BASE}/lobbies/${id}`).then(r => r.json()).then(d => {
       if (d?.lobbyId) setState(d);
     }).catch(() => {});
 
@@ -193,12 +193,12 @@ export default function LobbyPage() {
 
   async function handleNoTimeout() {
     if (noTimeout || !id) return;
-    try { const r = await fetch(`/api/lobbies/${id}/no-timeout`, { method: 'POST' }); if (r.ok) setNoTimeout(true); } catch {}
+    try { const r = await fetch(`${API_BASE}/lobbies/${id}/no-timeout`, { method: 'POST' }); if (r.ok) setNoTimeout(true); } catch {}
   }
 
   async function handleCloseLobby() {
     if (!id || !confirm('Close this lobby? All agents will be disconnected.')) return;
-    try { await fetch(`/api/lobbies/${id}`, { method: 'DELETE' }); navigate('/lobbies'); } catch {}
+    try { await fetch(`${API_BASE}/lobbies/${id}`, { method: 'DELETE' }); navigate('/lobbies'); } catch {}
   }
 
   if (!id) return null;

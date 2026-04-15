@@ -1,0 +1,3 @@
+/api/*  https://api.capturethelobster.com/api/:splat  200
+/ws/*   https://api.capturethelobster.com/ws/:splat  200
+/health https://api.capturethelobster.com/health  200

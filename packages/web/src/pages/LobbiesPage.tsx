@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE } from '../config.js';
 import { motion } from 'framer-motion';
 import { fetchGames, type GameSummary } from '../api';
 
@@ -76,7 +77,7 @@ export default function LobbiesPage() {
       try {
         const [gamesData, lobbiesData] = await Promise.all([
           fetchGames(),
-          fetch('/api/lobbies').then(r => r.json()).catch(() => []),
+          fetch(`${API_BASE}/lobbies`).then(r => r.json()).catch(() => []),
         ]);
         if (!cancelled) {
           const mapped = gamesData.map((g: GameSummary) => ({
@@ -106,13 +107,13 @@ export default function LobbiesPage() {
     setCreating(true);
     try {
       if (gameTab === 'oathbreaker') {
-        const res = await fetch('/api/lobbies/create', {
+        const res = await fetch(`${API_BASE}/lobbies/create`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
         });
         if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
       } else {
-        const res = await fetch('/api/lobbies/create', {
+        const res = await fetch(`${API_BASE}/lobbies/create`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ teamSize }),
         });

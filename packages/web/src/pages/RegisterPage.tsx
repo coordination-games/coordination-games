@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { API_BASE } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -252,7 +253,7 @@ function useRegistrationPoll(address: string | null) {
 
     async function poll() {
       try {
-        const res = await fetch(`/api/relay/status/${address}`);
+        const res = await fetch(`${API_BASE}/relay/status/${address}`);
         if (!res.ok) return;
         const data = await res.json();
 

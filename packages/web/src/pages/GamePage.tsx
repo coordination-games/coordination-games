@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { getSpectatorPlugin } from '../games/registry';
-import { getWsUrl } from '../config.js';
+import { API_BASE, getWsUrl } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — extract platform data (handles, chat) from server payloads
@@ -50,7 +50,7 @@ export default function GamePage() {
   useEffect(() => {
     if (!id) return;
 
-    fetch(`/api/games/${id}`)
+    fetch(`${API_BASE}/games/${id}`)
       .then(r => r.json())
       .then(data => {
         setGameType(data.gameType ?? 'capture-the-lobster');

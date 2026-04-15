@@ -10,5 +10,7 @@ execSync([
   '--outfile=dist/index.cjs',
   "--banner:js='#!/usr/bin/env node'",
   '--external:better-sqlite3',
+  '--external:@modelcontextprotocol/sdk',
+  '--external:zod',
   `--define:COGA_VERSION='"${version}"'`,
 ].join(' '), { stdio: 'inherit' });

@@ -1,4 +1,4 @@
-export declare const DEFAULT_SERVER_URL = "https://capturethelobster.com";
+export declare const DEFAULT_SERVER_URL = "https://api.capturethelobster.com";
 export interface Config {
     serverUrl: string;
     keyMode: "local" | "waap";

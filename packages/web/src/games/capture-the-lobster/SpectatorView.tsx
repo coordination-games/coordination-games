@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import HexGrid from '../../components/HexGrid';
 import type { SpectatorViewProps } from '../types';
-import { getWsUrl } from '../../config.js';
+import { API_BASE, getWsUrl } from '../../config.js';
 import type {
   SpectatorGameState,
   KillEvent,
@@ -234,7 +234,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   useEffect(() => {
     if (isReplay || !gameId) return;
 
-    fetch(`/api/games/${gameId}`)
+    fetch(`${API_BASE}/games/${gameId}`)
       .then((res) => res.json())
       .then((data) => {
         const mapped = mapServerState(data);

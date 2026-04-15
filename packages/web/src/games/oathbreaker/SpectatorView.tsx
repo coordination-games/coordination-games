@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { getWsUrl } from '../../config.js';
+import { API_BASE, getWsUrl } from '../../config.js';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
 import { ArcadeOverview } from './components/ArcadeOverview';
@@ -103,7 +103,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   useEffect(() => {
     if (isReplay || !gameId) return;
 
-    fetch(`/api/games/${gameId}`)
+    fetch(`${API_BASE}/games/${gameId}`)
       .then(r => r.json())
       .then(data => {
         const mapped = mapServerState(data);
