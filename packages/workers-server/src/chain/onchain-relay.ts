@@ -3,6 +3,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { optimismSepolia } from 'viem/chains';
 import type { Env } from '../env.js';
 import type { ChainRelay, AgentInfo, RegisterParams, BalanceInfo, PermitParams, BurnRequest, CreditDelta, GameSettlement, SettlementReceipt } from './types.js';
+import { resolvePlayer } from '../db/player.js';
 
 // Minimal ABIs for read operations
 const erc8004Abi = [
@@ -163,20 +164,11 @@ export class OnChainRelay implements ChainRelay {
     const registeredLog = receipt.logs.find((l: any) => l.topics[0] === registeredTopic);
     const agentId = registeredLog ? BigInt(registeredLog.topics[2]).toString() : '0';
 
-    // Cache chain_agent_id in D1
-    const existing = await this.env.DB.prepare(
-      'SELECT id FROM players WHERE wallet_address = ? COLLATE NOCASE'
-    ).bind(params.address.toLowerCase()).first<{ id: string }>();
-
-    if (existing) {
-      await this.env.DB.prepare('UPDATE players SET chain_agent_id = ?, handle = ? WHERE id = ?')
-        .bind(Number(agentId), params.name, existing.id).run();
-    } else {
-      const playerId = crypto.randomUUID();
-      await this.env.DB.prepare(
-        'INSERT INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES (?, ?, ?, ?, 1000, 0, 0, ?)'
-      ).bind(playerId, params.address.toLowerCase(), params.name, Number(agentId), new Date().toISOString()).run();
-    }
+    // Ensure player row exists and cache chain_agent_id
+    await resolvePlayer(params.address, this, this.env.DB, {
+      handle: params.name,
+      chainAgentId: Number(agentId),
+    });
 
     // Read initial credits
     const credits = await this.client.readContract({

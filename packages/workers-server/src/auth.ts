@@ -1,6 +1,8 @@
 import { verifyMessage, createPublicClient, http, keccak256, toBytes } from 'viem';
 import { optimismSepolia } from 'viem/chains';
 import type { Env } from './env.js';
+import { resolvePlayer, PlayerHandleTakenError } from './db/player.js';
+import { createRelay } from './chain/index.js';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;    // 5 minutes
 const SESSION_TTL_MS   = 24 * 60 * 60 * 1000; // 24 hours
@@ -142,35 +144,21 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
     }
   }
 
-  // Upsert player by wallet address
+  // Resolve player via read-through cache (chain → D1)
   const trimmed = name.trim();
-  const addressLower = address.toLowerCase();
-
-  const existing = await env.DB.prepare(
-    'SELECT id FROM players WHERE wallet_address = ? COLLATE NOCASE'
-  ).bind(addressLower).first<{ id: string }>();
+  const relay = createRelay(env);
 
   let playerId: string;
-  let reconnected = false;
-
-  if (existing) {
-    playerId = existing.id;
-    reconnected = true;
-    // Keep handle current in case they changed their registered name
-    await env.DB.prepare('UPDATE players SET handle = ? WHERE id = ?').bind(trimmed, playerId).run();
-  } else {
-    playerId = crypto.randomUUID();
-    try {
-      await env.DB.prepare(
-        'INSERT INTO players (id, wallet_address, handle) VALUES (?, ?, ?)'
-      ).bind(playerId, addressLower, trimmed).run();
-    } catch (err: any) {
-      // Handle UNIQUE conflict on handle — another player already took this name
-      if (err.message?.includes('UNIQUE')) {
-        return Response.json({ error: `Handle "${trimmed}" is already taken` }, { status: 409 });
-      }
-      throw err;
+  let reconnected: boolean;
+  try {
+    const { player, created } = await resolvePlayer(address, relay, env.DB, { handle: trimmed });
+    playerId = player.id;
+    reconnected = !created;
+  } catch (err) {
+    if (err instanceof PlayerHandleTakenError) {
+      return Response.json({ error: err.message }, { status: 409 });
     }
+    throw err;
   }
 
   // Issue session token
@@ -181,7 +169,7 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
     'INSERT OR REPLACE INTO auth_sessions (token, player_id, name, expires_at) VALUES (?, ?, ?, ?)'
   ).bind(token, playerId, trimmed, expiresAt).run();
 
-  console.log(`[auth] Verified "${trimmed}" wallet=${addressLower} playerId=${playerId} reconnected=${reconnected}`);
+  console.log(`[auth] Verified "${trimmed}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`);
 
   return Response.json({ token, agentId: playerId, name: trimmed, expiresAt, reconnected });
 }

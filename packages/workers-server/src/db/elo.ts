@@ -5,16 +5,9 @@
  */
 
 import type { Env } from '../env.js';
+import { rowToPlayer, type Player } from './player.js';
 
-export interface Player {
-  id: string;
-  handle: string;
-  walletAddress: string;
-  elo: number;
-  gamesPlayed: number;
-  wins: number;
-  createdAt: string;
-}
+export type { Player } from './player.js';
 
 export interface MatchRecord {
   id: string;
@@ -84,21 +77,17 @@ export class D1EloTracker {
   ): Promise<void> {
     if (players.length < 2) return;
 
-    // Resolve players (create if needed)
+    // Resolve players — must exist via resolvePlayer() from auth
     const dbPlayers: { handle: string; payout: number; db: Player }[] = [];
     for (const p of players) {
       const existing = await this.getPlayerByHandle(p.handle);
-      if (existing) {
-        dbPlayers.push({ ...p, db: existing });
-      } else {
-        // Players should exist after auth — but handle the edge case
-        const id = crypto.randomUUID();
-        await this.db.prepare(
-          'INSERT OR IGNORE INTO players (id, wallet_address, handle) VALUES (?, ?, ?)'
-        ).bind(id, '', p.handle).run();
-        dbPlayers.push({ ...p, db: (await this.getPlayerByHandle(p.handle))! });
+      if (!existing) {
+        console.error(`[elo] Player "${p.handle}" not found — skipping (was resolvePlayer called during auth?)`);
+        continue;
       }
+      dbPlayers.push({ ...p, db: existing });
     }
+    if (dbPlayers.length < 2) return;
 
     const winners = dbPlayers.filter(p => p.payout > 0);
     const losers  = dbPlayers.filter(p => p.payout < 0);
@@ -175,18 +164,3 @@ export class D1EloTracker {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function rowToPlayer(row: any): Player {
-  return {
-    id: row.id,
-    handle: row.handle,
-    walletAddress: row.wallet_address,
-    elo: row.elo,
-    gamesPlayed: row.games_played,
-    wins: row.wins,
-    createdAt: row.created_at,
-  };
-}

@@ -1,4 +1,5 @@
 import type { ChainRelay, AgentInfo, RegisterParams, BalanceInfo, PermitParams, BurnRequest, CreditDelta, GameSettlement, SettlementReceipt } from './types.js';
+import { resolvePlayer } from '../db/player.js';
 
 export class MockRelay implements ChainRelay {
   constructor(private db: D1Database) {}
@@ -25,11 +26,8 @@ export class MockRelay implements ChainRelay {
   }
 
   async register(params: RegisterParams): Promise<{ agentId: string; name: string; credits: string }> {
-    const id = crypto.randomUUID();
-    await this.db.prepare(
-      'INSERT INTO players (id, wallet_address, handle, elo, games_played, wins, created_at) VALUES (?, ?, ?, 1000, 0, 0, ?)'
-    ).bind(id, params.address.toLowerCase(), params.name, new Date().toISOString()).run();
-    return { agentId: id, name: params.name, credits: '0' };
+    const { player } = await resolvePlayer(params.address, this, this.db, { handle: params.name });
+    return { agentId: player.id, name: player.handle, credits: '0' };
   }
 
   async getBalance(_agentId: string): Promise<BalanceInfo> {
