@@ -1,0 +1,1 @@
+ALTER TABLE players ADD COLUMN chain_agent_id INTEGER UNIQUE;

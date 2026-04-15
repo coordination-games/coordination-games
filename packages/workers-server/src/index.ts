@@ -3,6 +3,7 @@ import { LobbyDO } from './do/LobbyDO.js';
 import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
 import { D1EloTracker } from './db/elo.js';
 import { getRegisteredGames, getGame } from '@coordination-games/engine';
+import { createRelay } from './chain/index.js';
 import type { Env } from './env.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
@@ -88,6 +89,32 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     if (pathname === '/api/player/auth/verify' && method === 'POST') {
       return handleAuthVerify(request, env);
+    }
+
+    // ------------------------------------------------------------------
+    // Relay endpoints (public — no auth required)
+    // ------------------------------------------------------------------
+    const relay = createRelay(env);
+
+    const relayStatusMatch = pathname.match(/^\/api\/relay\/status\/([^/]+)$/);
+    if (relayStatusMatch && method === 'GET') {
+      const address = decodeURIComponent(relayStatusMatch[1]);
+      const agent = await relay.getAgentByAddress(address);
+      return Response.json(agent ?? { registered: false });
+    }
+
+    const relayNameMatch = pathname.match(/^\/api\/relay\/check-name\/([^/]+)$/);
+    if (relayNameMatch && method === 'GET') {
+      const name = decodeURIComponent(relayNameMatch[1]);
+      const result = await relay.checkName(name);
+      return Response.json(result);
+    }
+
+    const relayBalanceMatch = pathname.match(/^\/api\/relay\/balance\/([^/]+)$/);
+    if (relayBalanceMatch && method === 'GET') {
+      const agentId = decodeURIComponent(relayBalanceMatch[1]);
+      const result = await relay.getBalance(agentId);
+      return Response.json(result);
     }
 
     // ------------------------------------------------------------------
