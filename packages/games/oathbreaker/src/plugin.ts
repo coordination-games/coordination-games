@@ -169,6 +169,24 @@ Your interaction history persists across rounds. Others can see your cooperation
 // Game-phase tools (player-callable during the game phase)
 // ---------------------------------------------------------------------------
 
+/**
+ * System action types for OATHBREAKER — emitted by the engine, NEVER by players.
+ *
+ * Exported alongside `gameTools` (but NOT declared as `ToolDefinition`s — see
+ * `docs/plans/unified-tool-surface.md` "Security invariant"). Used by the
+ * release-blocking drift tests in workers-server to assert the
+ * system-action-isolation invariant: every type here must be rejected by
+ * `validateAction` when `playerId !== null`, and every tool in `gameTools`
+ * must be rejected when `playerId === null`.
+ *
+ * To stay authoritative: derived by enumerating the action-type branches in
+ * `validateAction` / `applyAction` that gate on `playerId === null`.
+ */
+export const OATHBREAKER_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
+  'game_start',
+  'round_timeout',
+]);
+
 const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'propose_pledge',
