@@ -23,16 +23,10 @@ interface Lobby {
   lobbyId: string;
   gameType?: string;
   phase: 'running' | 'starting' | 'game' | 'failed';
-  currentPhase?: {
-    id: string;
-    name: string;
-    view: any;
-  } | null;
-  agents: any[];
-  deadlineMs?: number | null;
+  teamSize?: number;
+  playerCount?: number;
+  createdAt?: string;
   gameId?: string | null;
-  error?: string | null;
-  noTimeout?: boolean;
 }
 
 function phaseBadge(phase: string) {
@@ -268,15 +262,13 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 
 function lobbyPhaseBadge(lobby: Lobby) {
   const phase = lobby.phase;
-  const phaseId = lobby.currentPhase?.id;
-  const phaseName = lobby.currentPhase?.name;
 
   switch (phase) {
     case 'running':
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.2)' }}>
           <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-amber)' }} />
-          {phaseName ?? 'In Progress'}
+          Open
         </span>
       );
     case 'starting':
@@ -289,20 +281,19 @@ function lobbyPhaseBadge(lobby: Lobby) {
     default:
       return (
         <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-heading font-medium" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}>
-          {phaseName ?? phase}
+          {phase}
         </span>
       );
   }
 }
 
 function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
-  const agentCount = lobby.agents.length;
+  const playerCount = lobby.playerCount ?? 0;
   const gameType = lobby.gameType ?? 'capture-the-lobster';
-  const phaseView = lobby.currentPhase?.view;
-
-  // Extract team count from team-formation phase view if available
-  const teams: any[] = phaseView?.teams ?? [];
-  const teamCount = teams.length;
+  const teamSize = lobby.teamSize;
+  const capacity = teamSize != null
+    ? (gameType === 'oathbreaker' ? teamSize : teamSize * 2)
+    : undefined;
 
   return (
     <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
@@ -311,17 +302,13 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
         {lobbyPhaseBadge(lobby)}
       </div>
       <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{agentCount}</span> agents
-        {teamCount > 0 && <span className="ml-2">· <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{teamCount}</span> teams formed</span>}
+        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{playerCount}</span>
+        {capacity != null ? <span>/{capacity}</span> : null} players
+        {teamSize != null && gameType !== 'oathbreaker' && (
+          <span className="ml-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>· {teamSize}v{teamSize}</span>
+        )}
       </div>
-      <div className="flex items-center justify-between">
-        <div className="flex flex-wrap gap-1">
-          {lobby.agents.slice(0, 8).map((agent: any) => (
-            <span key={agent.id} className="inline-block rounded-md px-1.5 py-0.5 text-xs font-mono" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}>
-              {agent.handle || agent.id}
-            </span>
-          ))}
-        </div>
+      <div className="flex items-center justify-end">
         {gameType === 'oathbreaker' && (
           <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>OATHBREAKER</span>
         )}
