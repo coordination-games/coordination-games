@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { PLATFORM_GITHUB_URL, PLATFORM_NAME, PLATFORM_SHORT_NAME } from '../games/manifest';
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
   return `font-heading text-sm tracking-wider uppercase ${
@@ -22,12 +23,12 @@ export default function Layout() {
       }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <NavLink to="/" className="flex items-center gap-2 sm:gap-3 hover:opacity-90 transition-opacity">
-            <span className="text-2xl sm:text-4xl" role="img" aria-label="lobster">
-              🦞
+            <span className="text-2xl sm:text-4xl" role="img" aria-label="games">
+              🎮
             </span>
             <h1 className="font-heading font-bold tracking-wide" style={{ color: 'var(--color-parchment)' }}>
-              <span className="hidden sm:inline text-xl">Capture the Lobster</span>
-              <span className="sm:hidden text-lg">CTL</span>
+              <span className="hidden sm:inline text-xl">{PLATFORM_NAME}</span>
+              <span className="sm:hidden text-lg">{PLATFORM_SHORT_NAME}</span>
             </h1>
           </NavLink>
 
@@ -43,7 +44,7 @@ export default function Layout() {
               Leaderboard
             </NavLink>
             <a
-              href="https://github.com/lucianHymer/capture-the-lobster"
+              href={PLATFORM_GITHUB_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors"
@@ -82,7 +83,7 @@ export default function Layout() {
               Leaderboard
             </NavLink>
             <a
-              href="https://github.com/lucianHymer/capture-the-lobster"
+              href={PLATFORM_GITHUB_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="font-heading text-sm tracking-wider uppercase transition-colors"
