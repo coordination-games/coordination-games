@@ -67,8 +67,9 @@ export default function LobbiesPage() {
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [creating, setCreating] = useState(false);
   const [teamSize, setTeamSize] = useState(2);
-  const [gameTab, setGameTab] = useState<'capture-the-lobster' | 'oathbreaker'>('capture-the-lobster');
+  const [gameTab, setGameTab] = useState<'capture-the-lobster' | 'oathbreaker' | 'comedy-of-the-commons'>('capture-the-lobster');
   const [oathPlayerCount, setOathPlayerCount] = useState(4);
+  const [comedyPlayerCount, setComedyPlayerCount] = useState(4);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -110,6 +111,12 @@ export default function LobbiesPage() {
         const res = await fetch(`${API_BASE}/lobbies/create`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
+        });
+        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
+      } else if (gameTab === 'comedy-of-the-commons') {
+        const res = await fetch(`${API_BASE}/lobbies/create`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameType: 'comedy-of-the-commons', teamSize: comedyPlayerCount }),
         });
         if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
       } else {
@@ -154,6 +161,16 @@ export default function LobbiesPage() {
           >
             OATHBREAKER
           </button>
+          <button
+            onClick={() => setGameTab('comedy-of-the-commons')}
+            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
+            style={gameTab === 'comedy-of-the-commons'
+              ? { background: 'rgba(16, 185, 129, 0.12)', color: '#86efac', border: '1px solid rgba(16, 185, 129, 0.35)' }
+              : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+            }
+          >
+            Comedy of the Commons
+          </button>
         </div>
 
         {/* Create controls */}
@@ -174,7 +191,7 @@ export default function LobbiesPage() {
                 </button>
               ))}
             </div>
-          ) : (
+          ) : gameTab === 'oathbreaker' ? (
             <div className="flex items-center gap-2">
               <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>Players:</span>
               {[4, 6, 8, 10, 12, 16, 20].map((count) => (
@@ -184,6 +201,23 @@ export default function LobbiesPage() {
                   className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
                   style={oathPlayerCount === count
                     ? { background: 'rgba(139, 32, 32, 0.15)', color: 'var(--color-blood-light, #c55)', border: '1px solid rgba(139, 32, 32, 0.4)' }
+                    : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+                  }
+                >
+                  {count}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>Players:</span>
+              {[4, 5, 6].map((count) => (
+                <button
+                  key={count}
+                  onClick={() => setComedyPlayerCount(count)}
+                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
+                  style={comedyPlayerCount === count
+                    ? { background: 'rgba(16, 185, 129, 0.15)', color: '#86efac', border: '1px solid rgba(16, 185, 129, 0.4)' }
                     : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
                   }
                 >
@@ -325,6 +359,9 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
         {gameType === 'oathbreaker' && (
           <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>OATHBREAKER</span>
         )}
+        {gameType === 'comedy-of-the-commons' && (
+          <span className="font-heading text-xs font-medium" style={{ color: '#86efac' }}>COMEDY</span>
+        )}
       </div>
     </button>
   );
@@ -367,6 +404,47 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
           <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>
             OATHBREAKER
           </span>
+          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+            {game.playerCount ?? '?'} players
+          </span>
+        </div>
+      </button>
+    );
+  }
+
+  if (game.gameType === 'comedy-of-the-commons') {
+    const round = game.round ?? game.turn ?? 0;
+    const maxRounds = game.maxRounds ?? game.maxTurns ?? 12;
+    const progress = maxRounds > 0 ? Math.round((round / maxRounds) * 100) : 0;
+    const isLive = game.phase === 'playing' || game.phase === 'in_progress';
+    return (
+      <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>{game.id}</span>
+          {phaseBadge(isLive ? 'in_progress' : game.phase === 'finished' ? 'finished' : 'starting')}
+        </div>
+        <div className="mb-3">
+          <div className="mb-1.5 flex justify-between text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>
+            <span>Round {round}/{maxRounds}</span>
+            <span>{progress}%</span>
+          </div>
+          <div className="h-1.5 w-full rounded-full" style={{ background: 'rgba(42, 31, 14, 0.08)' }}>
+            <motion.div
+              className="h-1.5 rounded-full"
+              style={{
+                width: `${progress}%`,
+                background: isLive
+                  ? 'linear-gradient(90deg, #059669, #86efac)'
+                  : 'linear-gradient(90deg, var(--color-ink-faint), var(--color-wood-light))',
+              }}
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.8, ease: 'easeOut' }}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-heading text-xs font-medium" style={{ color: '#86efac' }}>COMEDY OF THE COMMONS</span>
           <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
             {game.playerCount ?? '?'} players
           </span>
