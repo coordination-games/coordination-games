@@ -5,7 +5,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250407.0",
@@ -16,6 +17,7 @@
     "viem": "^2.0.0"
   },
   "devDependencies": {
+    "vitest": "^2.0.0",
     "wrangler": "^4.0.0"
   }
 }
