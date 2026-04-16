@@ -224,6 +224,33 @@ Because the cutover is atomic, these must ship in lockstep with the server chang
   - Haiku bot harness per `wiki/development/bot-system.md`
 - **`docs/building-a-game.md`** — tutorial update: new `gameTools` field, drift-test requirement, system-action conventions.
 
+### Completing the bot-registration work (in-flight)
+
+The work that surfaced this whole refactor — getting a pool of Haiku bots to properly register onchain (ERC-8004 + CoordinationRegistry + mock USDC faucet), fill lobby seats, and play CtL games against prod — is in progress in uncommitted scripts at the time of writing:
+
+- `scripts/setup-bot-pool.ts` — provisions N bots: creates wallets, faucets USDC, registers identities, requests CoordinationRegistry registration
+- `scripts/fill-bots.ts` — joins existing lobby seats from the pool
+- `scripts/drive-bots-adhoc.ts` — drives already-joined bots through a running game
+- `scripts/lib/bot-agent.ts` — shared bot Agent SDK harness
+- `scripts/run-game.ts` — refactored game runner (-334 lines)
+- `scripts/spawn-bots.sh` — entry point
+- `wiki/development/bot-system.md` — updated docs
+
+These scripts were blocked by the broken `coga tool <game> accept_team` silent-success bug (the origin of this plan) and by registration timing issues (faucet mint not mined before register runs — fix: retry loop on `ERC20InsufficientBalance` selector `0xe450d38c`).
+
+**This PR completes the bot-registration scripts** on top of the new tool surface. Concretely:
+
+1. Port the bot scripts to use `coga tool <name>` (or direct `POST /api/player/tool` calls from the Agent SDK harness) instead of the removed `coga tool <game> <name>` / `coga lobby-action` paths.
+2. Fix the faucet-mint-before-register race with proper retry/wait on the `ERC20InsufficientBalance` selector.
+3. Run an end-to-end validation: `scripts/setup-bot-pool.ts` provisions 3 bots against prod, `scripts/fill-bots.ts` seats them into a real lobby, they play a full CtL game using the new tool surface with no silent errors, no wrong-phase footguns, no type ambiguity. **This is the PR's acceptance test.**
+
+If any new-surface bug shows up under real bot load, fix it before merging — that's the whole point of wrapping the bot work into this change.
+
+**WIP to discard** (obsolete workarounds replaced by the new surface):
+- The `coga lobby-action` command added to `packages/cli/src/commands/game.ts`
+- Associated help-text updates in `mcp-tools.ts` and `game.ts`
+- CLI version bumps in `packages/cli/build.cjs` and `package.json` (re-apply the version bump fresh)
+
 ### Rollback
 
 If the cutover regresses in production, `git revert` the single PR and redeploy. Because the change is atomic on both sides, revert restores the full previous surface in one shot. No feature flags needed.
