@@ -57,6 +57,12 @@ const GAME_MANIFEST: GameManifestEntry[] = [
     tagline: 'Resource management, trade, and reputation',
     availability: 'prototype',
     accentColor: '#34d399',
+    lobby: {
+      options: [4, 5, 6],
+      optionDisplay: 'count',
+      buttonLabel: 'Create Lobby',
+      metricLabel: 'Players',
+    },
   },
   {
     gameType: 'ai-alignment',
