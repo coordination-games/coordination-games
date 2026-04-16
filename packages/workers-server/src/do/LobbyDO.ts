@@ -31,6 +31,7 @@ import type {
 } from '@coordination-games/engine';
 
 // Side-effect imports — register game plugins with the engine registry
+import '@coordination-games/game-comedy-of-the-commons';
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
 
