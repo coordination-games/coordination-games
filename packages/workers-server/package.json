@@ -11,6 +11,7 @@
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250407.0",
     "@coordination-games/engine": "*",
+    "@coordination-games/game-comedy-of-the-commons": "*",
     "@coordination-games/game-ctl": "*",
     "@coordination-games/game-oathbreaker": "*",
     "ajv": "^8.17.1",

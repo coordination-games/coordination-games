@@ -29,6 +29,7 @@ import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engin
 import type { Env } from '../env.js';
 
 // Side-effect imports: each calls registerGame() on module load
+import '@coordination-games/game-comedy-of-the-commons';
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
 
@@ -669,6 +670,7 @@ export class GameRoomDO extends DurableObject<Env> {
     // Fire-and-forget: catch all errors to prevent unhandled rejections
     (async () => {
       try {
+        await this.ensureGameRowInD1();
         await this.env.DB.prepare(
           `INSERT INTO game_summaries (game_id, progress_counter, summary_json, updated_at)
            VALUES (?1, ?2, ?3, datetime('now'))
@@ -704,6 +706,20 @@ export class GameRoomDO extends DurableObject<Env> {
       // Final catch-all to prevent unhandled rejections
       console.error(`[GameRoomDO] Unhandled error in writeSummaryToD1:`, err);
     });
+  }
+
+  /** Ensure the parent games row exists before summary writes that FK-reference it. */
+  private async ensureGameRowInD1(): Promise<void> {
+    if (!this._meta) return;
+    await this.env.DB.prepare(
+      `INSERT OR IGNORE INTO games (game_id, game_type, finished, created_at)
+       VALUES (?1, ?2, ?3, ?4)`
+    ).bind(
+      this._meta.gameId,
+      this._meta.gameType,
+      this._meta.finished ? 1 : 0,
+      this._meta.createdAt,
+    ).run();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
