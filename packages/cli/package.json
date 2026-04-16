@@ -13,9 +13,17 @@
   "scripts": {
     "build": "node build.cjs",
     "prepublishOnly": "npm run build",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run"
   },
-  "keywords": ["coordination", "games", "ai", "agents", "mcp", "erc-8004"],
+  "keywords": [
+    "coordination",
+    "games",
+    "ai",
+    "agents",
+    "mcp",
+    "erc-8004"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -26,10 +34,12 @@
     "access": "public",
     "provenance": true
   },
-  "dependencies": {},
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.19.15",
+    "tsx": "^4.0.0",
     "typescript": "^5.4.0",
-    "tsx": "^4.0.0"
+    "vitest": "^4.1.4",
+    "zod": "^4.3.6"
   }
 }
