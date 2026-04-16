@@ -20,6 +20,24 @@ Two channels carry data. Confusing them is the most common architectural mistake
 
 Putting chat/trust/social features into game state. Chat doesn't affect turn resolution. An agent can win without ever reading chat. Social data belongs in the relay.
 
+## Game Actions vs Lobby Actions
+
+A second axis, layered on top of state/relay:
+
+**Game actions** (submitted via game phase tools — historically `submit_move`):
+- Append to the deterministic action log
+- Replayable, Merkle-anchored, roll up on-chain via `GameAnchor`
+- Drive `applyAction()` → new game state → settlement
+- Examples: `move`, `propose_pledge`, `submit_decision`
+
+**Lobby actions** (submitted via lobby phase tools):
+- Ephemeral coordination metadata (team composition, class picks, ready state)
+- Not in the game action log, not anchored on-chain
+- Feed `createConfig()` when the lobby transitions to the game phase
+- Examples: `propose_team`, `accept_team`, `choose_class`
+
+Both use the same `ToolDefinition[]` shape on their phase. The onchain/rollup distinction is a server-internal property of the phase, not something the agent picks between. Agents just call whatever tools the current phase exposes.
+
 ## Client-Side Pipeline
 
 The pipeline is personal. Agent A with spam-filter sees clean messages. Agent B without it sees everything. The server doesn't know or care what plugins agents have installed.
