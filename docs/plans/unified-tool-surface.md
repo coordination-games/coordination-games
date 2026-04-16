@@ -190,56 +190,43 @@ To prevent the schema-vs-validator drift that caused the original footgun:
 3. **System-action isolation:** for every system action type emitted by the engine, `validateAction(state, <any non-null playerId>, {type})` returns false. For every tool in the callable surface, `validateAction(state, null, {type: tool.name, ...})` returns false.
 4. **Collision detector:** a test fixture with two plugins both naming a `chat` tool produces `COLLISION` at init.
 
-These tests are MVP-blocking — they're the reason for the whole refactor.
+These tests are release-blocking — they're the reason for the whole refactor.
 
 ## Migration
 
-### Order of work
+This ships as **one coherent change**. The old endpoints and MCP tools are removed in the same PR that introduces the new ones. No staged rollout, no deprecation window, no shims. The platform has no external paying users yet; the cost of carrying two parallel surfaces is higher than the cost of a clean cutover.
 
-The plan is built up in implementable increments. Each phase is independently shippable and deliverable value-positive on its own.
+### Implementation
 
-**Phase 1 — MVP (highest value, smallest blast radius):**
-- Add `gameTools?: ToolDefinition[]` on `CoordinationGame`.
-- Extend `GameRoomDO.buildState()` to include `currentPhase.tools`.
-- CtL declares `gameTools: [{name: "move", ...}]`. OATHBREAKER declares `[{name: "propose_pledge", ...}, {name: "submit_decision", ...}]`.
-- Replace the `lobby_action` MCP tool with per-name MCP entries generated from `currentPhase.tools` (LobbyPhase already exposes them). `coga tool <name>` dispatcher added to the CLI.
-- `submit_move` MCP tool stays for now.
-- Collision detection extended to cover phase-tool ∪ plugin-tool ∪ static-CLI.
-- Drift tests + error taxonomy + observability logging implemented.
+1. Add `gameTools?: ToolDefinition[]` to `CoordinationGame` in `packages/engine/src/types.ts`.
+2. Extend `GameRoomDO.buildState()` in `packages/workers-server/src/do/GameRoomDO.ts` to include `currentPhase.tools` (mirror `LobbyDO.buildState()` at line 587).
+3. Declare `gameTools` on both existing games:
+   - CtL (`packages/games/capture-the-lobster/src/plugin.ts`): `move`.
+   - OATHBREAKER (`packages/games/oathbreaker/src/plugin.ts`): `propose_pledge`, `submit_decision`.
+4. Replace both `POST /api/player/move` and `POST /api/player/lobby/action` with **one** endpoint: `POST /api/player/tool { toolName, args }`. Old endpoints are deleted, not deprecated. Server dispatches by declarer per the "Four destinations, one surface" table.
+5. Remove the `submit_move` and `lobby_action` MCP tools from `packages/cli/src/mcp-tools.ts`. Replace with per-name MCP tool entries generated from `state.currentPhase.tools` (server-authoritative) + loaded `ToolPlugin.tools` with `mcpExpose: true`.
+6. Add the `coga tool <name>` CLI dispatcher with JSON-Schema-driven arg parsing per the "Client (CLI) changes" section. Remove `coga submit_move` and `coga tool <game> <name>` entry points (replaced by `coga tool <name>`).
+7. Extend the collision check (currently at `packages/cli/src/mcp-tools.ts:114-116`) to cover the full surface: `gameTools ∪ LobbyPhase.tools ∪ pluginTools ∪ staticCLI`. Hard error at init.
+8. Implement the full error taxonomy. All dispatcher error responses use the structured payload.
+9. Implement the four drift tests. These run in CI and gate the PR.
+10. Add `tool.call` structured logging at the dispatcher.
+11. Add admin introspection endpoint `GET /api/admin/session/:id/tools` for operator debugging.
 
-Ship Phase 1 and validate with real bots before proceeding.
+### External coordination (must land together)
 
-**Phase 2:**
-- Same MCP-unification treatment for game tools. `submit_move` MCP tool becomes a deprecated shim; agents call `coga tool move` or the `move` MCP tool directly.
-- Skill repo updated.
+Because the cutover is atomic, these must ship in lockstep with the server change:
 
-**Phase 3 (server-side cleanup, no user-visible change):**
-- Unify `/api/player/move` and `/api/player/lobby/action` under `POST /api/player/tool`. Old endpoints remain as shims behind a feature flag for one release.
-- Delete shims.
-
-### External coordination
-
-- **Skill repo** (`coordination-games/skill`, SEPARATE from this monorepo per `/home/lucian/workspace/capture-the-lobster/CLAUDE.md`): update docs and example commands to use `coga tool <name>`.
-- **Bot scripts** — audit and update:
+- **CLI package** (`packages/cli`): bump version; old CLIs will break against new server (and vice versa). Document in release notes.
+- **Skill repo** (`coordination-games/skill`, SEPARATE from this monorepo per `/home/lucian/workspace/capture-the-lobster/CLAUDE.md`): update example commands and docs to use `coga tool <name>`. Push same day.
+- **Bot harnesses** — audit and update in the same PR:
   - `packages/cli/src/commands/game.ts` (local bot harness)
-  - `scripts/drive-bots-adhoc.ts`, `scripts/fill-bots.ts`, `scripts/setup-bot-pool.ts` (untracked per `git status`)
+  - Any production bots on Hetzner (`/home/lucian/workspace/CLAUDE.md`)
   - Haiku bot harness per `wiki/development/bot-system.md`
-  - Hetzner trading server bot configs (see `/home/lucian/workspace/CLAUDE.md`)
 - **`docs/building-a-game.md`** — tutorial update: new `gameTools` field, drift-test requirement, system-action conventions.
 
-### Client version detection
+### Rollback
 
-New CLIs talking to old servers: `/api/player/tool` 404s → CLI falls back to `/api/player/move` / `/api/player/lobby/action` with reconstructed shapes. Detected by a `server_version` field in `get_state` (add in Phase 1 even before it matters — cheap).
-
-Old CLIs talking to new servers: shims are in place for one release, so calls succeed. Deprecation warning logged server-side when shim is used; included in `tool.call` log with `legacyEndpoint: true`.
-
-### Rollback plan
-
-If `/api/player/tool` has a regression post-cutover:
-1. Re-enable the `/api/player/move` + `/api/player/lobby/action` shims via feature flag (they're retained as code through the deprecation window).
-2. CLI flag `--legacy-endpoints` forces old routes.
-3. Admin endpoint `POST /api/admin/session/:id/reset-to-legacy` disables the new dispatcher per-session.
-4. If schema changes broke things: `gameTools` is additive on `CoordinationGame` — removing the field falls back to the pre-refactor applyAction-only path without deploy.
+If the cutover regresses in production, `git revert` the single PR and redeploy. Because the change is atomic on both sides, revert restores the full previous surface in one shot. No feature flags needed.
 
 ## Non-goals
 
