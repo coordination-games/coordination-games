@@ -53,7 +53,7 @@ export default function GamePage() {
     fetch(`${API_BASE}/games/${id}`)
       .then(r => r.json())
       .then(data => {
-        setGameType(data.gameType ?? 'capture-the-lobster');
+        setGameType(data.gameType ?? 'unknown');
         const h = extractHandles(data);
         if (Object.keys(h).length) setHandles(h);
         const c = extractChat(data);
@@ -61,7 +61,7 @@ export default function GamePage() {
         setLoading(false);
       })
       .catch(() => {
-        setGameType('capture-the-lobster');
+        setGameType('unknown');
         setLoading(false);
       });
 
