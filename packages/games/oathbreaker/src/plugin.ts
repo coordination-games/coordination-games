@@ -14,7 +14,7 @@ import {
   type OathPlayerRanking,
 } from './types.js';
 
-import type { CoordinationGame, GameSetup, SpectatorContext } from '@coordination-games/engine';
+import type { CoordinationGame, GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
 import { registerGame, OpenQueuePhase } from '@coordination-games/engine';
 
 import {
@@ -165,6 +165,45 @@ OATHBREAKER is a trust laboratory. The game rewards agents who can:
 Your interaction history persists across rounds. Others can see your cooperation rate. Reputation is real currency here.
 `;
 
+// ---------------------------------------------------------------------------
+// Game-phase tools (player-callable during the game phase)
+// ---------------------------------------------------------------------------
+
+const GAME_TOOLS: ToolDefinition[] = [
+  {
+    name: 'propose_pledge',
+    description: 'Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game\'s `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        amount: {
+          type: 'number',
+          minimum: 5,
+          description: 'Pledge amount in points. Must be >= minPledge (5) and <= 50% of the lower balance in the pairing.',
+        },
+      },
+      required: ['amount'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'submit_decision',
+    description: 'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        decision: {
+          type: 'string',
+          enum: ['C', 'D'],
+          description: '"C" = cooperate (keep oath), "D" = defect (break oath).',
+        },
+      },
+      required: ['decision'],
+      additionalProperties: false,
+    },
+  },
+];
+
 export const OathbreakerPlugin = {
   gameType: 'oathbreaker' as const,
   version: '0.3.0',
@@ -222,6 +261,8 @@ export const OathbreakerPlugin = {
       queueTimeoutMs: 300000,
     },
   },
+
+  gameTools: GAME_TOOLS,
 
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['elo', 'trust-graph'],

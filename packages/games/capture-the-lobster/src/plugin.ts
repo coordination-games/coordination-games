@@ -11,6 +11,7 @@ import type {
   GameLobbyConfig,
   GameSetup,
   SpectatorContext,
+  ToolDefinition,
 } from '@coordination-games/engine';
 import { registerGame } from '@coordination-games/engine';
 
@@ -412,6 +413,30 @@ Don't just play the game. Build systems that make you better at it.
 `;
 
 // ---------------------------------------------------------------------------
+// Game-phase tools (player-callable during the game phase)
+// ---------------------------------------------------------------------------
+
+const GAME_TOOLS: ToolDefinition[] = [
+  {
+    name: 'move',
+    description: 'Submit your unit\'s move for the current turn. `path` is an ordered list of hex directions (N, NE, SE, S, SW, NW) up to your class\'s speed. Pass an empty path to stay put. All moves resolve simultaneously when every alive unit has submitted (or the turn timer expires).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'array',
+          items: { type: 'string', enum: ['N', 'NE', 'SE', 'S', 'SW', 'NW'] },
+          minItems: 1,
+          description: 'Ordered hex directions. Length capped by your class speed (rogue 3, knight 2, mage 1).',
+        },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------
 // The plugin
 // ---------------------------------------------------------------------------
 
@@ -620,6 +645,8 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       queueTimeoutMs: 120000,
     },
   } as GameLobbyConfig,
+
+  gameTools: GAME_TOOLS,
 
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['elo'],
