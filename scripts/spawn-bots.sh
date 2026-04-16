@@ -6,8 +6,9 @@
 # Each bot gets its own ephemeral wallet, authenticates, joins the lobby, then
 # starts an HTTP MCP server so a Claude agent can connect and play.
 #
-# For a fully automated e2e game (wallet creation + gameplay via Haiku), use:
-#   tsx scripts/run-oathbreaker.ts
+# For automated testing, prefer:
+#   tsx scripts/run-game.ts        — full e2e (ephemeral wallets, creates lobby)
+#   tsx scripts/fill-bots.ts <id>  — fill an existing lobby from the pool
 #
 # Prerequisites:
 #   - coga CLI installed globally: npm i -g coordination-games

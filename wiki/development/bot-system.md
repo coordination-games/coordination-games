@@ -18,9 +18,16 @@ Bots use Claude Haiku via the Agent SDK with in-process MCP.
 
 ## Spawning Bots
 
-For dev/testing: `scripts/spawn-bots.sh` spawns N external Haiku bots into a lobby.
+Three dev test flows, all in `scripts/`:
 
-The lobby UI has a "Fill Bots" button (admin password protected) that triggers bot creation server-side.
+- **`setup-bot-pool.ts`** — one-time. Creates 8 persistent bot wallets, registers + faucets them, writes `~/.coordination/bot-pool.json`.
+- **`fill-bots.ts <lobbyId> [count]`** — the game-designer workflow. You join a lobby yourself, run this, it joins pool bots into the remaining seats and spawns `claude --print` per bot. Bots drive lobby phases and gameplay via the generic `lobby_action` MCP tool + `get_guide`. No game-specific harness code.
+- **`run-game.ts`** — full E2E. Spawns ephemeral wallets, creates a lobby, joins everyone, hands off to Claude. Same generic driver as fill-bots.
+- **`spawn-bots.sh`** — older script that exposes `coga serve --http` for manual MCP connection. Use when you want to drive bots from your own Claude session, not automated.
+
+The lobby UI also has a "Fill Bots" button (admin password protected) that triggers bot creation server-side.
+
+All client-driven scripts share `scripts/lib/bot-agent.ts` (auth, pool persistence, `runClaudeAgent`).
 
 ## Bot Auth vs Player Auth
 
