@@ -38,6 +38,7 @@ export {
   getGame,
   getRegisteredGames,
   getAllGames,
+  ToolCollisionError,
 } from './registry.js';
 
 // Built-in lobby phases
