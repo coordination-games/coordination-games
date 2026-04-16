@@ -75,15 +75,15 @@ async function main() {
     console.log(`  ${bot.name} joined (phase: ${res.phase})`);
   }
 
-  // 3. Team formation (use propose_team / accept_team with correct payload format)
+  // 3. Team formation (unified tool surface: propose_team / accept_team)
   console.log('\nForming teams...');
   const teams = [bots.slice(0, TEAM_SIZE), bots.slice(TEAM_SIZE)];
   for (const team of teams) {
     for (let i = 1; i < team.length; i++) {
       // Propose
-      await api('/api/player/lobby/action', {
+      await api('/api/player/tool', {
         method: 'POST', token: team[0].token,
-        body: { type: 'propose_team', payload: { targetHandle: team[i].name } },
+        body: { toolName: 'propose_team', args: { targetHandle: team[i].name } },
       });
 
       // Get phase view to find team ID
@@ -94,9 +94,9 @@ async function main() {
       console.log(`  ${team[0].name} → ${team[i].name} (team ${teamId?.slice(0, 8)})`);
 
       // Accept
-      await api('/api/player/lobby/action', {
+      await api('/api/player/tool', {
         method: 'POST', token: team[i].token,
-        body: { type: 'accept_team', payload: { teamId } },
+        body: { toolName: 'accept_team', args: { teamId } },
       });
       console.log(`  ${team[i].name} accepted`);
     }
@@ -114,9 +114,9 @@ async function main() {
   console.log('Selecting classes...');
   for (let i = 0; i < bots.length; i++) {
     const unitClass = CLASSES[i % TEAM_SIZE];
-    await api('/api/player/lobby/action', {
+    await api('/api/player/tool', {
       method: 'POST', token: bots[i].token,
-      body: { type: 'choose_class', payload: { unitClass } },
+      body: { toolName: 'choose_class', args: { unitClass } },
     });
     console.log(`  ${bots[i].name} → ${unitClass}`);
   }
@@ -172,12 +172,12 @@ async function main() {
     // Submit STAY for each bot
     for (const bot of bots) {
       try {
-        const moveResult = await api('/api/player/move', {
+        const moveResult = await api('/api/player/tool', {
           method: 'POST', token: bot.token,
-          body: { type: 'move', path: [] },
+          body: { toolName: 'move', args: { path: [] } },
         });
-        if (!moveResult.success) {
-          console.log(`  ${bot.name} move REJECTED: ${moveResult.error}`);
+        if (!moveResult.ok) {
+          console.log(`  ${bot.name} move REJECTED: ${JSON.stringify(moveResult.error)}`);
         }
       } catch (err: any) {
         console.log(`  ${bot.name} move ERROR: ${err.message?.slice(0, 100)}`);

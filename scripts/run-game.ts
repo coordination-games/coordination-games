@@ -4,8 +4,9 @@
  *
  * Spawns N ephemeral bot wallets, creates a lobby, joins everyone, then hands
  * off to `claude --print` per bot. Bots drive everything — lobby phases (team
- * formation, class selection) and gameplay — via the `lobby_action` MCP tool
- * and game-specific tools surfaced by `get_guide`.
+ * formation, class selection) and gameplay — through the unified per-name MCP
+ * tool surface (propose_team, accept_team, choose_class, move, propose_pledge,
+ * submit_decision, chat, etc.) discovered via get_state.currentPhase.tools.
  *
  * For filling an existing lobby with persistent pool bots, use:
  *   tsx scripts/fill-bots.ts <lobbyId>

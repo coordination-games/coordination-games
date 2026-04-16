@@ -199,7 +199,13 @@ export async function registerBotOnChain(
       throw err;
     }
   }
-  throw new Error(`register failed after retries: ${lastErr?.message ?? lastErr}`);
+  throw new Error(
+    `register failed after 8 attempts (24s total, 3s backoff). ` +
+    `Most likely the faucet tx never mined, so the registry's transferFrom ` +
+    `(REGISTRATION_FEE + INITIAL_CREDITS_USDC = 5 USDC) keeps reverting with ` +
+    `ERC20InsufficientBalance (0xe450d38c). Check the faucet tx on the ` +
+    `target RPC. Last error: ${lastErr?.message ?? lastErr}`,
+  );
 }
 
 function sleep(ms: number) {
@@ -217,19 +223,35 @@ const INITIAL_PROMPT = (botName: string, gameType: string) => `You are ${botName
 
 YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join_lobby — you are already in one. Call get_state first to see its ID, phase, other players, and available actions.
 
-You have ONE MCP server named "game" that exposes every tool you need: get_guide, get_state, wait_for_update, lobby_action, submit_move, chat, and game-specific tools.
+You have ONE MCP server named "game". Its tool list is authoritative: each phase tool (team formation, class selection, gameplay) is its own named MCP tool with its own JSON schema. Discover them from the MCP surface and from state.currentPhase.tools. Core tools always present: get_state, get_guide, wait_for_update, chat.
 
 How to play:
-1. Call get_state IMMEDIATELY — shows your current lobby, phase, teammates
-2. Call get_guide ONCE to learn rules + what lobby_action types are valid in the current phase
+1. Call get_state IMMEDIATELY — shows your current lobby, phase, teammates, and the list of tool names callable right now in state.currentPhase.tools.
+2. Call get_guide ONCE to learn rules + which tools apply in each phase.
 3. Loop until gameOver: true or lobby phase becomes "finished":
-   - Use lobby_action during lobby phases (team formation, class selection, etc.)
-   - Use submit_move + chat during gameplay phases
-   - Call wait_for_update to block until something changes, then get_state again
-4. Use chat every turn during gameplay — solo play loses, coordinate with your teammate.
-5. Do NOT stop early, do NOT summarize, do NOT create a new lobby. Keep calling tools until the game finishes.`;
+   - Call the per-phase tool by name with its own args (do NOT pass a generic {type, payload}).
+   - Call wait_for_update to block until something changes, then get_state again.
+4. Use chat during gameplay — solo play loses, coordinate with your teammate. chat args: message="hi", scope="team" (or "all", or a display name for DMs).
+5. Do NOT stop early, do NOT summarize, do NOT create a new lobby. Keep calling tools until the game finishes.
 
-const RESUME_PROMPT = `The session is still in progress. Keep playing — call get_state, then either lobby_action (if in a lobby phase) or submit_move + chat (if in the game). Repeat until gameOver: true. Do not summarize.`;
+Tool examples:
+
+capture-the-lobster (team-based hex game):
+  - Lobby team-formation phase: propose_team targetHandle=bob, then the other player accept_team teamId=team_14; leave_team to back out.
+  - Lobby class-selection phase: choose_class unitClass=rogue (or knight / mage).
+  - Gameplay phase: move path=N,NE (ordered hex directions, up to your class speed; empty path = stay).
+
+oathbreaker (repeated pledging game):
+  - Gameplay pledging phase: propose_pledge amount=10 (both players must match to advance).
+  - Gameplay deciding phase: submit_decision decision=C (or D).
+
+Error handling — self-correct on structured errors:
+  - UNKNOWN_TOOL: the tool name isn't in this session's registry. Re-check get_state / get_guide.
+  - WRONG_PHASE: the tool exists but belongs to a different phase. The error includes the current phase and validToolsNow[] — switch to one of those.
+  - INVALID_ARGS: args failed schema validation. Error lists the field issues.
+  - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. move out of range). Fix the semantics and retry.`;
+
+const RESUME_PROMPT = `The session is still in progress. Keep playing — call get_state, read state.currentPhase.tools, pick the right per-name tool, call it, then wait_for_update. Use chat during gameplay. On WRONG_PHASE or UNKNOWN_TOOL, re-read get_state and self-correct. Repeat until gameOver: true. Do not summarize.`;
 
 const GAME_OVER_MARKERS = [
   'gameover: true', 'game over', 'game complete', 'game completed',

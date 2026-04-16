@@ -7,8 +7,8 @@
  * Haiku bots fill the remaining seats. Each bot gets its own `claude --print`
  * subprocess driving `coga serve --stdio` — same code path as any other player.
  *
- * Bots just call `get_guide`, read the rules, and use whatever MCP tools are
- * exposed (including `lobby_action` for team formation and class selection).
+ * Bots just call `get_guide`, read the rules, and use whatever per-name MCP
+ * tools are exposed (e.g. propose_team / accept_team / choose_class / move).
  * No game-specific harness code.
  *
  * Prerequisites:
