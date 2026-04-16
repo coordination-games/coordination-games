@@ -12,6 +12,7 @@
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
     "@coordination-games/game-oathbreaker": "*",
+    "ajv": "^8.17.1",
     "viem": "^2.0.0"
   },
   "devDependencies": {

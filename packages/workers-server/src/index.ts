@@ -4,6 +4,7 @@ import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './au
 import { D1EloTracker } from './db/elo.js';
 import { getRegisteredGames, getGame } from '@coordination-games/engine';
 import { createRelay } from './chain/index.js';
+import { dispatchToolCall, handleAdminSessionTools } from './tool-dispatcher.js';
 import type { Env } from './env.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
@@ -358,13 +359,6 @@ if (pathname === '/api/player/state' && method === 'GET') {
       return handlePlayerState(auth, env);
     }
 
-    // POST /api/player/move — game actions (lobby actions go through /api/player/lobby/action)
-    if (pathname === '/api/player/move' && method === 'POST') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerMove(auth, request, env);
-    }
-
     // POST /api/player/lobby/join — join a lobby
     if (pathname === '/api/player/lobby/join' && method === 'POST') {
       const auth = await requireAuth(request, env);
@@ -372,25 +366,16 @@ if (pathname === '/api/player/state' && method === 'GET') {
       return handlePlayerLobbyJoin(auth, request, env);
     }
 
-    // POST /api/player/lobby/action — generic lobby phase action
-    if (pathname === '/api/player/lobby/action' && method === 'POST') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerLobbyAction(auth, request, env);
-    }
-
-    // POST /api/player/lobby/tool — plugin tool call during lobby (chat, etc.)
-    if (pathname === '/api/player/lobby/tool' && method === 'POST') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerLobbyTool(auth, request, env);
-    }
-
-    // POST /api/player/tool — plugin tool calls during game (chat, etc.)
+    // POST /api/player/tool — UNIFIED tool-call endpoint.
+    // Replaces /api/player/move, /api/player/lobby/action, and the pre-refactor
+    // /api/player/tool + /api/player/lobby/tool plugin-relay endpoints.
+    // Wire shape: { toolName: string, args: object }. Dispatcher routes by
+    // declarer (game vs lobby-phase vs legacy plugin-relay). See
+    // src/tool-dispatcher.ts for the full algorithm.
     if (pathname === '/api/player/tool' && method === 'POST') {
       const auth = await requireAuth(request, env);
       if (auth instanceof Response) return auth;
-      return handlePlayerTool(auth, request, env);
+      return dispatchToolCall(auth, request, env);
     }
 
     // GET /api/player/guide — game guide + available tools
@@ -398,6 +383,15 @@ if (pathname === '/api/player/state' && method === 'GET') {
       const auth = await requireAuth(request, env);
       if (auth instanceof Response) return auth;
       return handlePlayerGuide(auth, request, env);
+    }
+
+    // ------------------------------------------------------------------
+    // Admin endpoints — ADMIN_TOKEN via X-Admin-Token header
+    // ------------------------------------------------------------------
+
+    const adminToolsMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/tools$/);
+    if (adminToolsMatch && method === 'GET') {
+      return handleAdminSessionTools(decodeURIComponent(adminToolsMatch[1]), request, env);
     }
 
     // ------------------------------------------------------------------
@@ -595,39 +589,6 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
   ));
 }
 
-async function handlePlayerMove(playerId: string, request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
-  if (body instanceof Response) return body;
-
-  const location = await getPlayerLocation(playerId, env);
-  if (!location) {
-    return Response.json({ error: 'Not in an active lobby or game' }, { status: 404 });
-  }
-
-  // Lobby action via /move (legacy compatibility) — forward to generic lobby action handler
-  if (body?.action && typeof body.action === 'string') {
-    if (location.kind !== 'lobby') {
-      return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
-    }
-    return forwardToLobbyDO(env, location.lobbyId, '/action', makeRequest('POST', {
-      playerId,
-      type: body.action,
-      payload: body,
-    }));
-  }
-
-  // Game action: forward to GameRoomDO
-  if (location.kind !== 'game') {
-    return Response.json({ error: 'Not in an active game' }, { status: 404 });
-  }
-  const doStub = getGameDO(env, location.gameId);
-  return doStub.fetch(new Request('https://do/action', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId, action: body }),
-  }));
-}
-
 async function handlePlayerLobbyJoin(playerId: string, request: Request, env: Env): Promise<Response> {
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
@@ -664,73 +625,6 @@ async function handlePlayerLobbyJoin(playerId: string, request: Request, env: En
   ).bind(playerId, lobbyId, new Date().toISOString()).run();
 
   return Response.json(joinBody, { status: joinResp.status });
-}
-
-/** Generic lobby phase action — forwards to LobbyDO POST /action */
-async function handlePlayerLobbyAction(playerId: string, request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
-  if (body instanceof Response) return body;
-
-  const location = await getPlayerLocation(playerId, env);
-  if (location?.kind !== 'lobby') {
-    return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
-  }
-
-  const { type, payload } = body ?? {};
-  if (!type) {
-    return Response.json({ error: 'type is required' }, { status: 400 });
-  }
-
-  return forwardToLobbyDO(env, location.lobbyId, '/action', makeRequest('POST', {
-    playerId,
-    type,
-    payload: payload ?? {},
-  }));
-}
-
-/** Plugin tool call during lobby (chat, etc.) — forwards to LobbyDO POST /tool */
-async function handlePlayerLobbyTool(playerId: string, request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
-  if (body instanceof Response) return body;
-
-  const location = await getPlayerLocation(playerId, env);
-  if (location?.kind !== 'lobby') {
-    return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
-  }
-
-  const { relay } = body ?? {};
-  if (!relay?.type || !relay?.pluginId) {
-    return Response.json({ error: 'Body must be { relay: { type, data, scope, pluginId } }' }, { status: 400 });
-  }
-
-  return forwardToLobbyDO(env, location.lobbyId, '/tool', makeRequest('POST', {
-    playerId,
-    relay,
-  }));
-}
-
-async function handlePlayerTool(playerId: string, request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
-  if (body instanceof Response) return body;
-
-  // Body is { relay: { type, data, scope, pluginId } } — produced by the CLI
-  // calling plugin.handleCall() locally. We just store and route it.
-  const { relay } = body ?? {};
-  if (!relay?.type || !relay?.pluginId) {
-    return Response.json({ error: 'Body must be { relay: { type, data, scope, pluginId } }' }, { status: 400 });
-  }
-
-  // Single routing path: the player's session points at a lobby, which either
-  // has a game_id set (→ GameRoomDO) or not (→ LobbyDO). Unambiguous by schema.
-  const location = await getPlayerLocation(playerId, env);
-  if (!location) {
-    return Response.json({ error: 'Not in an active lobby or game' }, { status: 404 });
-  }
-
-  if (location.kind === 'game') {
-    return forwardToGameDO(env, location.gameId, '/tool', makeRequest('POST', { relay, playerId }));
-  }
-  return forwardToLobbyDO(env, location.lobbyId, '/tool', makeRequest('POST', { relay, playerId }));
 }
 
 // ---------------------------------------------------------------------------
@@ -855,13 +749,4 @@ function forwardToLobbyDO(env: Env, lobbyId: string, subPath: string, request: R
   const url = new URL(request.url);
   url.pathname = subPath;
   return stub.fetch(new Request(url.toString(), request));
-}
-
-/** Build a simple POST Request with a JSON body to forward to a DO. */
-function makeRequest(method: string, body: unknown): Request {
-  return new Request('https://do/', {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
 }

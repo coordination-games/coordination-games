@@ -714,6 +714,15 @@ export class GameRoomDO extends DurableObject<Env> {
     const finished = this._plugin!.isOver(this._state as any);
     const visible = this._plugin!.getVisibleState(this._state, playerId);
     const relayMessages = this.getVisibleRelay(playerId);
+    // Tool discovery: mirror LobbyDO.buildState() currentPhase.tools shape so
+    // CLI + MCP consume one uniform surface. Today every game has one game
+    // phase — when GamePhase[] lands, this becomes the current GamePhase's
+    // {id, name, tools}.
+    const currentPhase = {
+      id: 'game',
+      name: 'Game',
+      tools: this._plugin!.gameTools ?? [],
+    };
     return {
       type: 'state_update',
       gameOver: finished,
@@ -721,6 +730,7 @@ export class GameRoomDO extends DurableObject<Env> {
       handles: this._meta!.handleMap,
       progressCounter: this._progress.counter,
       relayMessages,
+      currentPhase,
       ...(visible as Record<string, unknown>),
     };
   }
