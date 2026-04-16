@@ -594,9 +594,10 @@ export class GameRoomDO extends DurableObject<Env> {
       console.log(`[GameRoomDO] Game over — ${this._meta.gameType}, ${this._actionLog.length} actions`);
       // Write final summary (with finished=true reflected in game state)
       this.writeSummaryToD1();
-      // Update D1: mark game finished. Keep game_sessions so players can
-      // still fetch the final state with gameOver: true. Sessions are replaced
-      // automatically when the player joins a new game (INSERT OR REPLACE).
+      // Mark the game finished in D1. Player sessions still point at the
+      // parent lobby (via player_sessions → lobbies.game_id), so state reads
+      // continue to resolve here and return gameOver: true until the player
+      // joins a new lobby (which UPDATEs their session pointer).
       try {
         await this.env.DB.prepare(
           'UPDATE games SET finished = 1 WHERE game_id = ?'

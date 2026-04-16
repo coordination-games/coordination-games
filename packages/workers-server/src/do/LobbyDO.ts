@@ -535,28 +535,14 @@ export class LobbyDO extends DurableObject<Env> {
         console.warn(`[LobbyDO] game_start action failed for game ${gameId}`);
       }
 
-      // 3. Write game_sessions + games rows in D1
-      const now = new Date().toISOString();
-      const stmts = [
-        this.env.DB.prepare(
-          'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)',
-        ).bind(gameId, this._meta.gameType, now),
-        ...playerIds.map(pid =>
-          this.env.DB.prepare(
-            'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)',
-          ).bind(pid, gameId, this._meta!.gameType, now),
-        ),
-      ];
+      // 3. Create the games row. Player session rows already point at this
+      // lobby; they route to the new GameRoomDO automatically once step 4
+      // writes lobbies.game_id via updateLobbyPhaseInD1().
+      await this.env.DB.prepare(
+        'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)',
+      ).bind(gameId, this._meta.gameType, new Date().toISOString()).run();
 
-      // 4. Remove lobby_sessions rows
-      for (const pid of playerIds) {
-        stmts.push(
-          this.env.DB.prepare('DELETE FROM lobby_sessions WHERE player_id = ?').bind(pid),
-        );
-      }
-      await this.env.DB.batch(stmts);
-
-      // 5. Finalize lobby metadata
+      // 4. Finalize lobby metadata (writes lobbies.game_id → routing flips)
       this._meta.gameId = gameId;
       this._meta.phase = 'game';
       await this.saveState();

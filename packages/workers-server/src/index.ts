@@ -319,8 +319,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireAuth(request, env);
       if (auth instanceof Response) return auth;
       const playerId = auth;
-      const session = await getPlayerGameSession(playerId, env);
-      if (!session || session.game_id !== wsPlayerMatch[1]) {
+      const location = await getPlayerLocation(playerId, env);
+      if (location?.kind !== 'game' || location.gameId !== wsPlayerMatch[1]) {
         return Response.json({ error: 'Not a player in this game' }, { status: 403 });
       }
       const forwarded = new Request(request.url, request);
@@ -413,9 +413,9 @@ if (pathname === '/api/player/state' && method === 'GET') {
 async function handleListLobbies(env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
     "SELECT l.id, l.game_type, l.team_size, l.phase, l.created_at, l.game_id, " +
-    "COUNT(ls.player_id) as player_count " +
+    "COUNT(ps.player_id) as player_count " +
     "FROM lobbies l " +
-    "LEFT JOIN lobby_sessions ls ON ls.lobby_id = l.id " +
+    "LEFT JOIN player_sessions ps ON ps.lobby_id = l.id " +
     "WHERE l.phase NOT IN ('failed', 'game') " +
     "GROUP BY l.id " +
     "ORDER BY l.created_at DESC LIMIT 50"
@@ -488,10 +488,11 @@ async function handleListGames(env: Env): Promise<Response> {
 
   const rows = await env.DB.prepare(
     `SELECT g.game_id, g.game_type, g.finished,
-            COUNT(s.player_id) AS player_count,
+            COUNT(ps.player_id) AS player_count,
             gs.progress_counter, gs.summary_json
      FROM games g
-     LEFT JOIN game_sessions s ON s.game_id = g.game_id
+     LEFT JOIN lobbies l ON l.game_id = g.game_id
+     LEFT JOIN player_sessions ps ON ps.lobby_id = l.id
      LEFT JOIN game_summaries gs ON gs.game_id = g.game_id
      GROUP BY g.game_id
      ORDER BY g.finished ASC, g.created_at DESC
@@ -551,15 +552,23 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: err.error ?? 'Game creation failed' }, { status: createResp.status });
   }
 
+  // Every game is modeled as the child of a lobby (see player_sessions →
+  // lobbies.game_id). Direct game creation (no lobby) is a dev-only path;
+  // synthesize a lobby row so routing through player_sessions still works.
   const now = new Date().toISOString();
+  const syntheticLobbyId = `synthetic-${gameId}`;
   await env.DB.batch([
     env.DB.prepare(
       'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)'
     ).bind(gameId, gameType, now),
+    env.DB.prepare(
+      `INSERT OR REPLACE INTO lobbies (id, game_type, team_size, phase, created_at, game_id)
+       VALUES (?, ?, ?, 'game', ?, ?)`
+    ).bind(syntheticLobbyId, gameType, (playerIds as string[]).length, now, gameId),
     ...((playerIds as string[]).map(pid =>
       env.DB.prepare(
-        'INSERT OR REPLACE INTO game_sessions (player_id, game_id, game_type, joined_at) VALUES (?, ?, ?, ?)'
-      ).bind(pid, gameId, gameType, now)
+        'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
+      ).bind(pid, syntheticLobbyId, now)
     )),
   ]);
 
@@ -572,42 +581,35 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 // ---------------------------------------------------------------------------
 
 async function handlePlayerState(playerId: string, env: Env): Promise<Response> {
-  // Active game takes priority
-  const gameSession = await getPlayerGameSession(playerId, env);
-  if (gameSession) {
-    const doStub = getGameDO(env, gameSession.game_id);
-    return doStub.fetch(new Request(
-      `https://do/state?playerId=${encodeURIComponent(playerId)}`,
-      { method: 'GET' },
-    ));
+  const location = await getPlayerLocation(playerId, env);
+  if (!location) {
+    return Response.json({ error: 'No active lobby or game. Join a lobby first.' }, { status: 404 });
   }
 
-  // Lobby session
-  const lobbySession = await getPlayerLobbySession(playerId, env);
-  if (lobbySession) {
-    const doStub = getLobbyDO(env, lobbySession.lobby_id);
-    return doStub.fetch(new Request(
-      `https://do/state?playerId=${encodeURIComponent(playerId)}`,
-      { method: 'GET' },
-    ));
-  }
-
-  return Response.json({ error: 'No active lobby or game. Join a lobby first.' }, { status: 404 });
+  const stub = location.kind === 'game'
+    ? getGameDO(env, location.gameId)
+    : getLobbyDO(env, location.lobbyId);
+  return stub.fetch(new Request(
+    `https://do/state?playerId=${encodeURIComponent(playerId)}`,
+    { method: 'GET' },
+  ));
 }
 
 async function handlePlayerMove(playerId: string, request: Request, env: Env): Promise<Response> {
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
+  const location = await getPlayerLocation(playerId, env);
+  if (!location) {
+    return Response.json({ error: 'Not in an active lobby or game' }, { status: 404 });
+  }
+
   // Lobby action via /move (legacy compatibility) — forward to generic lobby action handler
   if (body?.action && typeof body.action === 'string') {
-    const lobbySession = await getPlayerLobbySession(playerId, env);
-    if (!lobbySession) {
+    if (location.kind !== 'lobby') {
       return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
     }
-    const lobbyId = lobbySession.lobby_id;
-    // Map legacy action format to generic { playerId, type, payload }
-    return forwardToLobbyDO(env, lobbyId, '/action', makeRequest('POST', {
+    return forwardToLobbyDO(env, location.lobbyId, '/action', makeRequest('POST', {
       playerId,
       type: body.action,
       payload: body,
@@ -615,11 +617,10 @@ async function handlePlayerMove(playerId: string, request: Request, env: Env): P
   }
 
   // Game action: forward to GameRoomDO
-  const session = await getPlayerGameSession(playerId, env);
-  if (!session) {
+  if (location.kind !== 'game') {
     return Response.json({ error: 'Not in an active game' }, { status: 404 });
   }
-  const doStub = getGameDO(env, session.game_id);
+  const doStub = getGameDO(env, location.gameId);
   return doStub.fetch(new Request('https://do/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -654,13 +655,13 @@ async function handlePlayerLobbyJoin(playerId: string, request: Request, env: En
   // Clone the response so we can inspect it and still return it
   const joinBody = await joinResp.json() as any;
 
-  // If the join immediately triggered a game start (e.g. OATHBREAKER reaching min players),
-  // the lobby_sessions row was already deleted by LobbyDO. Don't re-insert it.
-  if (joinBody?.phase !== 'game' && joinBody?.phase !== 'starting') {
-    await env.DB.prepare(
-      'INSERT OR REPLACE INTO lobby_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
-    ).bind(playerId, lobbyId, new Date().toISOString()).run();
-  }
+  // Point the player's session at this lobby. Works for all phases — if the
+  // join immediately transitioned the lobby into 'game' phase, the session
+  // row still correctly points at the lobby, and getPlayerLocation() resolves
+  // through lobbies.game_id to the GameRoomDO.
+  await env.DB.prepare(
+    'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
+  ).bind(playerId, lobbyId, new Date().toISOString()).run();
 
   return Response.json(joinBody, { status: joinResp.status });
 }
@@ -670,8 +671,8 @@ async function handlePlayerLobbyAction(playerId: string, request: Request, env: 
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
-  const lobbySession = await getPlayerLobbySession(playerId, env);
-  if (!lobbySession) {
+  const location = await getPlayerLocation(playerId, env);
+  if (location?.kind !== 'lobby') {
     return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
   }
 
@@ -680,7 +681,7 @@ async function handlePlayerLobbyAction(playerId: string, request: Request, env: 
     return Response.json({ error: 'type is required' }, { status: 400 });
   }
 
-  return forwardToLobbyDO(env, lobbySession.lobby_id, '/action', makeRequest('POST', {
+  return forwardToLobbyDO(env, location.lobbyId, '/action', makeRequest('POST', {
     playerId,
     type,
     payload: payload ?? {},
@@ -692,8 +693,8 @@ async function handlePlayerLobbyTool(playerId: string, request: Request, env: En
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
-  const lobbySession = await getPlayerLobbySession(playerId, env);
-  if (!lobbySession) {
+  const location = await getPlayerLocation(playerId, env);
+  if (location?.kind !== 'lobby') {
     return Response.json({ error: 'Not in an active lobby' }, { status: 404 });
   }
 
@@ -702,7 +703,7 @@ async function handlePlayerLobbyTool(playerId: string, request: Request, env: En
     return Response.json({ error: 'Body must be { relay: { type, data, scope, pluginId } }' }, { status: 400 });
   }
 
-  return forwardToLobbyDO(env, lobbySession.lobby_id, '/tool', makeRequest('POST', {
+  return forwardToLobbyDO(env, location.lobbyId, '/tool', makeRequest('POST', {
     playerId,
     relay,
   }));
@@ -719,12 +720,17 @@ async function handlePlayerTool(playerId: string, request: Request, env: Env): P
     return Response.json({ error: 'Body must be { relay: { type, data, scope, pluginId } }' }, { status: 400 });
   }
 
-  const session = await getPlayerGameSession(playerId, env);
-  if (!session) {
-    return Response.json({ error: 'Not in an active game' }, { status: 404 });
+  // Single routing path: the player's session points at a lobby, which either
+  // has a game_id set (→ GameRoomDO) or not (→ LobbyDO). Unambiguous by schema.
+  const location = await getPlayerLocation(playerId, env);
+  if (!location) {
+    return Response.json({ error: 'Not in an active lobby or game' }, { status: 404 });
   }
 
-  return forwardToGameDO(env, session.game_id, '/tool', makeRequest('POST', { relay, playerId }));
+  if (location.kind === 'game') {
+    return forwardToGameDO(env, location.gameId, '/tool', makeRequest('POST', { relay, playerId }));
+  }
+  return forwardToLobbyDO(env, location.lobbyId, '/tool', makeRequest('POST', { relay, playerId }));
 }
 
 // ---------------------------------------------------------------------------
@@ -736,17 +742,8 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
   let gameType = url.searchParams.get('game');
 
   if (!gameType) {
-    // Try active game session first
-    const gameSession = await getPlayerGameSession(playerId, env);
-    if (gameSession) {
-      gameType = gameSession.game_type;
-    } else {
-      // Try lobby session — join to lobbies table to get game_type
-      const lobbyRow = await env.DB.prepare(
-        'SELECT l.game_type FROM lobby_sessions ls JOIN lobbies l ON l.id = ls.lobby_id WHERE ls.player_id = ?'
-      ).bind(playerId).first<{ game_type: string }>();
-      if (lobbyRow) gameType = lobbyRow.game_type;
-    }
+    const location = await getPlayerLocation(playerId, env);
+    if (location) gameType = location.gameType;
   }
 
   if (!gameType) {
@@ -815,22 +812,35 @@ function getLobbyDO(env: Env, lobbyId: string): DurableObjectStub {
   return env.LOBBY.get(env.LOBBY.idFromName(lobbyId));
 }
 
-async function getPlayerGameSession(
+/**
+ * Resolve where a player's actions should route.
+ *
+ * A player has at most one `player_sessions` row, which references a lobby.
+ * The lobby's `game_id` column (set by LobbyDO at handoff) determines whether
+ * routing targets the LobbyDO or the spawned GameRoomDO.
+ *
+ * Returns `null` if the player has no session row (not in any lobby or game).
+ */
+async function getPlayerLocation(
   playerId: string,
   env: Env,
-): Promise<{ game_id: string; game_type: string } | null> {
-  return env.DB.prepare(
-    'SELECT game_id, game_type FROM game_sessions WHERE player_id = ?'
-  ).bind(playerId).first<{ game_id: string; game_type: string }>();
-}
+): Promise<
+  | { kind: 'lobby'; lobbyId: string; gameType: string }
+  | { kind: 'game'; lobbyId: string; gameId: string; gameType: string }
+  | null
+> {
+  const row = await env.DB.prepare(
+    `SELECT l.id AS lobby_id, l.game_id, l.game_type
+     FROM player_sessions ps
+     JOIN lobbies l ON l.id = ps.lobby_id
+     WHERE ps.player_id = ?`
+  ).bind(playerId).first<{ lobby_id: string; game_id: string | null; game_type: string }>();
 
-async function getPlayerLobbySession(
-  playerId: string,
-  env: Env,
-): Promise<{ lobby_id: string } | null> {
-  return env.DB.prepare(
-    'SELECT lobby_id FROM lobby_sessions WHERE player_id = ?'
-  ).bind(playerId).first<{ lobby_id: string }>();
+  if (!row) return null;
+  if (row.game_id) {
+    return { kind: 'game', lobbyId: row.lobby_id, gameId: row.game_id, gameType: row.game_type };
+  }
+  return { kind: 'lobby', lobbyId: row.lobby_id, gameType: row.game_type };
 }
 
 function forwardToGameDO(env: Env, gameId: string, subPath: string, request: Request): Promise<Response> {
