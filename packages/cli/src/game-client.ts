@@ -1,9 +1,13 @@
 /**
  * GameClient — shared REST API wrapper with client-side pipeline.
  *
- * Used by both the CLI MCP server and (eventually) the bot harness.
- * Wraps ApiClient for REST calls to /api/player/* endpoints and runs
- * the client-side plugin pipeline over relay messages in responses.
+ * Used by both the CLI MCP server and the bot harness. Wraps ApiClient for
+ * REST calls and runs the client-side plugin pipeline over relay messages
+ * in responses.
+ *
+ * Since the unified-tool-surface cutover, all player-callable actions go
+ * through a single endpoint: POST /api/player/tool { toolName, args }.
+ * The server dispatches by declarer (game / lobby phase / plugin relay).
  */
 
 import { ethers } from "ethers";
@@ -125,18 +129,95 @@ export class GameClient {
     return this.processResponse(raw);
   }
 
-  /** Submit any action — posts the body as-is to /move. The server routes by shape. */
-  async submitAction(body: Record<string, any>): Promise<any> {
+  /**
+   * Call a tool by name. This is the sole dispatch path for all
+   * player-callable actions since the unified-tool-surface cutover.
+   *
+   * - Game-phase tools (e.g. `move`): dispatcher reconstructs
+   *   `{type: toolName, ...args}` and forwards to GameRoomDO.
+   * - Lobby-phase tools (e.g. `propose-team`, `choose-class`): dispatcher
+   *   forwards `{type: toolName, payload: args}` to LobbyDO.
+   * - Plugin relay tools: call `callPluginRelay(...)` instead.
+   *
+   * On server error, the response payload carries a structured
+   * `{ error: { code, message, ... } }` shape (see error taxonomy in
+   * docs/plans/unified-tool-surface.md). ApiClient throws on non-2xx, so
+   * the caller sees the JSON body in err.message — callers that need the
+   * structured shape should use `callToolRaw` below.
+   */
+  async callTool(toolName: string, args: Record<string, any> = {}): Promise<any> {
     await this.ensureAuth();
-    const raw = await this.api.post('/api/player/move', body);
+    const raw = await this.api.post('/api/player/tool', { toolName, args });
     return this.processResponse(raw);
   }
 
-  /** Call a plugin tool by plugin ID and tool name. Goes through the generic relay. */
-  async callPluginTool(pluginId: string, toolName: string, args: unknown): Promise<any> {
+  /**
+   * Like `callTool` but returns the raw structured error payload instead of
+   * throwing. Use this when the caller needs to inspect `error.code` to
+   * self-correct (e.g. MCP tool handlers returning structured errors to the
+   * agent).
+   */
+  async callToolRaw(toolName: string, args: Record<string, any> = {}): Promise<
+    | { ok: true; data: any }
+    | { ok: false; error: { code: string; message: string; [k: string]: any } }
+  > {
     await this.ensureAuth();
-    const raw = await this.api.post('/api/player/tool', { relay: { type: toolName, pluginId, data: args, scope: 'all' } });
-    return this.processResponse(raw);
+    try {
+      const raw = await this.api.post('/api/player/tool', { toolName, args });
+      return { ok: true, data: this.processResponse(raw) };
+    } catch (err: any) {
+      // ApiClient throws `API error <status>: <body>` — try to parse the body.
+      const msg = String(err?.message ?? err);
+      const match = msg.match(/^API error \d+: (.*)$/s);
+      if (match) {
+        try {
+          const body = JSON.parse(match[1]);
+          if (body && typeof body === 'object' && body.error) {
+            return { ok: false, error: body.error };
+          }
+        } catch {
+          // fallthrough — treat as dispatch failure
+        }
+      }
+      return { ok: false, error: { code: 'DISPATCH_FAILED', message: msg } };
+    }
+  }
+
+  /**
+   * Invoke a client-side ToolPlugin that posts a relay envelope to the
+   * server. The plugin's `handleCall()` returns `{ relay: {...} }`; this
+   * wraps that envelope into the unified endpoint's wire format.
+   *
+   * Error codes added per the plan's error taxonomy:
+   * - `PLUGIN_ERROR`    — plugin.handleCall threw
+   * - `RELAY_UNREACHABLE` — relay endpoint returned 5xx
+   */
+  async callPluginRelay(
+    relay: { type: string; pluginId: string; data?: unknown; scope?: string },
+  ): Promise<any> {
+    await this.ensureAuth();
+    try {
+      const raw = await this.api.post('/api/player/tool', {
+        toolName: 'plugin_relay',
+        args: { relay },
+      });
+      return this.processResponse(raw);
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      // 5xx = relay unreachable; parse status from "API error <status>: ..."
+      const statusMatch = msg.match(/^API error (\d+):/);
+      const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+      if (status >= 500 && status < 600) {
+        const structured = {
+          error: {
+            code: 'RELAY_UNREACHABLE',
+            message: `Plugin relay endpoint unreachable (HTTP ${status}): ${msg}`,
+          },
+        };
+        throw Object.assign(new Error(structured.error.message), { structured });
+      }
+      throw err;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -165,27 +246,6 @@ export class GameClient {
     }
     const teamSize = Math.min(6, Math.max(2, size || 2));
     return this.api.post('/api/lobbies/create', { gameType, teamSize });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Generic lobby operations
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Submit a lobby phase action (generic — replaces proposeTeam, acceptTeam, etc.).
-   * The server routes the action to the current phase's handler.
-   */
-  async lobbyAction(type: string, payload?: any): Promise<any> {
-    await this.ensureAuth();
-    return this.api.post('/api/player/lobby/action', { type, payload });
-  }
-
-  /**
-   * Call a lobby plugin tool (e.g. chat during lobby phases).
-   */
-  async lobbyTool(pluginId: string, tool: string, args: any): Promise<any> {
-    await this.ensureAuth();
-    return this.api.post('/api/player/lobby/tool', { relay: { type: tool, pluginId, data: args, scope: 'all' } });
   }
 
   // ---------------------------------------------------------------------------
