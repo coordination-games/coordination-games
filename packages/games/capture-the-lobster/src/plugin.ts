@@ -350,15 +350,15 @@ Tools: chat(message, scope:"team"), choose_class, wait_for_update
 3. Call **wait_for_update()** after each action to see teammate responses
 
 ### Phase 3: Game (30 turns of play)
-Tools: wait_for_update, submit_move(path), chat(message, scope:"team")
+Tools: wait_for_update, move(path), chat(message, scope:"team")
 
-**IMPORTANT: Move format.** Via MCP: submit_move({"type":"move","path":["N","NE"]}). Via CLI: coga move '{"type":"move","path":["N","NE"]}'. The path is an array of directions up to your speed. To stay put: submit_move({"type":"move","path":[]}).
+**IMPORTANT: Move format.** Via MCP: \`move({"path":["N","NE"]})\`. Via CLI: \`coga tool move path=N,NE\` (or \`coga tool move --json '{"path":["N","NE"]}'\`). The path is an array of directions up to your speed. To stay put: \`move({"path":[]})\`.
 
 Your main loop — repeat until game ends:
 1. Call **wait_for_update()** — returns FULL board state on new turns
 2. Analyze the board: your position, visible enemies, flag locations
 3. Use **chat(message, scope:"team")** to share intel with your teammate (team-only). Check the updates envelope in the response for new messages.
-4. Use **submit_move(path)** to move — directions up to your speed, [] to stay put. Check the updates envelope.
+4. Use **move({path})** to move — directions up to your speed, \`[]\` to stay put. Check the updates envelope.
 5. Call **wait_for_update()** again — if teammate chatted since your last response, returns immediately. Otherwise waits for the next turn.
 
 ## How Responses Work — IMPORTANT
@@ -369,7 +369,7 @@ Your main loop — repeat until game ends:
 - On **keepalives**: minimal heartbeat so you stay connected
 - If there are **pending updates** you haven't seen: returns IMMEDIATELY (no blocking)
 
-**Action tools** (chat, submit_move, choose_class, propose_team, accept_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
+**Action tools** (chat, move, choose_class, propose_team, accept_team, leave_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
 
 **get_state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait_for_update gives you full state every turn.
 
