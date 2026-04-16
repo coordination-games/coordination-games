@@ -173,6 +173,7 @@ const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'propose_pledge',
     description: 'Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game\'s `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.',
+    mcpExpose: true,
     inputSchema: {
       type: 'object',
       properties: {
@@ -189,6 +190,7 @@ const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'submit_decision',
     description: 'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
+    mcpExpose: true,
     inputSchema: {
       type: 'object',
       properties: {
