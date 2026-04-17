@@ -169,6 +169,12 @@ export interface LobbyPlayer {
   elo: number;
 }
 
+/**
+ * Player IDs exposed to game plugins are opaque platform-issued identifiers.
+ * Game code must not depend on wallet addresses, ERC-8004 token IDs, or chain metadata.
+ */
+export type PlatformPlayerId = string;
+
 /** A team in a lobby. */
 export interface LobbyTeam {
   id: string;
