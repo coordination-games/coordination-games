@@ -239,8 +239,8 @@ function getLobbyDO(env: Env, lobbyId: string): DurableObjectStub {
   return env.LOBBY.get(env.LOBBY.idFromName(lobbyId));
 }
 
-function doRequest(method: string, body: unknown): Request {
-  return new Request('https://do/', {
+function doRequest(method: string, path: string, body: unknown): Request {
+  return new Request(`https://do${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -564,7 +564,7 @@ export async function dispatchToolCall(
 
       const stub = getGameDO(env, location.gameId);
       const resp = await stub.fetch(
-        doRequest('POST', { playerId, action }),
+        doRequest('POST', '/action', { playerId, action }),
       );
 
       const bodyClone = await resp.clone().json().catch(() => null) as any;
@@ -620,7 +620,7 @@ export async function dispatchToolCall(
     // LobbyPhase.handleAction expects { type, playerId, payload }; the
     // LobbyDO /action handler maps this to the phase call verbatim.
     const resp = await stub.fetch(
-      doRequest('POST', { playerId, type: toolName, payload: args }),
+      doRequest('POST', '/action', { playerId, type: toolName, payload: args }),
     );
     const bodyClone = await resp.clone().json().catch(() => null) as any;
 
