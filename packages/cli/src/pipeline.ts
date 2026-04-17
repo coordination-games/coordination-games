@@ -64,6 +64,7 @@ export function processState(serverResponse: {
 }): {
   gameState: any;
   messages: any[];
+  rationales: any[];
   pipelineOutput: Map<string, any>;
   raw: any;
 } {
@@ -73,6 +74,7 @@ export function processState(serverResponse: {
   return {
     gameState: serverResponse.gameState ?? serverResponse,
     messages: pipelineOutput.get('messaging') ?? [],
+    rationales: pipelineOutput.get('rationale') ?? [],
     pipelineOutput,
     raw: serverResponse,
   };

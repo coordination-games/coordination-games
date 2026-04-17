@@ -231,6 +231,6 @@ export class GameClient {
     const output = processState(raw);
     // Drop the raw relay log + the pipelineOutput map (they duplicate `messages`)
     const { relayMessages: _r, ...rest } = raw;
-    return { ...rest, messages: output.messages };
+    return { ...rest, messages: output.messages, rationales: output.rationales };
   }
 }
