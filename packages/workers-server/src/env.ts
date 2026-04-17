@@ -3,6 +3,7 @@ export interface Env {
   GAME_ROOM: DurableObjectNamespace;
   LOBBY: DurableObjectNamespace;
   ENVIRONMENT: string;
+  TEST_BOT_AUTH_SECRET?: string;
   // Optional — set via `wrangler secret put` to enable on-chain ERC-8004 verification
   RPC_URL?: string;
   REGISTRY_ADDRESS?: string;
