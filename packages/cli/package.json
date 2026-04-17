@@ -34,12 +34,21 @@
     "access": "public",
     "provenance": true
   },
-  "devDependencies": {
+  "dependencies": {
+    "@coordination-games/engine": "*",
+    "@coordination-games/game-ctl": "*",
+    "@coordination-games/game-oathbreaker": "*",
+    "@coordination-games/plugin-chat": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^11.0.0",
+    "commander": "^14.0.2",
+    "ethers": "^6.16.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
     "@types/node": "^22.19.15",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.4",
-    "zod": "^4.3.6"
+    "vitest": "^4.1.4"
   }
 }
