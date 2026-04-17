@@ -101,7 +101,6 @@ export class GameRoomDO extends DurableObject<Env> {
   private _meta: GameMeta | null = null;
   private _plugin: CoordinationGame<any, any, any, any> | null = null;
   private _state: unknown = null;
-  private _prevProgressState: unknown = null;  // state at last progress point (spectator delay)
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0, snapshots: [0] };
   private _relay: RelayMessage[] = [];
@@ -227,7 +226,6 @@ export class GameRoomDO extends DurableObject<Env> {
     await Promise.all([
       this.ctx.storage.put('meta', meta),
       this.ctx.storage.put('state', initialState),
-      this.ctx.storage.put('prevProgressState', null),
       this.ctx.storage.put('actionLog', []),
       this.ctx.storage.put('progress', progress),
       this.ctx.storage.put('relay', []),
@@ -239,7 +237,6 @@ export class GameRoomDO extends DurableObject<Env> {
     this._meta = meta;
     this._plugin = plugin;
     this._state = initialState;
-    this._prevProgressState = null;
     this._actionLog = [];
     this._progress = progress;
     this._relay = [];
@@ -586,7 +583,6 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     if (result.progressIncrement) {
-      this._prevProgressState = prevState;
       this._progress.counter++;
       this._progress.snapshots.push(this._actionLog.length - 1);
 
@@ -603,7 +599,6 @@ export class GameRoomDO extends DurableObject<Env> {
 
     const storagePuts: Promise<void>[] = [
       this.ctx.storage.put('state', this._state),
-      this.ctx.storage.put('prevProgressState', this._prevProgressState),
       this.ctx.storage.put('actionLog', this._actionLog),
       this.ctx.storage.put('progress', this._progress),
     ];
@@ -860,10 +855,9 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, prevProgressState, actionLog, progress, relay, deadline, config, snapshotCount] = await Promise.all([
+      const [meta, state, actionLog, progress, relay, deadline, config, snapshotCount] = await Promise.all([
         this.ctx.storage.get<GameMeta>('meta'),
         this.ctx.storage.get<unknown>('state'),
-        this.ctx.storage.get<unknown>('prevProgressState'),
         this.ctx.storage.get<ActionEntry[]>('actionLog'),
         this.ctx.storage.get<ProgressState>('progress'),
         this.ctx.storage.get<RelayMessage[]>('relay'),
@@ -871,6 +865,10 @@ export class GameRoomDO extends DurableObject<Env> {
         this.ctx.storage.get<unknown>('config'),
         this.ctx.storage.get<number>('snapshotCount'),
       ]);
+
+      // One-time cleanup: older games persisted prevProgressState; the
+      // field is unused by any post-fix code path. Fire-and-forget.
+      this.ctx.storage.delete('prevProgressState').catch(() => {});
 
       if (!meta) { this._loaded = true; return; }
 
@@ -899,7 +897,6 @@ export class GameRoomDO extends DurableObject<Env> {
       this._meta = meta;
       this._plugin = plugin;
       this._state = state ?? null;
-      this._prevProgressState = prevProgressState ?? null;
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0, snapshots: [0] };
       this._relay = relay ?? [];
