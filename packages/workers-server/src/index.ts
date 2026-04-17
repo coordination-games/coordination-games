@@ -1,6 +1,6 @@
 import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
-import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
+import { handleAuthChallenge, handleAuthVerify, handleBotAuth, validateBearerToken } from './auth.js';
 import { D1EloTracker } from './db/elo.js';
 import { getRegisteredGames, getGame } from '@coordination-games/engine';
 import { createRelay } from './chain/index.js';
@@ -89,6 +89,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
     if (pathname === '/api/player/auth/verify' && method === 'POST') {
       return handleAuthVerify(request, env);
+    }
+
+    if (pathname === '/api/player/auth/bot' && method === 'POST') {
+      return handleBotAuth(request, env);
     }
 
     // ------------------------------------------------------------------

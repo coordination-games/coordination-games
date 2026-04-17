@@ -161,17 +161,75 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
     throw err;
   }
 
-  // Issue session token
+  const { token, expiresAt } = await issueSessionToken(env, playerId, trimmed);
+
+  console.log(`[auth] Verified "${trimmed}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`);
+
+  return Response.json({ token, agentId: playerId, name: trimmed, expiresAt, reconnected });
+}
+
+function deriveBotWalletAddress(name: string): `0x${string}` {
+  const normalized = name.trim().toLowerCase();
+  const digest = keccak256(toBytes(`bot:${normalized}`));
+  return `0x${digest.slice(-40)}` as `0x${string}`;
+}
+
+async function issueSessionToken(env: Env, playerId: string, name: string): Promise<{ token: string; expiresAt: string }> {
   const token = hexRandom(20);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
   await env.DB.prepare(
     'INSERT OR REPLACE INTO auth_sessions (token, player_id, name, expires_at) VALUES (?, ?, ?, ?)'
-  ).bind(token, playerId, trimmed, expiresAt).run();
+  ).bind(token, playerId, name, expiresAt).run();
 
-  console.log(`[auth] Verified "${trimmed}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`);
+  return { token, expiresAt };
+}
 
-  return Response.json({ token, agentId: playerId, name: trimmed, expiresAt, reconnected });
+// ---------------------------------------------------------------------------
+// POST /api/player/auth/bot
+// ---------------------------------------------------------------------------
+
+export async function handleBotAuth(request: Request, env: Env): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  const name = String(body?.name ?? '').trim();
+  const providedSecret = typeof body?.secret === 'string' ? body.secret : undefined;
+  if (!name) {
+    return Response.json({ error: 'name is required' }, { status: 400 });
+  }
+
+  const configuredSecret = env.TEST_BOT_AUTH_SECRET;
+  if (!configuredSecret) {
+    return Response.json({ error: 'bot auth is not configured in this environment' }, { status: 503 });
+  }
+
+  if (providedSecret !== configuredSecret) {
+    return Response.json({ error: 'invalid bot auth secret' }, { status: 403 });
+  }
+
+  const relay = createRelay(env);
+  const address = deriveBotWalletAddress(name);
+  let playerId: string;
+  let reconnected: boolean;
+
+  try {
+    const { player, created } = await resolvePlayer(address, relay, env.DB, { handle: name });
+    playerId = player.id;
+    reconnected = !created;
+  } catch (err) {
+    if (err instanceof PlayerHandleTakenError) {
+      return Response.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
+
+  const { token, expiresAt } = await issueSessionToken(env, playerId, name);
+  return Response.json({ token, agentId: playerId, name, expiresAt, reconnected, bot: true, walletAddress: address });
 }
 
 // ---------------------------------------------------------------------------
