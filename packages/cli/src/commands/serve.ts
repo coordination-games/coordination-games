@@ -1,6 +1,20 @@
 import { Command } from "commander";
 import crypto from "node:crypto";
 
+async function requestBotToken(serverUrl: string, name: string, secret?: string): Promise<string> {
+  const response = await fetch(`${serverUrl}/api/player/auth/bot`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...(secret ? { secret } : {}) }),
+  });
+
+  const data = await response.json() as { token?: string; error?: string };
+  if (!response.ok || !data.token) {
+    throw new Error(data.error || `Bot auth failed with status ${response.status}`);
+  }
+  return data.token;
+}
+
 export function registerServeCommand(program: Command) {
   program
     .command("serve")
@@ -10,6 +24,7 @@ export function registerServeCommand(program: Command) {
     .option("--bot-mode", undefined, false)  // hidden: internal testing
     .option("--key <key>", undefined)         // hidden: bot private key
     .option("--name <name>", undefined)       // hidden: bot display name
+    .option("--bot-secret <secret>", undefined) // hidden: shared secret for non-local bot token auth
     .option("--server-url <url>", "Game server URL (default: from config)")
     .action(async (opts) => {
       // Dynamic import to avoid loading MCP deps when not needed
@@ -24,10 +39,12 @@ export function registerServeCommand(program: Command) {
         const serverUrl = opts.serverUrl || loadConfig().serverUrl;
         const key = opts.key || undefined;
         const name = opts.name || `bot-${crypto.randomBytes(3).toString('hex')}`;
+        const token = key ? undefined : await requestBotToken(serverUrl, name, opts.botSecret || process.env.COGA_BOT_SECRET);
 
         await startMcpServer(mode, {
           serverUrl,
           privateKey: key,
+          token,
           name,
           botMode: true,
           httpPort,
