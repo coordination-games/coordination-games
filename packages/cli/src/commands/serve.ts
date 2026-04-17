@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import crypto from "node:crypto";
+import type { ToolPlugin } from "@coordination-games/engine";
 
 export function registerServeCommand(program: Command) {
   program
@@ -10,10 +11,16 @@ export function registerServeCommand(program: Command) {
     .option("--bot-mode", undefined, false)  // hidden: internal testing
     .option("--key <key>", undefined)         // hidden: bot private key
     .option("--name <name>", undefined)       // hidden: bot display name
+    .option("--with-rationale", undefined, false) // hidden: opt-in rationale plugin
     .option("--server-url <url>", "Game server URL (default: from config)")
     .action(async (opts) => {
       // Dynamic import to avoid loading MCP deps when not needed
       const { startMcpServer } = await import("../mcp-server.js");
+      const plugins: ToolPlugin[] = [];
+      if (opts.withRationale) {
+        const { RationalePlugin } = await import("@coordination-games/plugin-rationale");
+        plugins.push(RationalePlugin);
+      }
 
       const httpPort = typeof opts.http === "string" ? parseInt(opts.http, 10) : undefined;
       const mode: "stdio" | "http" = opts.http ? "http" : "stdio";
@@ -31,6 +38,7 @@ export function registerServeCommand(program: Command) {
           name,
           botMode: true,
           httpPort,
+          plugins,
         });
       } else {
         // Normal mode: use local wallet from ~/.coordination/keys/
@@ -64,6 +72,7 @@ export function registerServeCommand(program: Command) {
           name,
           botMode: false,
           httpPort,
+          plugins,
         });
       }
     });

@@ -17,6 +17,7 @@ import { GameClient } from "./game-client.js";
 import { registerGameTools } from "./mcp-tools.js";
 import { loadConfig } from "./config.js";
 import { BasicChatPlugin } from "@coordination-games/plugin-chat";
+import type { ToolPlugin } from "@coordination-games/engine";
 
 export interface ServeOptions {
   serverUrl: string;
@@ -24,6 +25,7 @@ export interface ServeOptions {
   name?: string;
   botMode?: boolean;
   httpPort?: number;
+  plugins?: ToolPlugin[];
 }
 
 function createMcpServerWithClient(options?: ServeOptions): { server: McpServer; client: GameClient } {
@@ -36,7 +38,7 @@ function createMcpServerWithClient(options?: ServeOptions): { server: McpServer;
     name: "coordination-games",
     version: "0.1.0",
   });
-  registerGameTools(server, client, { botMode: options?.botMode, plugins: [BasicChatPlugin] });
+  registerGameTools(server, client, { botMode: options?.botMode, plugins: [BasicChatPlugin, ...(options?.plugins ?? [])] });
   return { server, client };
 }
 
