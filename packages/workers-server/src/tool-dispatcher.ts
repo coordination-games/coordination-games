@@ -54,6 +54,28 @@ const STATUS_BY_CODE: Record<DispatcherErrorCode, number> = {
   COLLISION: 500,
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// Validator factory — lazy-wrap validateArgs into a reusable validator
+// ─────────────────────────────────────────────────────────────────────────
+
+interface Validator {
+  (value: unknown): boolean;
+  errors?: FieldError[];
+}
+
+function getValidator(schema: Record<string, any>): Validator {
+  const validator = (value: unknown): boolean => {
+    const errs = validateArgs(schema, value);
+    (validator as any).errors = errs;
+    return errs.length === 0;
+  };
+  return validator;
+}
+
+function formatFieldErrors(errs: FieldError[]): { path: string; message: string }[] {
+  return errs;
+}
+
 export interface DispatcherErrorPayload {
   code: DispatcherErrorCode;
   message: string;
@@ -69,35 +91,81 @@ function errorResponse(
 }
 
 // ---------------------------------------------------------------------------
-// AJV — one instance, schemas compiled lazily and cached by reference
+// Minimal JSON Schema validator
+//
+// AJV 8 compiles schemas via `new Function()`, which Cloudflare Workers blocks
+// at runtime (Error 1101). We only use a small subset of JSON Schema for
+// ToolDefinition.inputSchema, so a hand-rolled walker is simpler than shipping
+// ajv/dist/standalone. Supported keywords: type, properties, required, items,
+// enum, minimum, maximum, minItems, maxItems, additionalProperties.
 // ---------------------------------------------------------------------------
 
-// `new Ajv(...)` — ajv 8 ships a default export when bundled via CJS interop.
-// The `(Ajv as any).default ?? Ajv` pattern handles both ESM and CJS shapes.
-const AjvCtor: typeof Ajv = (Ajv as any).default ?? Ajv;
-const ajv = new AjvCtor({ allErrors: true, strict: false });
+export interface FieldError { path: string; message: string; }
 
-/**
- * Per-ToolDefinition validator cache. Keyed by the inputSchema object
- * identity — plugin reloads would drop cache entries, which is fine.
- */
-const validatorCache = new WeakMap<object, ValidateFunction>();
-
-function getValidator(schema: Record<string, any>): ValidateFunction {
-  let v = validatorCache.get(schema);
-  if (!v) {
-    v = ajv.compile(schema);
-    validatorCache.set(schema, v);
-  }
-  return v;
+function typeOf(v: unknown): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  if (Number.isInteger(v)) return 'integer';
+  return typeof v;
 }
 
-function formatFieldErrors(errors: ErrorObject[] | null | undefined): Array<{ path: string; message: string }> {
-  if (!errors) return [];
-  return errors.map(e => ({
-    path: e.instancePath || (e.params?.missingProperty ? `/${e.params.missingProperty}` : '/'),
-    message: e.message ?? 'invalid',
-  }));
+function validateSchema(schema: any, value: unknown, path: string, errs: FieldError[]): void {
+  if (!schema || typeof schema !== 'object') return;
+  const expected: string | string[] | undefined = schema.type;
+  if (expected) {
+    const actual = typeOf(value);
+    const matches = Array.isArray(expected)
+      ? expected.some(t => t === actual || (t === 'number' && actual === 'integer'))
+      : expected === actual || (expected === 'number' && actual === 'integer');
+    if (!matches) {
+      errs.push({ path: path || '/', message: `must be ${Array.isArray(expected) ? expected.join(' or ') : expected}` });
+      return; // don't recurse into wrong-typed values
+    }
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    errs.push({ path: path || '/', message: `must be one of ${JSON.stringify(schema.enum)}` });
+  }
+  if (typeof value === 'number') {
+    if (typeof schema.minimum === 'number' && value < schema.minimum) {
+      errs.push({ path: path || '/', message: `must be >= ${schema.minimum}` });
+    }
+    if (typeof schema.maximum === 'number' && value > schema.maximum) {
+      errs.push({ path: path || '/', message: `must be <= ${schema.maximum}` });
+    }
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === 'number' && value.length < schema.minItems) {
+      errs.push({ path: path || '/', message: `must have >= ${schema.minItems} items` });
+    }
+    if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) {
+      errs.push({ path: path || '/', message: `must have <= ${schema.maxItems} items` });
+    }
+    if (schema.items) {
+      for (let i = 0; i < value.length; i++) {
+        validateSchema(schema.items, value[i], `${path}/${i}`, errs);
+      }
+    }
+  }
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const req of schema.required ?? []) {
+      if (!(req in obj)) errs.push({ path: `${path}/${req}`, message: `must have required property '${req}'` });
+    }
+    const props = schema.properties ?? {};
+    for (const key of Object.keys(obj)) {
+      if (key in props) {
+        validateSchema(props[key], obj[key], `${path}/${key}`, errs);
+      } else if (schema.additionalProperties === false) {
+        errs.push({ path: `${path}/${key}`, message: `additional property '${key}' is not allowed` });
+      }
+    }
+  }
+}
+
+function validateArgs(schema: Record<string, any>, args: unknown): FieldError[] {
+  const errs: FieldError[] = [];
+  validateSchema(schema, args, '', errs);
+  return errs;
 }
 
 // ---------------------------------------------------------------------------
@@ -460,10 +528,8 @@ export async function dispatchToolCall(
   }
 
   // ── 5. inputSchema validation ───────────────────────────────────────────
-  const validate = getValidator(entry.tool.inputSchema);
-  const valid = validate(args);
-  if (!valid) {
-    const fieldErrors = formatFieldErrors(validate.errors);
+  const fieldErrors = validateArgs(entry.tool.inputSchema as Record<string, any>, args);
+  if (fieldErrors.length > 0) {
     const res = errorResponse('INVALID_ARGS', `Arguments do not match the schema for "${toolName}"`, { fieldErrors });
     logToolCall({
       sessionId, playerId, toolName, declarer: entry.declarer,
