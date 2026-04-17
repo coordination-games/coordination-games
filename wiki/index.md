@@ -19,6 +19,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 - [npm Workspace Bugs](development/npm-workspace-bugs.md) — devDependencies not installed, @types ghost installs
 - [Adding a Game](development/adding-a-game.md) — checklist, what you get for free, lobby config patterns
 - [Bot System](development/bot-system.md) — Haiku bots via Agent SDK, auth bypass, generic harness
+- [Comedy Sweep](development/comedy-sweep.md) — thin Comedy-first persona/model sweep lane
 - [Hex Grid Rendering](development/hex-grid-rendering.md) — flat-top coords, Wesnoth assets, forest layering, map scaling
 
 ## Specs (Designed, Not Yet Built)
