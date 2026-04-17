@@ -289,29 +289,33 @@ export class LobbyDO extends DurableObject<Env> {
       return Response.json({ error: 'No current phase' }, { status: 500 });
     }
 
-    let result: PhaseActionResult;
     try {
-      result = phase.handleAction(
-        this._phaseState,
-        { type, playerId, payload },
-        this.agentInfos(),
-      );
+      let result: PhaseActionResult;
+      try {
+        result = phase.handleAction(
+          this._phaseState,
+          { type, playerId, payload },
+          this.agentInfos(),
+        );
+      } catch (err: any) {
+        return Response.json({ error: `Phase action error: ${err.message}` }, { status: 500 });
+      }
+
+      if (result.error) {
+        return Response.json(
+          { error: result.error.message },
+          { status: result.error.status ?? 400 },
+        );
+      }
+
+      await this.processActionResult(result);
+      await this.saveState();
+      this.broadcastUpdate();
+
+      return Response.json({ ok: true, ...this.buildState(playerId) });
     } catch (err: any) {
-      return Response.json({ error: `Phase action error: ${err.message}` }, { status: 500 });
+      return Response.json({ error: `Action handler error: ${err.message}` }, { status: 500 });
     }
-
-    if (result.error) {
-      return Response.json(
-        { error: result.error.message },
-        { status: result.error.status ?? 400 },
-      );
-    }
-
-    await this.processActionResult(result);
-    await this.saveState();
-    this.broadcastUpdate();
-
-    return Response.json({ ok: true, ...this.buildState(playerId) });
   }
 
   private async handleTool(request: Request): Promise<Response> {
