@@ -1,0 +1,26 @@
+{
+  "parallel": 1,
+  "cases": [
+    {
+      "name": "baseline-haiku",
+      "model": "haiku",
+      "botCount": 4,
+      "repeats": 1,
+      "promptAppend": "Play a balanced Comedy of the Commons game. Trade when it improves your medium-term position, but avoid obvious self-sabotage."
+    },
+    {
+      "name": "commons-steward",
+      "model": "haiku",
+      "botCount": 4,
+      "repeats": 1,
+      "promptAppend": "Prioritize long-term commons stewardship, reciprocal trade, and preserving productive ecosystems even if it lowers short-term extraction gains."
+    },
+    {
+      "name": "hard-bargainer",
+      "model": "haiku",
+      "botCount": 4,
+      "repeats": 1,
+      "promptAppend": "Prioritize leverage, opportunistic trades, and territorial growth. Cooperate only when it clearly improves your expected payout."
+    }
+  ]
+}

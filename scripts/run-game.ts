@@ -49,6 +49,11 @@ const BOT_COUNT = parseInt(
   process.env.BOT_COUNT ?? (GAME_TYPE === 'oathbreaker' ? '4' : String(TEAM_SIZE * 2))
 );
 const MODEL = process.env.MODEL ?? 'haiku';
+const LOBBY_SIZE = parseInt(
+  process.env.LOBBY_SIZE ?? (GAME_TYPE === 'oathbreaker' || GAME_TYPE === 'comedy-of-the-commons' ? String(BOT_COUNT) : String(TEAM_SIZE))
+);
+const RUN_LABEL = process.env.RUN_LABEL ?? `${GAME_TYPE}-${Date.now()}`;
+const PROMPT_APPEND = (process.env.PROMPT_APPEND ?? '').trim();
 
 // ---------------------------------------------------------------------------
 // REST helper
@@ -136,9 +141,17 @@ Play the game to completion using the "game" MCP server tools.
 5. Keep calling wait_for_update and submitting moves until gameOver: true
 6. Do NOT stop early or summarize — keep playing every round
 
-IMPORTANT: You have a chat tool — USE IT EVERY TURN. Tell your teammate what you see, where enemies are, and what you plan to do. Coordinate! Solo play loses.`;
+Run label: ${RUN_LABEL}
 
-  const resumePrompt = `The game is still in progress. Continue playing — call wait_for_update, chat with your teammate about what you see, then submit_move. Repeat until gameOver: true. Do NOT summarize or stop early. USE THE CHAT TOOL every turn to coordinate.`;
+IMPORTANT: You have a chat tool — USE IT EVERY TURN. Tell your teammate what you see, where enemies are, and what you plan to do. Coordinate! Solo play loses.${PROMPT_APPEND ? `
+
+Additional persona guidance:
+${PROMPT_APPEND}` : ''}`;
+
+  const resumePrompt = `The game is still in progress. Continue playing — call wait_for_update, chat with your teammate about what you see, then submit_move. Repeat until gameOver: true. Do NOT summarize or stop early. USE THE CHAT TOOL every turn to coordinate.${PROMPT_APPEND ? `
+
+Additional persona guidance:
+${PROMPT_APPEND}` : ''}`;
 
   /** Run one claude --print invocation; resolves with stdout text. */
   function runOnce(prompt: string, isResume: boolean): Promise<string> {
@@ -299,7 +312,9 @@ async function completeLobbyPhases(
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log(`\nrun-game.ts — ${BOT_COUNT} bots playing ${GAME_TYPE} on ${SERVER}\n`);
+  console.log(`\nrun-game.ts — ${BOT_COUNT} bots playing ${GAME_TYPE} on ${SERVER}`);
+  console.log(`run-label: ${RUN_LABEL}`);
+  console.log(`model: ${MODEL}\n`);
 
   // 1. Create wallets and authenticate
   console.log('Creating wallets and authenticating...');
@@ -320,9 +335,7 @@ async function main() {
 
   // 2. Create the lobby
   console.log(`\nCreating ${GAME_TYPE} lobby...`);
-  const lobbyBody = GAME_TYPE === 'oathbreaker'
-    ? { gameType: GAME_TYPE, teamSize: BOT_COUNT }
-    : { gameType: GAME_TYPE, teamSize: TEAM_SIZE };
+  const lobbyBody = { gameType: GAME_TYPE, teamSize: LOBBY_SIZE };
 
   const lobby = await api('/api/lobbies/create', { method: 'POST', body: lobbyBody, token: bots[0].token });
   const lobbyId = lobby.lobbyId;
