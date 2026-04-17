@@ -367,32 +367,35 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    // If no snapshots stored (pre-feature game), return what we can
-    if (this._spectatorSnapshots.length === 0) {
-      // Build a single snapshot from current state as fallback
-      const ctx = { handles: this._meta.handleMap, relayMessages: this._relay };
-      const current = this._plugin.buildSpectatorView(this._state, this._prevProgressState, ctx);
+    const idx = this.publicSnapshotIndex();
+    if (idx === null) {
+      // Pre-window: delay hasn't elapsed yet. Nothing public to show.
       return Response.json({
+        type: 'spectator_pending',
         gameType: this._meta.gameType,
         gameId: this._meta.gameId,
         handles: this._meta.handleMap,
         teamMap: this._meta.teamMap,
-        finished: this._meta.finished,
-        progressCounter: this._progress.counter,
-        snapshots: [current],
-        relay: this._relay,
+        finished: false,
+        progressCounter: null,
+        snapshots: [],
       });
     }
 
+    // Snapshots truncated to [0, publicSnapshotIndex()]. The raw relay
+    // array is NOT returned — it's a write-through log that includes DMs,
+    // team chat timestamps, and per-turn cadence that no unauthenticated
+    // replay consumer should see. Any chat a spectator is entitled to
+    // read is already embedded in the snapshots themselves.
     return Response.json({
+      type: 'replay',
       gameType: this._meta.gameType,
       gameId: this._meta.gameId,
       handles: this._meta.handleMap,
       teamMap: this._meta.teamMap,
       finished: this._meta.finished,
-      progressCounter: this._progress.counter,
-      snapshots: this._spectatorSnapshots,
-      relay: this._relay,
+      progressCounter: idx,
+      snapshots: this._spectatorSnapshots.slice(0, idx + 1),
     });
   }
 
