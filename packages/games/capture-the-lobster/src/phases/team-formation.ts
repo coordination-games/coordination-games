@@ -125,6 +125,20 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     action: { type: string; playerId: string; payload?: any },
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
+    // Defensive: ensure state is well-formed
+    if (!state || typeof state !== 'object') {
+      return { state: { teams: [], unassigned: players.map(p => p.id), teamCounter: 0 }, error: { message: 'Invalid phase state', status: 500 } };
+    }
+    if (!Array.isArray(state.teams)) {
+      state.teams = [];
+    }
+    if (!Array.isArray(state.unassigned)) {
+      state.unassigned = players.map(p => p.id).filter(id => !state.teams.some(t => t.members.includes(id)));
+    }
+    if (typeof state.teamCounter !== 'number') {
+      state.teamCounter = 0;
+    }
+
     switch (action.type) {
       case 'propose_team':
         return this.handlePropose(state, action.playerId, action.payload, players);
@@ -281,62 +295,66 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     payload: any,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const targetHandle = payload?.targetHandle;
-    if (!targetHandle) {
-      return { state, error: { message: 'targetHandle is required', status: 400 } };
-    }
-
-    // Resolve target by handle
-    const target = players.find(p => p.handle === targetHandle);
-    if (!target) {
-      return { state, error: { message: `Player "${targetHandle}" not found in lobby`, status: 404 } };
-    }
-    const targetId = target.id;
-
-    // Can't propose to yourself
-    if (targetId === playerId) {
-      return { state, error: { message: 'Cannot propose a team with yourself', status: 400 } };
-    }
-
-    const fromTeam = state.teams.find(t => t.members.includes(playerId));
-    const toTeam = state.teams.find(t => t.members.includes(targetId));
-
-    // Both on teams already
-    if (fromTeam && toTeam) {
-      if (fromTeam.id === toTeam.id) {
-        return { state, error: { message: 'Already on the same team', status: 409 } };
+    try {
+      const targetHandle = payload?.targetHandle;
+      if (!targetHandle) {
+        return { state, error: { message: 'targetHandle is required', status: 400 } };
       }
-      return { state, error: { message: 'Both players are already on teams. Use leave_team first.', status: 409 } };
-    }
 
-    let newState = { ...state, teams: state.teams.map(t => ({ ...t, members: [...t.members], invites: [...t.invites] })) };
-
-    if (toTeam && !fromTeam) {
-      // Target is on a team, proposer is solo — invite proposer to target's team
-      const team = newState.teams.find(t => t.id === toTeam.id)!;
-      if (team.members.length >= this.teamSize) {
-        return { state, error: { message: 'Team is full', status: 409 } };
+      // Resolve target by handle
+      const target = players.find(p => p.handle === targetHandle);
+      if (!target) {
+        return { state, error: { message: `Player "${targetHandle}" not found in lobby`, status: 404 } };
       }
-      if (!team.invites.includes(playerId)) team.invites.push(playerId);
+      const targetId = target.id;
+
+      // Can't propose to yourself
+      if (targetId === playerId) {
+        return { state, error: { message: 'Cannot propose a team with yourself', status: 400 } };
+      }
+
+      const fromTeam = state.teams.find(t => t.members.includes(playerId));
+      const toTeam = state.teams.find(t => t.members.includes(targetId));
+
+      // Both on teams already
+      if (fromTeam && toTeam) {
+        if (fromTeam.id === toTeam.id) {
+          return { state, error: { message: 'Already on the same team', status: 409 } };
+        }
+        return { state, error: { message: 'Both players are already on teams. Use leave_team first.', status: 409 } };
+      }
+
+      let newState = { ...state, teams: (state.teams || []).map(t => ({ ...t, members: [...(t.members || [])], invites: [...(t.invites || [])] })), unassigned: [...(state.unassigned || [])] };
+
+      if (toTeam && !fromTeam) {
+        // Target is on a team, proposer is solo — invite proposer to target's team
+        const team = newState.teams.find(t => t.id === toTeam.id)!;
+        if (team && team.members.length >= this.teamSize) {
+          return { state, error: { message: 'Team is full', status: 409 } };
+        }
+        if (team && !team.invites.includes(playerId)) team.invites.push(playerId);
+        return this.maybeComplete(newState, players);
+      }
+
+      if (fromTeam && !toTeam) {
+        // Proposer is on a team, target is solo — invite target
+        const team = newState.teams.find(t => t.id === fromTeam.id)!;
+        if (team && team.members.length >= this.teamSize) {
+          return { state, error: { message: 'Team is full', status: 409 } };
+        }
+        if (team && !team.invites.includes(targetId)) team.invites.push(targetId);
+        return this.maybeComplete(newState, players);
+      }
+
+      // Neither on a team — create new team with proposer as member, target as invite
+      const teamId = `team_${++newState.teamCounter}`;
+      newState.teams.push({ id: teamId, members: [playerId], invites: [targetId] });
+      newState.unassigned = newState.unassigned.filter(id => id !== playerId);
+
       return this.maybeComplete(newState, players);
+    } catch (err: any) {
+      return { state, error: { message: `Internal error: ${err?.message || String(err)}`, status: 500 } };
     }
-
-    if (fromTeam && !toTeam) {
-      // Proposer is on a team, target is solo — invite target
-      const team = newState.teams.find(t => t.id === fromTeam.id)!;
-      if (team.members.length >= this.teamSize) {
-        return { state, error: { message: 'Team is full', status: 409 } };
-      }
-      if (!team.invites.includes(targetId)) team.invites.push(targetId);
-      return this.maybeComplete(newState, players);
-    }
-
-    // Neither on a team — create new team with proposer as member, target as invite
-    const teamId = `team_${++newState.teamCounter}`;
-    newState.teams.push({ id: teamId, members: [playerId], invites: [targetId] });
-    newState.unassigned = newState.unassigned.filter(id => id !== playerId);
-
-    return this.maybeComplete(newState, players);
   }
 
   private handleAccept(
@@ -345,41 +363,45 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     payload: any,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const teamId = payload?.teamId;
-    if (!teamId) {
-      return { state, error: { message: 'teamId is required', status: 400 } };
-    }
-
-    let newState = { ...state, teams: state.teams.map(t => ({ ...t, members: [...t.members], invites: [...t.invites] })) };
-
-    const team = newState.teams.find(t => t.id === teamId);
-    if (!team) {
-      return { state, error: { message: 'Team not found', status: 404 } };
-    }
-
-    if (!team.invites.includes(playerId)) {
-      return { state, error: { message: 'Not invited to this team', status: 403 } };
-    }
-
-    if (team.members.length >= this.teamSize) {
-      return { state, error: { message: 'Team is full', status: 409 } };
-    }
-
-    // Leave any existing team first
-    const currentTeam = newState.teams.find(t => t.members.includes(playerId));
-    if (currentTeam) {
-      currentTeam.members = currentTeam.members.filter(id => id !== playerId);
-      if (currentTeam.members.length === 0) {
-        newState.teams = newState.teams.filter(t => t.id !== currentTeam.id);
+    try {
+      const teamId = payload?.teamId;
+      if (!teamId) {
+        return { state, error: { message: 'teamId is required', status: 400 } };
       }
+
+      let newState = { ...state, teams: (state.teams || []).map(t => ({ ...t, members: [...(t.members || [])], invites: [...(t.invites || [])] })), unassigned: [...(state.unassigned || [])] };
+
+      const team = newState.teams.find(t => t.id === teamId);
+      if (!team) {
+        return { state, error: { message: 'Team not found', status: 404 } };
+      }
+
+      if (!team.invites.includes(playerId)) {
+        return { state, error: { message: 'Not invited to this team', status: 403 } };
+      }
+
+      if (team.members.length >= this.teamSize) {
+        return { state, error: { message: 'Team is full', status: 409 } };
+      }
+
+      // Leave any existing team first
+      const currentTeam = newState.teams.find(t => t.members.includes(playerId));
+      if (currentTeam) {
+        currentTeam.members = currentTeam.members.filter(id => id !== playerId);
+        if (currentTeam.members.length === 0) {
+          newState.teams = newState.teams.filter(t => t.id !== currentTeam.id);
+        }
+      }
+
+      // Accept the invite
+      team.invites = team.invites.filter(id => id !== playerId);
+      team.members.push(playerId);
+      newState.unassigned = newState.unassigned.filter(id => id !== playerId);
+
+      return this.maybeComplete(newState, players);
+    } catch (err: any) {
+      return { state, error: { message: `Internal error: ${err?.message || String(err)}`, status: 500 } };
     }
-
-    // Accept the invite
-    team.invites = team.invites.filter(id => id !== playerId);
-    team.members.push(playerId);
-    newState.unassigned = newState.unassigned.filter(id => id !== playerId);
-
-    return this.maybeComplete(newState, players);
   }
 
   private handleLeave(
