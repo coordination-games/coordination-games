@@ -1,16 +1,18 @@
 name: Tests
 
-**Runs the full workspace test suite on every PR + push to main.**
-**# The release-blocking drift invariants live in:**
-**packages/workers-server/src/__tests__/tool-drift.test.ts**
-**packages/engine/src/__tests__/tool-collision.test.ts**
-**packages/cli/src/__tests__/tool-collision.test.ts**
-**See docs/plans/unified-tool-surface.md — "Testing — drift invariants".**
-**These gates are the reason the unified-tool-surface refactor exists; if**
-**they stop running in CI, we risk silent schema/validator drift shipping.**
+# Runs the full workspace test suite on every PR + push to main.
+#
+# The release-blocking drift invariants live in:
+#   packages/workers-server/src/__tests__/tool-drift.test.ts
+#   packages/engine/src/__tests__/tool-collision.test.ts
+#   packages/cli/src/__tests__/tool-collision.test.ts
+# See docs/plans/unified-tool-surface.md — "Testing — drift invariants".
+# These gates are the reason the unified-tool-surface refactor exists; if
+# they stop running in CI, we risk silent schema/validator drift shipping.
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
 
