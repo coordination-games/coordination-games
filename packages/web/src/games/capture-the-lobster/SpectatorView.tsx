@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import HexGrid from '../../components/HexGrid';
+import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
 import type { SpectatorViewProps } from '../types';
 import { API_BASE, getWsUrl } from '../../config.js';
 import type {
@@ -199,9 +200,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const [liveState, setLiveState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
   const [connected, setConnected] = useState(false);
-  // True while the server reports { type: 'spectator_pending' } — the
-  // spectator-delay window hasn't elapsed yet and there is no public
-  // state to render. Drives the "waiting for first turns" overlay below.
+  // Server reported { type: 'spectator_pending' } — delay hasn't elapsed.
   const [pendingWindow, setPendingWindow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lobbyChat, setLobbyChat] = useState<LobbyChatMessage[]>([]);
@@ -349,19 +348,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
 
   if (!gameState) {
     if (pendingWindow && !isReplay) {
-      return (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center px-8 py-6">
-            <div className="text-5xl md:text-6xl mb-4">🦞</div>
-            <div className="text-xl md:text-2xl font-bold text-gray-200 mb-2">
-              Game in progress
-            </div>
-            <div className="text-sm md:text-base text-gray-400">
-              Spectator view is delayed — waiting for first turns to resolve...
-            </div>
-          </div>
-        </div>
-      );
+      return <SpectatorPendingPlaceholder title="Game in progress" />;
     }
     return (
       <div className="flex items-center justify-center h-full">

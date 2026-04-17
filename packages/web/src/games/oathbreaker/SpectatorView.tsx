@@ -106,9 +106,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     fetch(`${API_BASE}/games/${gameId}`)
       .then(r => r.json())
       .then(data => {
-        // OATHBREAKER runs with spectatorDelay=0, so spectator_pending
-        // should never appear here — but we guard symmetrically to stay
-        // robust to future plugin-config changes.
+        // Symmetric guard; spectator_pending never fires for delay=0.
         if (data?.type === 'spectator_pending') return;
         const mapped = mapServerState(data);
         if (mapped) setLiveState(mapped);

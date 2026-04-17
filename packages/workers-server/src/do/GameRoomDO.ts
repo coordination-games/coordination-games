@@ -56,10 +56,8 @@ interface GameMeta {
   createdAt: string;
   finished: boolean;
   /**
-   * Spectator delay (progress ticks) frozen at game creation. Deploys that
-   * change the plugin value never retroactively reveal in-flight data.
-   * Absent on games created before this field was introduced — ensureLoaded
-   * falls back to the live plugin value for one-time migration.
+   * Spectator delay (progress ticks) frozen at game creation so deploys
+   * never retroactively change visibility for in-flight games.
    */
   spectatorDelay: number;
 }
@@ -107,12 +105,9 @@ export class GameRoomDO extends DurableObject<Env> {
   private _deadlineMs: number | null = null;
   private _config: unknown = null;  // game config (for replay reconstruction)
   private _spectatorSnapshots: unknown[] = [];  // spectator view at each progress point
-  // Last publicSnapshotIndex() value we emitted to spectator WS sockets.
-  // Gates broadcastUpdates so spectators only see a new push when the
-  // public index has actually advanced — closes a tick-cadence side
-  // channel and reduces spectator bandwidth. Not persisted: on DO reload
-  // it resets to undefined and the first broadcast after reload fires.
-  private _lastSpectatorIdx: number | null | undefined = undefined;
+  // Last publicSnapshotIndex() value pushed to spectator WS sockets —
+  // broadcastUpdates skips the push when the index hasn't advanced.
+  private _lastSpectatorIdx: number | null = null;
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -275,10 +270,8 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    // Only the X-Player-Id header (set by the authenticated Worker after a
-    // successful Bearer validation) can authorise a player-level view.
-    // Query params on the request URL are attacker-controlled — ignore
-    // them entirely. This is the single trust boundary for /state.
+    // X-Player-Id (set by the Worker after Bearer validation) is the sole
+    // trust boundary for /state.
     const headerPlayerId = request.headers.get('X-Player-Id');
     const playerId = headerPlayerId && headerPlayerId.length > 0 ? headerPlayerId : null;
 
@@ -379,11 +372,9 @@ export class GameRoomDO extends DurableObject<Env> {
       });
     }
 
-    // Snapshots truncated to [0, publicSnapshotIndex()]. The raw relay
-    // array is NOT returned — it's a write-through log that includes DMs,
-    // team chat timestamps, and per-turn cadence that no unauthenticated
-    // replay consumer should see. Any chat a spectator is entitled to
-    // read is already embedded in the snapshots themselves.
+    // Raw _relay is NOT returned: it contains DMs, team chat, and per-turn
+    // cadence. Chat a spectator is entitled to read is already baked into
+    // the snapshots themselves.
     return Response.json({
       type: 'replay',
       gameType: this._meta.gameType,
@@ -686,26 +677,23 @@ export class GameRoomDO extends DurableObject<Env> {
   }
 
   /**
-   * Fire-and-forget upsert of game summary into D1 for the listing page.
-   *
-   * Gated by publicSnapshotIndex — a caller polling GET /api/games while
-   * a game is mid-turn must not see `winner`, `turn`, etc. for a turn the
-   * spectator view has not yet caught up to. See Bug E in
-   * docs/plans/spectator-delay-security-fix.md §2.
+   * Fire-and-forget D1 upsert of the public game summary. Gated by
+   * publicSnapshotIndex so /api/games never reveals a turn ahead of
+   * what the spectator view has caught up to.
    */
   private writeSummaryToD1(): void {
     if (!this._meta || !this._plugin) return;
 
     const idx = this.publicSnapshotIndex();
-    if (idx === null) return;  // pre-window — nothing public to publish yet
+    if (idx === null) return;
 
     const publicSnapshot = this._spectatorSnapshots[idx];
     let summary: Record<string, any> = {};
     if (typeof this._plugin.getSummaryFromSpectator === 'function') {
       summary = this._plugin.getSummaryFromSpectator(publicSnapshot);
     } else if (typeof this._plugin.getSummary === 'function') {
-      // Fallback for plugins whose spectator shape matches getSummary's
-      // expected state fields (same names, same types).
+      // Plugins that omit getSummaryFromSpectator must have a spectator
+      // shape that getSummary can read directly (same field names).
       summary = this._plugin.getSummary(publicSnapshot as any);
     }
     const json = JSON.stringify(summary);
@@ -779,11 +767,9 @@ export class GameRoomDO extends DurableObject<Env> {
   }
 
   /**
-   * Highest index in _spectatorSnapshots that may be revealed to a caller
-   * without player-level authorisation. Returns null when the delay window
-   * has not yet elapsed (nothing public yet). Single oracle for the live
-   * spectator WS push, HTTP /spectator, HTTP /replay, and /api/games
-   * summaries. See docs/plans/spectator-delay-security-fix.md §4.2.
+   * Highest snapshot index a caller without player-level authorisation
+   * may see. `null` pre-window. Sole gate for every public emission —
+   * spectator WS, /spectator, /replay, /api/games summary.
    */
   private publicSnapshotIndex(): number | null {
     if (!this._meta) return null;
@@ -818,10 +804,8 @@ export class GameRoomDO extends DurableObject<Env> {
     if (!this._meta || !this._plugin) return;
 
     try {
-      // Push delayed spectator view only when the public index has
-      // advanced since the last spectator broadcast. Closes a per-action
-      // timing side-channel (spectators could previously count push
-      // events to infer hidden action cadence) and cuts bandwidth.
+      // Push to spectators only on public-index advance — prevents
+      // counting push events to infer hidden action cadence.
       const idx = this.publicSnapshotIndex();
       if (idx !== this._lastSpectatorIdx) {
         const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
@@ -831,8 +815,6 @@ export class GameRoomDO extends DurableObject<Env> {
         this._lastSpectatorIdx = idx;
       }
 
-      // Push fog-filtered view to each player's connection(s) — players
-      // always see latest, no cadence gating.
       for (const pid of this._meta.playerIds) {
         const playerConns = this.ctx.getWebSockets(pid);
         if (playerConns.length === 0) continue;
@@ -866,8 +848,7 @@ export class GameRoomDO extends DurableObject<Env> {
         this.ctx.storage.get<number>('snapshotCount'),
       ]);
 
-      // One-time cleanup: older games persisted prevProgressState; the
-      // field is unused by any post-fix code path. Fire-and-forget.
+      // Drop the legacy prevProgressState key from older games.
       this.ctx.storage.delete('prevProgressState').catch(() => {});
 
       if (!meta) { this._loaded = true; return; }
@@ -888,8 +869,7 @@ export class GameRoomDO extends DurableObject<Env> {
         loadedSnapshots = snapshotKeys.map(k => snapshotMap.get(k)).filter(Boolean) as unknown[];
       }
 
-      // Back-fill spectatorDelay for games created before the field was
-      // persisted. Fresh games always set this at create time.
+      // Back-fill for games created before this field was persisted.
       if (typeof meta.spectatorDelay !== 'number') {
         meta.spectatorDelay = plugin.spectatorDelay ?? 0;
       }

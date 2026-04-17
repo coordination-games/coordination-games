@@ -1,16 +1,10 @@
 /**
- * Single oracle for "what can a caller without player-level authorisation
- * see of this game right now?". Every public emission boundary in
- * GameRoomDO (live spectator WS + /spectator + /replay + /api/games
- * summary) routes through this helper.
+ * Highest `_spectatorSnapshots` index a caller without player-level
+ * authorisation may see. Sole gate for every public emission.
  *
- * Returns the highest index in `_spectatorSnapshots` that may be revealed:
- *   - `null` when the delay window has not yet elapsed (nothing public).
- *   - `snapshotCount - 1` when the game is finished (full reveal).
- *   - otherwise `snapshotCount - 1 - delay`.
- *
- * Pure function — no DO state. Exported so unit tests can cover all the
- * edge cases in one place.
+ *   null                     — pre-window; nothing public yet.
+ *   snapshotCount - 1        — game finished (full reveal).
+ *   snapshotCount - 1 - delay — active game, delay applied.
  */
 export function computePublicSnapshotIndex(
   snapshotCount: number,

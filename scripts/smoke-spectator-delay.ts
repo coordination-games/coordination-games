@@ -17,6 +17,7 @@
  */
 
 import { ethers } from 'ethers';
+import { api as libApi, authenticate as libAuth } from './lib/bot-agent.js';
 
 const SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 const TEAM_SIZE = 2;
@@ -30,19 +31,22 @@ type Bot = {
 };
 
 // ---------------------------------------------------------------------------
-// HTTP + auth helpers (mirrors test-ctl-moves.ts)
+// Thin wrappers over scripts/lib/bot-agent.ts — apiOk reuses the throwing
+// helper; apiRaw captures non-2xx for the T5 403 assertions.
 // ---------------------------------------------------------------------------
 
-async function api(
+const apiOk = (path: string, opts: { method?: string; body?: unknown; token?: string } = {}) =>
+  libApi(SERVER, path, opts);
+
+async function apiRaw(
   path: string,
-  opts: { method?: string; body?: unknown; token?: string; headers?: Record<string, string> } = {},
-): Promise<any> {
+  opts: { method?: string; body?: unknown; token?: string } = {},
+): Promise<{ status: number; body: any }> {
   const res = await fetch(`${SERVER}${path}`, {
     method: opts.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
       ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-      ...(opts.headers ?? {}),
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
@@ -52,23 +56,8 @@ async function api(
   return { status: res.status, body: json };
 }
 
-async function apiOk(path: string, opts: Parameters<typeof api>[1] = {}): Promise<any> {
-  const { status, body } = await api(path, opts);
-  if (status < 200 || status >= 300) {
-    throw new Error(`${opts.method ?? 'GET'} ${path} → ${status}: ${JSON.stringify(body)}`);
-  }
-  return body;
-}
-
-async function authenticate(wallet: ethers.Wallet, name: string): Promise<{ token: string; playerId: string }> {
-  const challenge = await apiOk('/api/player/auth/challenge', { method: 'POST' });
-  const signature = await wallet.signMessage(challenge.message);
-  const result = await apiOk('/api/player/auth/verify', {
-    method: 'POST',
-    body: { nonce: challenge.nonce, signature, address: wallet.address, name },
-  });
-  return { token: result.token, playerId: result.agentId };
-}
+const authenticate = (wallet: ethers.Wallet, name: string) =>
+  libAuth(SERVER, wallet.privateKey, name).then(({ token, playerId }) => ({ token, playerId }));
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -92,23 +81,20 @@ function check(label: string, ok: boolean, detail?: string): void {
 
 async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: string }> {
   console.log(`\n== Setup: ${BOT_COUNT} bots, CtL lobby, ${SERVER}`);
-  const bots: Bot[] = [];
-  for (let i = 0; i < BOT_COUNT; i++) {
-    const wallet = ethers.Wallet.createRandom();
+  const wallets = Array.from({ length: BOT_COUNT }, () => ethers.Wallet.createRandom());
+  const bots: Bot[] = await Promise.all(wallets.map(async (wallet, i) => {
     const name = `smoke${i + 1}-${wallet.address.slice(2, 8)}`;
     const { token, playerId } = await authenticate(wallet, name);
-    bots.push({ wallet, name, token, playerId });
-  }
+    return { wallet, name, token, playerId };
+  }));
 
   const lobby = await apiOk('/api/lobbies/create', {
     method: 'POST', token: bots[0].token,
     body: { gameType: 'capture-the-lobster', teamSize: TEAM_SIZE, noTimeout: true },
   });
-  for (const bot of bots) {
-    await apiOk('/api/player/lobby/join', {
-      method: 'POST', token: bot.token, body: { lobbyId: lobby.lobbyId },
-    });
-  }
+  await Promise.all(bots.map(bot => apiOk('/api/player/lobby/join', {
+    method: 'POST', token: bot.token, body: { lobbyId: lobby.lobbyId },
+  })));
 
   // Team formation
   const teams = [bots.slice(0, TEAM_SIZE), bots.slice(TEAM_SIZE)];
@@ -137,12 +123,10 @@ async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: stri
 
   // Choose classes
   const CLASSES = ['rogue', 'knight'];
-  for (let i = 0; i < bots.length; i++) {
-    await apiOk('/api/player/tool', {
-      method: 'POST', token: bots[i].token,
-      body: { toolName: 'choose_class', args: { unitClass: CLASSES[i % TEAM_SIZE] } },
-    });
-  }
+  await Promise.all(bots.map((bot, i) => apiOk('/api/player/tool', {
+    method: 'POST', token: bot.token,
+    body: { toolName: 'choose_class', args: { unitClass: CLASSES[i % TEAM_SIZE] } },
+  })));
 
   // Wait for game start; resolve the gameId
   let gameId: string | null = null;
@@ -163,7 +147,7 @@ async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: stri
 
 async function advanceTurn(bots: Bot[]): Promise<void> {
   for (const bot of bots) {
-    await api('/api/player/tool', {
+    await apiRaw('/api/player/tool', {
       method: 'POST', token: bot.token,
       body: { toolName: 'move', args: { path: [] } },
     });
@@ -178,7 +162,7 @@ async function currentTurn(bot: Bot): Promise<number> {
 }
 
 async function sendTeamChat(bot: Bot, message: string): Promise<void> {
-  await api('/api/player/tool', {
+  await apiRaw('/api/player/tool', {
     method: 'POST', token: bot.token,
     body: { toolName: 'team_chat', args: { message } },
   });
@@ -254,7 +238,7 @@ async function runScenarios(): Promise<void> {
   console.log('\n== T5: /state?playerId=<X> never returns X private state to Y');
   const victim = teamA[0];
   const attacker = teamB[0];
-  const r5 = await api(
+  const r5 = await apiRaw(
     `/api/games/${gameId}/state?playerId=${encodeURIComponent(victim.playerId)}`,
     { token: attacker.token },
   );
@@ -273,7 +257,7 @@ async function runScenarios(): Promise<void> {
   // Attempt with a completely unrelated wallet (not in game)
   const outsiderWallet = ethers.Wallet.createRandom();
   const outsider = await authenticate(outsiderWallet, `outsider-${outsiderWallet.address.slice(2, 8)}`);
-  const r5b = await api(
+  const r5b = await apiRaw(
     `/api/games/${gameId}/state?playerId=${encodeURIComponent(victim.playerId)}`,
     { token: outsider.token },
   );

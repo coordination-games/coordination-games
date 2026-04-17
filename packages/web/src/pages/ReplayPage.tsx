@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { fetchReplay } from '../api';
 import type { ReplayData } from '../api';
 import { getSpectatorPlugin } from '../games/registry';
+import { SpectatorPendingPlaceholder } from '../components/SpectatorPendingPlaceholder';
 
 // ---------------------------------------------------------------------------
 // ReplayPage — generic replay shell for any game type
@@ -127,21 +128,11 @@ export default function ReplayPage() {
     );
   }
 
-  // Pre-window: the game's spectator-delay hasn't elapsed yet. No
-  // snapshots exist to render — show the same placeholder the live
-  // spectator view uses.
+  // Pre-window: no public snapshots yet.
   if (replay?.type === 'spectator_pending') {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
-        <div className="text-center px-8 py-6">
-          <div className="text-5xl md:text-6xl mb-4">🦞</div>
-          <div className="text-xl md:text-2xl font-bold text-gray-200 mb-2">
-            Replay not yet available
-          </div>
-          <div className="text-sm md:text-base text-gray-400">
-            Spectator view is delayed — waiting for first turns to resolve...
-          </div>
-        </div>
+        <SpectatorPendingPlaceholder title="Replay not yet available" />
       </div>
     );
   }
