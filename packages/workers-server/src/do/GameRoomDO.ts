@@ -108,6 +108,12 @@ export class GameRoomDO extends DurableObject<Env> {
   private _deadlineMs: number | null = null;
   private _config: unknown = null;  // game config (for replay reconstruction)
   private _spectatorSnapshots: unknown[] = [];  // spectator view at each progress point
+  // Last publicSnapshotIndex() value we emitted to spectator WS sockets.
+  // Gates broadcastUpdates so spectators only see a new push when the
+  // public index has actually advanced — closes a tick-cadence side
+  // channel and reduces spectator bandwidth. Not persisted: on DO reload
+  // it resets to undefined and the first broadcast after reload fires.
+  private _lastSpectatorIdx: number | null | undefined = undefined;
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -797,13 +803,21 @@ export class GameRoomDO extends DurableObject<Env> {
     if (!this._meta || !this._plugin) return;
 
     try {
-      // Push delayed spectator view to all spectator connections
-      const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
-      for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
-        try { ws.send(spectatorMsg); } catch {}
+      // Push delayed spectator view only when the public index has
+      // advanced since the last spectator broadcast. Closes a per-action
+      // timing side-channel (spectators could previously count push
+      // events to infer hidden action cadence) and cuts bandwidth.
+      const idx = this.publicSnapshotIndex();
+      if (idx !== this._lastSpectatorIdx) {
+        const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
+        for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
+          try { ws.send(spectatorMsg); } catch {}
+        }
+        this._lastSpectatorIdx = idx;
       }
 
-      // Push fog-filtered view to each player's connection(s)
+      // Push fog-filtered view to each player's connection(s) — players
+      // always see latest, no cadence gating.
       for (const pid of this._meta.playerIds) {
         const playerConns = this.ctx.getWebSockets(pid);
         if (playerConns.length === 0) continue;
