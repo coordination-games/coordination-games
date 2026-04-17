@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import HexGrid from '../../components/HexGrid';
 import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
+import { ScrubberSlider } from '../../components/ScrubberSlider';
 import type { SpectatorViewProps } from '../types';
 import { API_BASE, getWsUrl } from '../../config.js';
 import type {
@@ -9,6 +10,17 @@ import type {
   ChatMessage,
 } from '../../types';
 import { useHexAnimations } from './useHexAnimations';
+
+// Raw spectator-visible snapshot shape. Canonical source is
+// buildCtlSpectatorView in packages/games/capture-the-lobster/src/plugin.ts.
+// Kept as an open record to accept both /replay entries and WS envelopes
+// (which spread the snapshot plus type/gameType/handles/progressCounter).
+type RawSnapshot = Record<string, any>;
+
+type RewindState =
+  | { mode: 'live' }
+  | { mode: 'loading' }
+  | { mode: 'active'; index: number; snapshots: RawSnapshot[] };
 
 // ---------------------------------------------------------------------------
 // Map server state -> frontend types (CtL-specific)
@@ -209,6 +221,13 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const [showLobbyChat, setShowLobbyChat] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
+  // Live scrubber state — see docs/plans/live-scrubber.md
+  const [rewind, setRewind] = useState<RewindState>({ mode: 'live' });
+  const snapshotCacheRef = useRef<Map<number, RawSnapshot>>(new Map());
+  const [latestProgress, setLatestProgress] = useState<number | null>(null);
+  const rewindRef = useRef<RewindState>(rewind);
+  useEffect(() => { rewindRef.current = rewind; }, [rewind]);
+
   // Sync perspective from props
   useEffect(() => {
     if (props.perspective) {
@@ -279,13 +298,23 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         const raw = JSON.parse(event.data);
         if (raw?.type === 'spectator_pending') {
           setPendingWindow(true);
-          setLiveState(null);
+          // Preserve liveState during an open rewind session — otherwise
+          // the !gameState gate below would tear down the rewind UI even
+          // though the cached snapshots are still valid.
+          if (rewindRef.current.mode === 'live') setLiveState(null);
           return;
         }
         setPendingWindow(false);
         const mapped = mapServerState(raw);
         if (mapped) {
           setLiveState(mapped);
+          // Accumulate raw snapshot by public index for the scrubber.
+          if (typeof raw.progressCounter === 'number') {
+            snapshotCacheRef.current.set(raw.progressCounter, raw);
+            setLatestProgress((prev) =>
+              prev === null || raw.progressCounter > prev ? raw.progressCounter : prev,
+            );
+          }
           if (mapped.kills.length > 0) {
             setAllKills((prev) => {
               const existing = new Set(prev.map(k => `${k.turn}:${k.victimId}`));
@@ -309,18 +338,115 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   }, [gameId, isReplay]);
 
   // ---------------------------------------------------------------------------
-  // Unified state: replay or live
+  // Live scrubber — enterRewind, backToLive, cache alignment, auto-exit
+  // See docs/plans/live-scrubber.md
   // ---------------------------------------------------------------------------
 
-  const gameState = isReplay ? replayState : liveState;
-  const prevGameState = isReplay ? prevReplayState : null;
-  const displayKills = isReplay ? (replayState?.kills ?? []) : allKills;
+  const enterRewind = useCallback(async () => {
+    if (latestProgress === null) return;
+    setRewind({ mode: 'loading' });
 
-  // Animation — only active in replay mode with animate=true
+    let haveAll = true;
+    for (let i = 0; i <= latestProgress; i++) {
+      if (!snapshotCacheRef.current.has(i)) { haveAll = false; break; }
+    }
+
+    if (!haveAll) {
+      try {
+        const res = await fetch(`${API_BASE}/games/${gameId}/replay`, { cache: 'no-store' });
+        const data = await res.json();
+        if (rewindRef.current.mode !== 'loading') return;  // user bailed or game ended
+        if (data?.type === 'replay' && Array.isArray(data.snapshots)) {
+          data.snapshots.forEach((s: RawSnapshot, i: number) => {
+            if (!snapshotCacheRef.current.has(i)) {
+              snapshotCacheRef.current.set(i, s);
+            }
+          });
+        } else {
+          setRewind({ mode: 'live' });
+          return;
+        }
+      } catch {
+        if (rewindRef.current.mode === 'loading') setRewind({ mode: 'live' });
+        return;
+      }
+    }
+
+    // latestProgress may have advanced during the await — read fresh.
+    const frozenLatest = latestProgress;
+    const snapshots: RawSnapshot[] = [];
+    for (let i = 0; i <= frozenLatest; i++) {
+      const snap = snapshotCacheRef.current.get(i);
+      if (!snap) {
+        console.warn('[live-scrubber] cache gap at index', i);
+        setRewind({ mode: 'live' });
+        return;
+      }
+      snapshots.push(snap);
+    }
+    setRewind({ mode: 'active', index: frozenLatest, snapshots });
+  }, [gameId, latestProgress]);
+
+  const backToLive = useCallback(() => {
+    setRewind({ mode: 'live' });
+  }, []);
+
+  // §6.5 Keep rewind.snapshots aligned with cache growth.
+  useEffect(() => {
+    if (rewind.mode !== 'active') return;
+    if (latestProgress === null) return;
+    if (rewind.snapshots.length - 1 >= latestProgress) return;
+
+    setRewind((r) => {
+      if (r.mode !== 'active') return r;
+      const snapshots: RawSnapshot[] = [];
+      for (let i = 0; i <= latestProgress; i++) {
+        const snap = snapshotCacheRef.current.get(i);
+        if (!snap) {
+          console.warn('[live-scrubber] cache gap at index', i);
+          return r;
+        }
+        snapshots.push(snap);
+      }
+      const index = Math.min(r.index, snapshots.length - 1);
+      return { mode: 'active', index, snapshots };
+    });
+  }, [latestProgress, rewind.mode, rewind.mode === 'active' ? rewind.snapshots.length : 0]);
+
+  // §6.9 Auto-exit rewind when the game ends — /replay is the right surface
+  // for a finished game.
+  useEffect(() => {
+    if (liveState?.phase === 'finished' && rewindRef.current.mode !== 'live') {
+      setRewind({ mode: 'live' });
+    }
+  }, [liveState?.phase]);
+
+  // ---------------------------------------------------------------------------
+  // Unified state: replay, rewind, or live
+  // ---------------------------------------------------------------------------
+
+  const displayRaw = rewind.mode === 'active' ? rewind.snapshots[rewind.index] : null;
+  const rewindDisplayState = useMemo(
+    () => displayRaw ? mapServerState(displayRaw) : null,
+    [displayRaw],
+  );
+
+  const gameState = isReplay
+    ? replayState
+    : rewindDisplayState ?? liveState;
+  const prevGameState = isReplay ? prevReplayState : null;
+  const displayKills = isReplay
+    ? (replayState?.kills ?? [])
+    : rewind.mode === 'active'
+      ? (rewindDisplayState?.kills ?? [])
+      : allKills;
+  const effectiveAnimate = rewind.mode === 'active' ? false : (animate ?? false);
+
+  // Animation — disabled in rewind (instant snap per scrub)
   const animState = useHexAnimations(
     prevGameState?.tiles ?? null,
     gameState?.tiles ?? [],
-    animate ?? false,
+    effectiveAnimate,
     displayKills,
     gameState?.deathPositions,
   );
@@ -409,10 +535,15 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           {!isReplay && !connected && (
             <span className="text-xs text-yellow-500">disconnected</span>
           )}
-          {gameState.phase === 'finished' && (
+          {/* FINISHED reads from liveState (not gameState) so scrubbing
+              through past turns during rewind doesn't flash a misleading
+              FINISHED badge when the game is still active. In replay
+              mode fall back to replayState since there is no liveState. */}
+          {(isReplay ? gameState.phase === 'finished' : liveState?.phase === 'finished') && (
             <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-800 text-emerald-200">
               FINISHED
-              {gameState.winner && ` — Team ${gameState.winner} wins`}
+              {(isReplay ? gameState.winner : liveState?.winner) &&
+                ` — Team ${isReplay ? gameState.winner : liveState?.winner} wins`}
             </span>
           )}
         </div>
@@ -442,38 +573,100 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               {btn.label}
             </button>
           ))}
+          {/* Rewind toggle — shown only for live mode when there's
+              something worth rewinding through and the game is ongoing. */}
+          {!isReplay
+            && rewind.mode !== 'active'
+            && latestProgress !== null
+            && latestProgress >= 1
+            && liveState?.phase !== 'finished' && (
+            <button
+              onClick={enterRewind}
+              disabled={rewind.mode === 'loading'}
+              className="ml-1 px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 disabled:opacity-50 disabled:cursor-wait"
+              title="Rewind to past turns (live view keeps updating in background)"
+            >
+              {rewind.mode === 'loading' ? '…' : '↻ Rewind'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Live scrubber row — visible only while rewind is active. */}
+      {!isReplay && rewind.mode === 'active' && (
+        <div className="flex items-center gap-3 bg-gray-900 rounded-lg px-3 py-2 shrink-0">
+          <span className="text-xs font-semibold text-amber-400 shrink-0">
+            Rewind · Turn {gameState?.turn ?? 0}
+          </span>
+          <ScrubberSlider
+            currentTurn={rewind.index}
+            totalTurns={rewind.snapshots.length}
+            onSeek={(i) =>
+              setRewind((r) =>
+                r.mode === 'active' ? { ...r, index: i } : r,
+              )
+            }
+            onPrev={() =>
+              setRewind((r) =>
+                r.mode === 'active'
+                  ? { ...r, index: Math.max(0, r.index - 1) }
+                  : r,
+              )
+            }
+            onNext={() =>
+              setRewind((r) =>
+                r.mode === 'active'
+                  ? { ...r, index: Math.min(r.snapshots.length - 1, r.index + 1) }
+                  : r,
+              )
+            }
+          />
+          <button
+            onClick={backToLive}
+            className="px-3 py-1 text-xs rounded font-semibold bg-emerald-800 text-emerald-200 hover:bg-emerald-700 transition-colors cursor-pointer shrink-0"
+            title="Return to live view"
+          >
+            ↻ Back to live
+          </button>
+        </div>
+      )}
 
       {/* Main content area */}
       <div className="flex flex-col md:flex-row gap-2 flex-1 min-h-0 md:overflow-hidden">
         {/* Hex grid */}
         <div className="flex-1 bg-gray-900/50 rounded-lg p-1 flex items-center justify-center min-w-0 aspect-square md:aspect-auto md:min-h-0 overflow-hidden relative">
-          {gameState.phase === 'finished' && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-lg">
-              <div className="text-center px-8 py-6">
-                {gameState.winner ? (
-                  <>
-                    <div className="text-5xl md:text-7xl font-black mb-3" style={{ color: gameState.winner === 'A' ? '#60a5fa' : '#f87171' }}>
-                      {gameState.winner === 'A' ? '' : ''} TEAM {gameState.winner} WINS!
-                    </div>
-                    <div className="text-xl md:text-2xl text-gray-300 font-medium">
-                      captured the lobster
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">
-                      DRAW
-                    </div>
-                    <div className="text-xl md:text-2xl text-gray-500 font-medium">
-                      Turn limit reached — no capture
-                    </div>
-                  </>
-                )}
+          {/* Full-screen overlay reads from liveState for the same reason
+              as the FINISHED badge above — rewind scrubbing must never
+              surface a spurious win screen. */}
+          {(() => {
+            const finishSrc = isReplay ? gameState : liveState;
+            if (!finishSrc || finishSrc.phase !== 'finished') return null;
+            return (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-lg">
+                <div className="text-center px-8 py-6">
+                  {finishSrc.winner ? (
+                    <>
+                      <div className="text-5xl md:text-7xl font-black mb-3" style={{ color: finishSrc.winner === 'A' ? '#60a5fa' : '#f87171' }}>
+                        {finishSrc.winner === 'A' ? '' : ''} TEAM {finishSrc.winner} WINS!
+                      </div>
+                      <div className="text-xl md:text-2xl text-gray-300 font-medium">
+                        captured the lobster
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">
+                        DRAW
+                      </div>
+                      <div className="text-xl md:text-2xl text-gray-500 font-medium">
+                        Turn limit reached — no capture
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           <HexGrid
             tiles={gameState.tiles}
             fogTiles={fogTiles}
