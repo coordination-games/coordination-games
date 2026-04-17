@@ -24,10 +24,17 @@ interface Lobby {
   lobbyId: string;
   gameType?: string;
   phase: 'running' | 'starting' | 'game' | 'failed';
-  teamSize?: number;
   playerCount?: number;
-  createdAt?: string;
+  currentPhase?: {
+    id: string;
+    name: string;
+    view: any;
+  } | null;
+  agents: any[];
+  deadlineMs?: number | null;
   gameId?: string | null;
+  error?: string | null;
+  noTimeout?: boolean;
 }
 
 function phaseBadge(phase: string) {
@@ -248,7 +255,7 @@ function lobbyPhaseBadge(lobby: Lobby) {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.2)' }}>
           <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-amber)' }} />
-          Open
+          {phaseName ?? 'In Progress'}
         </span>
       );
     case 'starting':
