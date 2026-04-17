@@ -9,12 +9,16 @@
  *
  * HTTP routes (sub-path, forwarded from the main Worker):
  *   POST /           — create lobby { lobbyId, gameType, noTimeout? }
- *   GET  /state      — lobby state (?playerId=X for player-specific view)
- *   POST /join       — { playerId, handle, elo? }
- *   POST /action     — generic phase action { playerId, type, payload }
- *   POST /tool       — plugin tool call { playerId, pluginId, tool, args }
+ *   GET  /state      — lobby state. Per-player view if X-Player-Id set.
+ *   POST /join       — body { handle, elo? }; identity from X-Player-Id.
+ *   POST /action     — body { type, payload };  identity from X-Player-Id.
+ *   POST /tool       — body { relay: {...} };   identity from X-Player-Id.
  *   POST /no-timeout — disable the phase timer
  *   DELETE /         — disband lobby
+ *
+ * Identity comes from the X-Player-Id header (set by the Worker after
+ * Bearer auth). Request bodies and query params are never trusted for
+ * player identity.
  *
  * WebSocket:
  *   WS / — spectator (no auth, receives lobby state updates)
@@ -104,7 +108,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     await this.ensureLoaded();
 
-    if (method === 'GET' && path === '/state') return this.handleGetState(url);
+    if (method === 'GET' && path === '/state') return this.handleGetState(request);
     if (method === 'POST' && path === '/join') return this.handleJoin(request);
     if (method === 'POST' && path === '/action') return this.handleAction(request);
     if (method === 'POST' && path === '/tool') return this.handleTool(request);
@@ -218,10 +222,16 @@ export class LobbyDO extends DurableObject<Env> {
     return Response.json({ ok: true, lobbyId, gameType });
   }
 
-  private async handleGetState(url: URL): Promise<Response> {
+  private async handleGetState(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    const playerId = url.searchParams.get('playerId') ?? undefined;
-    return Response.json(this.buildState(playerId));
+    const playerId = this.headerPlayerId(request);
+    return Response.json(this.buildState(playerId ?? undefined));
+  }
+
+  /** X-Player-Id header. Absent = spectator/system. Never read from body or URL. */
+  private headerPlayerId(request: Request): string | null {
+    const h = request.headers.get('X-Player-Id');
+    return h && h.length > 0 ? h : null;
   }
 
   private async handleJoin(request: Request): Promise<Response> {
@@ -233,9 +243,10 @@ export class LobbyDO extends DurableObject<Env> {
     const body = await this.parseJson(request);
     if (body instanceof Response) return body;
 
-    const { playerId, handle, elo } = body;
+    const { handle, elo } = body;
+    const playerId = this.headerPlayerId(request);
     if (!playerId || !handle) {
-      return Response.json({ error: 'playerId and handle are required' }, { status: 400 });
+      return Response.json({ error: 'X-Player-Id header and body.handle are required' }, { status: 400 });
     }
 
     // Idempotent — don't add twice
@@ -279,9 +290,10 @@ export class LobbyDO extends DurableObject<Env> {
     const body = await this.parseJson(request);
     if (body instanceof Response) return body;
 
-    const { playerId, type, payload } = body;
+    const { type, payload } = body;
+    const playerId = this.headerPlayerId(request);
     if (!playerId || !type) {
-      return Response.json({ error: 'playerId and type are required' }, { status: 400 });
+      return Response.json({ error: 'X-Player-Id header and body.type are required' }, { status: 400 });
     }
 
     const phase = this.getCurrentPhase();
@@ -320,10 +332,11 @@ export class LobbyDO extends DurableObject<Env> {
     const body = await this.parseJson(request);
     if (body instanceof Response) return body;
 
-    const { playerId, relay } = body;
+    const { relay } = body;
+    const playerId = this.headerPlayerId(request);
     if (!playerId || !relay?.type || !relay?.pluginId) {
       return Response.json(
-        { error: 'Body must be { playerId, relay: { type, data, scope, pluginId } }' },
+        { error: 'X-Player-Id header required; body must be { relay: { type, data, scope, pluginId } }' },
         { status: 400 },
       );
     }
@@ -525,11 +538,12 @@ export class LobbyDO extends DurableObject<Env> {
         throw new Error(err.error ?? 'Game creation failed');
       }
 
-      // 2. Send game_start system action
+      // 2. Send game_start system action — no X-Player-Id header means
+      // GameRoomDO treats it as a null-player (system) action.
       const startResp = await gameStub.fetch(new Request('https://do/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId: null, action: { type: 'game_start' } }),
+        body: JSON.stringify({ action: { type: 'game_start' } }),
       }));
       if (!startResp.ok) {
         console.warn(`[LobbyDO] game_start action failed for game ${gameId}`);

@@ -7,11 +7,12 @@
  *
  * HTTP routes (sub-path, forwarded from the main Worker):
  *   POST /          — create game { gameType, config, playerIds, handleMap, teamMap }
- *   POST /action    — apply action { playerId, action }
- *   GET  /state     — fog-filtered state for the player named in
- *                     X-Player-Id (set by the Worker after Bearer auth).
- *                     Missing header → spectator view. Query params and
- *                     request bodies are ignored for player identity.
+ *   POST /action    — apply action { action }. Identity from X-Player-Id
+ *                     header; missing header = system action (null).
+ *   POST /tool      — plugin tool call { relay }. Same identity rule.
+ *   GET  /state     — fog-filtered state for the X-Player-Id header;
+ *                     missing = spectator view. Query params and bodies
+ *                     are never trusted for identity.
  *   GET  /result    — Merkle root + outcome (only when finished)
  *   GET  /spectator — current delayed spectator view (HTTP snapshot, no WS)
  *   GET  /bundle   — full action bundle for verification (only when finished)
@@ -255,11 +256,14 @@ export class GameRoomDO extends DurableObject<Env> {
     try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { playerId, action } = body ?? {} as Record<string, unknown>;
+    const { action } = body ?? {} as Record<string, unknown>;
     if (action === undefined) return Response.json({ error: 'action is required' }, { status: 400 });
 
+    const playerId = this.trustedPlayerId(request);
+    if (playerId instanceof Response) return playerId;
+
     try {
-      return Response.json(await this.applyActionInternal((playerId as string) ?? null, action));
+      return Response.json(await this.applyActionInternal(playerId, action));
     } catch (err: any) {
       console.error(`[GameRoomDO] Error in applyActionInternal:`, err?.stack ?? err);
       return Response.json({ error: 'Internal server error', details: String(err), stack: err?.stack ?? '' }, { status: 500 });
@@ -270,16 +274,26 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    // X-Player-Id (set by the Worker after Bearer validation) is the sole
-    // trust boundary for /state.
-    const headerPlayerId = request.headers.get('X-Player-Id');
-    const playerId = headerPlayerId && headerPlayerId.length > 0 ? headerPlayerId : null;
-
-    if (playerId !== null && !this._meta.playerIds.includes(playerId)) {
-      return Response.json({ error: 'Not a player in this game' }, { status: 403 });
-    }
+    const playerId = this.trustedPlayerId(request);
+    if (playerId instanceof Response) return playerId;
 
     return Response.json(this.buildPlayerMessage(playerId));
+  }
+
+  /**
+   * Single trust boundary for player identity. Read X-Player-Id from
+   * the request headers (set by the authenticated Worker, or absent
+   * for internal system calls). Never trust request bodies or query
+   * params. Returns a Response on auth failure; null means "system
+   * action — no authenticated player".
+   */
+  private trustedPlayerId(request: Request): string | null | Response {
+    const header = request.headers.get('X-Player-Id');
+    const playerId = header && header.length > 0 ? header : null;
+    if (playerId !== null && this._meta && !this._meta.playerIds.includes(playerId)) {
+      return Response.json({ error: 'Not a player in this game' }, { status: 403 });
+    }
+    return playerId;
   }
 
   private async handleResult(): Promise<Response> {
@@ -419,24 +433,27 @@ export class GameRoomDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * POST /tool — accepts a pre-formed relay envelope from the CLI.
-   * Body: { relay: { type, data, scope, pluginId }, playerId }
-   *
-   * The CLI calls plugin.handleCall() locally and sends us the result.
-   * We are a dumb pipe: store it, route it by scope, push WS updates.
-   * No server-side plugin registry needed.
+   * POST /tool — accepts a pre-formed relay envelope.
+   * Body: { relay: { type, data, scope, pluginId } }.
+   * Sender identity comes from X-Player-Id (never the body).
    */
   private async handleTool(request: Request): Promise<Response> {
     await this.ensureLoaded();
     if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
 
+    const playerId = this.trustedPlayerId(request);
+    if (playerId instanceof Response) return playerId;
+    if (playerId === null) {
+      return Response.json({ error: 'X-Player-Id header required for tool calls' }, { status: 401 });
+    }
+
     let body: Record<string, unknown>;
     try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { relay, playerId } = body ?? {} as Record<string, unknown>;
-    if (!relay || !playerId) {
-      return Response.json({ error: 'relay envelope and playerId are required' }, { status: 400 });
+    const { relay } = body ?? {} as Record<string, unknown>;
+    if (!relay) {
+      return Response.json({ error: 'relay envelope is required' }, { status: 400 });
     }
     const relayObj = relay as Record<string, unknown>;
     if (!relayObj.type || !relayObj.pluginId) {
@@ -450,7 +467,7 @@ export class GameRoomDO extends DurableObject<Env> {
         data: relayObj.data ?? null,
         scope: (relayObj.scope as string) ?? 'all',
         pluginId: relayObj.pluginId as string,
-        sender: playerId as string,
+        sender: playerId,
         turn: this._progress.counter,
         timestamp: Date.now(),
       };
