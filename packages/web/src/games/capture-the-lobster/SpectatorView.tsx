@@ -316,19 +316,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     { label: 'Team B', value: 'B' },
   ];
 
-  if (!gameState) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🦞</div>
-          <p className="text-gray-400">
-            {error ? error : connected ? 'Waiting for game data...' : isReplay ? 'Loading replay...' : `Connecting to game ${gameId}...`}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   // Fog of war for selected team
   const fogTiles = useMemo(() => {
     if (selectedTeam === 'all' || !gameState) return undefined;
@@ -343,6 +330,19 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     }
     return fog;
   }, [gameState, selectedTeam]);
+
+  if (!gameState) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <div className="text-4xl mb-4">🦞</div>
+          <p className="text-gray-400">
+            {error ? error : connected ? 'Waiting for game data...' : isReplay ? 'Loading replay...' : `Connecting to game ${gameId}...`}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Build unit labels (e.g. "R1", "K2") from tile data
   const unitLabels: Record<string, string> = {};
