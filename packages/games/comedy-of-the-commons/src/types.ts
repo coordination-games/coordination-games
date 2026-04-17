@@ -73,7 +73,7 @@ export interface ComedyTradeOffer {
 
 export type ComedyAction =
   | { type: 'game_start' }
-  | { type: 'offer_trade'; offer: ComedyTradeOffer }
+  | { type: 'offer_trade'; to: string; give: Partial<ResourceInventory>; receive: Partial<ResourceInventory> }
   | { type: 'extract_commons'; ecosystemId: string; level: ExtractionLevel }
   | { type: 'build_settlement'; regionId: string }
   | { type: 'pass' }

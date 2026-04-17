@@ -13,6 +13,14 @@ import {
   type ResourceType,
 } from './types.js';
 
+function toTradeOffer(action: Extract<ComedyAction, { type: 'offer_trade' }>): ComedyTradeOffer {
+  return {
+    to: action.to,
+    give: { ...action.give },
+    receive: { ...action.receive },
+  };
+}
+
 const RESOURCE_CAP = 14;
 const SETTLEMENT_COST: Partial<ResourceInventory> = {
   grain: 1,
@@ -203,28 +211,28 @@ function resolveTrades(
       const other = submittedByPlayer[j];
       if (other.action.type !== 'offer_trade' || used.has(j)) continue;
       if (current.playerId === other.playerId) continue;
-      if (current.action.offer.to !== other.playerId) continue;
-      if (other.action.offer.to !== current.playerId) continue;
-      if (!inventoryEquals(current.action.offer.give, other.action.offer.receive)) continue;
-      if (!inventoryEquals(current.action.offer.receive, other.action.offer.give)) continue;
+      if (current.action.to !== other.playerId) continue;
+      if (other.action.to !== current.playerId) continue;
+      if (!inventoryEquals(current.action.give, other.action.receive)) continue;
+      if (!inventoryEquals(current.action.receive, other.action.give)) continue;
 
       const actionSender = playerMap.get(current.playerId);
       const otherSender = playerMap.get(other.playerId);
       if (!actionSender || !otherSender) continue;
-      if (!canAfford(actionSender.resources, current.action.offer.give)) continue;
-      if (!canAfford(otherSender.resources, other.action.offer.give)) continue;
+      if (!canAfford(actionSender.resources, current.action.give)) continue;
+      if (!canAfford(otherSender.resources, other.action.give)) continue;
 
-      deductCost(actionSender.resources, current.action.offer.give);
-      deductCost(otherSender.resources, other.action.offer.give);
-      for (const [resource, amount] of Object.entries(current.action.offer.receive)) {
+      deductCost(actionSender.resources, current.action.give);
+      deductCost(otherSender.resources, other.action.give);
+      for (const [resource, amount] of Object.entries(current.action.receive)) {
         actionSender.resources[resource as ResourceType] += amount ?? 0;
       }
-      for (const [resource, amount] of Object.entries(other.action.offer.receive)) {
+      for (const [resource, amount] of Object.entries(other.action.receive)) {
         otherSender.resources[resource as ResourceType] += amount ?? 0;
       }
       actionSender.influence += 1;
       otherSender.influence += 1;
-      completed.push(current.action.offer, other.action.offer);
+      completed.push(toTradeOffer(current.action), toTradeOffer(other.action));
       used.add(i);
       used.add(j);
       break;
@@ -358,6 +366,10 @@ export function validateAction(state: ComedyState, playerId: string | null, acti
 
   if (action.type === 'extract_commons') {
     return Boolean(action.ecosystemId && EXTRACTION_PROFILES[action.level]);
+  }
+
+  if (action.type === 'offer_trade') {
+    return Boolean(action.to && action.to !== playerId);
   }
 
   return true;
