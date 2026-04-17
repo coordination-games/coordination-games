@@ -1,8 +1,7 @@
-import { verifyMessage, createPublicClient, http, keccak256, toBytes } from 'viem';
-import { optimismSepolia } from 'viem/chains';
+import { verifyMessage } from 'viem';
 import type { Env } from './env.js';
-import { resolvePlayer, PlayerHandleTakenError } from './db/player.js';
-import { createRelay } from './chain/index.js';
+import { PlayerHandleTakenError } from './db/player.js';
+import { resolveAuthenticatedPlatformPlayer } from './platform/identity.js';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;    // 5 minutes
 const SESSION_TTL_MS   = 24 * 60 * 60 * 1000; // 24 hours
@@ -89,74 +88,30 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
     );
   }
 
-  // Optional: ERC-8004 on-chain name ownership check
-  if (env.RPC_URL && env.REGISTRY_ADDRESS && env.ERC8004_ADDRESS) {
-    try {
-      const client = createPublicClient({
-        chain: optimismSepolia,
-        transport: http(env.RPC_URL),
-      });
-
-      const registryAbi = [{
-        name: 'nameToAgent',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'nameKey', type: 'bytes32' }],
-        outputs: [{ name: '', type: 'uint256' }],
-      }] as const;
-      const nameKey = keccak256(toBytes(name.toLowerCase()));
-      const agentId = await client.readContract({
-        address: env.REGISTRY_ADDRESS as `0x${string}`,
-        abi: registryAbi,
-        functionName: 'nameToAgent',
-        args: [nameKey],
-      } as any);
-
-      if (agentId === 0n) {
-        return Response.json({ error: `Name "${name}" is not registered on-chain` }, { status: 401 });
-      }
-
-      const erc8004Abi = [{
-        name: 'ownerOf',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'tokenId', type: 'uint256' }],
-        outputs: [{ name: '', type: 'address' }],
-      }] as const;
-      const owner = await client.readContract({
-        address: env.ERC8004_ADDRESS as `0x${string}`,
-        abi: erc8004Abi,
-        functionName: 'ownerOf',
-        args: [agentId],
-      } as any) as `0x${string}`;
-
-      if (owner.toLowerCase() !== address.toLowerCase()) {
-        return Response.json(
-          { error: `Address ${address} does not own name "${name}"` },
-          { status: 401 },
-        );
-      }
-
-      console.log(`[auth] On-chain verified: "${name}" owned by ${address}`);
-    } catch (err: any) {
-      console.error('[auth] On-chain verification failed:', err.message);
-      return Response.json({ error: 'On-chain verification failed: ' + err.message }, { status: 500 });
-    }
-  }
-
-  // Resolve player via read-through cache (chain → D1)
-  const trimmed = name.trim();
-  const relay = createRelay(env);
-
   let playerId: string;
   let reconnected: boolean;
+  let normalizedName: string;
   try {
-    const { player, created } = await resolvePlayer(address, relay, env.DB, { handle: trimmed });
-    playerId = player.id;
-    reconnected = !created;
-  } catch (err) {
+    const resolved = await resolveAuthenticatedPlatformPlayer(address, name, env);
+    playerId = resolved.playerId;
+    reconnected = resolved.reconnected;
+    normalizedName = resolved.name;
+    if (resolved.chainAgentId !== null) {
+      console.log(`[auth] On-chain verified: "${normalizedName}" owned by ${resolved.walletAddress} (agent ${resolved.chainAgentId})`);
+    }
+  } catch (err: any) {
     if (err instanceof PlayerHandleTakenError) {
       return Response.json({ error: err.message }, { status: 409 });
+    }
+    if (
+      String(err?.message ?? '').includes('is not registered on-chain') ||
+      String(err?.message ?? '').includes('does not own name')
+    ) {
+      return Response.json({ error: err.message }, { status: 401 });
+    }
+    if (String(err?.message ?? '').includes('on-chain')) {
+      console.error('[auth] On-chain verification failed:', err.message);
+      return Response.json({ error: 'On-chain verification failed: ' + err.message }, { status: 500 });
     }
     throw err;
   }
@@ -167,11 +122,11 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
 
   await env.DB.prepare(
     'INSERT OR REPLACE INTO auth_sessions (token, player_id, name, expires_at) VALUES (?, ?, ?, ?)'
-  ).bind(token, playerId, trimmed, expiresAt).run();
+  ).bind(token, playerId, normalizedName, expiresAt).run();
 
-  console.log(`[auth] Verified "${trimmed}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`);
+  console.log(`[auth] Verified "${normalizedName}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`);
 
-  return Response.json({ token, agentId: playerId, name: trimmed, expiresAt, reconnected });
+  return Response.json({ token, agentId: playerId, name: normalizedName, expiresAt, reconnected });
 }
 
 // ---------------------------------------------------------------------------
