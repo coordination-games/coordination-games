@@ -303,7 +303,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireAuth(request, env);
       if (auth instanceof Response) return auth;
       const playerId = auth;
-      const forwarded = new Request(request.url, request);
+      // Strip attacker-controlled playerId query param before forwarding —
+      // the DO derives player identity exclusively from X-Player-Id.
+      // See docs/plans/spectator-delay-security-fix.md §4.7.
+      const sanitisedUrl = new URL(request.url);
+      sanitisedUrl.searchParams.delete('playerId');
+      const forwarded = new Request(sanitisedUrl.toString(), request);
       forwarded.headers.set('X-Player-Id', playerId);
       return forwardToGameDO(env, gameId, sub, forwarded);
     }
@@ -583,9 +588,12 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
   const stub = location.kind === 'game'
     ? getGameDO(env, location.gameId)
     : getLobbyDO(env, location.lobbyId);
+  // GameRoomDO trusts X-Player-Id exclusively; LobbyDO still reads the
+  // query param. Set both so this helper works for either target without
+  // knowing the DO's internal trust model.
   return stub.fetch(new Request(
     `https://do/state?playerId=${encodeURIComponent(playerId)}`,
-    { method: 'GET' },
+    { method: 'GET', headers: { 'X-Player-Id': playerId } },
   ));
 }
 

@@ -8,7 +8,10 @@
  * HTTP routes (sub-path, forwarded from the main Worker):
  *   POST /          — create game { gameType, config, playerIds, handleMap, teamMap }
  *   POST /action    — apply action { playerId, action }
- *   GET  /state     — fog-filtered state  ?playerId=X
+ *   GET  /state     — fog-filtered state for the player named in
+ *                     X-Player-Id (set by the Worker after Bearer auth).
+ *                     Missing header → spectator view. Query params and
+ *                     request bodies are ignored for player identity.
  *   GET  /result    — Merkle root + outcome (only when finished)
  *   GET  /spectator — current delayed spectator view (HTTP snapshot, no WS)
  *   GET  /bundle   — full action bundle for verification (only when finished)
@@ -121,7 +124,7 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'POST' && path === '/') return this.handleCreate(request);
     if (method === 'POST' && path === '/action') return this.handleAction(request);
     if (method === 'POST' && path === '/tool') return this.handleTool(request);
-    if (method === 'GET'  && path === '/state') return this.handleState(url);
+    if (method === 'GET'  && path === '/state') return this.handleState(request);
     if (method === 'GET'  && path === '/result') return this.handleResult();
     if (method === 'GET'  && path === '/spectator') return this.handleSpectator();
     if (method === 'GET'  && path === '/replay') return this.handleReplay();
@@ -264,11 +267,21 @@ export class GameRoomDO extends DurableObject<Env> {
     }
   }
 
-  private async handleState(url: URL): Promise<Response> {
+  private async handleState(request: Request): Promise<Response> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    const playerId = url.searchParams.get('playerId') ?? null;
+    // Only the X-Player-Id header (set by the authenticated Worker after a
+    // successful Bearer validation) can authorise a player-level view.
+    // Query params on the request URL are attacker-controlled — ignore
+    // them entirely. This is the single trust boundary for /state.
+    const headerPlayerId = request.headers.get('X-Player-Id');
+    const playerId = headerPlayerId && headerPlayerId.length > 0 ? headerPlayerId : null;
+
+    if (playerId !== null && !this._meta.playerIds.includes(playerId)) {
+      return Response.json({ error: 'Not a player in this game' }, { status: 403 });
+    }
+
     return Response.json(this.buildPlayerMessage(playerId));
   }
 
