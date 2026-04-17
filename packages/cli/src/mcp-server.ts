@@ -17,6 +17,8 @@ import { GameClient } from "./game-client.js";
 import { registerGameTools } from "./mcp-tools.js";
 import { loadConfig } from "./config.js";
 import { BasicChatPlugin } from "@coordination-games/plugin-chat";
+import { CaptureTheLobsterPlugin } from "@coordination-games/game-ctl";
+import { OathbreakerPlugin } from "@coordination-games/game-oathbreaker";
 
 export interface ServeOptions {
   serverUrl: string;
@@ -36,7 +38,11 @@ function createMcpServerWithClient(options?: ServeOptions): { server: McpServer;
     name: "coordination-games",
     version: "0.1.0",
   });
-  registerGameTools(server, client, { botMode: options?.botMode, plugins: [BasicChatPlugin] });
+  registerGameTools(server, client, {
+    botMode: options?.botMode,
+    plugins: [BasicChatPlugin],
+    games: [CaptureTheLobsterPlugin, OathbreakerPlugin],
+  });
   return { server, client };
 }
 

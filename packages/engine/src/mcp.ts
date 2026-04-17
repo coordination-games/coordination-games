@@ -47,8 +47,8 @@ const GAMEPLAY_TOOLS: ToolDefinition[] = [
  * Map of phase -> platform tools.
  *
  * Lobby phases (team-formation, class-selection, etc.) are NOT listed here.
- * Their tools come dynamically from each LobbyPhase's `tools` array, surfaced
- * to agents via the CLI's `lobby_action` tool.
+ * Their tools come dynamically from each LobbyPhase's `tools` array, registered
+ * per-name as MCP tools by the CLI (see `packages/cli/src/mcp-tools.ts`).
  */
 const PHASE_TOOLS: Record<string, ToolDefinition[]> = {
   'lobby': [],

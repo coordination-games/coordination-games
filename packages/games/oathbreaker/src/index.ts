@@ -1,4 +1,4 @@
-export { OathbreakerPlugin } from './plugin.js';
+export { OathbreakerPlugin, OATHBREAKER_SYSTEM_ACTION_TYPES } from './plugin.js';
 export {
   cooperationBonus,
   dollarValue,

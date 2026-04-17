@@ -90,6 +90,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Lobby configuration. */
   readonly lobby?: GameLobbyConfig;
 
+  /**
+   * Player-callable tools during the game phase. Dispatcher reconstructs
+   * `{type: tool.name, ...args}` before passing to validateAction/applyAction.
+   */
+  readonly gameTools?: ToolDefinition[];
+
   /** Delay in progress units (turns for CtL, rounds for OATHBREAKER). Default 0. */
   spectatorDelay?: number;
 

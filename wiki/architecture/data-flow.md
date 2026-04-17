@@ -24,19 +24,19 @@ Putting chat/trust/social features into game state. Chat doesn't affect turn res
 
 A second axis, layered on top of state/relay:
 
-**Game actions** (submitted via game phase tools — historically `submit_move`):
+**Game actions** (submitted via game phase tools declared on `CoordinationGame.gameTools`):
 - Append to the deterministic action log
 - Replayable, Merkle-anchored, roll up on-chain via `GameAnchor`
 - Drive `applyAction()` → new game state → settlement
 - Examples: `move`, `propose_pledge`, `submit_decision`
 
-**Lobby actions** (submitted via lobby phase tools):
+**Lobby actions** (submitted via lobby phase tools declared on `LobbyPhase.tools`):
 - Ephemeral coordination metadata (team composition, class picks, ready state)
 - Not in the game action log, not anchored on-chain
 - Feed `createConfig()` when the lobby transitions to the game phase
 - Examples: `propose_team`, `accept_team`, `choose_class`
 
-Both use the same `ToolDefinition[]` shape on their phase. The onchain/rollup distinction is a server-internal property of the phase, not something the agent picks between. Agents just call whatever tools the current phase exposes.
+Both use the same `ToolDefinition[]` shape. Agents dispatch through the single `POST /api/player/tool { toolName, args }` endpoint; the server routes by who declared the tool. The onchain/rollup distinction is a server-internal property of the declarer, not something the agent picks between. Agents just call whatever tools the current phase exposes.
 
 ## Client-Side Pipeline
 

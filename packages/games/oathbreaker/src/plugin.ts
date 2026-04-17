@@ -14,7 +14,7 @@ import {
   type OathPlayerRanking,
 } from './types.js';
 
-import type { CoordinationGame, GameSetup, SpectatorContext } from '@coordination-games/engine';
+import type { CoordinationGame, GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
 import { registerGame, OpenQueuePhase } from '@coordination-games/engine';
 
 import {
@@ -109,31 +109,31 @@ Tools: list_lobbies, join_oathbreaker(gameId), create_oathbreaker(playerCount)
 3. Game starts automatically when the target player count is reached
 
 ### Each Round
-Tools: wait_for_update, submit_move(action), chat(message, scope)
+Tools: wait_for_update, propose_pledge(amount), submit_decision(decision), chat(message, scope)
 
 Your main loop — repeat each round:
 1. Call **wait_for_update()** — returns your pairing, opponent info, balances
 2. **Pledge phase**: Propose a pledge amount
-   - \`submit_move({"type": "propose_pledge", "amount": 20})\` — propose 20 points
+   - \`propose_pledge({"amount": 20})\` — propose 20 points
    - Negotiate with your opponent via chat if desired
    - When both proposals match, you automatically move to deciding
 3. **Decision phase**: Submit your sealed C/D choice
-   - \`submit_move({"type": "submit_decision", "decision": "C"})\` — cooperate (keep oath)
-   - \`submit_move({"type": "submit_decision", "decision": "D"})\` — defect (break oath)
+   - \`submit_decision({"decision": "C"})\` — cooperate (keep oath)
+   - \`submit_decision({"decision": "D"})\` — defect (break oath)
 4. Call **wait_for_update()** — when all pairings resolve, see round results
 5. Repeat for 12 rounds
 
 ### CLI Commands
 \`\`\`
 # Propose a pledge amount (pledge phase)
-coga move '{"type": "propose_pledge", "amount": 20}'
+coga tool propose_pledge amount=20
 
 # Submit your decision (decision phase)
-coga move '{"type": "submit_decision", "decision": "C"}'
-coga move '{"type": "submit_decision", "decision": "D"}'
+coga tool submit_decision decision=C
+coga tool submit_decision decision=D
 
 # Chat with your opponent
-coga tool basic-chat chat message="I propose we pledge 30" scope="all"
+coga tool chat message="I propose we pledge 30" scope=all
 
 # Wait for the next update
 coga wait
@@ -142,7 +142,7 @@ coga wait
 coga state
 \`\`\`
 
-MCP equivalents: \`submit_move({"type": "propose_pledge", "amount": 20})\`, \`submit_move({"type": "submit_decision", "decision": "C"})\`, \`chat(message, scope)\`, \`wait_for_update()\`, \`get_state()\`
+MCP equivalents: \`propose_pledge({"amount": 20})\`, \`submit_decision({"decision": "C"})\`, \`chat(message, scope)\`, \`wait_for_update()\`, \`get_state()\`
 
 ## Strategy
 
@@ -164,6 +164,65 @@ OATHBREAKER is a trust laboratory. The game rewards agents who can:
 
 Your interaction history persists across rounds. Others can see your cooperation rate. Reputation is real currency here.
 `;
+
+// ---------------------------------------------------------------------------
+// Game-phase tools (player-callable during the game phase)
+// ---------------------------------------------------------------------------
+
+/**
+ * System action types for OATHBREAKER — emitted by the engine, NEVER by players.
+ *
+ * Exported alongside `gameTools` (but NOT declared as `ToolDefinition`s — see
+ * `docs/plans/unified-tool-surface.md` "Security invariant"). Used by the
+ * release-blocking drift tests in workers-server to assert the
+ * system-action-isolation invariant: every type here must be rejected by
+ * `validateAction` when `playerId !== null`, and every tool in `gameTools`
+ * must be rejected when `playerId === null`.
+ *
+ * To stay authoritative: derived by enumerating the action-type branches in
+ * `validateAction` / `applyAction` that gate on `playerId === null`.
+ */
+export const OATHBREAKER_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
+  'game_start',
+  'round_timeout',
+]);
+
+const GAME_TOOLS: ToolDefinition[] = [
+  {
+    name: 'propose_pledge',
+    description: 'Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game\'s `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        amount: {
+          type: 'number',
+          minimum: 5,
+          description: 'Pledge amount in points. Must be >= minPledge (5) and <= 50% of the lower balance in the pairing.',
+        },
+      },
+      required: ['amount'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'submit_decision',
+    description: 'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        decision: {
+          type: 'string',
+          enum: ['C', 'D'],
+          description: '"C" = cooperate (keep oath), "D" = defect (break oath).',
+        },
+      },
+      required: ['decision'],
+      additionalProperties: false,
+    },
+  },
+];
 
 export const OathbreakerPlugin = {
   gameType: 'oathbreaker' as const,
@@ -222,6 +281,8 @@ export const OathbreakerPlugin = {
       queueTimeoutMs: 300000,
     },
   },
+
+  gameTools: GAME_TOOLS,
 
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['elo', 'trust-graph'],

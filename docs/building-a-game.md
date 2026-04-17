@@ -34,6 +34,8 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   readonly entryCost: number;
   computePayouts(outcome: TOutcome, playerIds: string[]): Map<string, number>;
   readonly lobby?: GameLobbyConfig;
+  /** Player-callable tools during the game phase. See "Declaring Game Tools" below. */
+  readonly gameTools?: ToolDefinition[];
   readonly requiredPlugins?: string[];
   readonly recommendedPlugins?: string[];
 }
@@ -115,6 +117,95 @@ Sequential within a round: agents propose pledges back and forth until they agre
 ### The pattern
 
 Every game needs at least `game_start` (to transition from initial state to playing) and some timeout action (so the framework timer can force progress). Player actions are whatever your game needs.
+
+## Declaring Game Tools
+
+`TAction` describes what the game accepts internally. `gameTools` is how agents discover and call your player actions. Every player-callable action gets one `ToolDefinition` entry on your plugin:
+
+```typescript
+readonly gameTools?: ToolDefinition[];
+```
+
+Each entry has a `name`, a `description`, and a JSON-Schema `inputSchema`. The server's dispatcher reconstructs `{ type: tool.name, ...args }` before handing it to your `validateAction` / `applyAction`. So the tool's `name` MUST match the `type` discriminator on your corresponding `TAction` variant.
+
+### CtL example
+
+```typescript
+const GAME_TOOLS: ToolDefinition[] = [
+  {
+    name: 'move',
+    description: 'Submit your unit\'s move for the current turn. ...',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'array',
+          items: { type: 'string', enum: ['N', 'NE', 'SE', 'S', 'SW', 'NW'] },
+          minItems: 0,
+          description: 'Ordered hex directions. Length capped by class speed.',
+        },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
+];
+
+export const CaptureTheLobsterPlugin: CoordinationGame<...> = {
+  gameType: 'capture-the-lobster',
+  // ...
+  gameTools: GAME_TOOLS,
+};
+```
+
+OATHBREAKER declares two entries the same way (`propose_pledge` with an `amount: number`, `submit_decision` with `decision: 'C' | 'D'`). See `packages/games/oathbreaker/src/plugin.ts`.
+
+### System actions are NOT tools
+
+System actions (`game_start`, `turn_timeout`, `round_timeout`) are emitted by the engine itself — from `GameRoomDO.alarm()` or the lobby→game handoff — and they always run with `playerId === null`. **Do NOT declare them in `gameTools`.** Declaring a system action as a tool would create a privilege-escalation hole where a player could spoof it over the wire.
+
+The defence is the `playerId === null` gate in your `validateAction`. For every entry in `gameTools`, reject when `playerId === null`. For every system-action `type`, reject when `playerId !== null`. No action type is ever valid for both. Drift tests in `packages/workers-server/src/__tests__/tool-drift.test.ts` enforce this.
+
+To keep system actions discoverable without declaring them as tools, export a frozen list of their `type` strings alongside your plugin. Both shipped games follow this pattern:
+
+```typescript
+export const CTL_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
+  'game_start',
+  'turn_timeout',
+]);
+```
+
+The drift tests import this export to assert the isolation invariant. Export yours the same way or the system-action isolation test can't cover your game.
+
+### Drift-test fixture (release-blocking)
+
+The workers-server test suite iterates the real tool registry and requires a fixture entry for every discovered tool. When you add a new game — or add a new tool to an existing game — you MUST add a corresponding entry to `DRIFT_FIXTURES` in `packages/workers-server/src/__tests__/tool-drift.test.ts`.
+
+A fixture supplies a valid sample `args` payload plus a state builder where that sample is semantically accepted. The suite then asserts:
+
+1. AJV accepts the sample against your `inputSchema`.
+2. Your `validateAction` (or phase `handleAction`) accepts the sample — no shape-mismatch false negative.
+3. Missing required fields, extra fields, and wrong types are rejected by AJV.
+4. `validateAction` rejects `playerId=null` for every game tool; `validateAction` rejects every non-null `playerId` for every system-action type.
+
+If you forget to add a fixture, the meta-test fails loudly with a pointer straight at the file to edit. Treat this as part of shipping the game.
+
+### Error taxonomy
+
+The single tool dispatcher returns structured errors so the agent can self-correct:
+
+- `UNKNOWN_TOOL` — the name isn't in the session's registry. Includes `validToolsNow[]`.
+- `WRONG_PHASE` — the tool exists but belongs to another phase. Includes `currentPhase` and `validToolsNow[]`.
+- `INVALID_ARGS` — AJV rejected the args against your `inputSchema`. Includes `fieldErrors[]`.
+- `VALIDATION_FAILED` — AJV passed, but your `validateAction` (or phase `handleAction`) returned false/error. Includes the validator's message.
+- `COLLISION` — init-time only: two declarers registered the same tool name.
+
+Keep your `validateAction` rejection messages useful (`"not your turn"`, `"unit already submitted"`, etc.) — those are what bubble up as `VALIDATION_FAILED`.
+
+### Collision rule
+
+Tool names must be unique across `gameTools ∪ LobbyPhase.tools` for your game (plus any loaded `ToolPlugin.tools` and the static CLI commands in `packages/cli/src/mcp-tools.ts`). A collision is a hard error at plugin-registry / session init — not a silent precedence rule. If you want a `chat` game tool and you're also loading `@coordination-games/plugin-chat`, one of them has to rename.
 
 ## The Game Loop
 
@@ -429,6 +520,9 @@ To ship a new game:
 - [ ] Define your config, state, action union, and outcome types
 - [ ] Implement all 6 methods + `entryCost` + `computePayouts`
 - [ ] Add lobby configuration (phases, matchmaking)
+- [ ] Declare `gameTools: ToolDefinition[]` for every player-callable game action (names must match the `type` discriminator on `TAction`)
+- [ ] Export `YOUR_GAME_SYSTEM_ACTION_TYPES` as a frozen `readonly string[]` alongside the plugin
+- [ ] Add a `DRIFT_FIXTURES` entry for each new tool in `packages/workers-server/src/__tests__/tool-drift.test.ts`
 - [ ] Register the game plugin in the server (`packages/server/src/api.ts`)
 - [ ] Create spectator plugin at `packages/web/src/games/your-game/`
 - [ ] Implement `SpectatorView` component

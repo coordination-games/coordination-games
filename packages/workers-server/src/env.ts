@@ -11,4 +11,7 @@ export interface Env {
   GAME_ANCHOR_ADDRESS?: string;
   USDC_ADDRESS?: string;
   RELAYER_PRIVATE_KEY?: string;
+  // Optional — set via `wrangler secret put ADMIN_TOKEN` to enable
+  // GET /api/admin/session/:id/tools. Header: X-Admin-Token: <value>.
+  ADMIN_TOKEN?: string;
 }

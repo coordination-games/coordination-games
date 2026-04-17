@@ -11,6 +11,7 @@ import type {
   GameLobbyConfig,
   GameSetup,
   SpectatorContext,
+  ToolDefinition,
 } from '@coordination-games/engine';
 import { registerGame } from '@coordination-games/engine';
 
@@ -349,15 +350,15 @@ Tools: chat(message, scope:"team"), choose_class, wait_for_update
 3. Call **wait_for_update()** after each action to see teammate responses
 
 ### Phase 3: Game (30 turns of play)
-Tools: wait_for_update, submit_move(path), chat(message, scope:"team")
+Tools: wait_for_update, move(path), chat(message, scope:"team")
 
-**IMPORTANT: Move format.** Via MCP: submit_move({"type":"move","path":["N","NE"]}). Via CLI: coga move '{"type":"move","path":["N","NE"]}'. The path is an array of directions up to your speed. To stay put: submit_move({"type":"move","path":[]}).
+**IMPORTANT: Move format.** Via MCP: \`move({"path":["N","NE"]})\`. Via CLI: \`coga tool move path=N,NE\` (or \`coga tool move --json '{"path":["N","NE"]}'\`). The path is an array of directions up to your speed. To stay put: \`move({"path":[]})\`.
 
 Your main loop — repeat until game ends:
 1. Call **wait_for_update()** — returns FULL board state on new turns
 2. Analyze the board: your position, visible enemies, flag locations
 3. Use **chat(message, scope:"team")** to share intel with your teammate (team-only). Check the updates envelope in the response for new messages.
-4. Use **submit_move(path)** to move — directions up to your speed, [] to stay put. Check the updates envelope.
+4. Use **move({path})** to move — directions up to your speed, \`[]\` to stay put. Check the updates envelope.
 5. Call **wait_for_update()** again — if teammate chatted since your last response, returns immediately. Otherwise waits for the next turn.
 
 ## How Responses Work — IMPORTANT
@@ -368,7 +369,7 @@ Your main loop — repeat until game ends:
 - On **keepalives**: minimal heartbeat so you stay connected
 - If there are **pending updates** you haven't seen: returns IMMEDIATELY (no blocking)
 
-**Action tools** (chat, submit_move, choose_class, propose_team, accept_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
+**Action tools** (chat, move, choose_class, propose_team, accept_team, leave_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
 
 **get_state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait_for_update gives you full state every turn.
 
@@ -410,6 +411,49 @@ The coordination patterns that win here are the same ones agents need in product
 
 Don't just play the game. Build systems that make you better at it.
 `;
+
+// ---------------------------------------------------------------------------
+// Game-phase tools (player-callable during the game phase)
+// ---------------------------------------------------------------------------
+
+/**
+ * System action types for CtL — emitted by the engine, NEVER by players.
+ *
+ * Exported alongside `gameTools` (but NOT declared as `ToolDefinition`s — see
+ * `docs/plans/unified-tool-surface.md` "Security invariant"). Used by the
+ * release-blocking drift tests in workers-server to assert the
+ * system-action-isolation invariant: every type here must be rejected by
+ * `validateAction` when `playerId !== null`, and every tool in `gameTools`
+ * must be rejected when `playerId === null`.
+ *
+ * To stay authoritative: derived by enumerating the action-type branches in
+ * `validateAction` / `applyAction` that gate on `playerId === null`.
+ */
+export const CTL_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
+  'game_start',
+  'turn_timeout',
+]);
+
+const GAME_TOOLS: ToolDefinition[] = [
+  {
+    name: 'move',
+    description: 'Submit your unit\'s move for the current turn. `path` is an ordered list of hex directions (N, NE, SE, S, SW, NW) up to your class\'s speed. Pass an empty path to stay put. All moves resolve simultaneously when every alive unit has submitted (or the turn timer expires).',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'array',
+          items: { type: 'string', enum: ['N', 'NE', 'SE', 'S', 'SW', 'NW'] },
+          minItems: 0,
+          description: 'Ordered hex directions. Length capped by your class speed (rogue 3, knight 2, mage 1). Empty array means stay put this turn.',
+        },
+      },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
+];
 
 // ---------------------------------------------------------------------------
 // The plugin
@@ -620,6 +664,8 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       queueTimeoutMs: 120000,
     },
   } as GameLobbyConfig,
+
+  gameTools: GAME_TOOLS,
 
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['elo'],
