@@ -23,4 +23,4 @@ export {
   getPlayerView,
   getSpectatorView,
 } from './game.js';
-export { ComedyOfTheCommonsPlugin } from './plugin.js';
+export { ComedyOfTheCommonsPlugin, COMEDY_SYSTEM_ACTION_TYPES } from './plugin.js';
