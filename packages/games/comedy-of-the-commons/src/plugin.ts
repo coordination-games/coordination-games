@@ -1,4 +1,4 @@
-import type { CoordinationGame, GameSetup, SpectatorContext } from '@coordination-games/engine';
+import type { CoordinationGame, GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
 import { OpenQueuePhase, registerGame } from '@coordination-games/engine';
 import {
   DEFAULT_COMEDY_CONFIG,
@@ -40,6 +40,66 @@ Highest VP wins when the round limit is reached. Influence is the tie-breaker.
 This is an intentionally reduced v0 upstream port. Richer trust, commitments, and Olympiad portability are planned for later slices.
 `;
 
+export const COMEDY_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
+  'game_start',
+  'round_timeout',
+]);
+
+const GAME_TOOLS: ToolDefinition[] = [
+  {
+    name: 'offer_trade',
+    description: 'Offer a bilateral trade to one other player. Matching reciprocal offers in the same round settle automatically.',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Target player id for the trade offer.' },
+        give: { type: 'object', description: 'Resources you are offering.' },
+        receive: { type: 'object', description: 'Resources you want back.' },
+      },
+      required: ['to', 'give', 'receive'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'extract_commons',
+    description: 'Extract a shared resource from an ecosystem you can access. Higher extraction gives more now but damages the commons faster.',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ecosystemId: { type: 'string' },
+        level: { type: 'string', enum: ['low', 'medium', 'high'] },
+      },
+      required: ['ecosystemId', 'level'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'build_settlement',
+    description: 'Spend resources to establish a settlement in an unclaimed region and gain VP.',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        regionId: { type: 'string' },
+      },
+      required: ['regionId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'pass',
+    description: 'Submit no action for this round.',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+];
+
 export const ComedyOfTheCommonsPlugin: CoordinationGame<ComedyConfig, ComedyState, ComedyAction, ComedyOutcome> = {
   gameType: 'comedy-of-the-commons',
   version: '0.1.0',
@@ -58,6 +118,8 @@ export const ComedyOfTheCommonsPlugin: CoordinationGame<ComedyConfig, ComedyStat
       queueTimeoutMs: 300000,
     },
   },
+
+  gameTools: GAME_TOOLS,
 
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['rationale'],
