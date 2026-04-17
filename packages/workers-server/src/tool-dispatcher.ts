@@ -25,8 +25,6 @@
  * `{ type: toolName, ...args }` — byte-identical to the pre-refactor shape.
  */
 
-import Ajv from 'ajv';
-import type { ErrorObject, ValidateFunction } from 'ajv';
 import { getGame } from '@coordination-games/engine';
 import type { CoordinationGame, ToolDefinition } from '@coordination-games/engine';
 import type { Env } from './env.js';
