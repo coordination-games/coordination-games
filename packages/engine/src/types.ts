@@ -115,6 +115,21 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Summary for game listing (lobby browser). */
   getSummary?(state: TState): Record<string, any>;
 
+  /**
+   * Summary derived from a *public* spectator-view snapshot instead of raw
+   * game state. Called by the server to publish the live `/api/games`
+   * summary without leaking fields that the delayed spectator view does
+   * not yet reveal.
+   *
+   * If absent, the server falls back to calling `getSummary` with the
+   * snapshot cast — which only works if the snapshot shape exposes the
+   * same fields `getSummary` reads (same names, same types). Games whose
+   * `getSummary` reads private fields (e.g. `state.config.turnLimit`)
+   * MUST implement this. Games whose `getSummary` reads only fields that
+   * are named identically on their SpectatorView can omit it.
+   */
+  getSummaryFromSpectator?(snapshot: unknown): Record<string, any>;
+
   /** IDs of players that need to submit an action in the current state. */
   getPlayersNeedingAction?(state: TState): string[];
 

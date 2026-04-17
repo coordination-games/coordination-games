@@ -638,6 +638,25 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     };
   },
 
+  /**
+   * Public summary derived from a spectator snapshot — the server calls
+   * this on every progress tick to update /api/games. Uses snapshot-only
+   * fields so `winner`, `turn`, etc. never leak ahead of the delayed view.
+   */
+  getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
+    const s = snapshot as SpectatorState;
+    return {
+      turn: s.turn,
+      maxTurns: s.maxTurns,
+      phase: s.phase,
+      winner: s.winner,
+      teams: {
+        A: s.units.filter(u => u.team === 'A').map(u => u.id),
+        B: s.units.filter(u => u.team === 'B').map(u => u.id),
+      },
+    };
+  },
+
   spectatorDelay: 2,
 
   getPlayersNeedingAction(state: CtlGameState): string[] {

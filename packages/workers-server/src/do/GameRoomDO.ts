@@ -690,12 +690,29 @@ export class GameRoomDO extends DurableObject<Env> {
     return { success: true, progressCounter: this._progress.counter };
   }
 
-  /** Fire-and-forget upsert of game summary into D1 for the listing page. */
+  /**
+   * Fire-and-forget upsert of game summary into D1 for the listing page.
+   *
+   * Gated by publicSnapshotIndex — a caller polling GET /api/games while
+   * a game is mid-turn must not see `winner`, `turn`, etc. for a turn the
+   * spectator view has not yet caught up to. See Bug E in
+   * docs/plans/spectator-delay-security-fix.md §2.
+   */
   private writeSummaryToD1(): void {
     if (!this._meta || !this._plugin) return;
-    const summary = typeof this._plugin.getSummary === 'function'
-      ? this._plugin.getSummary(this._state)
-      : {};
+
+    const idx = this.publicSnapshotIndex();
+    if (idx === null) return;  // pre-window — nothing public to publish yet
+
+    const publicSnapshot = this._spectatorSnapshots[idx];
+    let summary: Record<string, any> = {};
+    if (typeof this._plugin.getSummaryFromSpectator === 'function') {
+      summary = this._plugin.getSummaryFromSpectator(publicSnapshot);
+    } else if (typeof this._plugin.getSummary === 'function') {
+      // Fallback for plugins whose spectator shape matches getSummary's
+      // expected state fields (same names, same types).
+      summary = this._plugin.getSummary(publicSnapshot as any);
+    }
     const json = JSON.stringify(summary);
     // Fire-and-forget: catch all errors to prevent unhandled rejections
     (async () => {
@@ -705,7 +722,7 @@ export class GameRoomDO extends DurableObject<Env> {
            VALUES (?1, ?2, ?3, datetime('now'))
            ON CONFLICT(game_id) DO UPDATE SET
              progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
-        ).bind(this._meta!.gameId, this._progress.counter, json).run();
+        ).bind(this._meta!.gameId, idx, json).run();
       } catch (err: any) {
         // Auto-create table if it doesn't exist yet (migration not applied)
         if (String(err).includes('no such table')) {
@@ -723,7 +740,7 @@ export class GameRoomDO extends DurableObject<Env> {
                VALUES (?1, ?2, ?3, datetime('now'))
                ON CONFLICT(game_id) DO UPDATE SET
                  progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
-            ).bind(this._meta!.gameId, this._progress.counter, json).run();
+            ).bind(this._meta!.gameId, idx, json).run();
           } catch (e) {
             console.error(`[GameRoomDO] Failed to auto-create game_summaries:`, e);
           }
