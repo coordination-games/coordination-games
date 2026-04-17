@@ -1,0 +1,61 @@
+name: Tests
+
+**Runs the full workspace test suite on every PR + push to main.**
+**# The release-blocking drift invariants live in:**
+**packages/workers-server/src/__tests__/tool-drift.test.ts**
+**packages/engine/src/__tests__/tool-collision.test.ts**
+**packages/cli/src/__tests__/tool-collision.test.ts**
+**See docs/plans/unified-tool-surface.md — "Testing — drift invariants".**
+**These gates are the reason the unified-tool-surface refactor exists; if**
+**they stop running in CI, we risk silent schema/validator drift shipping.**
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # --include=dev is required due to a workspace bug in npm 10 that
+        # silently skips devDependencies for workspace packages.
+        # --legacy-peer-deps accommodates intra-workspace peer conflicts
+        # (e.g. zod version drift between MCP SDK and CLI testing).
+        run: npm install --include=dev --legacy-peer-deps
+
+      - name: Build engine + games + plugins
+        # Tests in workers-server resolve `@coordination-games/game-*` via the
+        # `main`/`types` fields (dist/*). They must be built before tests run.
+        run: |
+          npm run build -w packages/engine
+          npm run build -w packages/games/capture-the-lobster
+          npm run build -w packages/games/oathbreaker
+          npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/plugins/elo
+
+      # contracts workspace has a pre-existing hardhat dependency issue;
+      # excluded from CI until fixed separately.
+      #
+      # Workspaces are listed explicitly (NOT `--workspaces`) so contracts is
+      # visibly omitted. `--if-present` is scoped to this allowlist — any new
+      # workspace added here without a test script is a deliberate placeholder
+      # (e.g. packages/games/oathbreaker has no tests yet), and contracts is
+      # not silently skipped because it isn't in the list at all.
+      - name: Run workspace tests
+        run: |
+          npm test --if-present \
+                   -w packages/engine \
+                   -w packages/workers-server \
+                   -w packages/cli \
+                   -w packages/games/capture-the-lobster \
+                   -w packages/games/oathbreaker \
+                   -w packages/plugins/basic-chat \
+                   -w packages/plugins/elo
