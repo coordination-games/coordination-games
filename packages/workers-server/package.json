@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "vitest run"
+    "test": "vitest run",
+    "smoke:spectator": "GAME_SERVER=http://localhost:8787 tsx ../../scripts/smoke-spectator-delay.ts"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250407.0",
