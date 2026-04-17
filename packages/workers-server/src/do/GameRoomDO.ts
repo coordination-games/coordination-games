@@ -51,6 +51,13 @@ interface GameMeta {
   teamMap: Record<string, string>;    // playerId → 'A' | 'B' | 'FFA'
   createdAt: string;
   finished: boolean;
+  /**
+   * Spectator delay (progress ticks) frozen at game creation. Deploys that
+   * change the plugin value never retroactively reveal in-flight data.
+   * Absent on games created before this field was introduced — ensureLoaded
+   * falls back to the live plugin value for one-time migration.
+   */
+  spectatorDelay: number;
 }
 
 interface ProgressState {
@@ -199,6 +206,7 @@ export class GameRoomDO extends DurableObject<Env> {
       teamMap: (teamMap as Record<string, string>) ?? {},
       createdAt: new Date().toISOString(),
       finished: false,
+      spectatorDelay: plugin.spectatorDelay ?? 0,
     };
     const progress: ProgressState = { counter: 0, snapshots: [0] };
 
@@ -816,6 +824,12 @@ export class GameRoomDO extends DurableObject<Env> {
         const snapshotKeys = Array.from({ length: count }, (_, i) => `snapshot:${i}`);
         const snapshotMap = await this.ctx.storage.get<unknown>(snapshotKeys);
         loadedSnapshots = snapshotKeys.map(k => snapshotMap.get(k)).filter(Boolean) as unknown[];
+      }
+
+      // Back-fill spectatorDelay for games created before the field was
+      // persisted. Fresh games always set this at create time.
+      if (typeof meta.spectatorDelay !== 'number') {
+        meta.spectatorDelay = plugin.spectatorDelay ?? 0;
       }
 
       this._meta = meta;
