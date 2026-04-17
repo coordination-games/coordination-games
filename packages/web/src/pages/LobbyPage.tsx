@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { API_BASE, getWsUrl } from '../config.js';
-import { PlayerList, ChatPanel, AutoScrollChat, TimerBar, JoinInstructions, TeamPanel } from '../components/lobby';
+import { PlayerList, ChatPanel, TimerBar, JoinInstructions, TeamPanel } from '../components/lobby';
+import { getGameDisplayName } from '../games/manifest';
 
 // ---------------------------------------------------------------------------
 // Shared types — matches the new generic LobbyDO state shape
@@ -227,8 +228,8 @@ export default function LobbyPage() {
   if (!state) return null;
 
   // Derive display info from the new state shape
-  const gameType = state.gameType ?? 'capture-the-lobster';
-  const gameLabel = gameType === 'oathbreaker' ? 'OATHBREAKER' : 'Capture the Lobster';
+  const gameType = state.gameType;
+  const gameLabel = getGameDisplayName(gameType);
   const phaseId = state.currentPhase?.id;
   const phaseView = state.currentPhase?.view;
   const chatMessages = extractChatMessages(state.relay ?? []);
@@ -236,7 +237,6 @@ export default function LobbyPage() {
   // Determine if this is a team-based or simple lobby from phase view data
   const isTeamPhase = phaseId === 'team-formation';
   const isClassSelection = phaseId === 'class-selection';
-  const isOpenQueue = phaseId === 'open-queue';
   const showTimer = state.phase === 'running' && state.deadlineMs != null;
 
   // Team formation view: { teams: [{id, members, invites}], unassigned, teamSize, numTeams }
@@ -248,9 +248,7 @@ export default function LobbyPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="font-heading text-xl font-bold" style={{ color: 'var(--color-ink)' }}>Lobby</h1>
-          {gameType !== 'capture-the-lobster' && (
-            <span className="font-heading text-sm font-medium" style={{ color: 'var(--color-blood)' }}>{gameLabel}</span>
-          )}
+          <span className="font-heading text-sm font-medium" style={{ color: 'var(--color-blood)' }}>{gameLabel}</span>
           <span className="font-mono text-sm" style={{ color: 'var(--color-ink-faint)' }}>{state.lobbyId}</span>
           {phaseBadge(state.phase, phaseId)}
           <span className="text-sm" style={{ color: 'var(--color-ink-light)' }}>{state.agents.length} agents</span>
@@ -284,7 +282,7 @@ export default function LobbyPage() {
 
       {/* Running phase: Join instructions */}
       {state.phase === 'running' && (
-        <JoinInstructions lobbyId={state.lobbyId} />
+        <JoinInstructions lobbyId={state.lobbyId} gameType={gameType} />
       )}
 
       {/* Game redirect */}

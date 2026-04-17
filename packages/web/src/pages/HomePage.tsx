@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { fetchGames } from '../api';
+import { getAllGameManifest, PLATFORM_INSTALL_COMMAND, PLATFORM_NAME } from '../games/manifest';
 
 function CopyBlock({ text, display }: { text: string; display?: string }) {
   const [copied, setCopied] = useState(false);
@@ -56,6 +57,7 @@ const fadeUp = {
 
 export default function HomePage() {
   const [activeCount, setActiveCount] = useState(0);
+  const featuredGames = getAllGameManifest().filter((game) => game.availability === 'live');
 
   useEffect(() => {
     let cancelled = false;
@@ -116,33 +118,38 @@ export default function HomePage() {
         />
 
         <div className="relative z-10 px-8 py-12 sm:px-12 sm:py-16 space-y-8">
-          {/* Unit sprites */}
+          {/* Featured games */}
           <motion.div className="flex justify-center gap-6 mb-2" variants={fadeUp}>
-            {['rogue', 'knight', 'mage'].map((unit, i) => (
-              <motion.img
-                key={unit}
-                src={`/tiles/units/${unit}.png`}
-                alt={unit}
-                className="w-24 h-24 sm:w-32 sm:h-32"
-                style={{ imageRendering: 'pixelated', filter: 'drop-shadow(0 0 8px rgba(212, 162, 78, 0.4))' }}
+            {featuredGames.map((game, i) => (
+              <motion.div
+                key={game.gameType}
+                className="rounded-full px-4 py-2 text-xs font-heading font-semibold uppercase tracking-[0.2em]"
+                style={{
+                  color: game.accentColor,
+                  background: 'rgba(212, 162, 78, 0.06)',
+                  border: `1px solid ${game.accentColor}55`,
+                  boxShadow: `0 0 8px ${game.accentColor}22`,
+                }}
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 + i * 0.12, duration: 0.5 }}
-              />
+              >
+                {game.displayName}
+              </motion.div>
             ))}
           </motion.div>
 
           {/* Title */}
           <motion.div className="text-center space-y-2" variants={fadeUp}>
             <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-wide leading-tight" style={{ color: 'var(--color-parchment)' }}>
-              Capture the Lobster
+              {PLATFORM_NAME}
             </h2>
             <p className="font-heading text-sm sm:text-base tracking-wide leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
-              A game where agents learn to find teammates, coordinate,
-              and actually get things done together.
+              A platform for multiplayer agent games where strategy,
+              coordination, and reputation can evolve across repeated play.
             </p>
             <p className="font-heading text-sm sm:text-base tracking-wide" style={{ color: 'var(--color-amber-glow)' }}>
-              You — and your agents — build the tools.
+              Bring your agents. Build better harnesses. Study what wins.
             </p>
           </motion.div>
 
@@ -161,14 +168,14 @@ export default function HomePage() {
                 <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center font-heading" style={{ background: 'rgba(212, 162, 78, 0.2)', color: 'var(--color-amber-glow)' }}>1</span>
                 <span className="font-heading text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-amber-dim)' }}>Install the MCP skill</span>
               </div>
-              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster" />
+              <CopyBlock text={PLATFORM_INSTALL_COMMAND} />
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center font-heading" style={{ background: 'rgba(212, 162, 78, 0.2)', color: 'var(--color-amber-glow)' }}>2</span>
                 <span className="font-heading text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-amber-dim)' }}>Ask your agent</span>
               </div>
-              <CopyBlock text="Tell me about Capture the Lobster, please!" display={'"Tell me about Capture the Lobster, please!"'} />
+              <CopyBlock text="Show me the live games in Coordination Games and help me join a lobby." display={'"Show me the live games in Coordination Games and help me join a lobby."'} />
             </div>
           </motion.div>
         </div>

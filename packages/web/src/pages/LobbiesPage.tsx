@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../config.js';
 import { motion } from 'framer-motion';
 import { fetchGames, type GameSummary } from '../api';
+import { formatLobbyOption, getGameManifest, getLobbyEnabledGames } from '../games/manifest';
 
 interface Game {
   id: string;
@@ -23,10 +24,17 @@ interface Lobby {
   lobbyId: string;
   gameType?: string;
   phase: 'running' | 'starting' | 'game' | 'failed';
-  teamSize?: number;
   playerCount?: number;
-  createdAt?: string;
+  currentPhase?: {
+    id: string;
+    name: string;
+    view: any;
+  } | null;
+  agents: any[];
+  deadlineMs?: number | null;
   gameId?: string | null;
+  error?: string | null;
+  noTimeout?: boolean;
 }
 
 function phaseBadge(phase: string) {
@@ -57,14 +65,19 @@ function phaseBadge(phase: string) {
 }
 
 export default function LobbiesPage() {
+  const lobbyGames = getLobbyEnabledGames();
+  const defaultGame = lobbyGames[0]?.gameType ?? 'capture-the-lobster';
   const [games, setGames] = useState<Game[]>([]);
   const [lobbies, setLobbies] = useState<Lobby[]>([]);
   const [creating, setCreating] = useState(false);
-  const [teamSize, setTeamSize] = useState(2);
-  const [gameTab, setGameTab] = useState<'capture-the-lobster' | 'oathbreaker' | 'comedy-of-the-commons'>('capture-the-lobster');
-  const [oathPlayerCount, setOathPlayerCount] = useState(4);
-  const [comedyPlayerCount, setComedyPlayerCount] = useState(4);
+  const [gameTab, setGameTab] = useState<string>(defaultGame);
+  const [createValue, setCreateValue] = useState<number>(getGameManifest(defaultGame)?.lobby?.options[0] ?? 2);
   const navigate = useNavigate();
+  const selectedGame = getGameManifest(gameTab);
+
+  useEffect(() => {
+    setCreateValue(selectedGame?.lobby?.options[0] ?? 2);
+  }, [selectedGame?.gameType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,31 +114,17 @@ export default function LobbiesPage() {
   async function handleCreateLobby() {
     setCreating(true);
     try {
-      if (gameTab === 'oathbreaker') {
-        const res = await fetch(`${API_BASE}/lobbies/create`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
-        });
-        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
-      } else if (gameTab === 'comedy-of-the-commons') {
-        const res = await fetch(`${API_BASE}/lobbies/create`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gameType: 'comedy-of-the-commons', teamSize: comedyPlayerCount }),
-        });
-        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
-      } else {
-        const res = await fetch(`${API_BASE}/lobbies/create`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ teamSize }),
-        });
-        if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
-      }
+      const res = await fetch(`${API_BASE}/lobbies/create`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameType: gameTab, teamSize: createValue }),
+      });
+      if (res.ok) { const data = await res.json(); navigate(`/lobby/${data.lobbyId}`); return; }
     } catch {}
     setCreating(false);
   }
 
-  const filteredGames = games.filter(g => (g.gameType ?? 'capture-the-lobster') === gameTab);
-  const filteredLobbies = lobbies.filter(l => (l.gameType ?? 'capture-the-lobster') === gameTab);
+  const filteredGames = games.filter(g => (g.gameType ?? defaultGame) === gameTab);
+  const filteredLobbies = lobbies.filter(l => (l.gameType ?? defaultGame) === gameTab);
   const activeGames = filteredGames.filter((g) => g.phase !== 'finished');
   const finishedGames = filteredGames.filter((g) => g.phase === 'finished');
 
@@ -135,87 +134,40 @@ export default function LobbiesPage() {
       <div className="flex flex-col gap-3">
         {/* Tab selector */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setGameTab('capture-the-lobster')}
-            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
-            style={gameTab === 'capture-the-lobster'
-              ? { background: 'rgba(58, 90, 42, 0.15)', color: 'var(--color-forest)', border: '1px solid rgba(58, 90, 42, 0.3)' }
-              : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
-            }
-          >
-            Capture the Lobster
-          </button>
-          <button
-            onClick={() => setGameTab('oathbreaker')}
-            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
-            style={gameTab === 'oathbreaker'
-              ? { background: 'rgba(139, 32, 32, 0.12)', color: 'var(--color-blood)', border: '1px solid rgba(139, 32, 32, 0.3)' }
-              : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
-            }
-          >
-            OATHBREAKER
-          </button>
-          <button
-            onClick={() => setGameTab('comedy-of-the-commons')}
-            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
-            style={gameTab === 'comedy-of-the-commons'
-              ? { background: 'rgba(16, 185, 129, 0.12)', color: '#86efac', border: '1px solid rgba(16, 185, 129, 0.35)' }
-              : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
-            }
-          >
-            Comedy of the Commons
-          </button>
+          {lobbyGames.map((game) => {
+            const isActive = gameTab === game.gameType;
+            return (
+              <button
+                key={game.gameType}
+                onClick={() => setGameTab(game.gameType)}
+                className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
+                style={isActive
+                  ? { background: `${game.accentColor}20`, color: game.accentColor, border: `1px solid ${game.accentColor}55` }
+                  : { background: 'transparent', color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
+                }
+              >
+                {game.displayName}
+              </button>
+            );
+          })}
         </div>
 
         {/* Create controls */}
         <div className="flex items-center justify-end gap-3">
-          {gameTab === 'capture-the-lobster' ? (
+          {selectedGame?.lobby && (
             <div className="flex items-center gap-2">
-              {[2, 3, 4, 5, 6].map((size) => (
+              <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>{selectedGame.lobby.metricLabel}:</span>
+              {selectedGame.lobby.options.map((option) => (
                 <button
-                  key={size}
-                  onClick={() => setTeamSize(size)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
-                  style={teamSize === size
-                    ? { background: 'rgba(212, 162, 78, 0.15)', color: 'var(--color-amber-glow)', border: '1px solid rgba(212, 162, 78, 0.4)' }
+                  key={option}
+                  onClick={() => setCreateValue(option)}
+                  className="cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors"
+                  style={createValue === option
+                    ? { background: `${selectedGame.accentColor}20`, color: selectedGame.accentColor, border: `1px solid ${selectedGame.accentColor}55` }
                     : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
                   }
                 >
-                  {size}v{size}
-                </button>
-              ))}
-            </div>
-          ) : gameTab === 'oathbreaker' ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>Players:</span>
-              {[4, 6, 8, 10, 12, 16, 20].map((count) => (
-                <button
-                  key={count}
-                  onClick={() => setOathPlayerCount(count)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
-                  style={oathPlayerCount === count
-                    ? { background: 'rgba(139, 32, 32, 0.15)', color: 'var(--color-blood-light, #c55)', border: '1px solid rgba(139, 32, 32, 0.4)' }
-                    : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
-                  }
-                >
-                  {count}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>Players:</span>
-              {[4, 5, 6].map((count) => (
-                <button
-                  key={count}
-                  onClick={() => setComedyPlayerCount(count)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
-                  style={comedyPlayerCount === count
-                    ? { background: 'rgba(16, 185, 129, 0.15)', color: '#86efac', border: '1px solid rgba(16, 185, 129, 0.4)' }
-                    : { color: 'var(--color-ink-faint)', border: '1px solid rgba(42, 31, 14, 0.15)' }
-                  }
-                >
-                  {count}
+                  {formatLobbyOption(selectedGame, option)}
                 </button>
               ))}
             </div>
@@ -228,7 +180,7 @@ export default function LobbiesPage() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
-            {creating ? 'Creating...' : 'Create Lobby'}
+            {creating ? 'Creating...' : (selectedGame?.lobby?.buttonLabel ?? 'Create Lobby')}
           </motion.button>
         </div>
       </div>
@@ -296,13 +248,14 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 
 function lobbyPhaseBadge(lobby: Lobby) {
   const phase = lobby.phase;
+  const phaseName = lobby.currentPhase?.name;
 
   switch (phase) {
     case 'running':
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide" style={{ background: 'rgba(184, 134, 11, 0.08)', color: 'var(--color-amber)', border: '1px solid rgba(184, 134, 11, 0.2)' }}>
           <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--color-amber)' }} />
-          Open
+          {phaseName ?? 'In Progress'}
         </span>
       );
     case 'starting':
@@ -324,10 +277,12 @@ function lobbyPhaseBadge(lobby: Lobby) {
 function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
   const playerCount = lobby.playerCount ?? 0;
   const gameType = lobby.gameType ?? 'capture-the-lobster';
-  const teamSize = lobby.teamSize;
-  const capacity = teamSize != null
-    ? (gameType === 'oathbreaker' ? teamSize : teamSize * 2)
-    : undefined;
+  const manifest = getGameManifest(gameType);
+  const phaseView = lobby.currentPhase?.view;
+
+  // Extract team count from team-formation phase view if available
+  const teams: any[] = phaseView?.teams ?? [];
+  const teamCount = teams.length;
 
   return (
     <button onClick={onClick} className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md">
@@ -336,18 +291,19 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
         {lobbyPhaseBadge(lobby)}
       </div>
       <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{playerCount}</span>
-        {capacity != null ? <span>/{capacity}</span> : null} players
-        {teamSize != null && gameType !== 'oathbreaker' && (
-          <span className="ml-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>· {teamSize}v{teamSize}</span>
-        )}
+        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>{playerCount}</span> players
+        {teamCount > 0 && <span className="ml-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>· {teamCount} teams</span>}
       </div>
-      <div className="flex items-center justify-end">
-        {gameType === 'oathbreaker' && (
-          <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>OATHBREAKER</span>
-        )}
-        {gameType === 'comedy-of-the-commons' && (
-          <span className="font-heading text-xs font-medium" style={{ color: '#86efac' }}>COMEDY</span>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap gap-1">
+          {lobby.agents.slice(0, 8).map((agent: any) => (
+            <span key={agent.id} className="inline-block rounded-md px-1.5 py-0.5 text-xs font-mono" style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}>
+              {agent.handle || agent.id}
+            </span>
+          ))}
+        </div>
+        {manifest && (
+          <span className="font-heading text-xs font-medium" style={{ color: manifest.accentColor }}>{manifest.displayName}</span>
         )}
       </div>
     </button>
@@ -355,6 +311,7 @@ function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
 }
 
 function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
+  const manifest = getGameManifest(game.gameType ?? 'capture-the-lobster');
   if (game.gameType === 'comedy-of-the-commons') {
     const round = game.round ?? game.turn ?? 0;
     const maxRounds = game.maxRounds ?? game.maxTurns ?? 12;
@@ -387,8 +344,8 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
           </div>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="font-heading text-xs font-medium" style={{ color: '#86efac' }}>
-            Comedy of the Commons
+          <span className="font-heading text-xs font-medium" style={{ color: manifest?.accentColor ?? '#86efac' }}>
+            {manifest?.displayName ?? 'Comedy of the Commons'}
           </span>
           <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
             {game.playerCount ?? '?'} players
@@ -397,7 +354,6 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
       </button>
     );
   }
-
   // OATHBREAKER game card
   if (game.gameType === 'oathbreaker') {
     const round = game.round ?? game.turn ?? 0;
@@ -431,8 +387,8 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
           </div>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="font-heading text-xs font-medium" style={{ color: 'var(--color-blood)' }}>
-            OATHBREAKER
+          <span className="font-heading text-xs font-medium" style={{ color: manifest?.accentColor ?? 'var(--color-blood)' }}>
+            {manifest?.displayName ?? 'OATHBREAKER'}
           </span>
           <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
             {game.playerCount ?? '?'} players
