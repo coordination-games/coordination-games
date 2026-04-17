@@ -106,6 +106,10 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     fetch(`${API_BASE}/games/${gameId}`)
       .then(r => r.json())
       .then(data => {
+        // OATHBREAKER runs with spectatorDelay=0, so spectator_pending
+        // should never appear here — but we guard symmetrically to stay
+        // robust to future plugin-config changes.
+        if (data?.type === 'spectator_pending') return;
         const mapped = mapServerState(data);
         if (mapped) setLiveState(mapped);
       })
@@ -119,6 +123,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     ws.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data);
+        if (raw?.type === 'spectator_pending') return;
         const mapped = mapServerState(raw);
         if (mapped) setLiveState(mapped);
       } catch {

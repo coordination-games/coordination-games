@@ -43,14 +43,20 @@ export async function fetchLeaderboard(): Promise<any[]> {
 }
 
 export interface ReplayData {
+  /**
+   * 'replay' — snapshots contain 1..N entries representing progress ticks
+   *            [0, publicSnapshotIndex()].
+   * 'spectator_pending' — the game's spectator-delay window has not yet
+   *            elapsed. snapshots is [] and progressCounter is null.
+   */
+  type?: 'replay' | 'spectator_pending';
   gameType: string;
   gameId: string;
   handles: Record<string, string>;
   teamMap: Record<string, string>;
   finished: boolean;
-  progressCounter: number;
+  progressCounter: number | null;
   snapshots: any[];
-  relay: any[];
 }
 
 export async function fetchReplay(id: string): Promise<ReplayData> {

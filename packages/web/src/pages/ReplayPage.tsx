@@ -119,11 +119,38 @@ export default function ReplayPage() {
     );
   }
 
-  if (error || !replay || totalTurns === 0) {
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <div className="text-red-400 text-lg">{error}</div>
+      </div>
+    );
+  }
+
+  // Pre-window: the game's spectator-delay hasn't elapsed yet. No
+  // snapshots exist to render — show the same placeholder the live
+  // spectator view uses.
+  if (replay?.type === 'spectator_pending') {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <div className="text-center px-8 py-6">
+          <div className="text-5xl md:text-6xl mb-4">🦞</div>
+          <div className="text-xl md:text-2xl font-bold text-gray-200 mb-2">
+            Replay not yet available
+          </div>
+          <div className="text-sm md:text-base text-gray-400">
+            Spectator view is delayed — waiting for first turns to resolve...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!replay || totalTurns === 0) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
         <div className="text-red-400 text-lg">
-          {error ?? 'No replay data available for this game.'}
+          No replay data available for this game.
         </div>
       </div>
     );
