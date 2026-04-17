@@ -21,6 +21,7 @@ import { BasicChatPlugin } from "@coordination-games/plugin-chat";
 export interface ServeOptions {
   serverUrl: string;
   privateKey?: string;
+  token?: string;
   name?: string;
   botMode?: boolean;
   httpPort?: number;
@@ -30,6 +31,7 @@ function createMcpServerWithClient(options?: ServeOptions): { server: McpServer;
   const serverUrl = options?.serverUrl || loadConfig().serverUrl;
   const client = new GameClient(serverUrl, {
     privateKey: options?.privateKey,
+    token: options?.token,
     name: options?.name,
   });
   const server = new McpServer({
