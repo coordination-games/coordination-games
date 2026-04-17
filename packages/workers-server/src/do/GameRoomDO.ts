@@ -30,6 +30,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { getGame, buildActionMerkleTree } from '@coordination-games/engine';
 import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engine';
 import type { Env } from '../env.js';
+import { computePublicSnapshotIndex } from './spectator-delay.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
@@ -756,23 +757,39 @@ export class GameRoomDO extends DurableObject<Env> {
     };
   }
 
+  /**
+   * Highest index in _spectatorSnapshots that may be revealed to a caller
+   * without player-level authorisation. Returns null when the delay window
+   * has not yet elapsed (nothing public yet). Single oracle for the live
+   * spectator WS push, HTTP /spectator, HTTP /replay, and /api/games
+   * summaries. See docs/plans/spectator-delay-security-fix.md §4.2.
+   */
+  private publicSnapshotIndex(): number | null {
+    if (!this._meta) return null;
+    return computePublicSnapshotIndex(
+      this._spectatorSnapshots.length,
+      this._meta.finished,
+      this._meta.spectatorDelay ?? 0,
+    );
+  }
+
   private buildSpectatorMessage(): object {
-    const delay = this._plugin!.spectatorDelay ?? 0;
-    const finished = this._meta!.finished;
-    // Spectators see only 'all'-scoped relay messages (no team chat)
-    const relayMessages = this._relay.filter(m => m.scope === 'all');
-    const ctx = { handles: this._meta!.handleMap, relayMessages };
-
-    const view = delay > 0 && this._prevProgressState && !finished
-      ? this._plugin!.buildSpectatorView(this._prevProgressState, null, ctx)
-      : this._plugin!.buildSpectatorView(this._state, this._prevProgressState, ctx);
-
+    const idx = this.publicSnapshotIndex();
+    if (idx === null) {
+      return {
+        type: 'spectator_pending',
+        gameType: this._meta!.gameType,
+        handles: this._meta!.handleMap,
+        progressCounter: null,
+      };
+    }
+    const snapshot = this._spectatorSnapshots[idx] as Record<string, unknown>;
     return {
       type: 'state_update',
       gameType: this._meta!.gameType,
       handles: this._meta!.handleMap,
-      progressCounter: this._progress.counter,
-      ...(view as Record<string, unknown>),
+      progressCounter: idx,
+      ...snapshot,
     };
   }
 
