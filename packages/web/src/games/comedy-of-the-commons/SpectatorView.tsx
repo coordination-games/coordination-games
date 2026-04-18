@@ -54,14 +54,16 @@ function statusColor(status: ComedyEcosystem['status']): string {
 }
 
 export function ComedySpectatorView(props: SpectatorViewProps) {
-  const { gameId, handles, chatMessages } = props;
+  const { gameId, handles, chatMessages, gameState } = props;
   const [state, setState] = useState<ComedySpectatorState | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const replayState = mapServerState(gameState);
+  const effectiveState = replayState ?? state;
 
   useEffect(() => {
-    if (!gameId) return;
+    if (!gameId || replayState) return;
 
     fetch(`${API_BASE}/games/${gameId}`)
       .then((r) => r.json())
@@ -89,14 +91,14 @@ export function ComedySpectatorView(props: SpectatorViewProps) {
       ws.close();
       wsRef.current = null;
     };
-  }, [gameId]);
+  }, [gameId, replayState]);
 
   const sortedPlayers = useMemo(
-    () => [...(state?.players ?? [])].sort((a, b) => (b.vp - a.vp) || (b.influence - a.influence)),
-    [state?.players],
+    () => [...(effectiveState?.players ?? [])].sort((a, b) => (b.vp - a.vp) || (b.influence - a.influence)),
+    [effectiveState?.players],
   );
 
-  if (!state) {
+  if (!effectiveState) {
     return (
       <div className="flex h-[calc(100vh-5rem)] items-center justify-center px-6 text-center">
         <div>
@@ -114,10 +116,10 @@ export function ComedySpectatorView(props: SpectatorViewProps) {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-emerald-200">Comedy of the Commons</h1>
-              <p className="text-sm text-slate-400">Round {state.round}/{state.maxRounds} · {state.phase}</p>
+              <p className="text-sm text-slate-400">Round {effectiveState.round}/{effectiveState.maxRounds} · {effectiveState.phase}</p>
             </div>
             <div className="rounded-full border border-emerald-500/20 px-3 py-1 text-xs uppercase tracking-[0.2em] text-emerald-300">
-              {state.winner ? `Leader: ${handles[state.winner] ?? state.winner}` : 'Live commons race'}
+              {effectiveState.winner ? `Leader: ${handles[effectiveState.winner] ?? effectiveState.winner}` : 'Live commons race'}
             </div>
           </div>
 
@@ -154,7 +156,7 @@ export function ComedySpectatorView(props: SpectatorViewProps) {
           <section className="rounded-2xl border border-sky-500/20 bg-slate-900/80 p-5 shadow-xl">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-sky-300">Ecosystems</h2>
             <div className="space-y-3">
-              {state.ecosystems.map((ecosystem) => {
+              {effectiveState.ecosystems.map((ecosystem) => {
                 const pct = Math.max(0, Math.min(100, Math.round((ecosystem.health / ecosystem.maxHealth) * 100)));
                 return (
                   <div key={ecosystem.id} className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
@@ -177,11 +179,11 @@ export function ComedySpectatorView(props: SpectatorViewProps) {
 
           <section className="rounded-2xl border border-amber-500/20 bg-slate-900/80 p-5 shadow-xl">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.2em] text-amber-300">Active trades</h2>
-            {state.activeTrades.length === 0 ? (
+            {effectiveState.activeTrades.length === 0 ? (
               <p className="text-sm text-slate-400">No reciprocal trades settled this round.</p>
             ) : (
               <div className="space-y-2 text-sm text-slate-300">
-                {state.activeTrades.map((trade, index) => (
+                {effectiveState.activeTrades.map((trade, index) => (
                   <div key={`${trade.to}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
                     <div className="text-xs uppercase tracking-[0.14em] text-slate-500">to {handles[trade.to] ?? trade.to}</div>
                     <div>Give {JSON.stringify(trade.give)} · Receive {JSON.stringify(trade.receive)}</div>
