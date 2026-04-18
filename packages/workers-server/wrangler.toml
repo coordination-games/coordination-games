@@ -2,6 +2,7 @@ name = "ctl-server"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
+alias = { "@coordination-games/engine" = "../engine/src/index.ts", "@coordination-games/game-ctl" = "../games/capture-the-lobster/src/index.ts", "@coordination-games/game-oathbreaker" = "../games/oathbreaker/src/index.ts", "@coordination-games/plugin-chat" = "../plugins/basic-chat/src/index.ts" }
 
 [[d1_databases]]
 binding = "DB"
