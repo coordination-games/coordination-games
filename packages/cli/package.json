@@ -34,6 +34,12 @@
     "access": "public",
     "provenance": true
   },
+  "dependencies": {
+    "@coordination-games/game-ctl": "*",
+    "@coordination-games/game-oathbreaker": "*",
+    "@coordination-games/plugin-chat": "*",
+    "ethers": "^6.15.0"
+  },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.19.15",
