@@ -566,6 +566,16 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
     )),
   ]);
 
+  const startResp = await doStub.fetch(new Request('https://do/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId: null, action: { type: 'game_start' } }),
+  }));
+  if (!startResp.ok) {
+    const err = await startResp.json() as any;
+    return Response.json({ error: err.error ?? 'Game start failed' }, { status: startResp.status });
+  }
+
   console.log(`[Worker] Created ${gameType} game ${gameId} for ${playerIds.length} players`);
   return Response.json({ gameId, gameType, playerCount: playerIds.length }, { status: 201 });
 }
