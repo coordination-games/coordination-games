@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 
 import { Wallet } from 'ethers';
+import { promises as fs } from 'fs';
 import { api, authenticate } from './lib/bot-agent.js';
 
 interface SmokeOptions {
@@ -10,6 +11,9 @@ interface SmokeOptions {
   namePrefix: string;
   maxWaitMs: number;
   resumeDelayMs: number;
+  finishWaitMs: number;
+  workerLogPath?: string;
+  directGameCreate: boolean;
 }
 
 function parseArgs(): SmokeOptions {
@@ -26,6 +30,9 @@ function parseArgs(): SmokeOptions {
     namePrefix: get('--name-prefix') ?? 'Smoke',
     maxWaitMs: Number(get('--max-wait-ms') ?? '10000'),
     resumeDelayMs: Number(get('--resume-delay-ms') ?? '1500'),
+    finishWaitMs: Number(get('--finish-wait-ms') ?? '0'),
+    workerLogPath: get('--worker-log-path') ?? process.env.WORKER_LOG_PATH,
+    directGameCreate: (get('--direct-game-create') ?? process.env.DIRECT_GAME_CREATE ?? '').toLowerCase() === 'true',
   };
 }
 
@@ -33,14 +40,20 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function authenticateWithRetry(server: string, privateKey: string, name: string, attempts = 4) {
+async function authenticateWithRetry(server: string, privateKey: string, baseName: string, attempts = 4) {
   let lastError: unknown;
+  let currentName = baseName;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      return await authenticate(server, privateKey, name);
+      const auth = await authenticate(server, privateKey, currentName);
+      return { ...auth, name: currentName };
     } catch (error) {
       lastError = error;
       const message = String(error instanceof Error ? error.message : error);
+      if (/already taken|409/i.test(message)) {
+        currentName = `${baseName}-${Date.now().toString(36).slice(-4)}-${attempt + 1}`;
+        continue;
+      }
       if (!/worker restarted mid-request|503/i.test(message) || attempt === attempts - 1) {
         throw error;
       }
@@ -66,6 +79,41 @@ async function waitForReplay(server: string, gameId: string, maxWaitMs: number) 
   throw new Error(`Timed out waiting for replay for game ${gameId}`);
 }
 
+async function waitForGameFinished(server: string, gameId: string, maxWaitMs: number) {
+  const started = Date.now();
+  while (Date.now() - started < maxWaitMs) {
+    try {
+      const game = await api(server, `/api/games/${gameId}`);
+      if (game?.finished || game?.phase === 'finished') {
+        return game;
+      }
+    } catch {
+      // wait and retry
+    }
+    await sleep(1000);
+  }
+  throw new Error(`Timed out waiting for game ${gameId} to finish`);
+}
+
+async function readLogOffset(path?: string): Promise<number | null> {
+  if (!path) return null;
+  try {
+    const stat = await fs.stat(path);
+    return stat.size;
+  } catch {
+    return 0;
+  }
+}
+
+async function assertNoSettlementErrors(path: string | undefined, offset: number | null) {
+  if (!path || offset === null) return;
+  const text = await fs.readFile(path, 'utf8');
+  const tail = text.slice(offset);
+  if (/On-chain settlement failed|Buffer is not defined/i.test(tail)) {
+    throw new Error('Worker log contains settlement failure after smoke run');
+  }
+}
+
 async function waitForFramework(server: string, maxWaitMs: number) {
   const started = Date.now();
   while (Date.now() - started < maxWaitMs) {
@@ -83,7 +131,7 @@ async function waitForFramework(server: string, maxWaitMs: number) {
 }
 
 async function main() {
-  const { server, webBaseUrl, playerCount, namePrefix, maxWaitMs, resumeDelayMs } = parseArgs();
+  const { server, webBaseUrl, playerCount, namePrefix, maxWaitMs, resumeDelayMs, finishWaitMs, workerLogPath, directGameCreate } = parseArgs();
   if (playerCount < 4) {
     throw new Error('Comedy demo smoke requires at least 4 players');
   }
@@ -91,6 +139,7 @@ async function main() {
   console.log(`\ncomedy-demo-smoke — ${playerCount} players on ${server}\n`);
 
   await waitForFramework(server, maxWaitMs);
+  const workerLogOffset = await readLogOffset(workerLogPath);
 
   const players: Array<{ name: string; token: string; playerId: string; address: string }> = [];
 
@@ -98,31 +147,53 @@ async function main() {
     const wallet = Wallet.createRandom();
     const name = `${namePrefix}${i + 1}`;
     const auth = await authenticateWithRetry(server, wallet.privateKey, name);
-    players.push({ ...auth, name, address: wallet.address });
-    console.log(`  authenticated ${name} (${auth.playerId.slice(0, 8)}...)`);
+    players.push({ ...auth, address: wallet.address });
+    console.log(`  authenticated ${auth.name} (${auth.playerId.slice(0, 8)}...)`);
   }
 
-  const created = await api(server, '/api/lobbies/create', {
-    method: 'POST',
-    token: players[0].token,
-    body: { gameType: 'comedy-of-the-commons', teamSize: playerCount },
-  });
-  const lobbyId = created.lobbyId as string;
-  console.log(`\n  lobby: ${lobbyId}`);
-
+  let lobbyId: string | null = null;
   let gameId: string | null = null;
-  for (const player of players) {
-    const joined = await api(server, '/api/player/lobby/join', {
+
+  if (directGameCreate) {
+    const created = await api(server, '/api/games/create', {
       method: 'POST',
-      token: player.token,
-      body: { lobbyId },
+      body: {
+        gameType: 'comedy-of-the-commons',
+        config: {
+          seed: `smoke-${Date.now().toString(36)}`,
+          playerIds: players.map((player) => player.playerId),
+          maxRounds: 1,
+          turnTimerSeconds: 1,
+        },
+        playerIds: players.map((player) => player.playerId),
+        handleMap: Object.fromEntries(players.map((player) => [player.playerId, player.name])),
+        teamMap: Object.fromEntries(players.map((player) => [player.playerId, 'FFA'])),
+      },
     });
-    console.log(`  ${player.name} joined (phase: ${joined.phase ?? joined.currentPhase?.id ?? 'unknown'})`);
-    if (joined.gameId) gameId = joined.gameId;
+    gameId = created.gameId as string;
+    console.log(`\n  direct game: ${gameId}`);
+  } else {
+    const created = await api(server, '/api/lobbies/create', {
+      method: 'POST',
+      token: players[0].token,
+      body: { gameType: 'comedy-of-the-commons', teamSize: playerCount },
+    });
+    lobbyId = created.lobbyId as string;
+    console.log(`\n  lobby: ${lobbyId}`);
+
+    for (const player of players) {
+      const joined = await api(server, '/api/player/lobby/join', {
+        method: 'POST',
+        token: player.token,
+        body: { lobbyId },
+      });
+      console.log(`  ${player.name} joined (phase: ${joined.phase ?? joined.currentPhase?.id ?? 'unknown'})`);
+      if (joined.gameId) gameId = joined.gameId;
+    }
   }
 
   if (!gameId) {
-    throw new Error('Lobby did not promote into a game');
+    throw new Error('Flow did not produce a game');
   }
 
   const games = await api(server, '/api/games');
@@ -142,6 +213,16 @@ async function main() {
   if ((resumedReplay.snapshots?.length ?? 0) < (replay.snapshots?.length ?? 0)) {
     throw new Error('Replay/resume reduced snapshot count after reconnect check');
   }
+
+  let finishedGame: any = null;
+  let finishedReplaySnapshots: number | null = null;
+  if (finishWaitMs > 0) {
+    finishedGame = await waitForGameFinished(server, gameId, finishWaitMs);
+    const finishedReplay = await waitForReplay(server, gameId, maxWaitMs);
+    finishedReplaySnapshots = finishedReplay.snapshots?.length ?? 0;
+    await assertNoSettlementErrors(workerLogPath, workerLogOffset);
+  }
+
   const replayUrl = `${webBaseUrl}/replay/${gameId}`;
 
   console.log('\nSmoke summary');
@@ -149,6 +230,7 @@ async function main() {
     lobbyId,
     gameId,
     playerCount,
+    creationMode: directGameCreate ? 'direct-game' : 'lobby-join',
     gameSummary: game,
     spectatorType: spectator.type,
     replaySnapshots: replay.snapshots?.length ?? 0,
@@ -156,6 +238,9 @@ async function main() {
     resumedReplaySnapshots: resumedReplay.snapshots?.length ?? 0,
     initialProgress,
     resumedProgress,
+    finished: finishedGame ? (finishedGame.finished ?? finishedGame.phase === 'finished') : false,
+    finishedProgressCounter: finishedGame?.progressCounter ?? null,
+    finishedReplaySnapshots,
     replayUrl,
   }, null, 2));
 }
