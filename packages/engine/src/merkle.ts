@@ -16,13 +16,13 @@ import crypto from 'node:crypto';
 // ---------------------------------------------------------------------------
 
 /** Hash a buffer with SHA-256. In production, replace with keccak256. */
-function hashBuffer(data: Buffer): string {
+function hashBuffer(data: Uint8Array): string {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
 /** Hash a string with SHA-256. */
 function hashString(data: string): string {
-  return hashBuffer(Buffer.from(data, 'utf-8'));
+  return hashBuffer(new TextEncoder().encode(data));
 }
 
 /** Hash two child hashes together (sorted for order independence). */
