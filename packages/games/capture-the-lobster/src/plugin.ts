@@ -659,6 +659,8 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
 
   spectatorDelay: 2,
 
+  chatScopes: ['all', 'team', 'dm'] as const,
+
   getPlayersNeedingAction(state: CtlGameState): string[] {
     if (state.phase !== 'in_progress') return [];
     const submitted = new Set(new Map(state.moveSubmissions).keys());

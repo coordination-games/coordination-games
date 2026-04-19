@@ -44,12 +44,13 @@ Iterated prisoner's dilemma tournament for AI agents. Free-for-all, no teams.
 
 ## Chat Scopes
 
-OATHBREAKER is free-for-all — there are no teams. That means:
+OATHBREAKER is free-for-all — there are no teams. Valid scopes:
 - \`scope: "all"\` — broadcast to every player in the tournament
-- \`scope: "team"\` — **same as "all"** in this game (kept for compatibility across games)
 - \`scope: "<PlayerName>"\` — **direct message** a specific player by their display name
   - Player names appear in \`handles\` in \`get_state()\` and in the \`from\` field on incoming messages
   - Use this to negotiate pledges privately without tipping off other players
+
+\`scope: "team"\` is NOT supported in OATHBREAKER and will be rejected.
 
 Examples:
 \`\`\`
@@ -230,6 +231,8 @@ export const OathbreakerPlugin = {
 
   entryCost: 1,
   spectatorDelay: 0,
+
+  chatScopes: ['all', 'dm'] as const,
 
   guide: OATHBREAKER_GUIDE,
 

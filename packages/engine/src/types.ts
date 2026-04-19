@@ -140,6 +140,18 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   readonly recommendedPlugins?: string[];
 
   /**
+   * Chat scopes supported by this game. The server validates incoming
+   * `type: 'messaging'` relay envelopes against this list and rejects
+   * scopes that aren't allowed. Effective scope kinds:
+   *   - 'all': broadcast to every participant
+   *   - 'team': broadcast to the sender's team only (games with team structure)
+   *   - 'dm':  directed at a specific player handle
+   * Omit to accept all three. Games without teams (FFA like OATHBREAKER)
+   * should declare `['all', 'dm']`.
+   */
+  readonly chatScopes?: ReadonlyArray<'all' | 'team' | 'dm'>;
+
+  /**
    * Build a game config from a player list.
    * Called by the server when creating a game from a lobby or waiting room.
    * Returns the config plus relay-relevant player info (team assignments for message routing).

@@ -28,7 +28,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import { getGame, buildActionMerkleTree } from '@coordination-games/engine';
+import { getGame, buildActionMerkleTree, validateChatScope } from '@coordination-games/engine';
 import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engine';
 import type { Env } from '../env.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
@@ -458,6 +458,13 @@ export class GameRoomDO extends DurableObject<Env> {
     const relayObj = relay as Record<string, unknown>;
     if (!relayObj.type || !relayObj.pluginId) {
       return Response.json({ error: 'relay must have type and pluginId' }, { status: 400 });
+    }
+
+    if (relayObj.type === 'messaging') {
+      const scopeError = validateChatScope(relayObj.scope as string | undefined, this._plugin?.chatScopes);
+      if (scopeError) {
+        return Response.json({ error: { code: 'INVALID_CHAT_SCOPE', message: scopeError } }, { status: 400 });
+      }
     }
 
     try {

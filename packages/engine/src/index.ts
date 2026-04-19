@@ -44,6 +44,9 @@ export {
 // Built-in lobby phases
 export { OpenQueuePhase, type OpenQueueState } from './phases/open-queue.js';
 
+// Chat scope validation
+export { validateChatScope, classifyScope, type ChatScopeKind } from './chat-scope.js';
+
 // Server-side framework
 export {
   GameFramework,

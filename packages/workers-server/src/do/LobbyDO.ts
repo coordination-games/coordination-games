@@ -25,7 +25,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env.js';
-import { getGame } from '@coordination-games/engine';
+import { getGame, validateChatScope } from '@coordination-games/engine';
 import type {
   LobbyPhase,
   PhaseActionResult,
@@ -337,6 +337,13 @@ export class LobbyDO extends DurableObject<Env> {
         { error: 'X-Player-Id header required; body must be { relay: { type, data, scope, pluginId } }' },
         { status: 400 },
       );
+    }
+
+    if (relay.type === 'messaging') {
+      const scopeError = validateChatScope(relay.scope, getGame(this._meta.gameType)?.chatScopes);
+      if (scopeError) {
+        return Response.json({ error: { code: 'INVALID_CHAT_SCOPE', message: scopeError } }, { status: 400 });
+      }
     }
 
     // Store relay message with team routing
