@@ -58,52 +58,55 @@ async function main() {
 
   const capacity  = deriveCapacity(lobby.gameType, lobby.teamSize);
   const occupied  = lobby.playerCount ?? 0;
-  const remaining = capacity - occupied;
+  const remaining = Math.max(0, capacity - occupied);
   console.log(`  Lobby ${lobbyId.slice(0, 8)} — ${lobby.gameType}, ${occupied}/${capacity} seats filled`);
 
-  if (remaining <= 0) {
-    console.log('  Lobby already full. Nothing to do.\n');
-    return;
-  }
-
-  const wanted = countArg ? Math.min(parseInt(countArg), remaining) : remaining;
-  if (wanted > pool.length) {
-    console.error(`  Need ${wanted} bots but pool only has ${pool.length}. Run setup-bot-pool with POOL_SIZE=${wanted}.`);
-    process.exit(1);
-  }
-
-  // 3. Pick bots (simple: first N from pool). Check who's already in the lobby
-  //    by looking at the lobby state agents list, so we don't try to join twice.
+  // 3. Find which pool bots are already in this lobby (so we can re-spawn
+  //    agents for them if a prior run died mid-spawn), and which still need
+  //    to join. `picked` = new joiners, `reused` = already-seated pool bots.
   const lobbyState: any = await api(SERVER, `/api/lobbies/${lobbyId}/state`).catch(() => null);
   const alreadyIn = new Set<string>(
     (lobbyState?.agents ?? []).map((a: any) => String(a.handle).toLowerCase()),
   );
 
+  const reused = pool.filter(b => alreadyIn.has(b.name.toLowerCase()));
+  const wanted = countArg ? Math.min(parseInt(countArg), remaining) : remaining;
   const picked = pool.filter(b => !alreadyIn.has(b.name.toLowerCase())).slice(0, wanted);
-  if (picked.length < wanted) {
-    console.error(`  Only ${picked.length} pool bots are not already in this lobby.`);
+
+  if (picked.length === 0 && reused.length === 0) {
+    console.error('  No pool bots to join or re-spawn agents for. Aborting.');
     process.exit(1);
   }
 
-  // 4. Auth + join each bot
-  console.log(`  Joining ${picked.length} bot(s) into lobby...`);
-  const live: { name: string; token: string; playerId: string; privateKey: string }[] = [];
-  for (const bot of picked) {
-    try {
-      const { token, playerId } = await authenticate(SERVER, bot.privateKey, bot.name);
-      await api(SERVER, '/api/player/lobby/join', {
-        method: 'POST', token,
-        body: { lobbyId },
-      });
-      console.log(`    ${bot.name} joined (${playerId.slice(0, 8)}...)`);
-      live.push({ name: bot.name, token, playerId, privateKey: bot.privateKey });
-    } catch (err: any) {
-      console.error(`    ${bot.name} FAILED to join: ${err.message}`);
+  // 4. Auth + join new bots; auth reused bots so we can spawn agents for them too.
+  const live: { name: string; privateKey: string }[] = [];
+
+  if (picked.length > 0) {
+    console.log(`  Joining ${picked.length} bot(s) into lobby...`);
+    for (const bot of picked) {
+      try {
+        const { token, playerId } = await authenticate(SERVER, bot.privateKey, bot.name);
+        await api(SERVER, '/api/player/lobby/join', {
+          method: 'POST', token,
+          body: { lobbyId },
+        });
+        console.log(`    ${bot.name} joined (${playerId.slice(0, 8)}...)`);
+        live.push({ name: bot.name, privateKey: bot.privateKey });
+      } catch (err: any) {
+        console.error(`    ${bot.name} FAILED to join: ${err.message}`);
+      }
+    }
+  }
+
+  if (reused.length > 0) {
+    console.log(`  Re-spawning agents for ${reused.length} already-seated pool bot(s): ${reused.map(b => b.name).join(', ')}`);
+    for (const bot of reused) {
+      live.push({ name: bot.name, privateKey: bot.privateKey });
     }
   }
 
   if (live.length === 0) {
-    console.error('No bots joined. Aborting.');
+    console.error('No bots joined or reused. Aborting.');
     process.exit(1);
   }
 

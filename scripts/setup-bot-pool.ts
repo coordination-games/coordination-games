@@ -25,11 +25,12 @@ import { authenticate, faucetBot, registerBotOnChain, loadPool, savePool, POOL_P
 const SERVER    = process.env.GAME_SERVER ?? 'http://localhost:8787';
 const POOL_SIZE = parseInt(process.env.POOL_SIZE ?? '8');
 
+const NAME_SUFFIX = process.env.BOT_NAME_SUFFIX ?? '';
 const BOT_NAMES = [
   'bot-alice', 'bot-bob',   'bot-carol', 'bot-dave',
   'bot-erin',  'bot-frank', 'bot-grace', 'bot-henry',
   'bot-ivy',   'bot-jack',  'bot-kate',  'bot-liam',
-];
+].map(n => NAME_SUFFIX ? `${n}-${NAME_SUFFIX}` : n);
 
 async function main() {
   console.log(`\nsetup-bot-pool — target size ${POOL_SIZE} on ${SERVER}\n`);
