@@ -646,58 +646,109 @@ export class GameRoomDO extends DurableObject<Env> {
       } catch (err) {
         console.error(`[GameRoomDO] Failed to update D1 on game over:`, err);
       }
-      // Fire-and-forget: settle game on-chain if relay is configured
-      (async () => {
-        try {
-          const { createRelay } = await import('../chain/index.js');
-          const relay = createRelay(this.env);
-
-          // Build settlement data
-          const leaves: MerkleLeafData[] = this._actionLog.map((e: any, i: number) => ({
-            actionIndex: i,
-            playerId: e.playerId,
-            actionData: JSON.stringify(e.action),
-          }));
-          const tree = buildActionMerkleTree(leaves);
-
-          const config = {
-            gameType: this._meta!.gameType,
-            playerIds: this._meta!.playerIds,
-            handleMap: this._meta!.handleMap,
-            teamMap: this._meta!.teamMap,
-            createdAt: this._meta!.createdAt,
-          };
-          const configJson = JSON.stringify(config, Object.keys(config).sort());
-          const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(configJson));
-          const configHash = '0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-
-          const outcome = this._plugin!.getOutcome(this._state);
-
-          // Build credit deltas from outcome (game plugin determines who wins/loses credits)
-          // For now, empty deltas — credit changes will be added when games have entry fees
-          const deltas: { agentId: string; delta: number }[] = [];
-
-          await relay.settleGame({
-            gameId: this._meta!.gameId,
-            gameType: this._meta!.gameType,
-            playerIds: this._meta!.playerIds,
-            outcome,
-            movesRoot: tree.root,
-            configHash,
-            turnCount: this._actionLog.length,
-            timestamp: Date.now(),
-          }, deltas);
-
-          console.log(`[GameRoomDO] Game ${this._meta!.gameId} settled on-chain`);
-        } catch (err) {
-          console.error(`[GameRoomDO] On-chain settlement failed (will retry via cron):`, err);
-        }
-      })();
+      // Settle on-chain (or against MockRelay in dev). ctx.waitUntil keeps the
+      // isolate alive past this request's response; otherwise the Workers runtime
+      // may hibernate the DO before the tx lands.
+      this.ctx.waitUntil(this.settleOnChain());
     }
 
     this.broadcastUpdates();
 
     return { success: true, progressCounter: this._progress.counter };
+  }
+
+  /**
+   * Anchor the finished game on-chain with credit deltas from the plugin.
+   *
+   * Server-side invariants (enforced before sending tx):
+   *   • sum(deltas) === 0              — zero-sum; GameAnchor enforces this too
+   *   • every delta ≥ -entryCost       — no player loses more than their stake
+   *   • every player has chain_agent_id — only registered identities can settle
+   *
+   * If any invariant fails we log and skip — never throw, never attack chain.
+   * MockRelay ignores deltas, so in dev mode this still exercises the path.
+   */
+  private async settleOnChain(): Promise<void> {
+    if (!this._plugin || !this._meta) return;
+    const gameId = this._meta.gameId;
+    const { playerIds, gameType, handleMap, teamMap, createdAt } = this._meta;
+
+    try {
+      // Build merkle + configHash (same as before)
+      const leaves: MerkleLeafData[] = this._actionLog.map((e: any, i: number) => ({
+        actionIndex: i,
+        playerId: e.playerId,
+        actionData: JSON.stringify(e.action),
+      }));
+      const tree = buildActionMerkleTree(leaves);
+
+      const config = { gameType, playerIds, handleMap, teamMap, createdAt };
+      const configJson = JSON.stringify(config, Object.keys(config).sort());
+      const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(configJson));
+      const configHash = '0x' + Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      const outcome = this._plugin.getOutcome(this._state);
+      const entryCost = this._plugin.entryCost;
+      const payouts = this._plugin.computePayouts(outcome, playerIds, entryCost);
+
+      // Build delta array in playerIds order; default to 0 for any missing entry
+      const deltas: { agentId: string; delta: number }[] = playerIds.map(id => ({
+        agentId: id,
+        delta: payouts.get(id) ?? 0,
+      }));
+
+      // Invariant 1: zero-sum
+      const sum = deltas.reduce((acc, d) => acc + d.delta, 0);
+      if (sum !== 0) {
+        console.error(`[settle ${gameId}] skip: non-zero-sum deltas sum=${sum}`, deltas);
+        return;
+      }
+
+      // Invariant 2: no player loses more than their stake
+      const floorViolation = deltas.find(d => d.delta < -entryCost);
+      if (floorViolation) {
+        console.error(
+          `[settle ${gameId}] skip: delta ${floorViolation.delta} < -entryCost(${entryCost}) for ${floorViolation.agentId}`,
+          deltas,
+        );
+        return;
+      }
+
+      // Invariant 3: all players must have an on-chain identity (in on-chain mode).
+      // MockRelay doesn't use chain_agent_id — skip this check when RPC_URL is unset.
+      if (this.env.RPC_URL) {
+        const rows = await this.env.DB.prepare(
+          `SELECT id, chain_agent_id FROM players WHERE id IN (${playerIds.map(() => '?').join(',')})`
+        ).bind(...playerIds).all<{ id: string; chain_agent_id: number | null }>();
+        const chainMap = new Map((rows.results ?? []).map(r => [r.id, r.chain_agent_id]));
+        const unregistered = playerIds.filter(id => !chainMap.get(id));
+        if (unregistered.length > 0) {
+          console.warn(
+            `[settle ${gameId}] skip: ${unregistered.length}/${playerIds.length} players lack chain_agent_id`,
+            unregistered,
+          );
+          return;
+        }
+      }
+
+      const { createRelay } = await import('../chain/index.js');
+      const relay = createRelay(this.env);
+
+      const receipt = await relay.settleGame({
+        gameId,
+        gameType,
+        playerIds,
+        outcome,
+        movesRoot: tree.root,
+        configHash,
+        turnCount: this._actionLog.length,
+        timestamp: Date.now(),
+      }, deltas);
+
+      console.log(`[settle ${gameId}] ok tx=${receipt.txHash ?? 'mock'} deltas=${JSON.stringify(deltas)}`);
+    } catch (err) {
+      console.error(`[settle ${gameId}] failed:`, err);
+    }
   }
 
   /**

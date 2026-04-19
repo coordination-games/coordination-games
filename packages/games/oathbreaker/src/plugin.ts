@@ -337,11 +337,11 @@ export const OathbreakerPlugin = {
     };
   },
 
-  computePayouts(outcome: OathOutcome, playerIds: string[]): Map<string, number> {
+  computePayouts(outcome: OathOutcome, playerIds: string[], entryCost: number): Map<string, number> {
     const payouts = new Map<string, number>();
     for (const id of playerIds) {
       const ranking = outcome.rankings.find((r) => r.id === id);
-      payouts.set(id, ranking ? ranking.dollarValue - 1 : 0);
+      payouts.set(id, ranking ? ranking.dollarValue - entryCost : 0);
     }
     return payouts;
   },

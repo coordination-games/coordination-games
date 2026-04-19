@@ -126,7 +126,7 @@ export class GameRoom<TConfig, TState, TAction, TOutcome> {
 
   /** Get payouts (only valid when isOver). */
   computePayouts(playerIds: string[]): Map<string, number> {
-    return this.game.computePayouts(this.getOutcome(), playerIds);
+    return this.game.computePayouts(this.getOutcome(), playerIds, this.game.entryCost);
   }
 
   getStateHistory(): readonly TState[] {

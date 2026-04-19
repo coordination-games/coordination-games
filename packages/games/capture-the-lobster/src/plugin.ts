@@ -691,7 +691,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['elo'],
 
-  computePayouts(outcome: CtlOutcome, playerIds: string[]): Map<string, number> {
+  computePayouts(outcome: CtlOutcome, playerIds: string[], entryCost: number): Map<string, number> {
     const payouts = new Map<string, number>();
 
     if (!outcome.winner) {
@@ -699,7 +699,6 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       return payouts;
     }
 
-    const entryCost = 10;
     for (const id of playerIds) {
       const stats = outcome.playerStats.get(id);
       if (!stats) { payouts.set(id, 0); continue; }

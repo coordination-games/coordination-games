@@ -84,8 +84,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Entry cost in credits per player. */
   readonly entryCost: number;
 
-  /** Credit payouts from outcome. Must be zero-sum. */
-  computePayouts(outcome: TOutcome, playerIds: string[]): Map<string, number>;
+  /**
+   * Credit payouts from outcome. Must be zero-sum and no single player delta may
+   * be more negative than -entryCost (a player never loses more than their stake).
+   * The framework re-validates both invariants before anchoring on-chain.
+   */
+  computePayouts(outcome: TOutcome, playerIds: string[], entryCost: number): Map<string, number>;
 
   /** Lobby configuration. */
   readonly lobby?: GameLobbyConfig;
