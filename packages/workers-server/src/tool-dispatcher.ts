@@ -466,11 +466,7 @@ export async function dispatchToolCall(
       : getLobbyDO(env, location.lobbyId);
     try {
       const resp = await stub.fetch(
-        new Request('https://do/tool', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ relay, playerId }),
-        }),
+        doRequest('POST', '/tool', { relay }, playerId),
       );
       logToolCall({
         sessionId, playerId, toolName, declarer: 'plugin',
