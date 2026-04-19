@@ -463,7 +463,7 @@ export class GameRoomDO extends DurableObject<Env> {
     if (relayObj.type === 'messaging') {
       const scopeError = validateChatScope(relayObj.scope as string | undefined, this._plugin?.chatScopes);
       if (scopeError) {
-        return Response.json({ error: 'VALIDATION_FAILED', code: 'INVALID_CHAT_SCOPE', message: scopeError }, { status: 400 });
+        return Response.json({ error: { code: 'INVALID_CHAT_SCOPE', message: scopeError } }, { status: 400 });
       }
     }
 

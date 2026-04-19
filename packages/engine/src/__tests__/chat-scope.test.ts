@@ -23,8 +23,13 @@ describe('validateChatScope', () => {
     expect(validateChatScope('Alice', undefined)).toBeNull();
   });
 
+  it('always accepts "all" regardless of declaration', () => {
+    expect(validateChatScope('all', ['dm'])).toBeNull();
+    expect(validateChatScope(undefined, ['dm'])).toBeNull();
+    expect(validateChatScope('', ['team'])).toBeNull();
+  });
+
   it('accepts scopes in the allowed list', () => {
-    expect(validateChatScope('all',  ['all', 'dm'])).toBeNull();
     expect(validateChatScope('Alice', ['all', 'dm'])).toBeNull();
     expect(validateChatScope('team', ['all', 'team', 'dm'])).toBeNull();
   });

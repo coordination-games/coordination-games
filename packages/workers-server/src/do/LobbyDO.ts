@@ -340,10 +340,9 @@ export class LobbyDO extends DurableObject<Env> {
     }
 
     if (relay.type === 'messaging') {
-      const plugin = this._meta ? getGame(this._meta.gameType) : undefined;
-      const scopeError = validateChatScope(relay.scope, plugin?.chatScopes);
+      const scopeError = validateChatScope(relay.scope, getGame(this._meta.gameType)?.chatScopes);
       if (scopeError) {
-        return Response.json({ error: 'VALIDATION_FAILED', code: 'INVALID_CHAT_SCOPE', message: scopeError }, { status: 400 });
+        return Response.json({ error: { code: 'INVALID_CHAT_SCOPE', message: scopeError } }, { status: 400 });
       }
     }
 
