@@ -1,6 +1,6 @@
 # Trust Attestations: Platform Primitives + `@ctl/attestations` Plugin
 
-*Status: brainstorm. Not implementation-ready. Supersedes `trust-economics.md` and `trust-plugins.md` (both retained in git history for reference).*
+*Status: brainstorm. Not implementation-ready.*
 
 ## Design Philosophy
 
@@ -396,8 +396,6 @@ Direct module imports from the server. No event bus, no dynamic registry.
 ## Migration from Existing Code
 
 - `server/relay.ts` (or equivalent location) EIP-712 + EAS plumbing: keep the signing flow; replace schema with polarity + scope. EAS off-chain format + daily Merkle rollup replaces per-attestation on-chain posting.
-- `trust-plugins.md` 5-plugin PageRank chain: drop.
-- `trust-economics.md` TILT/QTRS/HIGH SCORE token economics: drop. Stewardship is non-fungible, non-transferable.
 - Coordinate with `onchain-reintegration.md` phase 3. Until that lands, `match_players` is the authoritative outcome source.
 
 ## Philosophical Notes for Future Maintainers
