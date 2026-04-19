@@ -106,6 +106,8 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     fetch(`${API_BASE}/games/${gameId}`)
       .then(r => r.json())
       .then(data => {
+        // Symmetric guard; spectator_pending never fires for delay=0.
+        if (data?.type === 'spectator_pending') return;
         const mapped = mapServerState(data);
         if (mapped) setLiveState(mapped);
       })
@@ -119,6 +121,7 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     ws.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data);
+        if (raw?.type === 'spectator_pending') return;
         const mapped = mapServerState(raw);
         if (mapped) setLiveState(mapped);
       } catch {

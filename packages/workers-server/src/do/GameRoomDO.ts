@@ -7,8 +7,12 @@
  *
  * HTTP routes (sub-path, forwarded from the main Worker):
  *   POST /          — create game { gameType, config, playerIds, handleMap, teamMap }
- *   POST /action    — apply action { playerId, action }
- *   GET  /state     — fog-filtered state  ?playerId=X
+ *   POST /action    — apply action { action }. Identity from X-Player-Id
+ *                     header; missing header = system action (null).
+ *   POST /tool      — plugin tool call { relay }. Same identity rule.
+ *   GET  /state     — fog-filtered state for the X-Player-Id header;
+ *                     missing = spectator view. Query params and bodies
+ *                     are never trusted for identity.
  *   GET  /result    — Merkle root + outcome (only when finished)
  *   GET  /spectator — current delayed spectator view (HTTP snapshot, no WS)
  *   GET  /bundle   — full action bundle for verification (only when finished)
@@ -27,6 +31,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { getGame, buildActionMerkleTree } from '@coordination-games/engine';
 import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engine';
 import type { Env } from '../env.js';
+import { computePublicSnapshotIndex } from './spectator-delay.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
@@ -51,6 +56,11 @@ interface GameMeta {
   teamMap: Record<string, string>;    // playerId → 'A' | 'B' | 'FFA'
   createdAt: string;
   finished: boolean;
+  /**
+   * Spectator delay (progress ticks) frozen at game creation so deploys
+   * never retroactively change visibility for in-flight games.
+   */
+  spectatorDelay: number;
 }
 
 interface ProgressState {
@@ -90,13 +100,15 @@ export class GameRoomDO extends DurableObject<Env> {
   private _meta: GameMeta | null = null;
   private _plugin: CoordinationGame<any, any, any, any> | null = null;
   private _state: unknown = null;
-  private _prevProgressState: unknown = null;  // state at last progress point (spectator delay)
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0, snapshots: [0] };
   private _relay: RelayMessage[] = [];
   private _deadlineMs: number | null = null;
   private _config: unknown = null;  // game config (for replay reconstruction)
   private _spectatorSnapshots: unknown[] = [];  // spectator view at each progress point
+  // Last publicSnapshotIndex() value pushed to spectator WS sockets —
+  // broadcastUpdates skips the push when the index hasn't advanced.
+  private _lastSpectatorIdx: number | null = null;
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -114,7 +126,7 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'POST' && path === '/') return this.handleCreate(request);
     if (method === 'POST' && path === '/action') return this.handleAction(request);
     if (method === 'POST' && path === '/tool') return this.handleTool(request);
-    if (method === 'GET'  && path === '/state') return this.handleState(url);
+    if (method === 'GET'  && path === '/state') return this.handleState(request);
     if (method === 'GET'  && path === '/result') return this.handleResult();
     if (method === 'GET'  && path === '/spectator') return this.handleSpectator();
     if (method === 'GET'  && path === '/replay') return this.handleReplay();
@@ -199,6 +211,7 @@ export class GameRoomDO extends DurableObject<Env> {
       teamMap: (teamMap as Record<string, string>) ?? {},
       createdAt: new Date().toISOString(),
       finished: false,
+      spectatorDelay: plugin.spectatorDelay ?? 0,
     };
     const progress: ProgressState = { counter: 0, snapshots: [0] };
 
@@ -209,7 +222,6 @@ export class GameRoomDO extends DurableObject<Env> {
     await Promise.all([
       this.ctx.storage.put('meta', meta),
       this.ctx.storage.put('state', initialState),
-      this.ctx.storage.put('prevProgressState', null),
       this.ctx.storage.put('actionLog', []),
       this.ctx.storage.put('progress', progress),
       this.ctx.storage.put('relay', []),
@@ -221,7 +233,6 @@ export class GameRoomDO extends DurableObject<Env> {
     this._meta = meta;
     this._plugin = plugin;
     this._state = initialState;
-    this._prevProgressState = null;
     this._actionLog = [];
     this._progress = progress;
     this._relay = [];
@@ -245,23 +256,44 @@ export class GameRoomDO extends DurableObject<Env> {
     try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { playerId, action } = body ?? {} as Record<string, unknown>;
+    const { action } = body ?? {} as Record<string, unknown>;
     if (action === undefined) return Response.json({ error: 'action is required' }, { status: 400 });
 
+    const playerId = this.trustedPlayerId(request);
+    if (playerId instanceof Response) return playerId;
+
     try {
-      return Response.json(await this.applyActionInternal((playerId as string) ?? null, action));
+      return Response.json(await this.applyActionInternal(playerId, action));
     } catch (err: any) {
       console.error(`[GameRoomDO] Error in applyActionInternal:`, err?.stack ?? err);
       return Response.json({ error: 'Internal server error', details: String(err), stack: err?.stack ?? '' }, { status: 500 });
     }
   }
 
-  private async handleState(url: URL): Promise<Response> {
+  private async handleState(request: Request): Promise<Response> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    const playerId = url.searchParams.get('playerId') ?? null;
+    const playerId = this.trustedPlayerId(request);
+    if (playerId instanceof Response) return playerId;
+
     return Response.json(this.buildPlayerMessage(playerId));
+  }
+
+  /**
+   * Single trust boundary for player identity. Read X-Player-Id from
+   * the request headers (set by the authenticated Worker, or absent
+   * for internal system calls). Never trust request bodies or query
+   * params. Returns a Response on auth failure; null means "system
+   * action — no authenticated player".
+   */
+  private trustedPlayerId(request: Request): string | null | Response {
+    const header = request.headers.get('X-Player-Id');
+    const playerId = header && header.length > 0 ? header : null;
+    if (playerId !== null && this._meta && !this._meta.playerIds.includes(playerId)) {
+      return Response.json({ error: 'Not a player in this game' }, { status: 403 });
+    }
+    return playerId;
   }
 
   private async handleResult(): Promise<Response> {
@@ -339,32 +371,33 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin) return Response.json({ error: 'Game not found' }, { status: 404 });
 
-    // If no snapshots stored (pre-feature game), return what we can
-    if (this._spectatorSnapshots.length === 0) {
-      // Build a single snapshot from current state as fallback
-      const ctx = { handles: this._meta.handleMap, relayMessages: this._relay };
-      const current = this._plugin.buildSpectatorView(this._state, this._prevProgressState, ctx);
+    const idx = this.publicSnapshotIndex();
+    if (idx === null) {
+      // Pre-window: delay hasn't elapsed yet. Nothing public to show.
       return Response.json({
+        type: 'spectator_pending',
         gameType: this._meta.gameType,
         gameId: this._meta.gameId,
         handles: this._meta.handleMap,
         teamMap: this._meta.teamMap,
-        finished: this._meta.finished,
-        progressCounter: this._progress.counter,
-        snapshots: [current],
-        relay: this._relay,
+        finished: false,
+        progressCounter: null,
+        snapshots: [],
       });
     }
 
+    // Raw _relay is NOT returned: it contains DMs, team chat, and per-turn
+    // cadence. Chat a spectator is entitled to read is already baked into
+    // the snapshots themselves.
     return Response.json({
+      type: 'replay',
       gameType: this._meta.gameType,
       gameId: this._meta.gameId,
       handles: this._meta.handleMap,
       teamMap: this._meta.teamMap,
       finished: this._meta.finished,
-      progressCounter: this._progress.counter,
-      snapshots: this._spectatorSnapshots,
-      relay: this._relay,
+      progressCounter: idx,
+      snapshots: this._spectatorSnapshots.slice(0, idx + 1),
     });
   }
 
@@ -400,24 +433,27 @@ export class GameRoomDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * POST /tool — accepts a pre-formed relay envelope from the CLI.
-   * Body: { relay: { type, data, scope, pluginId }, playerId }
-   *
-   * The CLI calls plugin.handleCall() locally and sends us the result.
-   * We are a dumb pipe: store it, route it by scope, push WS updates.
-   * No server-side plugin registry needed.
+   * POST /tool — accepts a pre-formed relay envelope.
+   * Body: { relay: { type, data, scope, pluginId } }.
+   * Sender identity comes from X-Player-Id (never the body).
    */
   private async handleTool(request: Request): Promise<Response> {
     await this.ensureLoaded();
     if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
 
+    const playerId = this.trustedPlayerId(request);
+    if (playerId instanceof Response) return playerId;
+    if (playerId === null) {
+      return Response.json({ error: 'X-Player-Id header required for tool calls' }, { status: 401 });
+    }
+
     let body: Record<string, unknown>;
     try { body = await request.json() as Record<string, unknown>; }
     catch { return Response.json({ error: 'Invalid JSON body' }, { status: 400 }); }
 
-    const { relay, playerId } = body ?? {} as Record<string, unknown>;
-    if (!relay || !playerId) {
-      return Response.json({ error: 'relay envelope and playerId are required' }, { status: 400 });
+    const { relay } = body ?? {} as Record<string, unknown>;
+    if (!relay) {
+      return Response.json({ error: 'relay envelope is required' }, { status: 400 });
     }
     const relayObj = relay as Record<string, unknown>;
     if (!relayObj.type || !relayObj.pluginId) {
@@ -431,7 +467,7 @@ export class GameRoomDO extends DurableObject<Env> {
         data: relayObj.data ?? null,
         scope: (relayObj.scope as string) ?? 'all',
         pluginId: relayObj.pluginId as string,
-        sender: playerId as string,
+        sender: playerId,
         turn: this._progress.counter,
         timestamp: Date.now(),
       };
@@ -555,7 +591,6 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     if (result.progressIncrement) {
-      this._prevProgressState = prevState;
       this._progress.counter++;
       this._progress.snapshots.push(this._actionLog.length - 1);
 
@@ -572,7 +607,6 @@ export class GameRoomDO extends DurableObject<Env> {
 
     const storagePuts: Promise<void>[] = [
       this.ctx.storage.put('state', this._state),
-      this.ctx.storage.put('prevProgressState', this._prevProgressState),
       this.ctx.storage.put('actionLog', this._actionLog),
       this.ctx.storage.put('progress', this._progress),
     ];
@@ -659,12 +693,26 @@ export class GameRoomDO extends DurableObject<Env> {
     return { success: true, progressCounter: this._progress.counter };
   }
 
-  /** Fire-and-forget upsert of game summary into D1 for the listing page. */
+  /**
+   * Fire-and-forget D1 upsert of the public game summary. Gated by
+   * publicSnapshotIndex so /api/games never reveals a turn ahead of
+   * what the spectator view has caught up to.
+   */
   private writeSummaryToD1(): void {
     if (!this._meta || !this._plugin) return;
-    const summary = typeof this._plugin.getSummary === 'function'
-      ? this._plugin.getSummary(this._state)
-      : {};
+
+    const idx = this.publicSnapshotIndex();
+    if (idx === null) return;
+
+    const publicSnapshot = this._spectatorSnapshots[idx];
+    let summary: Record<string, any> = {};
+    if (typeof this._plugin.getSummaryFromSpectator === 'function') {
+      summary = this._plugin.getSummaryFromSpectator(publicSnapshot);
+    } else if (typeof this._plugin.getSummary === 'function') {
+      // Plugins that omit getSummaryFromSpectator must have a spectator
+      // shape that getSummary can read directly (same field names).
+      summary = this._plugin.getSummary(publicSnapshot as any);
+    }
     const json = JSON.stringify(summary);
     // Fire-and-forget: catch all errors to prevent unhandled rejections
     (async () => {
@@ -674,7 +722,7 @@ export class GameRoomDO extends DurableObject<Env> {
            VALUES (?1, ?2, ?3, datetime('now'))
            ON CONFLICT(game_id) DO UPDATE SET
              progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
-        ).bind(this._meta!.gameId, this._progress.counter, json).run();
+        ).bind(this._meta!.gameId, idx, json).run();
       } catch (err: any) {
         // Auto-create table if it doesn't exist yet (migration not applied)
         if (String(err).includes('no such table')) {
@@ -692,7 +740,7 @@ export class GameRoomDO extends DurableObject<Env> {
                VALUES (?1, ?2, ?3, datetime('now'))
                ON CONFLICT(game_id) DO UPDATE SET
                  progress_counter = ?2, summary_json = ?3, updated_at = datetime('now')`
-            ).bind(this._meta!.gameId, this._progress.counter, json).run();
+            ).bind(this._meta!.gameId, idx, json).run();
           } catch (e) {
             console.error(`[GameRoomDO] Failed to auto-create game_summaries:`, e);
           }
@@ -735,23 +783,37 @@ export class GameRoomDO extends DurableObject<Env> {
     };
   }
 
+  /**
+   * Highest snapshot index a caller without player-level authorisation
+   * may see. `null` pre-window. Sole gate for every public emission —
+   * spectator WS, /spectator, /replay, /api/games summary.
+   */
+  private publicSnapshotIndex(): number | null {
+    if (!this._meta) return null;
+    return computePublicSnapshotIndex(
+      this._spectatorSnapshots.length,
+      this._meta.finished,
+      this._meta.spectatorDelay ?? 0,
+    );
+  }
+
   private buildSpectatorMessage(): object {
-    const delay = this._plugin!.spectatorDelay ?? 0;
-    const finished = this._meta!.finished;
-    // Spectators see only 'all'-scoped relay messages (no team chat)
-    const relayMessages = this._relay.filter(m => m.scope === 'all');
-    const ctx = { handles: this._meta!.handleMap, relayMessages };
-
-    const view = delay > 0 && this._prevProgressState && !finished
-      ? this._plugin!.buildSpectatorView(this._prevProgressState, null, ctx)
-      : this._plugin!.buildSpectatorView(this._state, this._prevProgressState, ctx);
-
+    const idx = this.publicSnapshotIndex();
+    if (idx === null) {
+      return {
+        type: 'spectator_pending',
+        gameType: this._meta!.gameType,
+        handles: this._meta!.handleMap,
+        progressCounter: null,
+      };
+    }
+    const snapshot = this._spectatorSnapshots[idx] as Record<string, unknown>;
     return {
       type: 'state_update',
       gameType: this._meta!.gameType,
       handles: this._meta!.handleMap,
-      progressCounter: this._progress.counter,
-      ...(view as Record<string, unknown>),
+      progressCounter: idx,
+      ...snapshot,
     };
   }
 
@@ -759,13 +821,17 @@ export class GameRoomDO extends DurableObject<Env> {
     if (!this._meta || !this._plugin) return;
 
     try {
-      // Push delayed spectator view to all spectator connections
-      const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
-      for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
-        try { ws.send(spectatorMsg); } catch {}
+      // Push to spectators only on public-index advance — prevents
+      // counting push events to infer hidden action cadence.
+      const idx = this.publicSnapshotIndex();
+      if (idx !== this._lastSpectatorIdx) {
+        const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
+        for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
+          try { ws.send(spectatorMsg); } catch {}
+        }
+        this._lastSpectatorIdx = idx;
       }
 
-      // Push fog-filtered view to each player's connection(s)
       for (const pid of this._meta.playerIds) {
         const playerConns = this.ctx.getWebSockets(pid);
         if (playerConns.length === 0) continue;
@@ -788,10 +854,9 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, prevProgressState, actionLog, progress, relay, deadline, config, snapshotCount] = await Promise.all([
+      const [meta, state, actionLog, progress, relay, deadline, config, snapshotCount] = await Promise.all([
         this.ctx.storage.get<GameMeta>('meta'),
         this.ctx.storage.get<unknown>('state'),
-        this.ctx.storage.get<unknown>('prevProgressState'),
         this.ctx.storage.get<ActionEntry[]>('actionLog'),
         this.ctx.storage.get<ProgressState>('progress'),
         this.ctx.storage.get<RelayMessage[]>('relay'),
@@ -799,6 +864,9 @@ export class GameRoomDO extends DurableObject<Env> {
         this.ctx.storage.get<unknown>('config'),
         this.ctx.storage.get<number>('snapshotCount'),
       ]);
+
+      // Drop the legacy prevProgressState key from older games.
+      this.ctx.storage.delete('prevProgressState').catch(() => {});
 
       if (!meta) { this._loaded = true; return; }
 
@@ -818,10 +886,14 @@ export class GameRoomDO extends DurableObject<Env> {
         loadedSnapshots = snapshotKeys.map(k => snapshotMap.get(k)).filter(Boolean) as unknown[];
       }
 
+      // Back-fill for games created before this field was persisted.
+      if (typeof meta.spectatorDelay !== 'number') {
+        meta.spectatorDelay = plugin.spectatorDelay ?? 0;
+      }
+
       this._meta = meta;
       this._plugin = plugin;
       this._state = state ?? null;
-      this._prevProgressState = prevProgressState ?? null;
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0, snapshots: [0] };
       this._relay = relay ?? [];

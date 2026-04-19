@@ -239,10 +239,17 @@ function getLobbyDO(env: Env, lobbyId: string): DurableObjectStub {
   return env.LOBBY.get(env.LOBBY.idFromName(lobbyId));
 }
 
-function doRequest(method: string, path: string, body: unknown): Request {
+/**
+ * Build a sub-request for a DO fetch. The DO derives player identity
+ * from X-Player-Id — never from the body — so callers pass it here.
+ * Pass null for system/internal calls.
+ */
+function doRequest(method: string, path: string, body: unknown, playerId: string | null): Request {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (playerId !== null) headers['X-Player-Id'] = playerId;
   return new Request(`https://do${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -564,7 +571,7 @@ export async function dispatchToolCall(
 
       const stub = getGameDO(env, location.gameId);
       const resp = await stub.fetch(
-        doRequest('POST', '/action', { playerId, action }),
+        doRequest('POST', '/action', { action }, playerId),
       );
 
       const bodyClone = await resp.clone().json().catch(() => null) as any;
@@ -618,9 +625,10 @@ export async function dispatchToolCall(
 
     const stub = getLobbyDO(env, location.lobbyId);
     // LobbyPhase.handleAction expects { type, playerId, payload }; the
-    // LobbyDO /action handler maps this to the phase call verbatim.
+    // LobbyDO /action handler reads playerId from the X-Player-Id header
+    // and forwards the rest to the phase.
     const resp = await stub.fetch(
-      doRequest('POST', '/action', { playerId, type: toolName, payload: args }),
+      doRequest('POST', '/action', { type: toolName, payload: args }, playerId),
     );
     const bodyClone = await resp.clone().json().catch(() => null) as any;
 

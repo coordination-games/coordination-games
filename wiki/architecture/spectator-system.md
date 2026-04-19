@@ -16,6 +16,41 @@ The engine tracks a `progressCounter` and takes state snapshots at each incremen
 
 Set `spectatorDelay` on your game plugin (e.g., `spectatorDelay: 2` for CtL).
 
+### Single-boundary rule
+
+`GameRoomDO` enforces the delay at exactly one point: `computePublicSnapshotIndex(snapshotCount, finished, delay)` in `packages/workers-server/src/do/spectator-delay.ts`. It returns the highest index in `_spectatorSnapshots` that an unauthenticated caller may see — `null` pre-window, `snapshotCount - 1` on finish, `snapshotCount - 1 - delay` otherwise.
+
+Every public emission boundary routes through it:
+
+- live spectator WS broadcast (`broadcastUpdates`) — pushes only when the public index advances, so an observer can't count push events to infer hidden action cadence;
+- HTTP `/spectator` + initial WS message (`buildSpectatorMessage`);
+- HTTP `/replay` (`handleReplay`) — snapshots sliced to `[0, idx]`, no raw relay returned;
+- `/api/games` list (`writeSummaryToD1`) — summary derived from the public snapshot via `plugin.getSummaryFromSpectator(snapshot)`.
+
+Player-level endpoints (`/state`, player WS, DM/team chat delivery) derive authorisation exclusively from the `X-Player-Id` header set by the authenticated Worker. Query params and request bodies are ignored for player identity — no `?playerId=X` trust-anyone path.
+
+### Frozen-at-creation delay
+
+The delay is pinned into `GameMeta.spectatorDelay` when the game is created. Deploys that change the plugin's `spectatorDelay` value never retroactively affect in-flight games.
+
+### Plugin contract: all-scope relay between progress ticks
+
+`buildSpectatorMessage` serves the snapshot captured at the last public progress tick. Any `scope: 'all'` relay message a plugin emits *between* progress ticks (e.g. via the chat tool plugin, which is a separate path) does not reach live spectators until the next tick captures a new snapshot with that message embedded.
+
+If a game needs real-time all-scope relay to spectators for delay=0, emit it via an action with `progressIncrement: true` instead of via a between-tick tool call. Current games:
+
+- **CtL** — `spectatorDelay = 2`. All observable-public messages are naturally delayed two ticks. No mid-tick all-scope emissions.
+- **OATHBREAKER** — `spectatorDelay = 0`, so "delayed" ≈ "next progress tick". Players' `scope: 'all'` chat between rounds lands at spectators on the next round resolution. If that lag ever matters for UX, pipe it through the progress boundary.
+
+### Pre-window envelope
+
+When `computePublicSnapshotIndex` returns `null` (delay hasn't elapsed), public endpoints emit `{ type: 'spectator_pending', ... }` instead of a misleading `state_update` with current state. Frontend `CtlSpectatorView` / `OathbreakerSpectatorView` / `ReplayPage` render a "Spectator view is delayed — waiting for first turns to resolve…" placeholder.
+
+### Known non-goals
+
+- **An operator running every player on both teams.** The trust boundary is per-playerId, not per-operator.
+- **Tick-interval side-channel.** A spectator can still infer *roughly* how often public turns advance by the cadence of public-index bumps. The per-action timing channel is closed; the per-tick one is inherent to real-time push.
+
 ## SpectatorPlugin (Frontend)
 
 Each game provides a React component registered in `packages/web/src/games/registry.ts`:

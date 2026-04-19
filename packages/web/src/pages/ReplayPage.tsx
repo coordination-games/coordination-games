@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { fetchReplay } from '../api';
 import type { ReplayData } from '../api';
 import { getSpectatorPlugin } from '../games/registry';
+import { SpectatorPendingPlaceholder } from '../components/SpectatorPendingPlaceholder';
+import { ScrubberSlider } from '../components/ScrubberSlider';
 
 // ---------------------------------------------------------------------------
 // ReplayPage — generic replay shell for any game type
@@ -119,11 +121,28 @@ export default function ReplayPage() {
     );
   }
 
-  if (error || !replay || totalTurns === 0) {
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <div className="text-red-400 text-lg">{error}</div>
+      </div>
+    );
+  }
+
+  // Pre-window: no public snapshots yet.
+  if (replay?.type === 'spectator_pending') {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
+        <SpectatorPendingPlaceholder title="Replay not yet available" />
+      </div>
+    );
+  }
+
+  if (!replay || totalTurns === 0) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
         <div className="text-red-400 text-lg">
-          {error ?? 'No replay data available for this game.'}
+          No replay data available for this game.
         </div>
       </div>
     );
@@ -239,24 +258,6 @@ function ScrubberBar({
       {/* Scrubber row */}
       <div className="flex items-center gap-3">
         <button
-          onClick={onPrev}
-          disabled={currentTurn === 0}
-          className="px-2 py-1 text-sm rounded bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          title="Previous turn (Left arrow)"
-        >
-          &#9664;
-        </button>
-
-        <button
-          onClick={onNext}
-          disabled={currentTurn >= totalTurns - 1}
-          className="px-2 py-1 text-sm rounded bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          title="Next turn (Right arrow)"
-        >
-          &#9654;
-        </button>
-
-        <button
           onClick={onTogglePlay}
           className={`px-3 py-1 text-sm rounded font-semibold transition-colors ${
             isPlaying
@@ -268,31 +269,13 @@ function ScrubberBar({
           {isPlaying ? 'Pause' : 'Play'}
         </button>
 
-        <input
-          type="range"
-          min={0}
-          max={totalTurns - 1}
-          value={currentTurn}
-          onChange={(e) => onSeek(Number(e.target.value))}
-          className="flex-1 h-2 rounded-lg appearance-none cursor-pointer bg-gray-700
-            [&::-webkit-slider-thumb]:appearance-none
-            [&::-webkit-slider-thumb]:w-4
-            [&::-webkit-slider-thumb]:h-4
-            [&::-webkit-slider-thumb]:rounded-full
-            [&::-webkit-slider-thumb]:bg-emerald-500
-            [&::-webkit-slider-thumb]:hover:bg-emerald-400
-            [&::-webkit-slider-thumb]:transition-colors
-            [&::-moz-range-thumb]:w-4
-            [&::-moz-range-thumb]:h-4
-            [&::-moz-range-thumb]:rounded-full
-            [&::-moz-range-thumb]:bg-emerald-500
-            [&::-moz-range-thumb]:border-0
-            [&::-moz-range-thumb]:hover:bg-emerald-400"
+        <ScrubberSlider
+          currentTurn={currentTurn}
+          totalTurns={totalTurns}
+          onPrev={onPrev}
+          onNext={onNext}
+          onSeek={onSeek}
         />
-
-        <span className="text-xs text-gray-400 tabular-nums w-14 text-right shrink-0">
-          {currentTurn}/{totalTurns - 1}
-        </span>
       </div>
     </div>
   );

@@ -258,14 +258,28 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return handleCreateLobby(request, env);
     }
 
-    // /api/lobbies/:id[/subpath] — forward to LobbyDO
+    // /api/lobbies/:id[/subpath] — forward to LobbyDO.
+    // GET /state is public (spectator view). Every other sub-path requires
+    // Bearer auth; the Worker forwards identity in X-Player-Id.
     const lobbyRestMatch = pathname.match(/^\/api\/lobbies\/([^/]+)(\/.*)?$/);
     if (lobbyRestMatch) {
       const lobbyId = lobbyRestMatch[1];
-      // DELETE without subpath → disband ('/')
-      // Everything else without subpath → state ('/state')
       const sub = lobbyRestMatch[2] ?? (method === 'DELETE' ? '/' : '/state');
-      return forwardToLobbyDO(env, lobbyId, sub, request);
+
+      const publicPaths = new Set(['/state']);
+      if (method === 'GET' && publicPaths.has(sub)) {
+        return forwardToLobbyDO(env, lobbyId, sub, request);
+      }
+
+      const auth = await requireAuth(request, env);
+      if (auth instanceof Response) return auth;
+      const playerId = auth;
+      // Strip attacker-controlled playerId query param before forwarding.
+      const sanitisedUrl = new URL(request.url);
+      sanitisedUrl.searchParams.delete('playerId');
+      const forwarded = new Request(sanitisedUrl.toString(), request);
+      forwarded.headers.set('X-Player-Id', playerId);
+      return forwardToLobbyDO(env, lobbyId, sub, forwarded);
     }
 
     // WS /ws/lobby/:id — unauthenticated spectator WebSocket for lobby updates
@@ -303,7 +317,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const auth = await requireAuth(request, env);
       if (auth instanceof Response) return auth;
       const playerId = auth;
-      const forwarded = new Request(request.url, request);
+      // Strip the playerId query param — the DO trusts only X-Player-Id.
+      const sanitisedUrl = new URL(request.url);
+      sanitisedUrl.searchParams.delete('playerId');
+      const forwarded = new Request(sanitisedUrl.toString(), request);
       forwarded.headers.set('X-Player-Id', playerId);
       return forwardToGameDO(env, gameId, sub, forwarded);
     }
@@ -583,10 +600,10 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
   const stub = location.kind === 'game'
     ? getGameDO(env, location.gameId)
     : getLobbyDO(env, location.lobbyId);
-  return stub.fetch(new Request(
-    `https://do/state?playerId=${encodeURIComponent(playerId)}`,
-    { method: 'GET' },
-  ));
+  return stub.fetch(new Request('https://do/state', {
+    method: 'GET',
+    headers: { 'X-Player-Id': playerId },
+  }));
 }
 
 async function handlePlayerLobbyJoin(playerId: string, request: Request, env: Env): Promise<Response> {
@@ -603,12 +620,13 @@ async function handlePlayerLobbyJoin(playerId: string, request: Request, env: En
   const handle = player?.handle ?? playerId;
   const elo    = player?.elo    ?? 1000;
 
-  // Forward join to LobbyDO
+  // Forward join to LobbyDO — identity goes in the header, body carries
+  // only the player's display info.
   const doStub = getLobbyDO(env, lobbyId);
   const joinResp = await doStub.fetch(new Request('https://do/join', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId, handle, elo }),
+    headers: { 'Content-Type': 'application/json', 'X-Player-Id': playerId },
+    body: JSON.stringify({ handle, elo }),
   }));
 
   if (!joinResp.ok) return joinResp;
