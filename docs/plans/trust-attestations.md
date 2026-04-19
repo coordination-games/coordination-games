@@ -8,7 +8,7 @@
 - **No tokens, no stakes, no money.** Wealth cannot be laundered into moderation power.
 - **Reputation IS the stake.** Attesters bind their judgment credibility to every statement they make. Wrong calls cost credibility; right early calls earn it. Precedented by Metaculus and Manifold pre-cash.
 - **The steward's edge: be early — in both directions.** Early to invite good contributors into the community (positive attestations before consensus forms) AND early to push bad actors away (negative attestations before consensus forms). Both earn calibration credit. Being late to agree earns almost nothing. This is the core loop stewards optimize for.
-- **Recovery is always possible.** Algorithmic scores never permanently ban a player. Bad conduct attestations decay out over time and are counterbalanced by clean-game auto-drip and fresh positive vouches. Persistent bad actors stay in the hole; reformed players climb out through sustained clean participation. (Permanent platform-access bans exist separately, for real-world-harmful behavior.)
+- **Recovery is always possible.** Algorithmic scores never permanently ban a player. Bad conduct attestations decay out over time and are counterbalanced by clean-game auto-drip and fresh positive vouches. Reformed players climb out by continuing to play public games — **including free games**, which are the natural rehabilitation tier. Persistent bad actors stay in the hole. (Permanent platform-access bans exist separately, for real-world-harmful behavior.)
 - **No authority, no disputes, no appeals.** The market IS the dispute mechanism. Consensus over time defines truth. The only admin escape hatch is platform-access bans for real-world-harmful behavior (separate system).
 - **Activity-driven decay, not clock-driven.** Old attestations fade via activity: they're outweighed by newer attestations about the same subject. Dormant subjects' scores stay put.
 - **Lobbies are primitives; access logic is in the default plugin.** Host configures parameters; server enforces; platform never decides who is "real" or "worthy."
@@ -57,7 +57,7 @@ Notes:
 ### Scope Tags
 
 1. **Reserved:** `conduct` — canonical integrity dimension. Covers rule-following, no cheating, interpersonal decency, no scamming/harassment, no abandonment. Gated on by default public lobbies. Has full market mechanics (P&L, stewardship).
-2. **Convention-based:** `skill:<game-id>` — per-game skill opinions (e.g. `skill:ctl`, `skill:oathbreaker`, `skill:tragedy-of-the-commons`). Contributes to a score; no P&L for attester (skill has no ground truth to calibrate against).
+2. **Convention-based:** `skill:<game-id>` — per-game skill opinions (e.g. `skill:ctl`, `skill:oathbreaker`). Contributes to a score; no P&L for attester (skill has no ground truth to calibrate against).
 3. **Free-form:** anything else. Stored, queryable, not aggregated by the default plugin. Custom consumers can interpret.
 
 ## Lobby Model
