@@ -94,7 +94,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   readonly name = 'Team Formation';
   readonly tools = TOOLS;
   readonly acceptsJoins = true;
-  readonly timeout = 120; // 2 minutes
+  readonly timeout = 600; // 10 minutes
 
   private teamSize: number;
   private numTeams: number;

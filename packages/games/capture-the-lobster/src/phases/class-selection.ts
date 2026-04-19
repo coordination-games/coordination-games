@@ -32,7 +32,7 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
   readonly id = 'class-selection';
   readonly name = 'Class Selection';
   readonly acceptsJoins = false;
-  readonly timeout = 30;
+  readonly timeout = 600;
 
   readonly tools: ToolDefinition[] = [
     {
