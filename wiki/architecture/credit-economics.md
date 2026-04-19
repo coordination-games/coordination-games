@@ -5,9 +5,9 @@ Games cost credits to play. Credits map to `CoordinationCredits` contract (on-ch
 ## Entry and Payouts
 
 - Each game declares `entryCost` (credits per player)
-- Fees deducted when game starts
-- `computePayouts(outcome, playerIds)` returns `Map<string, number>` of credit deltas
-- Payouts must be zero-sum relative to entry pool
+- **No upfront deduction** — credits are rebalanced at game end, not held in escrow. Withdrawal cooldown (`pendingBurns`) prevents flash-loan / rug attacks.
+- `computePayouts(outcome, playerIds, entryCost)` returns `Map<string, number>` of credit deltas
+- Server-side invariants checked before anchoring: `sum(deltas) === 0` and every delta `≥ -entryCost` (no player loses more than their stake). `GameAnchor.settleGame` re-enforces zero-sum on-chain.
 
 ## Payout Models
 
