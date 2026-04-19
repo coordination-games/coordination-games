@@ -2,13 +2,11 @@ export default function TimerBar({
   timeRemaining,
   noTimeout,
   phase,
-  onPauseTimer,
   onCloseLobby,
 }: {
   timeRemaining: number | null;
   noTimeout: boolean;
   phase: string;
-  onPauseTimer: () => void;
   onCloseLobby: () => void;
 }) {
   return (
@@ -20,15 +18,6 @@ export default function TimerBar({
         <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
           {noTimeout ? 'No time limit' : phase === 'class-selection' ? 'to pick classes' : 'until lobby closes'}
         </span>
-        <button onClick={onPauseTimer} disabled={noTimeout}
-          className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95 disabled:cursor-default"
-          style={{
-            background: noTimeout ? 'rgba(184, 134, 11, 0.1)' : 'transparent',
-            color: noTimeout ? 'var(--color-amber)' : 'var(--color-ink-light)',
-            border: `1px solid ${noTimeout ? 'rgba(184, 134, 11, 0.3)' : 'rgba(42, 31, 14, 0.15)'}`,
-          }}>
-          {noTimeout ? 'Paused' : 'Pause timer'}
-        </button>
       </div>
       <button onClick={onCloseLobby}
         className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95"
