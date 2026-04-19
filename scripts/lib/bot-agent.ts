@@ -306,7 +306,7 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
       else          args.push('--session-id', sessionId);
       args.push(prompt);
 
-      const proc = spawn('claude', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
+      const proc = spawn(process.env.CLAUDE_BIN ?? 'claude', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
 
       let output = '';
       proc.stdout?.on('data', (d: Buffer) => {
