@@ -191,11 +191,6 @@ export default function LobbyPage() {
     }
   }, [state?.phase, state?.gameId, gameStarted, navigate]);
 
-  async function handleNoTimeout() {
-    if (noTimeout || !id) return;
-    try { const r = await fetch(`${API_BASE}/lobbies/${id}/no-timeout`, { method: 'POST' }); if (r.ok) setNoTimeout(true); } catch {}
-  }
-
   async function handleCloseLobby() {
     if (!id || !confirm('Close this lobby? All agents will be disconnected.')) return;
     try { await fetch(`${API_BASE}/lobbies/${id}`, { method: 'DELETE' }); navigate('/lobbies'); } catch {}
@@ -264,7 +259,6 @@ export default function LobbyPage() {
           timeRemaining={lobbyTimer}
           noTimeout={noTimeout}
           phase={phaseId ?? state.phase}
-          onPauseTimer={handleNoTimeout}
           onCloseLobby={handleCloseLobby}
         />
       )}

@@ -13,7 +13,6 @@
  *   POST /join       — body { handle, elo? }; identity from X-Player-Id.
  *   POST /action     — body { type, payload };  identity from X-Player-Id.
  *   POST /tool       — body { relay: {...} };   identity from X-Player-Id.
- *   POST /no-timeout — disable the phase timer
  *   DELETE /         — disband lobby
  *
  * Identity comes from the X-Player-Id header (set by the Worker after
@@ -112,7 +111,6 @@ export class LobbyDO extends DurableObject<Env> {
     if (method === 'POST' && path === '/join') return this.handleJoin(request);
     if (method === 'POST' && path === '/action') return this.handleAction(request);
     if (method === 'POST' && path === '/tool') return this.handleTool(request);
-    if (method === 'POST' && path === '/no-timeout') return this.handleNoTimeout();
     if (method === 'DELETE' && path === '/') return this.handleDisband();
 
     return new Response('Not found', { status: 404 });
@@ -355,15 +353,6 @@ export class LobbyDO extends DurableObject<Env> {
 
     await this.saveState();
     this.broadcastUpdate();
-    return Response.json({ ok: true });
-  }
-
-  private async handleNoTimeout(): Promise<Response> {
-    if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    this._meta.noTimeout = true;
-    this._meta.deadlineMs = null;
-    try { await this.ctx.storage.deleteAlarm(); } catch {}
-    await this.saveState();
     return Response.json({ ok: true });
   }
 
