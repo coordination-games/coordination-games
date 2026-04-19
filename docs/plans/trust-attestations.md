@@ -87,11 +87,11 @@ Runs server-side. Canonical computation. Clients read via API; they don't execut
 ### Scores Produced
 
 Per-subject per-scope:
-- **CONDUCT** — platform integrity score. Full market mechanics.
-- **SKILL:\<game\>** — skill score. No P&L for attesters; just aggregated opinions.
+- **CONDUCT** — platform integrity score. Full market mechanics. New players default to **0.5** (mild positive trust). Anyone can accumulate up or down from there based on attestations and clean-play auto-drip.
+- **SKILL:\<game\>** — skill score. No P&L for attesters; just aggregated opinions. New players default to 0 (neutral).
 
 Per-attester:
-- **STEWARDSHIP** — quality of a player's CONDUCT judgments. Single scalar. Not computed for skill (no ground truth).
+- **STEWARDSHIP** — quality of a player's CONDUCT judgments. Single scalar, defaults to 0 for new players. Not computed for skill (no ground truth).
 
 ### Universal Attestation Weighting
 
@@ -114,24 +114,28 @@ The system is a **scalar prediction market**: each subject has a market per scop
 
 **Positions never auto-close.** They fade via continuous decay (see below). Let them fade; close explicitly only if you want to lock in a value or free slot capacity.
 
-### Attestation-Count-Based Exponential Decay
+### Attestation-Count-Based Exponential Decay (Stewardship-Scaled)
 
-Each attestation's weight decays as newer attestations about the **same (subject, scope)** arrive:
+Each attestation's weight decays as newer attestations about the **same (subject, scope)** arrive. The decay rate depends on the attester's stewardship at open time — trusted voices persist longer, untrusted voices fade faster:
 
 ```
-weight_factor(A, now) = r^(later_attestations_about_same_subject_scope_than_A)
-  where r = 0.99 (tunable)
+r(K) = lerp(r_low, r_high, normalized(STEWARDSHIP(K) + 1) / 2)
+  r_low  = 0.95 (low/zero stewardship — fast decay)
+  r_high = 0.995 (max stewardship — slow decay)
+
+weight_factor(A, now) = r(A.attester) ^ (later_attestations_about_same_subject_scope_than_A)
 ```
 
-- Newest attestation: 100% weight
-- 25 later: ~78%
-- 100 later: ~37%
-- 300 later: ~5%
-- 700 later: ~0.1% (sig-digit floor — computation drops these)
+Reference half-lives:
+- Zero stewardship: half-life ≈ 14 later attestations
+- Mid stewardship: half-life ≈ 35 later attestations
+- Full stewardship: half-life ≈ 140 later attestations
 
-**Activity-adaptive by construction:** dormant subjects preserve scores (few new attestations to displace old ones); active subjects churn fast (many new attestations push old ones to zero). A single parameter `r` works across scales — short 8-player rehearsals, week-long 5k-player tournaments, and continuous open-play all behave sensibly.
+**Why stewardship-scaled decay:** a coordinated sybil pile-on (10 alts all attesting at once) has strong initial burst, but every sybil starts near zero stewardship → fast decay. After ~30 later attestations the sybil burst collapses to ~12% of original; meanwhile a single attestation from a proven steward retains ~86%. The sybils' attack window is ephemeral; trusted voices remain visible. This replaces explicit pile-on dampening rules — the decay itself handles coordinated abuse.
 
-**Computational bound:** per subject per scope, only the last ~700 attestations contribute meaningfully. Storage is unbounded; compute is bounded.
+**Activity-adaptive by construction:** dormant subjects preserve scores (few new attestations to displace old ones); active subjects churn fast. The decay parameters work across scales — short 8-player rehearsals, week-long 5k-player tournaments, and continuous open-play all behave sensibly.
+
+**Computational bound:** per subject per scope, attestations past their sig-digit threshold are dropped from query. Worst-case cache depth is around 700 attestations even for an all-high-stewardship subject; in practice much less because low-stewardship contributions fall out of query range sooner.
 
 ### Score Computation
 
@@ -159,12 +163,9 @@ Stewardship is a running weighted sum across all of K's CONDUCT positions:
 STEWARDSHIP(K) =
   Σ over K's open positions: unrealized_pnl × weight_factor
   + Σ over K's closed positions: realized_pnl × weight_factor
-  + independence_bonus(K)
-
-independence_bonus(K) = small bonus for attestations that moved Score
-                        away from the prevailing direction at their open time
-                        (first-mover correct calls > late pile-ons)
 ```
+
+**No separate "first-mover bonus" is needed.** The market math already rewards being early in both directions: Alice attesting +1 at score 0.3 earns P&L of (+0.4) when score moves to 0.7; Bob piling on at 0.65 earns only (+0.05). Being early with a correct call is naturally 8× as rewarding as late confirmation — direct consequence of the price-delta P&L mechanic.
 
 Both realized and unrealized contributions decay at the same rate as the underlying attestation's weight. Old track record fades in current stewardship; lifetime cumulative can still be displayed for history.
 
