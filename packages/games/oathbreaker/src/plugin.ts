@@ -25,6 +25,7 @@ import {
   getSpectatorView,
   dollarPerPoint,
   dollarValue,
+  type SpectatorView,
 } from './game.js';
 
 // ---------------------------------------------------------------------------
@@ -252,6 +253,16 @@ export const OathbreakerPlugin = {
       maxRounds: state.config.maxRounds,
       phase: state.phase,
       players: state.players.map((p: any) => p.id),
+    };
+  },
+
+  getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
+    const s = snapshot as SpectatorView;
+    return {
+      round: s.round,
+      maxRounds: s.maxRounds,
+      phase: s.phase,
+      players: s.players.map(p => p.id),
     };
   },
 

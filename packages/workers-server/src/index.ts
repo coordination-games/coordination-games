@@ -490,11 +490,15 @@ async function handleListGames(env: Env): Promise<Response> {
   await ensureGameSummariesTable(env);
 
   // Auto-cleanup: mark stale unfinished games with no summary as finished
-  // (Games write a summary on creation; no summary = failed/orphaned)
+  // (Games write a summary after the first action; a game older than 60s
+  // with no summary is almost certainly failed/orphaned. The 60s grace
+  // window prevents a race where a freshly-created game is marked finished
+  // before its first action lands.)
   await env.DB.prepare(
     `UPDATE games SET finished = 1
      WHERE finished = 0
-       AND game_id NOT IN (SELECT game_id FROM game_summaries)`
+       AND game_id NOT IN (SELECT game_id FROM game_summaries)
+       AND datetime(created_at) < datetime('now', '-60 seconds')`
   ).run().catch(() => {});
 
   const rows = await env.DB.prepare(
