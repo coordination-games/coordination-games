@@ -8,14 +8,18 @@ import { type RelayMessageView, SlotHost } from '../plugins';
 //
 // Phase 7.1: the WS lifecycle now lives in `useSpectatorStream`. This page
 // reads the unified spectator payload and forwards (handles, relay) to the
-// slot host + the per-game SpectatorView. The chat-extraction WS that used
-// to live here is gone — Phase 7.2 will drop the now-redundant <SlotHost>
-// chat panel (chat envelopes are part of the unified payload).
+// slot host + the per-game SpectatorView.
+//
+// Phase 7.2: the per-game SpectatorViews used to open their OWN
+// `useSpectatorStream` against the same /ws/game/:id path, producing a
+// second WS per page. We now forward the live snapshot/isLive/error from
+// the single GamePage stream into the SpectatorView via props, so the
+// page opens exactly one WS.
 // ---------------------------------------------------------------------------
 
 export default function GamePage() {
   const { id } = useParams<{ id: string }>();
-  const { snapshot } = useSpectatorStream(id ?? '');
+  const { snapshot, isLive, error: streamError } = useSpectatorStream(id ?? '');
 
   const defaultGameType = getDefaultPlugin().gameType;
   const gameType =
@@ -67,6 +71,9 @@ export default function GamePage() {
         gameId={id ?? ''}
         gameType={gameType}
         phase={snapshot.meta.finished ? 'finished' : 'in_progress'}
+        liveSnapshot={snapshot}
+        liveIsLive={isLive}
+        liveError={streamError?.message ?? null}
       />
     </>
   );

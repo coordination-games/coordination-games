@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { useSpectatorStream } from '../../hooks/useSpectatorStream';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
 import { ArcadeOverview } from './components/ArcadeOverview';
@@ -86,18 +85,18 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     replaySnapshots,
     prevGameState: rawPrevGameState,
     animate,
+    liveSnapshot,
+    liveError,
   } = props;
   const isReplay = replaySnapshots != null;
 
-  // Phase 7.1 — WS lifecycle now lives in `useSpectatorStream`. We only
-  // open the stream in live mode; replay derives state from props.
-  const { snapshot, error: streamError } = useSpectatorStream(gameId ?? '', {
-    mode: isReplay ? 'replay' : 'live',
-  });
+  // Phase 7.2 — the single WS now lives in GamePage's `useSpectatorStream`.
+  // The live snapshot/error arrive via props in live mode; replay derives
+  // state from `rawGameState`.
   const liveState =
-    !isReplay && snapshot?.type === 'state_update' ? mapServerState(snapshot.state) : null;
-  const connected = !isReplay && snapshot != null;
-  const error = streamError?.message ?? null;
+    !isReplay && liveSnapshot?.type === 'state_update' ? mapServerState(liveSnapshot.state) : null;
+  const connected = !isReplay && liveSnapshot != null;
+  const error = liveError ?? null;
   const [followedPlayerId, setFollowedPlayerId] = useState<string | null>(null);
 
   // ---------------------------------------------------------------------------

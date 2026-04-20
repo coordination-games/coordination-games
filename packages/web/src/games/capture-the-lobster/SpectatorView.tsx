@@ -8,7 +8,6 @@ import type {
 import { ScrubberSlider } from '../../components/ScrubberSlider';
 import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
 import { API_BASE } from '../../config.js';
-import { useSpectatorStream } from '../../hooks/useSpectatorStream';
 import type { SpectatorViewProps } from '../types';
 import { useHexAnimations } from './useHexAnimations';
 
@@ -217,6 +216,9 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     replaySnapshots,
     prevGameState: rawPrevState,
     animate,
+    liveSnapshot,
+    liveIsLive,
+    liveError,
   } = props;
   const isReplay = replaySnapshots != null;
 
@@ -256,21 +258,16 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   }, [isReplay, rawPrevState]);
 
   // ---------------------------------------------------------------------------
-  // Live mode (Phase 7.1): WS lifecycle delegated to `useSpectatorStream`.
-  // We project the unified spectator payload onto the CtL-specific
-  // (liveState, snapshot cache, rewind) state. Rewind machinery stays
-  // co-located here because it depends on `mapServerState` + the cache.
+  // Live mode (Phase 7.2): the WS lifecycle now lives in GamePage's single
+  // `useSpectatorStream`. We project the unified spectator payload (passed
+  // in via props) onto CtL-specific (liveState, snapshot cache, rewind)
+  // state. Rewind machinery stays co-located here because it depends on
+  // `mapServerState` + the cache.
   // ---------------------------------------------------------------------------
 
-  const {
-    snapshot,
-    isLive,
-    error: streamError,
-  } = useSpectatorStream(gameId ?? '', {
-    mode: isReplay ? 'replay' : 'live',
-  });
-  const connected = !isReplay && isLive;
-  const error = streamError?.message ?? null;
+  const snapshot = isReplay ? undefined : liveSnapshot;
+  const connected = !isReplay && (liveIsLive ?? false);
+  const error = liveError ?? null;
 
   useEffect(() => {
     if (isReplay || !snapshot) return;

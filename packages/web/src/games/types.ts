@@ -23,6 +23,18 @@ export interface SpectatorViewProps {
   prevGameState?: any;
   /** Whether to animate the transition from prevGameState to gameState. False during scrubbing. */
   animate?: boolean;
+  /**
+   * Phase 7.2 — live spectator stream forwarded by GamePage. The single
+   * WS lifecycle now lives in GamePage's `useSpectatorStream`; per-game
+   * SpectatorViews must NOT open their own. In replay mode these are
+   * undefined (replay state arrives via `gameState` / `replaySnapshots`).
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: keeps SpectatorPayload import out of this shared types file; CtL/Oathbreaker views narrow it locally
+  liveSnapshot?: any;
+  /** True while the live WS is OPEN; false during HTTP polling fallback. */
+  liveIsLive?: boolean;
+  /** Last live-stream error (transport-level), if any. */
+  liveError?: string | null;
 }
 
 /** Props for a compact game card shown in lobby/game lists. */
