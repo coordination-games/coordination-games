@@ -99,9 +99,10 @@ async function main() {
         body: { toolName: 'propose_team', args: { targetHandle: team[i].name } },
       });
 
-      // Get phase view to find team ID
+      // Get phase view to find team ID. `/api/player/state` returns the
+      // unified spectator envelope — per-phase view lives under state.state.
       const state = await api('/api/player/state', { token: team[0].token });
-      const phaseTeams = state.currentPhase?.view?.teams ?? [];
+      const phaseTeams = state.state?.currentPhase?.view?.teams ?? [];
       const proposerTeam = phaseTeams.find((t: { members: string[] }) =>
         t.members.includes(team[0].playerId),
       );
@@ -122,7 +123,9 @@ async function main() {
   console.log('\nWaiting for class-selection...');
   for (let i = 0; i < 60; i++) {
     const state = await api('/api/player/state', { token: bots[0].token }).catch(() => null);
-    if (state?.currentPhase?.id === 'class-selection' || state?.phase === 'game') break;
+    const phaseId = state?.currentPhase?.id ?? state?.state?.currentPhase?.id;
+    const phase = state?.state?.phase ?? state?.phase;
+    if (phaseId === 'class-selection' || phase === 'game') break;
     await sleep(500);
   }
 

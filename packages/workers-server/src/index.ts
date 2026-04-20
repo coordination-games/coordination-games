@@ -507,6 +507,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return handleAdminSessionTools(decodeURIComponent(adminToolsMatch[1]), request, env);
   }
 
+  const adminKillMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/kill$/);
+  if (adminKillMatch && method === 'POST') {
+    // @ts-expect-error TS2345 — decoded match is always a string here
+    return handleAdminSessionKill(decodeURIComponent(adminKillMatch[1]), request, env);
+  }
+
   // ------------------------------------------------------------------
   // Not found
   // ------------------------------------------------------------------
@@ -913,6 +919,82 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
   }
 
   return Response.json({ gameType, guide, tools });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — kill a session (disband lobby + mark game finished). Dev-only.
+// ---------------------------------------------------------------------------
+
+async function handleAdminSessionKill(
+  sessionId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const expected = env.ADMIN_TOKEN;
+  if (!expected) {
+    return Response.json(
+      { error: 'Admin endpoint disabled (ADMIN_TOKEN not set)' },
+      { status: 503 },
+    );
+  }
+  if (request.headers.get('X-Admin-Token') !== expected) {
+    return Response.json({ error: 'Invalid admin token' }, { status: 401 });
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT id AS lobby_id, game_id FROM lobbies WHERE id = ?1 OR game_id = ?1 LIMIT 1`,
+  )
+    .bind(sessionId)
+    .first<{ lobby_id: string; game_id: string | null }>();
+
+  // Orphan game-id path: no lobbies row matched, but a games row exists. This
+  // happens when a lobby row was deleted / rolled back after its GameRoomDO
+  // spawned — the game keeps ticking `progressCounter` with no parent row.
+  // Reach into GameRoomDO directly to stop the alarm.
+  if (!row) {
+    const gameRow = await env.DB.prepare('SELECT game_id FROM games WHERE game_id = ? LIMIT 1')
+      .bind(sessionId)
+      .first<{ game_id: string }>();
+    if (!gameRow) {
+      return Response.json({ error: 'Session not found', sessionId }, { status: 404 });
+    }
+    const gameStub = getGameDO(env, gameRow.game_id);
+    const gameResp = await gameStub.fetch(new Request('https://do/', { method: 'DELETE' }));
+    await env.DB.prepare('UPDATE games SET finished = 1 WHERE game_id = ?')
+      .bind(gameRow.game_id)
+      .run();
+    return Response.json({
+      ok: true,
+      lobbyId: null,
+      gameId: gameRow.game_id,
+      lobbyDisbanded: false,
+      gameMarkedFinished: gameResp.ok,
+      orphan: true,
+    });
+  }
+
+  const lobbyStub = getLobbyDO(env, row.lobby_id);
+  const lobbyResp = await lobbyStub.fetch(new Request('https://do/', { method: 'DELETE' }));
+  const lobbyOk = lobbyResp.ok;
+
+  let gameMarked = false;
+  if (row.game_id) {
+    // Stop the GameRoomDO's progression alarm AND mark the D1 row finished.
+    // Without the DO call, a game whose lobby row is gone keeps firing
+    // alarms and bumping `progressCounter` until Cloudflare evicts it.
+    const gameStub = getGameDO(env, row.game_id);
+    await gameStub.fetch(new Request('https://do/', { method: 'DELETE' })).catch(() => {});
+    await env.DB.prepare('UPDATE games SET finished = 1 WHERE game_id = ?').bind(row.game_id).run();
+    gameMarked = true;
+  }
+
+  return Response.json({
+    ok: true,
+    lobbyId: row.lobby_id,
+    gameId: row.game_id,
+    lobbyDisbanded: lobbyOk,
+    gameMarkedFinished: gameMarked,
+  });
 }
 
 // ---------------------------------------------------------------------------

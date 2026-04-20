@@ -447,8 +447,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       const index = Math.min(r.index, snapshots.length - 1);
       return { mode: 'active', index, snapshots };
     });
-    // @ts-expect-error TS2339: Property 'snapshots' does not exist on type 'RewindState'. — TODO(2.3-followup)
-  }, [latestProgress, rewind.mode, rewind.snapshots.length]);
+  }, [
+    latestProgress,
+    rewind.mode,
+    rewind.mode === 'active' ? rewind.snapshots.length : 0,
+  ]);
 
   // §6.9 Auto-exit rewind when the game ends — /replay is the right surface
   // for a finished game.

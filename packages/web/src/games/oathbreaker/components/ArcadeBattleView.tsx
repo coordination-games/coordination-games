@@ -8,7 +8,7 @@ import { HealthBar } from './HealthBar';
 
 interface OathPlayer {
   id: string;
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   cooperationRate: number;
   oathsKept: number;
@@ -331,9 +331,10 @@ function OathBanner({ text, glow }: { text: string; glow?: boolean }) {
   );
 }
 
-function DollarDelta({ delta, side }: { delta: number; side: 'left' | 'right' }) {
+function CreditDelta({ delta, side }: { delta: number; side: 'left' | 'right' }) {
   const color = delta >= 0 ? '#4ade80' : '#f87171';
-  const text = delta >= 0 ? `+$${delta.toFixed(2)}` : `-$${Math.abs(delta).toFixed(2)}`;
+  const sign = delta >= 0 ? '+' : '-';
+  const text = `${sign}${Math.abs(delta).toFixed(2)} cr`;
 
   return (
     <div
@@ -630,8 +631,8 @@ export function ArcadeBattleView({
 
       {reveal.showDelta && latestResult && (
         <>
-          <DollarDelta delta={latestResult.delta1} side="left" />
-          <DollarDelta delta={latestResult.delta2} side="right" />
+          <CreditDelta delta={latestResult.delta1} side="left" />
+          <CreditDelta delta={latestResult.delta2} side="right" />
         </>
       )}
 
@@ -802,7 +803,7 @@ export function ArcadeBattleView({
           <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 4 }}>
             {name1}
           </div>
-          <HealthBar dollarValue={p1.dollarValue} breakEvenDelta={p1.breakEvenDelta} />
+          <HealthBar creditValue={p1.creditValue} breakEvenDelta={p1.breakEvenDelta} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p1.oathsKept}/{p1.oathsKept + p1.oathsBroken}
           </div>
@@ -814,7 +815,7 @@ export function ArcadeBattleView({
           <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 4 }}>
             {name2}
           </div>
-          <HealthBar dollarValue={p2.dollarValue} breakEvenDelta={p2.breakEvenDelta} />
+          <HealthBar creditValue={p2.creditValue} breakEvenDelta={p2.breakEvenDelta} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p2.oathsKept}/{p2.oathsKept + p2.oathsBroken}
           </div>

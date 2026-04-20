@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
 import { ArcadeOverview } from './components/ArcadeOverview';
+import { GameOverScreen } from './components/GameOverScreen';
 import { assignCharacters } from './utils/characterAssignment';
 import './styles/arcade.css';
 
@@ -11,7 +12,7 @@ import './styles/arcade.css';
 
 interface OathPlayer {
   id: string;
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   cooperationRate: number;
   oathsKept: number;
@@ -190,6 +191,22 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
                   : 'CONNECTING...'}
           </p>
         </div>
+      </div>
+    );
+  }
+
+  // Finished tournament → dedicated winners + oathbreaker screen. Replay
+  // stays on the per-round views so scrubbing backwards still animates.
+  if (state.phase === 'finished' && !isReplay) {
+    return (
+      <div style={{ height: '100%' }}>
+        <GameOverScreen
+          players={state.players}
+          roundResults={state.roundResults}
+          handles={handles}
+          characters={characters}
+          gameId={gameId ?? 'oathbreaker'}
+        />
       </div>
     );
   }

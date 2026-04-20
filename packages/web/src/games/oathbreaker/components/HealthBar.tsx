@@ -1,17 +1,17 @@
-// Retro health bar centered on the $1 break-even line
+// Retro health bar centered on the 1-credit break-even line
 
 interface HealthBarProps {
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   width?: number | string;
 }
 
-function formatDollar(v: number): string {
-  if (v >= 0) return `+$${v.toFixed(2)}`;
-  return `-$${Math.abs(v).toFixed(2)}`;
+function formatCreditDelta(v: number): string {
+  const sign = v >= 0 ? '+' : '-';
+  return `${sign}${Math.abs(v).toFixed(2)} cr`;
 }
 
-export function HealthBar({ dollarValue, breakEvenDelta, width = '100%' }: HealthBarProps) {
+export function HealthBar({ creditValue, breakEvenDelta, width = '100%' }: HealthBarProps) {
   const maxDelta = 1.0;
   const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, breakEvenDelta));
   const pct = (clampedDelta / maxDelta) * 50 + 50;
@@ -28,7 +28,7 @@ export function HealthBar({ dollarValue, breakEvenDelta, width = '100%' }: Healt
           flexShrink: 0,
         }}
       >
-        ${dollarValue.toFixed(2)}
+        {creditValue.toFixed(2)} cr
       </span>
       <div className="retro-health-bar" style={{ flex: 1 }}>
         <div className="center-line" />
@@ -63,7 +63,7 @@ export function HealthBar({ dollarValue, breakEvenDelta, width = '100%' }: Healt
           flexShrink: 0,
         }}
       >
-        {formatDollar(breakEvenDelta)}
+        {formatCreditDelta(breakEvenDelta)}
       </span>
     </div>
   );

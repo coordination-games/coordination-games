@@ -123,7 +123,7 @@ async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: stri
         body: { toolName: 'propose_team', args: { targetHandle: team[i].name } },
       });
       const state = await apiOk('/api/player/state', { token: team[0].token });
-      const phaseTeams = state.currentPhase?.view?.teams ?? [];
+      const phaseTeams = state.state?.currentPhase?.view?.teams ?? [];
       const proposerTeam = phaseTeams.find((t: { members: string[] }) =>
         t.members.includes(team[0].playerId),
       );
@@ -138,7 +138,9 @@ async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: stri
   // Wait for class-selection phase
   for (let i = 0; i < 60; i++) {
     const state = await apiOk('/api/player/state', { token: bots[0].token }).catch(() => null);
-    if (state?.currentPhase?.id === 'class-selection' || state?.phase === 'game') break;
+    const phaseId = state?.currentPhase?.id ?? state?.state?.currentPhase?.id;
+    const phase = state?.state?.phase ?? state?.phase;
+    if (phaseId === 'class-selection' || phase === 'game') break;
     await sleep(500);
   }
 
@@ -158,8 +160,9 @@ async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: stri
   let gameId: string | null = null;
   for (let i = 0; i < 60; i++) {
     const lobbyState = await apiOk(`/api/lobbies/${lobby.lobbyId}`).catch(() => null);
-    if (lobbyState?.gameId) {
-      gameId = lobbyState.gameId;
+    const envelopeGameId = lobbyState?.state?.gameId as string | null | undefined;
+    if (envelopeGameId) {
+      gameId = envelopeGameId;
       break;
     }
     await sleep(500);

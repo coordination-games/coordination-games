@@ -17,6 +17,52 @@ import type {
 } from './types.js';
 
 /**
+ * Translate the server's unified spectator envelope (`{type:'state_update',
+ * meta, state, relay, currentPhase?, gameOver?}`) into the flat `StateResponse`
+ * the CLI's downstream pipeline expects. Non-envelope responses (tool-result
+ * bodies, error payloads, legacy shapes) pass through unchanged.
+ *
+ * Merge rules:
+ *   - `state.*`             → top-level
+ *   - `meta.gameType`       → `gameType`
+ *   - `meta.gameId`         → `gameId` (falls back to `state.gameId`)
+ *   - `relay`               → `relayMessages`
+ *   - `meta.finished`/`gameOver` → `gameOver`
+ *   - `state.currentPhase` (lobby: `{id,name,view}`) merged with
+ *     `envelope.currentPhase` (auth-only: `{id,name,tools}`) into a single
+ *     `currentPhase: {id, name, view?, tools?}`.
+ */
+export function flattenStateEnvelope(raw: unknown): StateResponse {
+  if (!raw || typeof raw !== 'object') return (raw ?? {}) as StateResponse;
+  const env = raw as Record<string, unknown>;
+  const type = env.type;
+  if (type !== 'state_update' && type !== 'spectator_pending') {
+    return env as StateResponse;
+  }
+  const meta = (env.meta as Record<string, unknown> | undefined) ?? {};
+  const state = (env.state as Record<string, unknown> | undefined) ?? {};
+  const stateCurrentPhase = state.currentPhase as Record<string, unknown> | null | undefined;
+  const envelopeCurrentPhase = env.currentPhase as Record<string, unknown> | undefined;
+  const mergedCurrentPhase =
+    stateCurrentPhase || envelopeCurrentPhase
+      ? { ...(stateCurrentPhase ?? {}), ...(envelopeCurrentPhase ?? {}) }
+      : undefined;
+  const result: Record<string, unknown> = {
+    ...state,
+    gameType: meta.gameType,
+    gameId: (meta.gameId as string | undefined) ?? (state.gameId as string | undefined),
+    relayMessages: (env.relay as unknown[] | undefined) ?? [],
+    gameOver: (env.gameOver as boolean | undefined) ?? (meta.finished as boolean | undefined),
+  };
+  if (mergedCurrentPhase !== undefined) result.currentPhase = mergedCurrentPhase;
+  // Preserve any ad-hoc wrapper fields (`ok: true` from /action responses)
+  // so downstream callers that still inspect them keep working.
+  if ('ok' in env) result.ok = env.ok;
+  if ('error' in env) result.error = env.error;
+  return result as StateResponse;
+}
+
+/**
  * Simple HTTP client for the coordination game server API.
  *
  * `get()` / `post()` return `unknown` — callers either pass through a typed
@@ -140,11 +186,11 @@ export class ApiClient {
   }
 
   async getState(): Promise<StateResponse> {
-    return (await this.get('/api/player/state')) as StateResponse;
+    return flattenStateEnvelope(await this.get('/api/player/state'));
   }
 
   async waitForUpdate(): Promise<StateResponse> {
-    return (await this.get('/api/player/wait')) as StateResponse;
+    return flattenStateEnvelope(await this.get('/api/player/wait'));
   }
 
   async getGuide(game?: string): Promise<unknown> {
@@ -163,9 +209,13 @@ export class ApiClient {
   /**
    * Call a tool through the unified `/api/player/tool` endpoint.
    * Returns the raw JSON the server emits (success payload or `{error: ...}`
-   * envelope); the ApiClient still throws on non-2xx.
+   * envelope); the ApiClient still throws on non-2xx. When the server responds
+   * with a unified state envelope (lobby tools include the post-action state),
+   * the envelope is flattened to the legacy `StateResponse` shape for CLI
+   * consumers; other response shapes (game `/action`'s `{success,progressCounter}`,
+   * plugin-relay bodies) pass through unchanged.
    */
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-    return this.post('/api/player/tool', { toolName, args });
+    return flattenStateEnvelope(await this.post('/api/player/tool', { toolName, args }));
   }
 }

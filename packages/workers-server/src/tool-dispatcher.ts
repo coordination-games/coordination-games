@@ -321,6 +321,7 @@ export async function getPlayerLocationFromDb(
 async function buildSessionRegistry(
   location: PlayerLocation,
   env: Env,
+  playerId: string,
 ): Promise<SessionRegistry | Response> {
   const plugin = getGame(location.gameType);
   if (!plugin) {
@@ -338,11 +339,19 @@ async function buildSessionRegistry(
     currentPhaseName = 'Game';
     currentTools = gameTools;
   } else {
-    // Ask the LobbyDO which phase is current.
+    // Ask the LobbyDO which phase is current. The DO returns a unified
+    // envelope; with X-Player-Id set it includes the auth-only
+    // `currentPhase` slice at top level, carrying the current phase's
+    // callable tool surface.
     const stub = getLobbyDO(env, location.lobbyId);
     let stateResp: Response;
     try {
-      stateResp = await stub.fetch(new Request('https://do/state', { method: 'GET' }));
+      stateResp = await stub.fetch(
+        new Request('https://do/state', {
+          method: 'GET',
+          headers: { 'X-Player-Id': playerId },
+        }),
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return errorResponse('DISPATCH_FAILED', `LobbyDO unreachable: ${msg}`, {});
@@ -350,10 +359,11 @@ async function buildSessionRegistry(
     if (!stateResp.ok) {
       return errorResponse('DISPATCH_FAILED', `LobbyDO /state returned ${stateResp.status}`, {});
     }
-    const state = (await stateResp.json()) as {
+    const envelope = (await stateResp.json()) as {
+      type?: string;
       currentPhase?: { id?: string; name?: string; tools?: ToolDefinition[] };
     } | null;
-    const phase = state?.currentPhase;
+    const phase = envelope?.currentPhase;
     if (!phase?.id) {
       return errorResponse('DISPATCH_FAILED', 'Lobby has no current phase', {});
     }
@@ -544,7 +554,7 @@ export async function dispatchToolCall(
   }
 
   // ── 2. Build registry ───────────────────────────────────────────────────
-  const registryOrResp = await buildSessionRegistry(location, env);
+  const registryOrResp = await buildSessionRegistry(location, env, playerId);
   if (registryOrResp instanceof Response) return registryOrResp;
   const registry = registryOrResp;
 
@@ -855,18 +865,21 @@ export async function handleAdminSessionTools(
   } else if (row.game_id) {
     currentPhase = { id: 'game', name: 'Game', tools: gameTools };
   } else {
-    // Query the lobby DO for its current phase
+    // Query the lobby DO for its current phase. Unauth request returns the
+    // spectator envelope whose `state.currentPhase.{id,name}` is populated
+    // for every lifecycle phase; match against the admin-static tool map.
     const stub = getLobbyDO(env as Env, row.lobby_id);
     try {
       const stateResp = await stub.fetch(new Request('https://do/state', { method: 'GET' }));
-      const state = stateResp.ok
+      const envelope = stateResp.ok
         ? ((await stateResp.json()) as {
-            currentPhase?: { id: string; name: string; tools?: ToolDefinition[] };
+            type?: string;
+            state?: { currentPhase?: { id?: string; name?: string } | null };
           } | null)
         : null;
-      const phase = state?.currentPhase;
-      currentPhase = phase
-        ? { id: phase.id, name: phase.name, tools: phase.tools ?? [] }
+      const phase = envelope?.state?.currentPhase ?? null;
+      currentPhase = phase?.id
+        ? { id: phase.id, name: phase.name ?? phase.id, tools: lobbyPhaseTools[phase.id] ?? [] }
         : { id: 'unknown', name: 'unknown', tools: [] };
     } catch {
       currentPhase = { id: 'unknown', name: 'unknown', tools: [] };

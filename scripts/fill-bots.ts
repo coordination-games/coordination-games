@@ -76,8 +76,10 @@ async function main() {
   //    agents for them if a prior run died mid-spawn), and which still need
   //    to join. `picked` = new joiners, `reused` = already-seated pool bots.
   const lobbyState = await api(SERVER, `/api/lobbies/${lobbyId}/state`).catch(() => null);
+  // `/state` returns the unified spectator envelope; lobby fields live under `state`.
+  const stateAgents = lobbyState?.state?.agents ?? [];
   const alreadyIn = new Set<string>(
-    (lobbyState?.agents ?? []).map((a: { handle: string }) => a.handle.toLowerCase()),
+    stateAgents.map((a: { handle: string }) => a.handle.toLowerCase()),
   );
 
   const reused = pool.filter((b) => alreadyIn.has(b.name.toLowerCase()));

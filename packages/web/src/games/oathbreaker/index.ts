@@ -11,7 +11,7 @@ import { OathbreakerSpectatorView } from './SpectatorView';
 function getReplayChrome(snapshot: unknown): ReplayChrome {
   const s = snapshot as {
     phase?: 'waiting' | 'playing' | 'finished';
-    players?: { id: string; dollarValue: number }[];
+    players?: { id: string; creditValue: number }[];
   } | null;
 
   const isFinished = s?.phase === 'finished';
@@ -22,9 +22,9 @@ function getReplayChrome(snapshot: unknown): ReplayChrome {
 
   let topValue = Number.NEGATIVE_INFINITY;
   for (const p of players) {
-    if (p.dollarValue > topValue) topValue = p.dollarValue;
+    if (p.creditValue > topValue) topValue = p.creditValue;
   }
-  const leaders = players.filter((p) => p.dollarValue === topValue);
+  const leaders = players.filter((p) => p.creditValue === topValue);
   if (leaders.length !== 1) return { isFinished: true, statusVariant: 'draw' };
   // biome-ignore lint/style/noNonNullAssertion: leaders.length === 1 checked above
   return { isFinished: true, winnerLabel: leaders[0]!.id, statusVariant: 'win' };

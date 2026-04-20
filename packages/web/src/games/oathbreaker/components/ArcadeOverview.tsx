@@ -6,7 +6,7 @@ import { HealthBar } from './HealthBar';
 
 interface OathPlayer {
   id: string;
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   cooperationRate: number;
   oathsKept: number;
@@ -110,7 +110,7 @@ function AgentCard({
             </span>
           </div>
 
-          <HealthBar dollarValue={player.dollarValue} breakEvenDelta={player.breakEvenDelta} />
+          <HealthBar creditValue={player.creditValue} breakEvenDelta={player.breakEvenDelta} />
 
           <div
             className="pixel-text"
@@ -158,7 +158,7 @@ export function ArcadeOverview({
   onSelectPlayer,
 }: ArcadeOverviewProps) {
   // Sort by dollar value descending
-  const sorted = [...players].sort((a, b) => b.dollarValue - a.dollarValue);
+  const sorted = [...players].sort((a, b) => b.creditValue - a.creditValue);
 
   const getPairing = (playerId: string) =>
     pairings.find((p) => p.player1 === playerId || p.player2 === playerId);

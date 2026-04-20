@@ -166,7 +166,10 @@ export function useSpectatorStream(
     }
     let cancelled = false;
     fetch(httpPath(gameId), { cache: 'no-store' })
-      .then((r) => r.json() as Promise<SpectatorPayload>)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+        return (await r.json()) as SpectatorPayload;
+      })
       .then((p) => {
         if (cancelled) return;
         applyPayload(p, gen);
@@ -205,7 +208,10 @@ export function useSpectatorStream(
       const tick = () => {
         const url = `${httpPath(gameId)}?sinceIdx=${sinceIdxRef.current}`;
         fetch(url, { cache: 'no-store' })
-          .then((r) => r.json() as Promise<SpectatorPayload>)
+          .then(async (r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return (await r.json()) as SpectatorPayload;
+          })
           .then((p) => applyPayload(p, gen))
           .catch(() => {
             // Swallow individual poll failures; the next tick will retry.
@@ -228,7 +234,10 @@ export function useSpectatorStream(
     let cancelledInitial = false;
     if (!initialSnapshot) {
       fetch(httpPath(gameId), { cache: 'no-store' })
-        .then((r) => r.json() as Promise<SpectatorPayload>)
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return (await r.json()) as SpectatorPayload;
+        })
         .then((p) => {
           if (cancelledInitial) return;
           applyPayload(p, gen);

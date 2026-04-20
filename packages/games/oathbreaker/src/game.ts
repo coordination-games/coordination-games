@@ -473,21 +473,30 @@ function findPairingIndex(state: OathState, playerId: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// Dollar value computation
+// Per-round credit-value display (points → whole credits)
+//
+// Every round we expose a "what would you cash out right now?" figure to
+// agents and spectators. It's the player's point balance re-priced into
+// whole credits against the current supply:
+//   creditValue = balance × (totalCreditsInvested / totalSupply)
+//
+// Settlement itself is bigint (`plugin.entryCost` + `computePayouts`); this
+// function is display-only, fractional by design (point counts rarely divide
+// evenly into the pot), and carries no money-authority.
 // ---------------------------------------------------------------------------
 
-export function dollarValue(
+export function creditValue(
   balance: number,
-  totalDollarsInvested: number,
+  totalCreditsInvested: number,
   totalSupply: number,
 ): number {
   if (totalSupply <= 0) return 0;
-  return balance * (totalDollarsInvested / totalSupply);
+  return balance * (totalCreditsInvested / totalSupply);
 }
 
-export function dollarPerPoint(totalDollarsInvested: number, totalSupply: number): number {
+export function creditPerPoint(totalCreditsInvested: number, totalSupply: number): number {
   if (totalSupply <= 0) return 0;
-  return totalDollarsInvested / totalSupply;
+  return totalCreditsInvested / totalSupply;
 }
 
 // ---------------------------------------------------------------------------
@@ -512,8 +521,8 @@ export interface AgentView {
   gameParams: OathConfig;
   totalSupply: number;
   totalCreditsInvested: number;
-  dollarPerPoint: number;
-  yourDollarValue: number;
+  creditPerPoint: number;
+  yourCreditValue: number;
 }
 
 /** What spectators see — oaths visible, C/D hidden until round end. */
@@ -523,7 +532,7 @@ export interface SpectatorView {
   phase: 'waiting' | 'playing' | 'finished';
   players: {
     id: string;
-    dollarValue: number;
+    creditValue: number;
     breakEvenDelta: number;
     cooperationRate: number;
     oathsKept: number;
@@ -556,7 +565,7 @@ export function getAgentView(state: OathState, playerId: string): AgentView | nu
   const opponent = state.players.find((p) => p.id === opponentId);
   if (!opponent) return null;
 
-  const dpp = dollarPerPoint(state.totalCreditsInvested, state.totalSupply);
+  const cpp = creditPerPoint(state.totalCreditsInvested, state.totalSupply);
   const historyWithOpponent = player.history.filter((h) => h.opponent === opponentId);
 
   return {
@@ -576,13 +585,12 @@ export function getAgentView(state: OathState, playerId: string): AgentView | nu
     gameParams: state.config,
     totalSupply: state.totalSupply,
     totalCreditsInvested: state.totalCreditsInvested,
-    dollarPerPoint: dpp,
-    yourDollarValue: dollarValue(player.balance, state.totalCreditsInvested, state.totalSupply),
+    creditPerPoint: cpp,
+    yourCreditValue: creditValue(player.balance, state.totalCreditsInvested, state.totalSupply),
   };
 }
 
 export function getSpectatorView(state: OathState): SpectatorView {
-  const _dpp = dollarPerPoint(state.totalCreditsInvested, state.totalSupply);
   const entryCost = state.totalCreditsInvested / Math.max(state.players.length, 1);
 
   return {
@@ -590,12 +598,12 @@ export function getSpectatorView(state: OathState): SpectatorView {
     maxRounds: state.config.maxRounds,
     phase: state.phase,
     players: state.players.map((p) => {
-      const dv = dollarValue(p.balance, state.totalCreditsInvested, state.totalSupply);
+      const cv = creditValue(p.balance, state.totalCreditsInvested, state.totalSupply);
       const total = p.oathsKept + p.oathsBroken;
       return {
         id: p.id,
-        dollarValue: dv,
-        breakEvenDelta: dv - entryCost,
+        creditValue: cv,
+        breakEvenDelta: cv - entryCost,
         cooperationRate: total > 0 ? p.oathsKept / total : 1,
         oathsKept: p.oathsKept,
         oathsBroken: p.oathsBroken,

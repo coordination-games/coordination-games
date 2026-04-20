@@ -37,7 +37,11 @@ import type { ChainRelay } from '../chain/types.js';
 import type { Env } from '../env.js';
 import type { SpectatorViewer } from '../plugins/capabilities.js';
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
-import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
+import {
+  type BuildSpectatorPayloadCtx,
+  buildSpectatorPayload,
+  type SpectatorPayload,
+} from '../plugins/spectator-payload.js';
 
 // Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
@@ -295,16 +299,10 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleGetState(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
     const playerId = this.headerPlayerId(request);
-    // Authenticated player → legacy per-player view (auth-gated, includes
-    // phase tools the spectator payload omits). Unauthenticated caller →
-    // unified spectator payload (Phase 7.1) with optional `?sinceIdx=`.
-    if (playerId !== null) {
-      return Response.json(await this.buildStateForViewer(playerId));
-    }
     const url = new URL(request.url);
     const rawSince = url.searchParams.get('sinceIdx');
     const sinceIdx = rawSince === null ? undefined : Number(rawSince);
-    return Response.json(await this.buildLobbySpectatorPayload(sinceIdx));
+    return Response.json(await this.buildLobbySpectatorPayload(playerId, sinceIdx));
   }
 
   /** X-Player-Id header. Absent = spectator/system. Never read from body or URL. */
@@ -336,7 +334,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     // Idempotent — don't add twice
     if (this._agents.find((a) => a.id === playerId)) {
-      return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
+      return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
     }
 
     // Pre-game credit balance check. MVP: read-only "can this player afford
@@ -348,6 +346,16 @@ export class LobbyDO extends DurableObject<Env> {
     if (gatePlugin) {
       const balanceError = await this.checkBalanceOrError(playerId, gatePlugin.entryCost);
       if (balanceError) return balanceError;
+    }
+
+    // Re-check membership after the balance check — Durable Object requests
+    // interleave across every `await`, so two concurrent joins for the same
+    // player can both pass the first check, both complete the RPC, then both
+    // push, producing a duplicate agent row. The first-past-the-await wins
+    // (it already pushed); the second returns the same idempotent response
+    // the pre-check branch would have.
+    if (this._agents.find((a) => a.id === playerId)) {
+      return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
     }
 
     const agent: AgentEntry = { id: playerId, handle, elo: elo ?? 1000, joinedAt: Date.now() };
@@ -375,7 +383,7 @@ export class LobbyDO extends DurableObject<Env> {
     await this.broadcastUpdate();
 
     console.log(`[LobbyDO] ${handle} joined lobby ${this._meta.lobbyId}`);
-    return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
+    return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
   }
 
   private async handleAction(request: Request): Promise<Response> {
@@ -420,7 +428,7 @@ export class LobbyDO extends DurableObject<Env> {
     await this.saveState();
     await this.broadcastUpdate();
 
-    return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
+    return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
   }
 
   private async handleTool(request: Request): Promise<Response> {
@@ -507,7 +515,7 @@ export class LobbyDO extends DurableObject<Env> {
       // Phase 7.1 — spectator WS receives the same unified payload that
       // HTTP `/state` returns. Initial connect → full snapshot (no
       // `sinceIdx`); subsequent broadcasts emit deltas.
-      server.send(JSON.stringify(await this.buildLobbySpectatorPayload()));
+      server.send(JSON.stringify(await this.buildLobbySpectatorPayload(null)));
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -716,66 +724,22 @@ export class LobbyDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Build the lobby state object for a specific viewer. `playerId === null`
-   * means an unauthenticated spectator (HTTP `/state` without `X-Player-Id`,
-   * or any WS connection — WS has no auth surface).
+   * Unified spectator payload (HTTP + WS share this builder). `viewerPlayerId`
+   * discriminates the viewer: `null` → spectator (public view); non-null →
+   * authenticated player (fog-filtered view, auth-only `currentPhase` +
+   * `gameOver` fields populated on the envelope so CLI dispatchers can
+   * read the callable tool surface without a second endpoint).
    *
-   * Relay filtering is delegated entirely to the canonical
-   * `DOStorageRelayClient.visibleTo(viewer)` — Phase 0.1's inline
-   * `filterRelayForSpectator` / `filterRelayForPlayer` helpers are gone.
+   * Relay filtering runs through `DOStorageRelayClient.visibleTo(viewer)`;
+   * the lobby phase's `getView` receives the same playerId so per-player
+   * phase views stay fog-filtered.
    *
-   * Phase 7.1 — spectator callers (`playerId === null`) route through
-   * `buildSpectatorPayload` so HTTP and WS share one builder. Player
-   * callers stay on the legacy shape (auth-gated, includes phase tools).
-   * The lobby's spectator "state" is the same field bundle as the player
-   * view minus the relay slice (which lives at the unified-payload top
-   * level via `RelayClient.visibleTo`).
-   */
-  private async buildStateForViewer(playerId: string | null): Promise<object> {
-    if (!this._meta) return { error: 'Lobby not found' };
-
-    const plugin = getGame(this._meta.gameType);
-    const phases = plugin?.lobby?.phases ?? [];
-    const currentPhase = phases[this._meta.currentPhaseIndex];
-
-    const viewer: SpectatorViewer =
-      playerId === null ? { kind: 'spectator' } : { kind: 'player', playerId };
-    const filteredRelay = await this.getRelayClient().visibleTo(viewer);
-
-    const state: Record<string, unknown> = {
-      lobbyId: this._meta.lobbyId,
-      gameType: this._meta.gameType,
-      agents: this._agents.map((a) => ({
-        id: a.id,
-        handle: a.handle,
-        elo: a.elo,
-      })),
-      currentPhase: currentPhase
-        ? {
-            id: currentPhase.id,
-            name: currentPhase.name,
-            view: currentPhase.getView(this._phaseState, playerId ?? undefined),
-            tools: currentPhase.tools ?? [],
-          }
-        : null,
-      relay: filteredRelay,
-      phase: this._meta.phase,
-      deadlineMs: this._meta.deadlineMs,
-      gameId: this._meta.gameId,
-      error: this._meta.error,
-      noTimeout: this._meta.noTimeout,
-    };
-
-    return state;
-  }
-
-  /**
-   * Phase 7.1 — unified spectator payload (HTTP + WS share this builder).
-   * The lobby state itself becomes the `state` field; `relay` lives at
-   * the top level of the payload (same shape as GameRoomDO emits).
    * `sinceIdx` is clamped to `[0, relayTip]` server-side.
    */
-  private async buildLobbySpectatorPayload(sinceIdx?: number): Promise<SpectatorPayload> {
+  private async buildLobbySpectatorPayload(
+    viewerPlayerId: string | null,
+    sinceIdx?: number,
+  ): Promise<SpectatorPayload> {
     if (!this._meta) {
       return {
         type: 'spectator_pending',
@@ -796,9 +760,15 @@ export class LobbyDO extends DurableObject<Env> {
     const handles: Record<string, string> = {};
     for (const a of this._agents) handles[a.id] = a.handle;
 
+    const viewer: SpectatorViewer =
+      viewerPlayerId === null
+        ? { kind: 'spectator' }
+        : { kind: 'player', playerId: viewerPlayerId };
+
     // Lobby-shaped "state" — same field bundle the frontend already
-    // consumes (agents, currentPhase, gameId, etc.). `relay` is omitted
-    // because the unified payload exposes it at the top level.
+    // consumes (agents, currentPhase.view, gameId, etc.). `relay` is omitted
+    // because the unified payload exposes it at the top level. Phase view
+    // is fog-filtered when the viewer is a player.
     const state = {
       lobbyId: this._meta.lobbyId,
       gameType: this._meta.gameType,
@@ -807,8 +777,7 @@ export class LobbyDO extends DurableObject<Env> {
         ? {
             id: currentPhase.id,
             name: currentPhase.name,
-            view: currentPhase.getView(this._phaseState, undefined),
-            tools: currentPhase.tools ?? [],
+            view: currentPhase.getView(this._phaseState, viewerPlayerId ?? undefined),
           }
         : null,
       phase: this._meta.phase,
@@ -820,7 +789,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
-    return buildSpectatorPayload({
+    const ctx: BuildSpectatorPayloadCtx = {
       gameId: this._meta.lobbyId,
       gameType: this._meta.gameType,
       handles,
@@ -831,11 +800,24 @@ export class LobbyDO extends DurableObject<Env> {
       finished: this._meta.phase === 'finished',
       publicSnapshotIndex: 0,
       state,
-      viewer: { kind: 'spectator' },
+      viewer,
       relay: relayClient,
       relayTip,
       sinceIdx,
-    });
+    };
+    // Auth-only: advertise the callable tool surface + a stable `gameOver`
+    // alias so CLI callers can dispatch without a second hop.
+    if (viewerPlayerId !== null) {
+      if (currentPhase) {
+        ctx.currentPhase = {
+          id: currentPhase.id,
+          name: currentPhase.name,
+          tools: currentPhase.tools ?? [],
+        };
+      }
+      ctx.gameOver = this._meta.phase === 'finished';
+    }
+    return buildSpectatorPayload(ctx);
   }
 
   /**
@@ -852,7 +834,7 @@ export class LobbyDO extends DurableObject<Env> {
       this._lastBroadcastRelayIdx = tip;
       return;
     }
-    const payload = await this.buildLobbySpectatorPayload(this._lastBroadcastRelayIdx);
+    const payload = await this.buildLobbySpectatorPayload(null, this._lastBroadcastRelayIdx);
     const json = JSON.stringify(payload);
     for (const ws of conns) {
       try {

@@ -25,7 +25,7 @@
  * call with `sinceIdx = meta.sinceIdx` is correct.
  */
 
-import type { RelayEnvelope } from '@coordination-games/engine';
+import type { RelayEnvelope, ToolDefinition } from '@coordination-games/engine';
 import type { RelayClient, SpectatorViewer } from './capabilities.js';
 
 export interface SpectatorPayloadMeta {
@@ -63,6 +63,22 @@ export interface SpectatorStateUpdatePayload {
   state: unknown;
   /** Relay envelopes filtered through `RelayClient.visibleTo(viewer)`. */
   relay: RelayEnvelope[];
+  /**
+   * Auth-only: currently-callable tool surface for this viewer. Populated
+   * when the caller supplied an X-Player-Id; absent for spectator callers.
+   * For GameRoomDO this is the synthetic `{id:'game', name:'Game', tools}`;
+   * for LobbyDO it's the current `LobbyPhase`'s `{id, name, tools}`.
+   * Spectator-visible tool metadata stays available inside `state` for
+   * lobbies (under `state.currentPhase`) — this field carries the
+   * per-viewer authorized surface for CLI dispatch.
+   */
+  currentPhase?: { id: string; name: string; tools: ToolDefinition[] };
+  /**
+   * Auth-only: `true` when the underlying game has terminated. Mirrors
+   * `meta.finished` but kept as a distinct field so CLI callers can read
+   * a single, historically-stable name.
+   */
+  gameOver?: boolean;
 }
 
 export interface SpectatorPendingPayload {
@@ -110,6 +126,12 @@ export interface BuildSpectatorPayloadCtx {
    * call sites can forward parsed query strings without an extra branch.
    */
   sinceIdx?: number | undefined;
+  /**
+   * Auth-only fields. Pass these in when the viewer is a player; leave
+   * undefined for spectator viewers. Carried verbatim onto the payload.
+   */
+  currentPhase?: { id: string; name: string; tools: ToolDefinition[] };
+  gameOver?: boolean;
 }
 
 /**
@@ -157,10 +179,13 @@ export async function buildSpectatorPayload(
     return { type: 'spectator_pending', meta };
   }
 
-  return {
+  const payload: SpectatorStateUpdatePayload = {
     type: 'state_update',
     meta,
     state: ctx.state,
     relay: filteredRelay,
   };
+  if (ctx.currentPhase !== undefined) payload.currentPhase = ctx.currentPhase;
+  if (ctx.gameOver !== undefined) payload.gameOver = ctx.gameOver;
+  return payload;
 }

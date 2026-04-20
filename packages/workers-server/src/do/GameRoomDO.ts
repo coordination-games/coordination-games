@@ -354,8 +354,31 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'GET' && path === '/spectator') return this.handleSpectator(request);
     if (method === 'GET' && path === '/replay') return this.handleReplay();
     if (method === 'GET' && path === '/bundle') return this.handleBundle();
+    if (method === 'DELETE' && path === '/') return this.handleForceFinish();
 
     return new Response('Not found', { status: 404 });
+  }
+
+  /**
+   * Admin-only force-finish. Marks the game terminated and clears the
+   * alarm so ghost games whose parent lobby row vanished stop ticking the
+   * progress counter. The main Worker gates this path behind `ADMIN_TOKEN`.
+   */
+  private async handleForceFinish(): Promise<Response> {
+    await this.ensureLoaded();
+    if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
+    this._meta.finished = true;
+    try {
+      await this.ctx.storage.deleteAlarm();
+    } catch {}
+    await this.ctx.storage.put('meta', this._meta);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.close(1000, 'Game force-finished by admin');
+      } catch {}
+    }
+    console.log(`[GameRoomDO] force-finished game ${this._meta.gameId}`);
+    return Response.json({ ok: true, gameId: this._meta.gameId });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -598,11 +621,11 @@ export class GameRoomDO extends DurableObject<Env> {
     const playerId = this.trustedPlayerId(request);
     if (playerId instanceof Response) return playerId;
 
-    // Authenticated player → fog-filtered per-player view (unchanged).
-    // Unauthenticated caller → unified spectator payload (Phase 7.1) with
-    // optional `?sinceIdx=` query for incremental relay updates.
+    // Unified envelope for both. Player callers get a fog-filtered current
+    // state + top-level `currentPhase`/`gameOver`; spectator callers get
+    // the delayed public snapshot.
     if (playerId !== null) {
-      return Response.json(await this.buildPlayerMessage(playerId));
+      return Response.json(await this.buildPlayerPayload(playerId));
     }
     const url = new URL(request.url);
     const rawSince = url.searchParams.get('sinceIdx');
@@ -759,7 +782,7 @@ export class GameRoomDO extends DurableObject<Env> {
       // Authenticated player connection
       this.ctx.acceptWebSocket(server, [playerId]);
       if (this._meta && this._plugin) {
-        server.send(JSON.stringify(await this.buildPlayerMessage(playerId)));
+        server.send(JSON.stringify(await this.buildPlayerPayload(playerId)));
       }
     } else {
       // Unauthenticated spectator connection — same unified payload that
@@ -886,7 +909,7 @@ export class GameRoomDO extends DurableObject<Env> {
     for (const pid of recipients) {
       const conns = this.ctx.getWebSockets(pid);
       if (conns.length === 0) continue;
-      const payload = JSON.stringify(await this.buildPlayerMessage(pid));
+      const payload = JSON.stringify(await this.buildPlayerPayload(pid));
       for (const ws of conns) {
         try {
           ws.send(payload);
@@ -1247,34 +1270,56 @@ export class GameRoomDO extends DurableObject<Env> {
   // Message builders
   // ─────────────────────────────────────────────────────────────────────────
 
-  private async buildPlayerMessage(playerId: string | null): Promise<object> {
-    const finished = this._plugin?.isOver(this._state);
-    const visible = this._plugin?.getVisibleState(this._state, playerId);
-    // Identity → viewer shape. Null = unauthenticated WS path that landed
-    // here (handleSpectator goes through buildSpectatorMessage instead, but
-    // legacy callers may still pass null; treat as spectator).
-    const viewer: SpectatorViewer =
-      playerId === null ? { kind: 'spectator' } : { kind: 'player', playerId };
-    const relayMessages = await this.getRelayClient().visibleTo(viewer);
-    // Tool discovery: mirror LobbyDO.buildState() currentPhase.tools shape so
-    // CLI + MCP consume one uniform surface. Today every game has one game
-    // phase — when GamePhase[] lands, this becomes the current GamePhase's
-    // {id, name, tools}.
+  /**
+   * Build the unified spectator envelope for an authenticated player.
+   * `state` is the fog-filtered current game state (NOT the delayed
+   * spectator snapshot). `currentPhase` + `gameOver` are populated at the
+   * top level so CLI / bot callers can read the callable tool surface
+   * without a second endpoint.
+   */
+  private async buildPlayerPayload(playerId: string): Promise<SpectatorPayload> {
+    if (!this._meta || !this._plugin) {
+      return {
+        type: 'spectator_pending',
+        meta: {
+          gameId: this.ctx.id.name ?? '__unknown__',
+          gameType: '__unknown__',
+          handles: {},
+          progressCounter: null,
+          finished: false,
+          sinceIdx: 0,
+          lastUpdate: Date.now(),
+        },
+      };
+    }
+    const finished = this._plugin.isOver(this._state);
+    const visible = this._plugin.getVisibleState(this._state, playerId);
+    const viewer: SpectatorViewer = { kind: 'player', playerId };
+    const relayClient = this.getRelayClient();
+    const relayTip = await relayClient.getTip();
+    // Today every game has one game phase. When GamePhase[] lands this
+    // becomes the current GamePhase's {id, name, tools}.
     const currentPhase = {
       id: 'game',
       name: 'Game',
-      tools: this._plugin?.gameTools ?? [],
+      tools: this._plugin.gameTools ?? [],
     };
-    return {
-      type: 'state_update',
-      gameOver: finished,
-      gameType: this._meta?.gameType,
-      handles: this._meta?.handleMap,
-      progressCounter: this._progress.counter,
-      relayMessages,
+    return buildSpectatorPayload({
+      gameId: this._meta.gameId,
+      gameType: this._meta.gameType,
+      handles: this._meta.handleMap,
+      finished,
+      // Player view is the CURRENT state — no spectator-delay clamp.
+      // Pass a synthetic non-null index so the builder emits a state_update
+      // envelope (null index short-circuits to spectator_pending).
+      publicSnapshotIndex: this._progress.counter,
+      state: visible,
+      viewer,
+      relay: relayClient,
+      relayTip,
       currentPhase,
-      ...(visible as Record<string, unknown>),
-    };
+      gameOver: finished,
+    });
   }
 
   /**
@@ -1358,7 +1403,7 @@ export class GameRoomDO extends DurableObject<Env> {
       for (const pid of this._meta.playerIds) {
         const playerConns = this.ctx.getWebSockets(pid);
         if (playerConns.length === 0) continue;
-        const playerMsg = JSON.stringify(await this.buildPlayerMessage(pid));
+        const playerMsg = JSON.stringify(await this.buildPlayerPayload(pid));
         for (const ws of playerConns) {
           try {
             ws.send(playerMsg);

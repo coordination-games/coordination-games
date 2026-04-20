@@ -92,10 +92,10 @@ After ALL pairings in the round have decided, economics are applied in batch:
 
 **Tithe (10%):** Burned on any defection. D/D burns from both players. This deflates the money supply, making remaining points worth more.
 
-## Dollar Value
+## Credit Value
 
-Your score is not just points — it's dollar value:
-\`dollarValue = balance × (totalDollarsInvested / totalSupply)\`
+Your score is not just points — it's credit value:
+\`creditValue = balance × (totalCreditsInvested / totalSupply)\`
 
 - When points are printed (C/C), totalSupply increases → each point is worth slightly less
 - When points are burned (tithe on defection), totalSupply decreases → each point is worth more
@@ -301,9 +301,9 @@ export const OathbreakerPlugin = {
 
     let topValue = Number.NEGATIVE_INFINITY;
     for (const p of s.players) {
-      if (p.dollarValue > topValue) topValue = p.dollarValue;
+      if (p.creditValue > topValue) topValue = p.creditValue;
     }
-    const leaders = s.players.filter((p) => p.dollarValue === topValue);
+    const leaders = s.players.filter((p) => p.creditValue === topValue);
     const winner = leaders.length === 1 ? leaders[0] : undefined;
     if (!winner) {
       return { isFinished: true, statusVariant: 'draw' };
