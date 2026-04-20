@@ -6,9 +6,9 @@ name: Tests
 #   packages/workers-server/src/__tests__/tool-drift.test.ts
 #   packages/engine/src/__tests__/tool-collision.test.ts
 #   packages/cli/src/__tests__/tool-collision.test.ts
-# See docs/plans/unified-tool-surface.md — "Testing — drift invariants".
-# These gates are the reason the unified-tool-surface refactor exists; if
-# they stop running in CI, we risk silent schema/validator drift shipping.
+# If these gates stop running in CI, we risk silent tool-schema/validator drift
+# shipping — the unified-tool-surface refactor exists specifically to surface
+# that class of bug.
 
 on:
   pull_request:
@@ -18,10 +18,9 @@ on:
 
 jobs:
   lint-and-typecheck:
-    # Phase 2.4 (docs/plans/system-cleanup-plan.md): merge-blocking gate for
-    # Biome lint+format and per-package `tsc --noEmit`. Kept in its own job
-    # so failures are localized in the PR UI and don't get tangled with the
-    # test signal below.
+    # Merge-blocking gate for Biome lint+format and per-package `tsc --noEmit`.
+    # Kept in its own job so failures are localized in the PR UI and don't get
+    # tangled with the test signal below.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
