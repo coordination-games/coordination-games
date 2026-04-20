@@ -21,6 +21,7 @@ contract CoordinationCredits is ReentrancyGuard {
     struct PendingBurn {
         uint256 amount;
         uint256 executeAfter;
+        address recipient;
     }
 
     // agentId => pending burn request
@@ -110,11 +111,8 @@ contract CoordinationCredits is ReentrancyGuard {
                 balances[agentIds[i]] += uint256(deltas[i]);
             } else {
                 uint256 debit = uint256(-deltas[i]);
-                if (balances[agentIds[i]] < debit) {
-                    balances[agentIds[i]] = 0;
-                } else {
-                    balances[agentIds[i]] -= debit;
-                }
+                if (balances[agentIds[i]] < debit) revert InsufficientBalance();
+                balances[agentIds[i]] -= debit;
             }
         }
 
@@ -128,7 +126,8 @@ contract CoordinationCredits is ReentrancyGuard {
 
         pendingBurns[agentId] = PendingBurn({
             amount: amount,
-            executeAfter: block.timestamp + burnDelay
+            executeAfter: block.timestamp + burnDelay,
+            recipient: msg.sender
         });
 
         emit BurnRequested(agentId, amount, block.timestamp + burnDelay);
@@ -150,10 +149,11 @@ contract CoordinationCredits is ReentrancyGuard {
         uint256 usdcAmount = actual / 100;
         if (usdcAmount == 0) revert DustBurnRejected();
 
+        address recipient = pending.recipient;
         delete pendingBurns[agentId];
         balances[agentId] -= actual;
 
-        usdc.transferFrom(vault, msg.sender, usdcAmount);
+        usdc.transferFrom(vault, recipient, usdcAmount);
 
         emit BurnExecuted(agentId, actual, usdcAmount);
     }

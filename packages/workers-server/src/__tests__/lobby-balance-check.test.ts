@@ -156,8 +156,8 @@ describe('LobbyDO — pre-game credit balance check', () => {
     const body: any = await resp.json();
     expect(body).toEqual({
       error: 'Insufficient credits',
-      required: 10,
-      available: 5,
+      required: '10000000',
+      available: '5000000',
       agentId: 'player-a',
     });
     // Roster must be untouched — the check runs before the agent is pushed.

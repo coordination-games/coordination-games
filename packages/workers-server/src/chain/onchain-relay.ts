@@ -1,3 +1,4 @@
+import { canonicalEncode } from '@coordination-games/engine';
 import { createPublicClient, createWalletClient, http, keccak256, toBytes, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { optimismSepolia } from 'viem/chains';
@@ -296,7 +297,9 @@ export class OnChainRelay implements ChainRelay {
     const gameIdBytes = keccak256(toBytes(payload.gameId)) as `0x${string}`;
     const movesRootBytes = payload.movesRoot;
     const configHashBytes = payload.configHash;
-    const outcomeBytes = toHex(JSON.stringify(payload.outcome)) as `0x${string}`;
+    // canonicalEncode (not JSON.stringify) — deterministic, sorted keys, and
+    // loudly rejects Map/Set/undefined rather than silently producing "{}".
+    const outcomeBytes = toHex(canonicalEncode(payload.outcome)) as `0x${string}`;
 
     const gameAnchorAbi = [
       {

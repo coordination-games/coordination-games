@@ -166,8 +166,7 @@ describe('Integration', () => {
   });
 
   it('name collision across registrations', async () => {
-    // biome-ignore lint/correctness/noUnusedVariables: unused; remove in cleanup followup — TODO(2.3-followup)
-    const { registry, usdc, erc8004, user1, user2 } = await loadFixture(deployFullSystemFixture);
+    const { registry, usdc, erc8004, user1 } = await loadFixture(deployFullSystemFixture);
 
     const agentId1 = await erc8004.mintTo.staticCall(user1.address, 'uri1');
     await erc8004.mintTo(user1.address, 'uri1');

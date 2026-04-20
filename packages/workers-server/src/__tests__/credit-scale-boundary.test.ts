@@ -37,10 +37,10 @@ describe('CREDIT_SCALE — settlement boundary', () => {
       winner: 'A',
       score: { A: 1, B: 0 },
       turnCount: 5,
-      playerStats: new Map([
-        ['alice', { team: 'A', kills: 1, deaths: 0, flagCarries: 1, flagCaptures: 1 }],
-        ['bob', { team: 'B', kills: 0, deaths: 1, flagCarries: 0, flagCaptures: 0 }],
-      ]),
+      playerStats: {
+        alice: { team: 'A', kills: 1, deaths: 0, flagCarries: 1, flagCaptures: 1 },
+        bob: { team: 'B', kills: 0, deaths: 1, flagCarries: 0, flagCaptures: 0 },
+      },
     };
 
     // Simulate the GameRoomDO boundary: scale whole-credit entryCost to raw.
@@ -70,10 +70,10 @@ describe('CREDIT_SCALE — settlement boundary', () => {
       winner: 'A',
       score: { A: 1, B: 0 },
       turnCount: 5,
-      playerStats: new Map([
-        ['alice', { team: 'A', kills: 1, deaths: 0, flagCarries: 1, flagCaptures: 1 }],
-        ['bob', { team: 'B', kills: 0, deaths: 1, flagCarries: 0, flagCaptures: 0 }],
-      ]),
+      playerStats: {
+        alice: { team: 'A', kills: 1, deaths: 0, flagCarries: 1, flagCaptures: 1 },
+        bob: { team: 'B', kills: 0, deaths: 1, flagCarries: 0, flagCaptures: 0 },
+      },
     };
     const unscaled = BigInt(CaptureTheLobsterPlugin.entryCost); // 10n — wrong
     const scaled = unscaled * CREDIT_SCALE; // 10_000_000n — correct

@@ -163,14 +163,18 @@ describe('CoordinationCredits', () => {
       ).to.be.revertedWithCustomError(credits, 'LengthMismatch');
     });
 
-    it('should clamp negative deltas to zero balance', async () => {
+    it('should revert when debit exceeds balance (no silent mint)', async () => {
       const { credits, gameAnchorRole, agentId1, agentId2 } = await loadFixture(deployFixture);
 
-      // Agent1 has 0 credits, settle should clamp to 0
-      await credits.connect(gameAnchorRole).settleDeltas([agentId1, agentId2], [-100n, 100n]);
+      // Agent1 has 0 credits, a debit of -100 cannot be applied. The prior
+      // behavior was a silent clamp to 0 which broke zero-sum on-chain and
+      // effectively minted credits to the winner. Must revert instead.
+      await expect(
+        credits.connect(gameAnchorRole).settleDeltas([agentId1, agentId2], [-100n, 100n]),
+      ).to.be.revertedWithCustomError(credits, 'InsufficientBalance');
 
       expect(await credits.balances(agentId1)).to.equal(0n);
-      expect(await credits.balances(agentId2)).to.equal(100n);
+      expect(await credits.balances(agentId2)).to.equal(0n);
     });
   });
 
@@ -229,6 +233,53 @@ describe('CoordinationCredits', () => {
       await expect(
         credits.connect(user1).requestBurn(agentId1, 100n),
       ).to.be.revertedWithCustomError(credits, 'InsufficientBalance');
+    });
+
+    it('should pay USDC to the requester, not the executor', async () => {
+      const { credits, usdc, registryRole, user1, user2, agentId1 } =
+        await loadFixture(deployFixture);
+
+      await usdc.connect(registryRole).approve(await credits.getAddress(), 10_000_000n);
+      await credits.connect(registryRole).mintFor(agentId1, 10_000_000n);
+
+      await credits.connect(user1).requestBurn(agentId1, 500_000_000n);
+      await time.increase(3601);
+
+      const user1Before = await usdc.balanceOf(user1.address);
+      const user2Before = await usdc.balanceOf(user2.address);
+
+      // user2 (any address) executes the burn — permissionless execution.
+      await credits.connect(user2).executeBurn(agentId1);
+
+      // USDC goes to user1 (the requester), not user2 (the executor).
+      expect(await usdc.balanceOf(user1.address)).to.equal(user1Before + 5_000_000n);
+      expect(await usdc.balanceOf(user2.address)).to.equal(user2Before);
+    });
+
+    it('should pay the original requester even after agent NFT transfer', async () => {
+      const { credits, usdc, erc8004, registryRole, user1, user2, agentId1 } =
+        await loadFixture(deployFixture);
+
+      await usdc.connect(registryRole).approve(await credits.getAddress(), 10_000_000n);
+      await credits.connect(registryRole).mintFor(agentId1, 10_000_000n);
+
+      // user1 (owner) requests burn.
+      await credits.connect(user1).requestBurn(agentId1, 500_000_000n);
+
+      // Agent NFT is transferred to user2 mid-cooldown.
+      await erc8004.connect(user1).transferFrom(user1.address, user2.address, agentId1);
+
+      await time.increase(3601);
+
+      const user1Before = await usdc.balanceOf(user1.address);
+      const user2Before = await usdc.balanceOf(user2.address);
+
+      // Anyone executes — payout still goes to user1, the requester who
+      // staked the credits, not the current NFT owner.
+      await credits.connect(user2).executeBurn(agentId1);
+
+      expect(await usdc.balanceOf(user1.address)).to.equal(user1Before + 5_000_000n);
+      expect(await usdc.balanceOf(user2.address)).to.equal(user2Before);
     });
   });
 

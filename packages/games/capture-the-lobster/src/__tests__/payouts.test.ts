@@ -3,9 +3,9 @@ import type { CtlOutcome } from '../plugin.js';
 import { CaptureTheLobsterPlugin } from '../plugin.js';
 
 function outcome(winner: 'A' | 'B' | null, roster: Record<string, 'A' | 'B'>): CtlOutcome {
-  const playerStats: CtlOutcome['playerStats'] = new Map();
+  const playerStats: CtlOutcome['playerStats'] = {};
   for (const [id, team] of Object.entries(roster)) {
-    playerStats.set(id, { team, kills: 0, deaths: 0, flagCarries: 0, flagCaptures: 0 });
+    playerStats[id] = { team, kills: 0, deaths: 0, flagCarries: 0, flagCaptures: 0 };
   }
   return { winner, playerStats, turnCount: 1, score: { A: 0, B: 0 } };
 }

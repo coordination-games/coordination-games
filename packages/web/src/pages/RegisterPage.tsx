@@ -41,8 +41,8 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   }
 
   return (
-    // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
     <button
+      type="button"
       onClick={handleCopy}
       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold tracking-wider uppercase transition-all cursor-pointer"
       style={{
@@ -55,16 +55,28 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
     >
       {copied ? (
         <>
-          {/* biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup) */}
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            role="img"
+            aria-hidden="true"
+            className="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
           Copied
         </>
       ) : (
         <>
-          {/* biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup) */}
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            role="img"
+            aria-hidden="true"
+            className="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -139,8 +151,8 @@ function CopyableAddress({ address }: { address: string }) {
         >
           {address}
         </code>
-        {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
         <button
+          type="button"
           className="flex-none px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider transition-all"
           style={{
             background: copied ? 'rgba(74, 222, 128, 0.1)' : 'rgba(6, 182, 212, 0.1)',
@@ -191,8 +203,8 @@ function CopyPrompt({ text }: { text: string }) {
             {text}
           </p>
         </div>
-        {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
         <button
+          type="button"
           className="flex-none mt-0.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider transition-all"
           style={{
             background: copied ? 'rgba(74, 222, 128, 0.1)' : 'rgba(6, 182, 212, 0.1)',
@@ -359,7 +371,7 @@ function useWallet() {
   const [account, setAccount] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
+  const [usdcBalance, setUsdcBalance] = useState<bigint | null>(null);
 
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const hasEthereum = typeof window !== 'undefined' && !!(window as any).ethereum;
@@ -387,8 +399,9 @@ function useWallet() {
             method: 'eth_call',
             params: [{ to: USDC_ADDRESS, data: balData }, 'latest'],
           });
-          const balWei = parseInt(result, 16);
-          setUsdcBalance(balWei / 1e6); // USDC has 6 decimals
+          // Raw USDC balance (6 decimals). Keep as bigint all the way to the
+          // comparison — never round-trip through JS number.
+          setUsdcBalance(BigInt(result));
         } catch {
           // Balance check failed, don't block the flow
         }
@@ -868,8 +881,8 @@ export default function RegisterPage() {
 
                 {!wallet.account ? (
                   <div className="space-y-3">
-                    {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
                     <button
+                      type="button"
                       onClick={wallet.connect}
                       disabled={wallet.connecting}
                       className="rounded-xl px-5 py-2.5 text-sm font-semibold tracking-wider uppercase transition-all hover:scale-105 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -902,13 +915,15 @@ export default function RegisterPage() {
                       {wallet.usdcBalance !== null && (
                         <span
                           className="ml-2"
-                          style={{ color: wallet.usdcBalance >= 5 ? '#4ade80' : '#fb7185' }}
+                          style={{
+                            color: wallet.usdcBalance >= 5_000_000n ? '#4ade80' : '#fb7185',
+                          }}
                         >
-                          ({wallet.usdcBalance.toFixed(2)} USDC)
+                          ({(Number(wallet.usdcBalance / 10_000n) / 100).toFixed(2)} USDC)
                         </span>
                       )}
                     </p>
-                    {wallet.usdcBalance !== null && wallet.usdcBalance < 5 && (
+                    {wallet.usdcBalance !== null && wallet.usdcBalance < 5_000_000n && (
                       <div
                         className="rounded-lg px-4 py-3"
                         style={{
@@ -922,13 +937,13 @@ export default function RegisterPage() {
                         </p>
                       </div>
                     )}
-                    {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
                     <button
+                      type="button"
                       onClick={handleWalletRegister}
                       disabled={
                         txSending ||
                         !!txHash ||
-                        (wallet.usdcBalance !== null && wallet.usdcBalance < 5)
+                        (wallet.usdcBalance !== null && wallet.usdcBalance < 5_000_000n)
                       }
                       className="rounded-xl px-6 py-2.5 text-sm font-semibold tracking-wider uppercase transition-all hover:scale-105 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{
@@ -944,8 +959,9 @@ export default function RegisterPage() {
                     {txHash && (
                       <div className="space-y-3 pt-1">
                         <div className="flex items-center gap-2">
-                          {/* biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup) */}
                           <svg
+                            role="img"
+                            aria-hidden="true"
                             className="w-4 h-4 flex-none"
                             fill="none"
                             stroke="#4ade80"

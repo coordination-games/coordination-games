@@ -69,21 +69,21 @@ export interface CtlMove {
   path: Direction[];
 }
 
-/** CtL game outcome. */
+/** Per-player stats recorded at game end. Keyed by playerId. */
+export interface CtlPlayerStats {
+  team: 'A' | 'B';
+  kills: number;
+  deaths: number;
+  flagCarries: number;
+  flagCaptures: number;
+}
+
+/** CtL game outcome. POJO — Maps don't survive JSON-based canonical encoding. */
 export interface CtlOutcome {
   winner: 'A' | 'B' | null;
   score: { A: number; B: number };
   turnCount: number;
-  playerStats: Map<
-    string,
-    {
-      team: 'A' | 'B';
-      kills: number;
-      deaths: number;
-      flagCarries: number;
-      flagCaptures: number;
-    }
-  >;
+  playerStats: Record<string, CtlPlayerStats>;
 }
 
 // ---------------------------------------------------------------------------
@@ -668,25 +668,16 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   progressUnit: 'turn',
 
   getOutcome(state: CtlGameState): CtlOutcome {
-    const playerStats = new Map<
-      string,
-      {
-        team: 'A' | 'B';
-        kills: number;
-        deaths: number;
-        flagCarries: number;
-        flagCaptures: number;
-      }
-    >();
+    const playerStats: Record<string, CtlPlayerStats> = {};
 
     for (const unit of state.units) {
-      playerStats.set(unit.id, {
+      playerStats[unit.id] = {
         team: unit.team,
         kills: 0,
         deaths: 0,
         flagCarries: 0,
         flagCaptures: 0,
-      });
+      };
     }
 
     return {
@@ -808,7 +799,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     }
 
     for (const id of playerIds) {
-      const stats = outcome.playerStats.get(id);
+      const stats = outcome.playerStats[id];
       if (!stats) {
         payouts.set(id, 0n);
         continue;

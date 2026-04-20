@@ -94,7 +94,7 @@ export function createInitialState(config: OathConfig): OathState {
     phase: 'waiting',
     players,
     pairings: [],
-    totalDollarsInvested: playerIds.length * config.entryCost,
+    totalCreditsInvested: playerIds.length * config.entryCost,
     totalSupply,
     totalPrinted: 0,
     totalBurned: 0,
@@ -513,7 +513,7 @@ export interface AgentView {
   yourFullHistory: OathInteraction[];
   gameParams: OathConfig;
   totalSupply: number;
-  totalDollarsInvested: number;
+  totalCreditsInvested: number;
   dollarPerPoint: number;
   yourDollarValue: number;
 }
@@ -558,7 +558,7 @@ export function getAgentView(state: OathState, playerId: string): AgentView | nu
   const opponent = state.players.find((p) => p.id === opponentId);
   if (!opponent) return null;
 
-  const dpp = dollarPerPoint(state.totalDollarsInvested, state.totalSupply);
+  const dpp = dollarPerPoint(state.totalCreditsInvested, state.totalSupply);
   const historyWithOpponent = player.history.filter((h) => h.opponent === opponentId);
 
   return {
@@ -577,22 +577,22 @@ export function getAgentView(state: OathState, playerId: string): AgentView | nu
     yourFullHistory: player.history,
     gameParams: state.config,
     totalSupply: state.totalSupply,
-    totalDollarsInvested: state.totalDollarsInvested,
+    totalCreditsInvested: state.totalCreditsInvested,
     dollarPerPoint: dpp,
-    yourDollarValue: dollarValue(player.balance, state.totalDollarsInvested, state.totalSupply),
+    yourDollarValue: dollarValue(player.balance, state.totalCreditsInvested, state.totalSupply),
   };
 }
 
 export function getSpectatorView(state: OathState): SpectatorView {
-  const _dpp = dollarPerPoint(state.totalDollarsInvested, state.totalSupply);
-  const entryCost = state.totalDollarsInvested / Math.max(state.players.length, 1);
+  const _dpp = dollarPerPoint(state.totalCreditsInvested, state.totalSupply);
+  const entryCost = state.totalCreditsInvested / Math.max(state.players.length, 1);
 
   return {
     round: state.round,
     maxRounds: state.config.maxRounds,
     phase: state.phase,
     players: state.players.map((p) => {
-      const dv = dollarValue(p.balance, state.totalDollarsInvested, state.totalSupply);
+      const dv = dollarValue(p.balance, state.totalCreditsInvested, state.totalSupply);
       const total = p.oathsKept + p.oathsBroken;
       return {
         id: p.id,

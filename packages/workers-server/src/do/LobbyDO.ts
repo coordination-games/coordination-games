@@ -902,8 +902,8 @@ export class LobbyDO extends DurableObject<Env> {
         return Response.json(
           {
             error: 'Insufficient credits',
-            required: entryCostWhole,
-            available: 0,
+            required: required.toString(),
+            available: '0',
             agentId: playerId,
           },
           { status: 402 },
@@ -927,15 +927,14 @@ export class LobbyDO extends DurableObject<Env> {
 
     const available = BigInt(creditsStr);
     if (available < required) {
-      // `available` scaled down to whole credits for the response body. The
-      // reported `required` is whole credits so the two match what the
-      // player's CLI / web UI displays.
-      const availableWhole = Number(available / CREDIT_SCALE);
+      // Return raw 6-decimal credit units as strings (same shape as the
+      // on-chain balance wire format). The CLI / web UI formats via
+      // formatCreditsDisplay; no Number(bigint) truncation on the server.
       return Response.json(
         {
           error: 'Insufficient credits',
-          required: entryCostWhole,
-          available: availableWhole,
+          required: required.toString(),
+          available: available.toString(),
           agentId: agentIdForRelay,
         },
         { status: 402 },

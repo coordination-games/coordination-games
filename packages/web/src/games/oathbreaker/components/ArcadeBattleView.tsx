@@ -65,9 +65,7 @@ function useRevealAnimation(
   animate: boolean,
   newRoundResults: OathPairingResult[] | null,
 ): RevealState {
-  // biome-ignore lint/correctness/useHookAtTopLevel: conditional hook pattern; refactor in cleanup followup — TODO(2.3-followup)
   const [phase, setPhase] = useState<RevealPhase>('none');
-  // biome-ignore lint/correctness/useHookAtTopLevel: conditional hook pattern; refactor in cleanup followup — TODO(2.3-followup)
   const lastResultRef = useRef<string>('');
 
   const resultKey = result
@@ -76,7 +74,6 @@ function useRevealAnimation(
 
   const hasNewRound = newRoundResults != null && newRoundResults.length > 0;
 
-  // biome-ignore lint/correctness/useHookAtTopLevel: conditional hook pattern; refactor in cleanup followup — TODO(2.3-followup)
   useEffect(() => {
     if (!result) return;
 
@@ -444,6 +441,32 @@ export function ArcadeBattleView({
   newRoundResults = null,
 }: ArcadeBattleViewProps) {
   const chatRef = useRef<HTMLDivElement>(null);
+
+  // Find the followed player's most recent result. Hooks must run
+  // unconditionally, so derive latestResult from pairing IDs directly rather
+  // than the resolved player objects (which may be missing below).
+  //
+  // Pairings rotate each round — after a round resolves, the snapshot already
+  // has the NEXT round's pairings, so the current pairing won't match the
+  // just-resolved results. Instead, search for any result involving the
+  // followed player (pairing.player1, since SpectatorView normalizes order).
+  let latestResult: OathPairingResult | undefined;
+  for (let i = roundResults.length - 1; i >= 0; i--) {
+    const match = roundResults[i]?.find(
+      (r) => r.player1 === pairing.player1 || r.player2 === pairing.player1,
+    );
+    if (match) {
+      latestResult = match;
+      break;
+    }
+  }
+
+  const reveal = useRevealAnimation(latestResult, animate, newRoundResults);
+
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  }, []);
+
   const p1 = players.find((p) => p.id === pairing.player1);
   const p2 = players.find((p) => p.id === pairing.player2);
   if (!p1 || !p2) return null;
@@ -452,23 +475,6 @@ export function ArcadeBattleView({
   const name2 = handles[p2.id] ?? p2.id.slice(0, 8);
   const char1 = characters[p1.id];
   const char2 = characters[p2.id];
-
-  // Find the followed player's most recent result.
-  // Pairings rotate each round — after a round resolves, the snapshot already
-  // has the NEXT round's pairings, so the current p1/p2 pairing won't match
-  // the just-resolved results. Instead, search for any result involving the
-  // followed player (p1, since SpectatorView normalizes pairing order).
-  let latestResult: OathPairingResult | undefined;
-  for (let i = roundResults.length - 1; i >= 0; i--) {
-    const match = roundResults[i]?.find((r) => r.player1 === p1.id || r.player2 === p1.id);
-    if (match) {
-      latestResult = match;
-      break;
-    }
-  }
-
-  // biome-ignore lint/correctness/useHookAtTopLevel: conditional hook pattern; refactor in cleanup followup — TODO(2.3-followup)
-  const reveal = useRevealAnimation(latestResult, animate, newRoundResults);
 
   // Determine background
   const bgIdx = (p1.id + p2.id).split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 2;
@@ -482,11 +488,6 @@ export function ArcadeBattleView({
   const p1LastMsg = [...battleChat].reverse().find((m) => m.from === p1.id)?.message ?? '';
   const p2LastMsg = [...battleChat].reverse().find((m) => m.from === p2.id)?.message ?? '';
   const showBubbles = reveal.phase === 'darken' || reveal.phase === 'none';
-
-  // biome-ignore lint/correctness/useHookAtTopLevel: conditional hook pattern; refactor in cleanup followup — TODO(2.3-followup)
-  useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, []);
 
   // Chat panel (reused in both layouts)
   const chatPanel = (
@@ -737,8 +738,8 @@ export function ArcadeBattleView({
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
           <button
+            type="button"
             onClick={onBack}
             className="pixel-text"
             style={{

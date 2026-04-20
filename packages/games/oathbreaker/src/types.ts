@@ -70,7 +70,8 @@ export interface OathConfig {
   turnTimerSeconds: number;
   /** Random seed for deterministic pairing order. */
   seed: string;
-  /** Entry cost in dollars per player (from plugin.entryCost). */
+  /** Entry cost in whole credits per player (from plugin.entryCost). Scaled
+   *  to raw 6-decimal units at the GameRoomDO settlement boundary. */
   entryCost: number;
   /** Player IDs (populated when game starts from lobby). */
   playerIds: string[];
@@ -181,8 +182,9 @@ export interface OathState {
   players: OathPlayerState[];
   /** Active pairings for the current round (empty between rounds). */
   pairings: OathPairing[];
-  /** Total entry dollars invested (players.length * entryCost). */
-  totalDollarsInvested: number;
+  /** Total whole credits staked (players.length * entryCost). Used only for
+   *  in-game spectator display — settlement scales plugin.entryCost separately. */
+  totalCreditsInvested: number;
   /** Total points in circulation (changes with printing/burning). */
   totalSupply: number;
   /** Points printed through cooperation (cumulative). */
@@ -202,7 +204,7 @@ export interface OathState {
 /**
  * BigInt money type for OATHBREAKER payouts. All settlement math (entryCost
  * pot, per-player payouts, deltas) goes through this type. Rationale: float
- * division (the old `dollarPerPoint = totalDollarsInvested / totalSupply`)
+ * division (the old `dollarPerPoint = totalCreditsInvested / totalSupply`)
  * tripped the GameRoomDO zero-sum invariant and is rejected by canonicalEncode
  * (Phase 3.3). The unit is "credits" (whatever the smallest indivisible unit
  * of `entryCost` is — currently 1 credit per player).
