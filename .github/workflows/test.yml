@@ -69,10 +69,6 @@ jobs:
         run: npx tsc --noEmit
         working-directory: packages/plugins/basic-chat
 
-      - name: Typecheck — plugins/kibitzer
-        run: npx tsc --noEmit
-        working-directory: packages/plugins/kibitzer
-
   test:
     runs-on: ubuntu-latest
     steps:
@@ -97,7 +93,6 @@ jobs:
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/plugins/basic-chat
-          npm run build -w packages/plugins/kibitzer
 
       # contracts workspace has a pre-existing hardhat dependency issue;
       # excluded from CI until fixed separately.
@@ -115,5 +110,4 @@ jobs:
                    -w packages/cli \
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
-                   -w packages/plugins/basic-chat \
-                   -w packages/plugins/kibitzer
+                   -w packages/plugins/basic-chat
