@@ -262,8 +262,8 @@ function ScrubberBar({
 
       {/* Scrubber row */}
       <div className="flex items-center gap-3">
-        {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
         <button
+          type="button"
           onClick={onTogglePlay}
           className={`px-3 py-1 text-sm rounded font-semibold transition-colors ${
             isPlaying

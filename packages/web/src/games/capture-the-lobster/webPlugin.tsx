@@ -74,8 +74,8 @@ function CtlLobbyCard({
   const teamSize = lobby.teamSize;
   const capacity = teamSize != null ? teamSize * 2 : undefined;
   return (
-    // biome-ignore lint/a11y/useButtonType: matches sibling LobbiesPage button styling
     <button
+      type="button"
       onClick={onClick}
       className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
     >
@@ -110,8 +110,8 @@ function CtlGameCard({
   const progress = game.maxTurns > 0 ? Math.round((game.turn / game.maxTurns) * 100) : 0;
   const isLive = game.phase === 'in_progress';
   return (
-    // biome-ignore lint/a11y/useButtonType: matches sibling LobbiesPage button styling
     <button
+      type="button"
       onClick={onClick}
       className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
     >

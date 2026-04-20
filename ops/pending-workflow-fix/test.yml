@@ -1,0 +1,112 @@
+name: Tests
+
+# Runs the full workspace test suite on every PR + push to main.
+#
+# The release-blocking drift invariants live in:
+#   packages/workers-server/src/__tests__/tool-drift.test.ts
+#   packages/engine/src/__tests__/tool-collision.test.ts
+#   packages/cli/src/__tests__/tool-collision.test.ts
+# If these gates stop running in CI, we risk silent tool-schema/validator drift
+# shipping — the unified-tool-surface refactor exists specifically to surface
+# that class of bug.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-typecheck:
+    # Merge-blocking gate for Biome lint+format and per-package `tsc --noEmit`.
+    # Kept in its own job so failures are localized in the PR UI and don't get
+    # tangled with the test signal below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # See `test` job below for rationale on these flags.
+        run: npm install --include=dev --legacy-peer-deps
+
+      - name: Biome check (lint + format)
+        run: npm run check
+
+      # Per-package typecheck. Each package is invoked individually so the
+      # failure surface in the PR log points at the offending package.
+      # `contracts` is intentionally omitted — it has a pre-existing
+      # Hardhat dependency issue tracked separately.
+      - name: Typecheck — engine
+        run: npx tsc --noEmit
+        working-directory: packages/engine
+
+      - name: Typecheck — workers-server
+        run: npx tsc --noEmit
+        working-directory: packages/workers-server
+
+      - name: Typecheck — cli
+        run: npx tsc --noEmit
+        working-directory: packages/cli
+
+      - name: Typecheck — web
+        run: npx tsc --noEmit
+        working-directory: packages/web
+
+      - name: Typecheck — games/capture-the-lobster
+        run: npx tsc --noEmit
+        working-directory: packages/games/capture-the-lobster
+
+      - name: Typecheck — games/oathbreaker
+        run: npx tsc --noEmit
+        working-directory: packages/games/oathbreaker
+
+      - name: Typecheck — plugins/basic-chat
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/basic-chat
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # --include=dev is required due to a workspace bug in npm 10 that
+        # silently skips devDependencies for workspace packages.
+        # --legacy-peer-deps accommodates intra-workspace peer conflicts
+        # (e.g. zod version drift between MCP SDK and CLI testing).
+        run: npm install --include=dev --legacy-peer-deps
+
+      - name: Build engine + games + plugins
+        # Tests in workers-server resolve `@coordination-games/game-*` via the
+        # `main`/`types` fields (dist/*). They must be built before tests run.
+        run: |
+          npm run build -w packages/engine
+          npm run build -w packages/games/capture-the-lobster
+          npm run build -w packages/games/oathbreaker
+          npm run build -w packages/plugins/basic-chat
+
+      # contracts workspace has a pre-existing hardhat dependency issue;
+      # excluded from CI until fixed separately.
+      #
+      # Workspaces are listed explicitly (NOT `--workspaces`) so contracts is
+      # visibly omitted. `--if-present` is scoped to this allowlist — any new
+      # workspace added here without a test script is a deliberate placeholder
+      # (e.g. packages/games/oathbreaker has no tests yet), and contracts is
+      # not silently skipped because it isn't in the list at all.
+      - name: Run workspace tests
+        run: |
+          npm test --if-present \
+                   -w packages/engine \
+                   -w packages/workers-server \
+                   -w packages/cli \
+                   -w packages/games/capture-the-lobster \
+                   -w packages/games/oathbreaker \
+                   -w packages/plugins/basic-chat

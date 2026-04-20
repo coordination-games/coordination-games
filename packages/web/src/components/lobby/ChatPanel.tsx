@@ -11,7 +11,6 @@ interface Agent {
   handle: string;
 }
 
-// biome-ignore lint/correctness/noUnusedFunctionParameters: unused param; cleanup followup — TODO(2.3-followup)
 function AutoScrollChat({ children, deps }: { children: React.ReactNode; deps: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
@@ -22,11 +21,13 @@ function AutoScrollChat({ children, deps }: { children: React.ReactNode; deps: n
     shouldAutoScroll.current = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   };
 
+  // Re-run auto-scroll when `deps` changes (e.g. new chat message arrives).
   useEffect(() => {
+    void deps;
     if (shouldAutoScroll.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, []);
+  }, [deps]);
 
   return (
     <div ref={containerRef} onScroll={handleScroll} className="overflow-y-auto max-h-64">

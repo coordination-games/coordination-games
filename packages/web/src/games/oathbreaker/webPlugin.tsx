@@ -71,8 +71,8 @@ function OathLobbyCard({
   // OATH `teamSize` carries the player count target (no 2x multiplier).
   const capacity = teamSize ?? undefined;
   return (
-    // biome-ignore lint/a11y/useButtonType: matches sibling LobbiesPage button styling
     <button
+      type="button"
       onClick={onClick}
       className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
     >
@@ -109,8 +109,8 @@ function OathGameCard({
   const progress = maxRounds > 0 ? Math.round((round / maxRounds) * 100) : 0;
   const isLive = game.phase === 'in_progress';
   return (
-    // biome-ignore lint/a11y/useButtonType: matches sibling LobbiesPage button styling
     <button
+      type="button"
       onClick={onClick}
       className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
     >

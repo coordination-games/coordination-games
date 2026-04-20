@@ -268,8 +268,8 @@ export default function LobbyPage() {
           <p className="font-heading font-semibold" style={{ color: 'var(--color-forest)' }}>
             Game started! Redirecting...
           </p>
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
           <button
+            type="button"
             onClick={() => navigate(`/game/${gameStarted}`)}
             className="mt-2 rounded font-heading px-4 py-1 text-sm font-medium text-white"
             style={{ background: 'var(--color-forest)' }}
@@ -353,8 +353,8 @@ export default function LobbyPage() {
       {/* Close button (always available for non-timer lobbies) */}
       {!showTimer && (
         <div className="flex justify-end">
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
           <button
+            type="button"
             onClick={handleCloseLobby}
             className="cursor-pointer rounded px-3 py-1 text-xs font-heading font-medium transition-colors"
             style={{ color: 'var(--color-blood)', border: '1px solid rgba(139, 32, 32, 0.2)' }}
@@ -381,8 +381,8 @@ export default function LobbyPage() {
           <p className="font-heading font-semibold" style={{ color: 'var(--color-forest)' }}>
             Game started! Redirecting...
           </p>
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
           <button
+            type="button"
             onClick={() => navigate(`/game/${state.gameId}`)}
             className="mt-2 rounded font-heading px-4 py-1 text-sm font-medium text-white"
             style={{ background: 'var(--color-forest)' }}

@@ -211,8 +211,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const {
     gameState: rawGameState,
     gameId,
-    // biome-ignore lint/correctness/noUnusedVariables: unused; remove in cleanup followup — TODO(2.3-followup)
-    handles,
     replaySnapshots,
     prevGameState: rawPrevState,
     animate,
@@ -529,8 +527,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         </div>
         <div className="flex items-center gap-1">
           {selectedUnit && (
-            // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
             <button
+              type="button"
               onClick={() => setSelectedUnit(null)}
               className="px-2 py-1 text-xs rounded font-medium bg-yellow-900/60 text-yellow-300 hover:bg-yellow-800/60 mr-1 cursor-pointer"
             >
@@ -538,8 +536,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             </button>
           )}
           {teamButtons.map((btn) => (
-            // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
             <button
+              type="button"
               key={btn.value}
               onClick={() => handlePerspectiveChange(btn.value)}
               className={`px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer ${
@@ -562,8 +560,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             latestProgress !== null &&
             latestProgress >= 1 &&
             liveState?.phase !== 'finished' && (
-              // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
               <button
+                type="button"
                 onClick={enterRewind}
                 disabled={rewind.mode === 'loading'}
                 className="ml-1 px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 disabled:opacity-50 disabled:cursor-wait"
@@ -598,8 +596,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               )
             }
           />
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
           <button
+            type="button"
             onClick={backToLive}
             className="px-3 py-1 text-xs rounded font-semibold bg-emerald-800 text-emerald-200 hover:bg-emerald-700 transition-colors cursor-pointer shrink-0"
             title="Return to live view"
@@ -721,8 +719,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               if (chatToShow.length === 0) return null;
               return (
                 <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-40 md:max-h-[30%] overflow-hidden">
-                  {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
                   <button
+                    type="button"
                     onClick={() => setShowLobbyChat(!showLobbyChat)}
                     className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
                   >

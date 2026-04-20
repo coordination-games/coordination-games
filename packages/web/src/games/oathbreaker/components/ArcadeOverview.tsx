@@ -54,8 +54,8 @@ function AgentCard({
   }
 
   return (
-    // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
     <button
+      type="button"
       onClick={onClick}
       className={`arcade-card ${inBattle ? 'active' : ''}`}
       style={{ textAlign: 'left', width: '100%' }}

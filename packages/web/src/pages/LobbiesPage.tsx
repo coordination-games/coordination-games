@@ -27,8 +27,8 @@ function FallbackCard({
   onClick?: (() => void) | undefined;
 }) {
   return (
-    // biome-ignore lint/a11y/useButtonType: matches sibling LobbiesPage button styling
     <button
+      type="button"
       onClick={onClick}
       className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
       style={{
@@ -142,8 +142,8 @@ export default function LobbiesPage() {
             const active = gameTab === plugin.gameType;
             const color = plugin.branding.primaryColor;
             return (
-              // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
               <button
+                type="button"
                 key={plugin.gameType}
                 onClick={() => setGameTab(plugin.gameType)}
                 className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
@@ -174,8 +174,8 @@ export default function LobbiesPage() {
           {gameTab === CTL_ID ? (
             <div className="flex items-center gap-2">
               {[2, 3, 4, 5, 6].map((size) => (
-                // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
                 <button
+                  type="button"
                   key={size}
                   onClick={() => setTeamSize(size)}
                   className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
@@ -202,8 +202,8 @@ export default function LobbiesPage() {
                 Players:
               </span>
               {[4, 6, 8, 10, 12, 16, 20].map((count) => (
-                // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
                 <button
+                  type="button"
                   key={count}
                   onClick={() => setOathPlayerCount(count)}
                   className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}

@@ -27,4 +27,4 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 
 Design docs and not-yet-built proposals live in `docs/plans/`, not in the wiki. The wiki describes current repo state; plans describe intended future state. See `docs/plans/` for:
 
-- `unified-tool-surface.md`, `spectator-colocation.md`, `trust-plugins.md`, `oathbreaker-arcade-visual.md`, `oathbreaker-animations.md`, `onchain-reintegration.md`, `create-coordination-game.md`, `generic-bots.md`
+- `spectator-colocation.md`, `trust-plugins.md`, `oathbreaker-arcade-visual.md`, `oathbreaker-animations.md`, `onchain-reintegration.md`, `create-coordination-game.md`, `generic-bots.md`

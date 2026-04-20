@@ -35,4 +35,4 @@ Each `kind`'s dispatcher catches its own errors so a broken plugin can't trap th
 
 OATHBREAKER initially violated this by baking `phase: 'waiting'` into game state and requiring separate endpoints. This broke every generic feature. The fix: all games use the same lobby pipeline. Games with `phases: []` get simple collect-and-start behavior automatically.
 
-See: `docs/plans/system-cleanup-plan.md` and `docs/building-a-game.md`.
+See: `docs/building-a-game.md`.

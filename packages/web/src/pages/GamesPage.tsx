@@ -1199,8 +1199,7 @@ interface PhaseResult {
                   {/* Arrow connector */}
                   {i < arr.length - 1 && (
                     <div className="flex justify-center py-1">
-                      {/* biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup) */}
-                      <svg width="20" height="20" viewBox="0 0 20 20">
+                      <svg role="img" aria-hidden="true" width="20" height="20" viewBox="0 0 20 20">
                         <path
                           d="M10 2 L10 14 M6 10 L10 16 L14 10"
                           stroke="#334155"
@@ -1216,8 +1215,7 @@ interface PhaseResult {
               ))}
               {/* Final output */}
               <div className="flex justify-center py-1">
-                {/* biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup) */}
-                <svg width="20" height="20" viewBox="0 0 20 20">
+                <svg role="img" aria-hidden="true" width="20" height="20" viewBox="0 0 20 20">
                   <path
                     d="M10 2 L10 14 M6 10 L10 16 L14 10"
                     stroke="#334155"

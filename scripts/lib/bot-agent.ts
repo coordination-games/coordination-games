@@ -357,15 +357,17 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
         text
           .split('\n')
           .filter(Boolean)
-          // biome-ignore lint/suspicious/useIterableCallbackReturn: callback intentional; cleanup followup — TODO(2.3-followup)
-          .forEach((line) => console.log(`[${botName}] ${line.slice(0, 140)}`));
+          .forEach((line) => {
+            console.log(`[${botName}] ${line.slice(0, 140)}`);
+          });
       });
       proc.stderr?.on('data', (d: Buffer) => {
         d.toString()
           .split('\n')
           .filter(Boolean)
-          // biome-ignore lint/suspicious/useIterableCallbackReturn: callback intentional; cleanup followup — TODO(2.3-followup)
-          .forEach((line) => process.stderr.write(`[${botName}!] ${line.slice(0, 140)}\n`));
+          .forEach((line) => {
+            process.stderr.write(`[${botName}!] ${line.slice(0, 140)}\n`);
+          });
       });
       proc.on('close', () => resolve(output));
       proc.on('error', reject);

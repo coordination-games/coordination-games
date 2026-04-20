@@ -36,8 +36,8 @@ export default function TimerBar({
               : 'until lobby closes'}
         </span>
       </div>
-      {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
       <button
+        type="button"
         onClick={onCloseLobby}
         className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95"
         style={{

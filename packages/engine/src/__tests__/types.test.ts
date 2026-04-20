@@ -44,9 +44,14 @@ describe('Type interfaces compile correctly', () => {
       modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
       purity: 'stateful',
       init(ctx: PluginContext) {
-        // access ctx fields
-        // biome-ignore lint/correctness/noUnusedVariables: unused; remove in cleanup followup — TODO(2.3-followup)
-        const { gameType, gameId, turnCursor, relay, playerId } = ctx;
+        // Smoke-check that PluginContext fields are exposed to the plugin.
+        // (Destructuring + void assertion keeps the shape assertion without
+        // triggering the unused-var rule.)
+        void ctx.gameType;
+        void ctx.gameId;
+        void ctx.turnCursor;
+        void ctx.relay;
+        void ctx.playerId;
       },
       handleData(_mode, _inputs) {
         return new Map();

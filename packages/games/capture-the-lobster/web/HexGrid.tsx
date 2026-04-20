@@ -116,8 +116,7 @@ export default function HexGrid({
   hiddenUnitIds,
   killEffects,
   visionOpacity = 1,
-  // biome-ignore lint/correctness/noUnusedFunctionParameters: unused param; cleanup followup — TODO(2.3-followup)
-  dyingUnitIds,
+  dyingUnitIds: _dyingUnitIds,
 }: HexGridProps) {
   // Build a lookup of tile data by key
   const tileMap = useMemo(() => {
@@ -299,8 +298,7 @@ export default function HexGrid({
   const unitSpriteSize = HEX_SIZE * 1.5;
 
   return (
-    // biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup)
-    <svg viewBox={viewBox} style={{ width: '100%', height: '100%' }}>
+    <svg role="img" aria-hidden="true" viewBox={viewBox} style={{ width: '100%', height: '100%' }}>
       <defs>
         {/* Clip path for hex shape — used to clip terrain images */}
         <clipPath id="hex-clip">
