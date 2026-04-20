@@ -45,8 +45,11 @@ const router = createBrowserRouter([
   },
 ]);
 
-// biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const rootEl = document.getElementById('root');
+if (!rootEl) {
+  throw new Error('#root element not found in index.html');
+}
+ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <RouterProvider router={router} />
   </React.StrictMode>,

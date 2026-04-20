@@ -97,9 +97,9 @@ function _AddressDisplay({ address }: { address: string }) {
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing div onClick without key handler; cleanup followup — TODO(2.3-followup) */}
-      <code
-        className="font-mono text-sm px-3 py-1.5 rounded-md cursor-pointer transition-all"
+      <button
+        type="button"
+        className="font-mono text-sm px-3 py-1.5 rounded-md cursor-pointer transition-all text-left"
         style={{
           background: 'rgba(2, 6, 23, 0.8)',
           border: '1px solid rgba(6, 182, 212, 0.15)',
@@ -109,8 +109,8 @@ function _AddressDisplay({ address }: { address: string }) {
         onClick={() => setExpanded(!expanded)}
         title="Click to expand"
       >
-        {expanded ? address : truncateAddr(address)}
-      </code>
+        <code>{expanded ? address : truncateAddr(address)}</code>
+      </button>
       <CopyButton text={address} />
     </div>
   );
@@ -131,10 +131,9 @@ function CopyableAddress({ address }: { address: string }) {
   }
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing div onClick without key handler; cleanup followup — TODO(2.3-followup)
-    // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
-    <div
-      className="rounded-xl px-5 py-4 cursor-pointer group transition-all hover:scale-[1.01]"
+    <button
+      type="button"
+      className="rounded-xl px-5 py-4 cursor-pointer group transition-all hover:scale-[1.01] w-full text-left"
       style={{
         background: 'rgba(2, 6, 23, 0.9)',
         border: copied ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(6, 182, 212, 0.25)',
@@ -144,15 +143,14 @@ function CopyableAddress({ address }: { address: string }) {
       }}
       onClick={handleCopy}
     >
-      <div className="flex items-center gap-3">
+      <span className="flex items-center gap-3">
         <code
           className="font-mono text-base sm:text-lg font-black flex-1 leading-relaxed"
           style={{ color: '#f1f5f9', wordBreak: 'break-all', letterSpacing: '0.02em' }}
         >
           {address}
         </code>
-        <button
-          type="button"
+        <span
           className="flex-none px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider transition-all"
           style={{
             background: copied ? 'rgba(74, 222, 128, 0.1)' : 'rgba(6, 182, 212, 0.1)',
@@ -163,9 +161,9 @@ function CopyableAddress({ address }: { address: string }) {
           }}
         >
           {copied ? 'Copied!' : 'Copy'}
-        </button>
-      </div>
-    </div>
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -184,10 +182,9 @@ function CopyPrompt({ text }: { text: string }) {
   }
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing div onClick without key handler; cleanup followup — TODO(2.3-followup)
-    // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
-    <div
-      className="rounded-xl px-4 py-3 cursor-pointer group transition-all hover:scale-[1.01]"
+    <button
+      type="button"
+      className="rounded-xl px-4 py-3 cursor-pointer group transition-all hover:scale-[1.01] w-full text-left block"
       style={{
         background: 'rgba(2, 6, 23, 0.9)',
         border: copied ? '1px solid rgba(74, 222, 128, 0.3)' : '1px solid rgba(6, 182, 212, 0.2)',
@@ -197,14 +194,13 @@ function CopyPrompt({ text }: { text: string }) {
       }}
       onClick={handleCopy}
     >
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm leading-relaxed" style={{ color: '#e2e8f0' }}>
+      <span className="flex items-start gap-3">
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm leading-relaxed" style={{ color: '#e2e8f0' }}>
             {text}
-          </p>
-        </div>
-        <button
-          type="button"
+          </span>
+        </span>
+        <span
           className="flex-none mt-0.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider transition-all"
           style={{
             background: copied ? 'rgba(74, 222, 128, 0.1)' : 'rgba(6, 182, 212, 0.1)',
@@ -215,15 +211,15 @@ function CopyPrompt({ text }: { text: string }) {
           }}
         >
           {copied ? 'Copied!' : 'Copy'}
-        </button>
-      </div>
-      <p
-        className="text-[10px] mt-2 uppercase tracking-widest font-medium"
+        </span>
+      </span>
+      <span
+        className="block text-[10px] mt-2 uppercase tracking-widest font-medium"
         style={{ color: '#475569' }}
       >
         Paste this to your agent
-      </p>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -279,11 +275,11 @@ function useCountdown(expiresTimestamp: number | null) {
 
   useEffect(() => {
     if (!expiresTimestamp) return;
+    const expires = expiresTimestamp;
 
     function tick() {
       const now = Math.floor(Date.now() / 1000);
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const diff = expiresTimestamp! - now;
+      const diff = expires - now;
       setRemaining(diff > 0 ? diff : 0);
     }
 

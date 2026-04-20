@@ -75,11 +75,12 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
       app.post('/mcp', async (req: any, res: any) => {
         const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-        if (sessionId && transports.has(sessionId)) {
-          // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-          const transport = transports.get(sessionId)!;
-          await transport.handleRequest(req, res);
-          return;
+        if (sessionId) {
+          const transport = transports.get(sessionId);
+          if (transport) {
+            await transport.handleRequest(req, res);
+            return;
+          }
         }
 
         if (!sessionId && isInitializeRequest(req.body)) {
@@ -107,11 +108,12 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       app.get('/mcp', async (req: any, res: any) => {
         const sessionId = req.headers['mcp-session-id'] as string | undefined;
-        if (sessionId && transports.has(sessionId)) {
-          // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-          const transport = transports.get(sessionId)!;
-          await transport.handleRequest(req, res);
-          return;
+        if (sessionId) {
+          const transport = transports.get(sessionId);
+          if (transport) {
+            await transport.handleRequest(req, res);
+            return;
+          }
         }
         res.status(400).json({ error: 'No session' });
       });

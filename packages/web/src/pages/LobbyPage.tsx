@@ -207,13 +207,13 @@ export default function LobbyPage() {
 
   // Compute client-side timer from server deadlineMs
   useEffect(() => {
-    if (noTimeout || !state || state.phase !== 'lobby' || !state.deadlineMs) {
+    const deadlineMs = state?.deadlineMs;
+    if (noTimeout || !state || state.phase !== 'lobby' || !deadlineMs) {
       setLobbyTimer(null);
       return;
     }
     const tick = () => {
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const remaining = Math.max(0, Math.floor((state.deadlineMs! - Date.now()) / 1000));
+      const remaining = Math.max(0, Math.floor((deadlineMs - Date.now()) / 1000));
       setLobbyTimer(remaining);
     };
     tick();

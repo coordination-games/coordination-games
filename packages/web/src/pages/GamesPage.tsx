@@ -98,10 +98,9 @@ function DataRow({
 function CodeLine({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing div onClick without key handler; cleanup followup — TODO(2.3-followup)
-    // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
-    <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer group transition-all hover:scale-[1.01] overflow-hidden min-w-0"
+    <button
+      type="button"
+      className="flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer group transition-all hover:scale-[1.01] overflow-hidden min-w-0 w-full text-left"
       style={{
         background: 'rgba(2, 6, 23, 0.8)',
         border: '1px solid rgba(6, 182, 212, 0.15)',
@@ -125,7 +124,7 @@ function CodeLine({ text }: { text: string }) {
       >
         {copied ? 'copied!' : 'copy'}
       </span>
-    </div>
+    </button>
   );
 }
 

@@ -45,11 +45,10 @@ export default function JoinInstructions({ lobbyId, gameType }: Props) {
       <p className="mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>
         1. Install the plugin (one time):
       </p>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing div onClick without key handler; cleanup followup — TODO(2.3-followup) */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup) */}
-      <div
+      <button
+        type="button"
         onClick={handleCopyInstall}
-        className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95"
+        className="block w-full text-left cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95"
         title="Click to copy"
         style={{
           background: 'rgba(42, 31, 14, 0.06)',
@@ -58,15 +57,14 @@ export default function JoinInstructions({ lobbyId, gameType }: Props) {
         }}
       >
         {installCmd}
-      </div>
+      </button>
       <p className="mt-3 mb-2 text-xs" style={{ color: 'var(--color-ink-light)' }}>
         2. Tell your agent:
       </p>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: pre-existing div onClick without key handler; cleanup followup — TODO(2.3-followup) */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup) */}
-      <div
+      <button
+        type="button"
         onClick={handleCopyJoinPrompt}
-        className="cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95"
+        className="block w-full text-left cursor-pointer rounded px-3 py-2 font-mono text-xs transition-colors hover:brightness-95"
         title="Click to copy"
         style={{
           background: 'rgba(42, 31, 14, 0.06)',
@@ -75,7 +73,7 @@ export default function JoinInstructions({ lobbyId, gameType }: Props) {
         }}
       >
         "{joinPrompt}"
-      </div>
+      </button>
       <p className="mt-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
         {copied ? 'Copied!' : 'Click to copy'}
       </p>
