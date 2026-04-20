@@ -1,3 +1,4 @@
+import { KibitzerWebPlugin } from '@coordination-games/plugin-kibitzer/web';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
@@ -22,6 +23,12 @@ import './index.css';
 // Removing this single line removes chat from every shell that uses
 // <SlotHost>. The acceptance test for Phase 5.1 leans on that property.
 registerWebPlugin(ChatSlotPlugin);
+// Phase 5.4 acceptance: kibitzer overlays spectator commentary on
+// `game:overlay`. Universal plugin (no `gameType` filter) — works for
+// any game that publishes chat envelopes. Removing this single line
+// removes the overlay from every game page; the rest of the shell is
+// untouched.
+registerWebPlugin(KibitzerWebPlugin);
 // Phase 6.3: per-game `lobby:card` providers. Each plugin declares its
 // `gameType` and SlotHost dispatches lobby/game cards accordingly.
 registerWebPlugin(CaptureTheLobsterWebPlugin);

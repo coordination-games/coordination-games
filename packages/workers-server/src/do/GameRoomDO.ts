@@ -28,7 +28,12 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import type { CoordinationGame, MerkleLeafData, RelayScope } from '@coordination-games/engine';
+import type {
+  CoordinationGame,
+  MerkleLeafData,
+  RelayEnvelope,
+  RelayScope,
+} from '@coordination-games/engine';
 import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
 import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
 import { SETTLEMENT_ALARM_KIND } from '../chain/SettlementStateMachine.js';
@@ -53,6 +58,12 @@ import '@coordination-games/game-oathbreaker';
 // accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO
 // can dispatch by relay type without spelling the literal string.
 import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
+// Phase 5.4 acceptance: the kibitzer plugin registers its own relay schema
+// at import time and provides a per-game ServerPlugin that watches chat
+// envelopes and emits commentary. The umbrella import side-effect
+// registers the schema; the `/server` subpath provides the builder.
+import '@coordination-games/plugin-kibitzer';
+import { createKibitzerServerPlugin } from '@coordination-games/plugin-kibitzer/server';
 
 // ---------------------------------------------------------------------------
 // WS tags
@@ -188,9 +199,41 @@ export class GameRoomDO extends DurableObject<Env> {
       const runtime = new ServerPluginRuntime(caps, {
         gameId: this._meta?.gameId ?? this.ctx.id.name ?? '__unknown__',
       });
-      this._pluginRuntime = runtime.register(createSettlementPlugin()).then(() => runtime);
+      this._pluginRuntime = runtime
+        .register(createSettlementPlugin())
+        // Phase 5.4 acceptance: kibitzer registers per-DO. It only needs
+        // `relay`, so the runtime hands it a 1-cap subset of `caps`.
+        .then(() => runtime.register(createKibitzerServerPlugin()))
+        .then(() => runtime);
     }
     return this._pluginRuntime;
+  }
+
+  /**
+   * Phase 5.4 — fan a freshly-published envelope out to every plugin's
+   * `handleRelay`. Today only kibitzer reacts; the call is a no-op for
+   * settlement (no `handleRelay`) so it's safe regardless of registration
+   * order. Errors inside individual plugins are swallowed by the runtime
+   * — see `ServerPluginRuntime.handleRelay`.
+   *
+   * Why fire-and-forget rather than await: chat publishes are on the hot
+   * path of `handleTool`. Wrapping in `ctx.waitUntil` lets the response
+   * return immediately and lets the kibitzer's commentary publish settle
+   * in the background. The published envelope reaches spectators on the
+   * NEXT broadcast cycle (which fires on every chat envelope already, so
+   * latency is bounded by chat cadence).
+   */
+  private fanRelayToPlugins(env: RelayEnvelope): void {
+    this.ctx.waitUntil(
+      (async () => {
+        try {
+          const runtime = await this.getPluginRuntime();
+          await runtime.handleRelay(env);
+        } catch (err) {
+          console.error('[GameRoomDO] fanRelayToPlugins failed:', err);
+        }
+      })(),
+    );
   }
 
   /**
@@ -815,6 +858,18 @@ export class GameRoomDO extends DurableObject<Env> {
       // it from a tiny visibleTo({admin}) below only when we need the full
       // envelope to push. For the broadcast we just rebuild player messages.
       await this.broadcastRelayMessage(scope);
+      // Phase 5.4 — fan envelopes through the per-DO plugin runtime so
+      // plugins like kibitzer can react. Index/timestamp aren't strictly
+      // accurate here (the RelayClient assigned them internally), but no
+      // current handleRelay consumer cares — they all key off `type`,
+      // `turn`, `data`, `scope`. Synthesizing avoids a round-trip read.
+      const tip = await this.getRelayClient().getTip();
+      const synthesized: RelayEnvelope = {
+        ...partial,
+        index: Math.max(0, tip - 1),
+        timestamp: Date.now(),
+      };
+      this.fanRelayToPlugins(synthesized);
 
       return Response.json({ ok: true });
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
