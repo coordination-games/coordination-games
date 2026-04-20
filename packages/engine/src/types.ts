@@ -193,8 +193,17 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    */
   getOutcome(state: TState): TOutcome;
 
-  /** Entry cost in credits per player. */
-  readonly entryCost: number;
+  /**
+   * Entry cost per player, in RAW credit units (6-decimal `bigint` matching
+   * on-chain `CoordinationCredits` storage). Use `credits(n)` from
+   * `@coordination-games/engine` to construct from a whole-credit integer:
+   *
+   *   entryCost: credits(10),  // = 10_000_000n raw
+   *
+   * The DO settlement path consumes this value directly — there is no
+   * boundary scaling. `0n` is the free-game sentinel.
+   */
+  readonly entryCost: bigint;
 
   /**
    * Credit payouts from outcome. Must be zero-sum and no single player delta may

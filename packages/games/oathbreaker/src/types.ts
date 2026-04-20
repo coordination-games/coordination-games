@@ -70,8 +70,10 @@ export interface OathConfig {
   turnTimerSeconds: number;
   /** Random seed for deterministic pairing order. */
   seed: string;
-  /** Entry cost in whole credits per player (from plugin.entryCost). Scaled
-   *  to raw 6-decimal units at the GameRoomDO settlement boundary. */
+  /** Entry cost in WHOLE credits per player — display-only. Used for
+   *  per-round UI math (`breakEvenDelta`, `totalCreditsInvested`). The raw-
+   *  unit value that actually drives settlement is `plugin.entryCost`
+   *  (bigint); this field is divided back from it at `createConfig` time. */
   entryCost: number;
   /** Player IDs (populated when game starts from lobby). */
   playerIds: string[];
@@ -182,8 +184,8 @@ export interface OathState {
   players: OathPlayerState[];
   /** Active pairings for the current round (empty between rounds). */
   pairings: OathPairing[];
-  /** Total whole credits staked (players.length * entryCost). Used only for
-   *  in-game spectator display — settlement scales plugin.entryCost separately. */
+  /** Total whole credits staked (players.length * entryCost). Display-only
+   *  for in-game UI — settlement uses plugin.entryCost (bigint raw) directly. */
   totalCreditsInvested: number;
   /** Total points in circulation (changes with printing/burning). */
   totalSupply: number;

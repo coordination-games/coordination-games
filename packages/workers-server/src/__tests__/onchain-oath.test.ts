@@ -80,7 +80,8 @@ function playToCompletion(
 
 describe('OATHBREAKER settlement invariants — end-to-end', () => {
   const playerIds = ['alice', 'bob', 'carol', 'dave'];
-  const entryCost = BigInt(OathbreakerPlugin.entryCost);
+  // plugin.entryCost is raw-unit bigint (credits(1) = 1_000_000n).
+  const entryCost = OathbreakerPlugin.entryCost;
 
   function make(seed: string): OathState {
     return createInitialState({
@@ -88,7 +89,8 @@ describe('OATHBREAKER settlement invariants — end-to-end', () => {
       maxRounds: 6, // shorter for the test
       playerIds: [...playerIds],
       seed,
-      entryCost: OathbreakerPlugin.entryCost,
+      // OathConfig.entryCost is display-only whole credits (see types.ts).
+      entryCost: 1,
     });
   }
 

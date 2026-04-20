@@ -32,7 +32,7 @@ import type {
   PhaseResult,
   RelayScope,
 } from '@coordination-games/engine';
-import { CREDIT_SCALE, getGame, validateChatScope } from '@coordination-games/engine';
+import { getGame, validateChatScope } from '@coordination-games/engine';
 import type { ChainRelay } from '../chain/types.js';
 import type { Env } from '../env.js';
 import type { SpectatorViewer } from '../plugins/capabilities.js';
@@ -869,9 +869,9 @@ export class LobbyDO extends DurableObject<Env> {
   /**
    * Pre-game credit balance check. Returns `null` on success, or a 402
    * Response describing the shortfall. `entryCost` is the plugin-declared
-   * value in WHOLE credits; we scale by `CREDIT_SCALE` (6-dec, matches
-   * `CoordinationCredits` storage and `GameRoomDO.kickOffSettlement`) for
-   * the raw-unit comparison.
+   * value in RAW credit units (6-dec `bigint`, matching
+   * `CoordinationCredits` storage) — compared directly to the relay's
+   * `getBalance` result with no scaling.
    *
    * Balance source: `ChainRelay.getBalance(agentId)`. On-chain mode reads
    * the live `CoordinationCredits.balances(uint256)` value — the same
@@ -879,7 +879,7 @@ export class LobbyDO extends DurableObject<Env> {
    * mode (`env.RPC_URL` unset), `MockRelay` returns `MOCK_CREDIT_BALANCE`,
    * trivially satisfying the check for local bots and tests.
    *
-   * `entryCost: 0` (tests, free games) short-circuits to success without
+   * `entryCost: 0n` (tests, free games) short-circuits to success without
    * hitting the relay.
    *
    * On-chain mode requires an on-chain agent id to query `balances`. If the
@@ -889,12 +889,9 @@ export class LobbyDO extends DurableObject<Env> {
    * Errors from the relay itself (RPC flake) bubble up as 503 — we fail
    * closed; letting the join through on an RPC error would bypass the gate.
    */
-  private async checkBalanceOrError(
-    playerId: string,
-    entryCostWhole: number,
-  ): Promise<Response | null> {
-    if (!entryCostWhole || entryCostWhole <= 0) return null;
-    const required = BigInt(entryCostWhole) * CREDIT_SCALE;
+  private async checkBalanceOrError(playerId: string, entryCost: bigint): Promise<Response | null> {
+    if (entryCost <= 0n) return null;
+    const required = entryCost;
 
     // On-chain mode: translate D1 UUID → chain_agent_id. MockRelay ignores
     // the arg, so only pay the D1 cost when we actually have an RPC config.

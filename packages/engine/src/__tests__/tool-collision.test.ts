@@ -67,7 +67,7 @@ function fakeGame(options: {
   return {
     gameType: options.gameType,
     version: '0.0.0-test',
-    entryCost: 0,
+    entryCost: 0n,
     gameTools: options.gameTools,
     lobby: options.phases
       ? {

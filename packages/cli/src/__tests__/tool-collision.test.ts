@@ -77,7 +77,7 @@ function fakeGame(
   return {
     gameType,
     version: '0.0.0-test',
-    entryCost: 0,
+    entryCost: 0n,
     gameTools: opts.gameTools,
     lobby: opts.phaseTools
       ? {

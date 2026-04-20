@@ -33,7 +33,7 @@ function fakeGame(opts: FakeOpts): AnyGame {
   const base: Record<string, unknown> = {
     gameType: opts.gameType,
     version: '0.0.0-test',
-    entryCost: 0,
+    entryCost: 0n,
     createInitialState: () => ({}),
     validateAction: () => false,
     applyAction: (state: unknown) => ({ state }),

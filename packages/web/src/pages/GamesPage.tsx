@@ -1023,8 +1023,8 @@ export default function GamesPage() {
   isOver(state): boolean
   getOutcome(state): TOutcome
 
-  entryCost: number   // vibes per player
-  computePayouts(outcome): Map<id, number>
+  entryCost: bigint   // raw credits per player (credits(10))
+  computePayouts(outcome): Map<id, bigint>
 
   lobby: LobbyConfig  // phase pipeline
   requiredPlugins: string[]

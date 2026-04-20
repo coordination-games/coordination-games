@@ -1,3 +1,4 @@
+import { formatCredits } from '@coordination-games/engine';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../config.js';
@@ -20,25 +21,6 @@ function getInjectedProvider(): InjectedEthereumProvider | undefined {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Credits are stored on-chain with 6 decimals of precision (see
-// `packages/engine/src/money.ts`). The relay API returns raw units; divide
-// for display. The `web` package doesn't depend on `@coordination-games/engine`
-// (it's a thin UI over the HTTP API), so we mirror the constant here.
-const CREDIT_SCALE_DIGITS = 6;
-const CREDIT_SCALE_BIG = 10n ** BigInt(CREDIT_SCALE_DIGITS);
-
-function formatRawCreditsForDisplay(raw: string | number | null | undefined): number | null {
-  if (raw === null || raw === undefined) return null;
-  try {
-    const asBig = BigInt(raw);
-    // Drop the fractional component for the hero number; any remainder is
-    // tiny dust relative to whole-credit balances users actually hold.
-    return Number(asBig / CREDIT_SCALE_BIG);
-  } catch {
-    return null;
-  }
-}
 
 function truncateAddr(addr: string): string {
   if (addr.length <= 14) return addr;
@@ -236,7 +218,9 @@ type RegStatus = 'waiting' | 'detected' | 'registering' | 'success' | 'error';
 
 interface RegResult {
   agentId?: number;
-  credits?: number;
+  /** Raw 6-decimal credits as returned by the relay (string/number/bigint-
+   *  compatible). Formatted for display via `formatCredits`. */
+  credits?: string | number | null;
   name?: string;
 }
 
@@ -261,7 +245,7 @@ function useRegistrationPoll(address: string | null) {
           setStatus('success');
           setResult({
             agentId: data.agentId,
-            credits: formatRawCreditsForDisplay(data.credits) ?? 400,
+            credits: data.credits ?? null,
             name: data.name,
           });
         } else if (data.status === 'registering' || data.status === 'pending_relay') {
@@ -688,7 +672,7 @@ export default function RegisterPage() {
                   )}
                   <div>
                     <p className="font-mono text-lg font-bold" style={{ color: '#4ade80' }}>
-                      {result.credits ?? 400}
+                      {result.credits != null ? formatCredits(result.credits) : '400'}
                     </p>
                     <p
                       className="text-xs uppercase tracking-wider font-medium"

@@ -1,21 +1,21 @@
 /**
  * LobbyDO pre-game credit balance check.
  *
- * Locks in the join-time `balance >= entryCost * CREDIT_SCALE` gate added to
+ * Locks in the join-time `balance >= entryCost` gate added to
  * `LobbyDO.handleJoin`. The MVP spec is a read-only check against the
  * current on-chain (or mock) balance before appending the player to the
  * lobby roster — no committed-stake ledger, no concurrent-game escrow.
  *
  * Scenarios covered:
- *   1. Balance short of `entryCost * CREDIT_SCALE` → HTTP 402 with the
- *      documented `{ error, required, available, agentId }` body; no agent
- *      is appended to the lobby roster.
- *   2. Balance exactly meets `entryCost * CREDIT_SCALE` → join succeeds;
- *      the agent is appended.
+ *   1. Balance short of `entryCost` → HTTP 402 with the documented
+ *      `{ error, required, available, agentId }` body; no agent is
+ *      appended to the lobby roster.
+ *   2. Balance exactly meets `entryCost` → join succeeds; the agent is
+ *      appended.
  *
- * Uses the real CtL plugin so `entryCost: 10 whole credits → 10_000_000n
- * raw units` is exercised end-to-end (same scale boundary that
- * `GameRoomDO.kickOffSettlement` uses for settlement deltas).
+ * `plugin.entryCost` is already a raw-unit bigint (declared via `credits(10)`
+ * in CtL → `10_000_000n`). No scaling happens in the DO — the type system
+ * alone guarantees units match the relay's `getBalance` result.
  *
  * The chain relay is stubbed via `_chainRelayPromise` — no viem, no D1
  * lookup for chain_agent_id (we leave `env.RPC_URL` unset so the MockRelay
@@ -39,9 +39,10 @@ let LobbyDO: LobbyDOCtor;
 
 beforeAll(async () => {
   ({ LobbyDO } = (await import('../do/LobbyDO.js')) as unknown as { LobbyDO: LobbyDOCtor });
-  // Sanity-check the fixture assumption: CtL entryCost must be 10 whole
-  // credits so `10_000_000n` (below) is exactly the gating threshold.
-  expect(CaptureTheLobsterPlugin.entryCost).toBe(10);
+  // Sanity-check the fixture assumption: CtL entryCost is 10 whole credits
+  // (= 10_000_000n raw) so the `rawBalance` values below are exactly the
+  // gating threshold.
+  expect(CaptureTheLobsterPlugin.entryCost).toBe(10_000_000n);
 });
 
 /** Minimal ChainRelay stub — only `getBalance` is exercised here. */
@@ -103,7 +104,7 @@ function buildLobby(rawBalance: bigint): LobbyDOInternal {
 // ---------------------------------------------------------------------------
 
 describe('LobbyDO — pre-game credit balance check', () => {
-  it('rejects join with 402 when balance < entryCost * CREDIT_SCALE', async () => {
+  it('rejects join with 402 when balance < entryCost (raw units)', async () => {
     // 5 whole credits in raw units — below CtL's 10 whole credits entry.
     const lobby = buildLobby(5_000_000n);
     const resp: Response = await lobby.fetch(
@@ -125,7 +126,7 @@ describe('LobbyDO — pre-game credit balance check', () => {
     expect(lobby._agents).toEqual([]);
   });
 
-  it('allows join when balance exactly meets entryCost * CREDIT_SCALE', async () => {
+  it('allows join when balance exactly meets entryCost (raw units)', async () => {
     // 10 whole credits in raw units — exactly CtL's entry cost.
     const lobby = buildLobby(10_000_000n);
     const resp: Response = await lobby.fetch(

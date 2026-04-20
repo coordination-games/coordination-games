@@ -24,8 +24,15 @@ export {
   type MerkleTree,
   verifyProof,
 } from './merkle.js';
-// Credit decimal scaling (6 decimals, matching USDC)
-export { CREDIT_DECIMALS, CREDIT_SCALE } from './money.js';
+// Credit decimal scaling (6 decimals, matching USDC) + helpers for declaring,
+// formatting, and parsing raw credit amounts.
+export {
+  CREDIT_DECIMALS,
+  CREDIT_SCALE,
+  credits,
+  formatCredits,
+  parseCredits,
+} from './money.js';
 // Built-in lobby phases
 export { OpenQueuePhase, type OpenQueueState } from './phases/open-queue.js';
 // Plugin loader and pipeline

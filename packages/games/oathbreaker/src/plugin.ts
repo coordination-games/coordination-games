@@ -11,7 +11,7 @@ import type {
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { OpenQueuePhase, registerGame } from '@coordination-games/engine';
+import { CREDIT_SCALE, credits, OpenQueuePhase, registerGame } from '@coordination-games/engine';
 import {
   applyAction,
   createInitialState,
@@ -242,7 +242,7 @@ export const OathbreakerPlugin = {
   gameType: OATH_GAME_ID,
   version: '0.3.0',
 
-  entryCost: 1,
+  entryCost: credits(1),
   spectatorDelay: 0,
   progressUnit: 'round',
 
@@ -450,7 +450,10 @@ export const OathbreakerPlugin = {
     return {
       config: {
         ...DEFAULT_OATH_CONFIG,
-        entryCost: OathbreakerPlugin.entryCost,
+        // OathConfig.entryCost is a display-only whole-credit number (used
+        // for per-round UI math like breakEvenDelta). Plugin.entryCost is
+        // the raw-unit bigint that drives settlement — divide back here.
+        entryCost: Number(OathbreakerPlugin.entryCost / CREDIT_SCALE),
         playerIds: players.map((p) => p.id),
         seed,
         ...maxRoundsOverride,

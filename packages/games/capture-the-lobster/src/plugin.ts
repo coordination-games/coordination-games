@@ -16,7 +16,7 @@ import type {
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { registerGame } from '@coordination-games/engine';
+import { credits, registerGame } from '@coordination-games/engine';
 // Phase 5.1: spectator filter dispatches by relay type via the constant the
 // chat plugin exports — no magic strings, no consumer knowledge of the wire
 // format. If basic-chat is removed from the platform, this import breaks at
@@ -766,7 +766,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return state.units.filter((u) => u.alive && !submitted.has(u.id)).map((u) => u.id);
   },
 
-  entryCost: 10,
+  entryCost: credits(10),
 
   lobby: {
     queueType: 'open',

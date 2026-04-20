@@ -22,23 +22,15 @@ import type {
  * — we'd otherwise need to run a local chain just to exercise the lobby path.
  * `topup` / `requestBurn` / `executeBurn` throw ("Credits not available in
  * mock mode"), and `submit` is a no-op that discards the deltas after
- * returning a fake tx hash. Because of that, the 6-decimal scaling applied
- * in `GameRoomDO.kickOffSettlement` (see `CREDIT_SCALE` in
- * `@coordination-games/engine`) has no observable effect here — scaled or
- * unscaled, the numbers go nowhere.
- *
- * Consequence: in-memory mode stays internally consistent whether deltas are
- * scaled or not, which is why the pre-scaling bug was silent. On-chain mode
- * is the only path where the scale mismatch would corrupt balances, and
- * that path is fixed at the settlement boundary.
+ * returning a fake tx hash.
  */
 
 /**
  * High synthetic balance returned by `MockRelay.getBalance` (raw credit units,
  * 6-dec scale). 10^18 ≈ 10^12 whole credits — comfortably above any plausible
- * `entryCost * CREDIT_SCALE` so dev lobbies don't hit the join-time balance
- * gate. Expressed as a decimal string to match the on-chain `uint256` wire
- * format everywhere else in this file.
+ * `entryCost` so dev lobbies don't hit the join-time balance gate. Expressed
+ * as a decimal string to match the on-chain `uint256` wire format everywhere
+ * else in this file.
  */
 export const MOCK_CREDIT_BALANCE = '1000000000000000000';
 

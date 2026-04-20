@@ -31,8 +31,9 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Final outcome. Only valid when isOver() is true. */
   getOutcome(state: TState): TOutcome;
 
-  readonly entryCost: number;
-  computePayouts(outcome: TOutcome, playerIds: string[]): Map<string, number>;
+  /** Entry cost per player, in raw credit units. Use `credits(n)` to construct. */
+  readonly entryCost: bigint;
+  computePayouts(outcome: TOutcome, playerIds: string[], entryCost: bigint): Map<string, bigint>;
   readonly lobby?: GameLobbyConfig;
   /** Player-callable tools during the game phase. See "Declaring Game Tools" below. */
   readonly gameTools?: ToolDefinition[];
@@ -436,7 +437,7 @@ Iterated prisoner's dilemma, FFA.
 
 ## Payouts
 
-Every game defines `entryCost` (whole credits per player — see `wiki/architecture/credit-economics.md` for the 6-decimal scale; the server scales at the settlement boundary, plugins stay in whole-unit-equivalent bigint math) and `computePayouts(outcome, playerIds, entryCost)`. Payouts must be zero-sum relative to the entry pool.
+Every game defines `entryCost` as a `bigint` in raw credit units (6-decimal, matching on-chain storage). Use the `credits(n)` helper from `@coordination-games/engine` so the call site reads as whole credits: `entryCost: credits(10)` = `10_000_000n`. See `wiki/architecture/credit-economics.md` for the full unit policy. `computePayouts(outcome, playerIds, entryCost)` returns raw-unit deltas; payouts must be zero-sum relative to the entry pool.
 
 **CtL:** Winners get +10, losers get -10, draws get 0. Simple binary outcome.
 
