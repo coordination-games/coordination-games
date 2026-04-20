@@ -17,6 +17,62 @@ on:
     branches: [main]
 
 jobs:
+  lint-and-typecheck:
+    # Phase 2.4 (docs/plans/system-cleanup-plan.md): merge-blocking gate for
+    # Biome lint+format and per-package `tsc --noEmit`. Kept in its own job
+    # so failures are localized in the PR UI and don't get tangled with the
+    # test signal below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # See `test` job below for rationale on these flags.
+        run: npm install --include=dev --legacy-peer-deps
+
+      - name: Biome check (lint + format)
+        run: npm run check
+
+      # Per-package typecheck. Each package is invoked individually so the
+      # failure surface in the PR log points at the offending package.
+      # `contracts` is intentionally omitted — it has a pre-existing
+      # Hardhat dependency issue tracked separately.
+      - name: Typecheck — engine
+        run: npx tsc --noEmit
+        working-directory: packages/engine
+
+      - name: Typecheck — workers-server
+        run: npx tsc --noEmit
+        working-directory: packages/workers-server
+
+      - name: Typecheck — cli
+        run: npx tsc --noEmit
+        working-directory: packages/cli
+
+      - name: Typecheck — web
+        run: npx tsc --noEmit
+        working-directory: packages/web
+
+      - name: Typecheck — games/capture-the-lobster
+        run: npx tsc --noEmit
+        working-directory: packages/games/capture-the-lobster
+
+      - name: Typecheck — games/oathbreaker
+        run: npx tsc --noEmit
+        working-directory: packages/games/oathbreaker
+
+      - name: Typecheck — plugins/elo
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/elo
+
+      - name: Typecheck — plugins/basic-chat
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/basic-chat
+
   test:
     runs-on: ubuntu-latest
     steps:
