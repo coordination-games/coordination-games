@@ -53,14 +53,23 @@ interface OathSpectatorState {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function mapServerState(raw: any): OathSpectatorState | null {
-  if (!raw) return null;
+function mapServerState(raw: unknown): OathSpectatorState | null {
+  if (!raw || typeof raw !== 'object') return null;
   // Phase 7.1: live mode hands us the unified spectator payload's
   // `state` field directly. Replay mode (and legacy callers) still pass
   // the snapshot at the top level. `raw.data ?? raw` keeps both shapes
   // working while replay is on the legacy `/replay` path.
-  const data = raw.data ?? raw;
+  const top = raw as { data?: unknown };
+  const dataCandidate = top.data ?? raw;
+  if (!dataCandidate || typeof dataCandidate !== 'object') return null;
+  const data = dataCandidate as {
+    players?: OathPlayer[];
+    round?: number;
+    maxRounds?: number;
+    phase?: 'playing' | 'finished';
+    pairings?: OathSpectatorPairing[];
+    roundResults?: OathPairingResult[][];
+  };
   if (!data.players || !Array.isArray(data.players)) return null;
   return {
     round: data.round ?? 0,
@@ -93,9 +102,12 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   // Phase 7.2 — the single WS now lives in GamePage's `useSpectatorStream`.
   // The live snapshot/error arrive via props in live mode; replay derives
   // state from `rawGameState`.
+  const liveSnapshotTyped = liveSnapshot as { type?: string; state?: unknown } | null | undefined;
   const liveState =
-    !isReplay && liveSnapshot?.type === 'state_update' ? mapServerState(liveSnapshot.state) : null;
-  const connected = !isReplay && liveSnapshot != null;
+    !isReplay && liveSnapshotTyped?.type === 'state_update'
+      ? mapServerState(liveSnapshotTyped.state)
+      : null;
+  const connected = !isReplay && liveSnapshotTyped != null;
   const error = liveError ?? null;
   const [followedPlayerId, setFollowedPlayerId] = useState<string | null>(null);
 

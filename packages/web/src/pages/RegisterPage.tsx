@@ -2,6 +2,21 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../config.js';
 
+/**
+ * Minimal EIP-1193 provider shape — the only wallet surface we touch. We
+ * declare it locally (rather than via a global `Window` augmentation) so
+ * other files don't get an ambient `window.ethereum` that promises
+ * features we haven't checked for.
+ */
+interface InjectedEthereumProvider {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+}
+
+function getInjectedProvider(): InjectedEthereumProvider | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return (window as unknown as { ethereum?: InjectedEthereumProvider }).ethereum;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -369,8 +384,7 @@ function useWallet() {
   const [error, setError] = useState<string | null>(null);
   const [usdcBalance, setUsdcBalance] = useState<bigint | null>(null);
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const hasEthereum = typeof window !== 'undefined' && !!(window as any).ethereum;
+  const hasEthereum = !!getInjectedProvider();
 
   const connect = useCallback(async () => {
     if (!hasEthereum) {
@@ -382,19 +396,25 @@ function useWallet() {
     setError(null);
 
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const ethereum = (window as any).ethereum;
-      const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+      const ethereum = getInjectedProvider();
+      if (!ethereum) {
+        setError('No wallet detected. Install MetaMask or another browser wallet.');
+        return;
+      }
+      const accounts = (await ethereum.request({ method: 'eth_requestAccounts' })) as string[];
       if (accounts && accounts.length > 0) {
-        setAccount(accounts[0]);
+        const addr = accounts[0];
+        if (!addr) return;
+        setAccount(addr);
 
         // Check USDC balance — balanceOf(address) selector = 0x70a08231
         try {
-          const balData = `0x70a08231${accounts[0].replace('0x', '').toLowerCase().padStart(64, '0')}`;
-          const result = await ethereum.request({
+          const balData = `0x70a08231${addr.replace('0x', '').toLowerCase().padStart(64, '0')}`;
+          const result = (await ethereum.request({
             method: 'eth_call',
             params: [{ to: USDC_ADDRESS, data: balData }, 'latest'],
-          });
+            // biome-ignore lint/suspicious/noExplicitAny: eth_call returns an untyped hex string; narrowed by the outer BigInt() below which throws on malformed input.
+          })) as any;
           // Raw USDC balance (6 decimals). Keep as bigint all the way to the
           // comparison — never round-trip through JS number.
           setUsdcBalance(BigInt(result));
@@ -402,9 +422,8 @@ function useWallet() {
           // Balance check failed, don't block the flow
         }
       }
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      setError(err?.message ?? 'Failed to connect wallet');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to connect wallet');
     } finally {
       setConnecting(false);
     }
@@ -430,8 +449,7 @@ function padAddress(addr: string): string {
 }
 
 async function sendUsdcToAgent(walletAccount: string, agentAddr: string): Promise<string | null> {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const ethereum = (window as any).ethereum;
+  const ethereum = getInjectedProvider();
   if (!ethereum) return null;
 
   // Transfer 5 USDC directly to the agent's address
@@ -439,7 +457,7 @@ async function sendUsdcToAgent(walletAccount: string, agentAddr: string): Promis
   const transferData =
     TRANSFER_SELECTOR + padAddress(agentAddr).slice(2) + REGISTRATION_AMOUNT.slice(2);
 
-  const txHash = await ethereum.request({
+  const txHash = (await ethereum.request({
     method: 'eth_sendTransaction',
     params: [
       {
@@ -448,7 +466,7 @@ async function sendUsdcToAgent(walletAccount: string, agentAddr: string): Promis
         data: transferData,
       },
     ],
-  });
+  })) as string;
 
   return txHash;
 }
@@ -549,9 +567,8 @@ export default function RegisterPage() {
     try {
       const hash = await sendUsdcToAgent(wallet.account, agentAddr);
       setTxHash(hash);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      setTxError(err?.message ?? 'Transaction failed');
+    } catch (err) {
+      setTxError(err instanceof Error ? err.message : 'Transaction failed');
     } finally {
       setTxSending(false);
     }

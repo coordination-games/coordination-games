@@ -1,8 +1,7 @@
 /** Props passed to a game's spectator view component. */
 export interface SpectatorViewProps {
-  /** Raw game state from the server (game-specific shape). */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  gameState: any;
+  /** Raw game state from the server (game-specific shape); narrowed at the per-game view boundary. */
+  gameState: unknown;
   /** Chat messages from the relay. */
   chatMessages: { from: string; message: string; timestamp: number }[];
   /** Map of agentId → display name. */
@@ -16,11 +15,9 @@ export interface SpectatorViewProps {
   /** Kill feed entries. */
   killFeed?: { turn: number; text: string }[];
   /** All replay snapshots (only set in replay mode). Each snapshot is self-contained. */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  replaySnapshots?: any[];
+  replaySnapshots?: unknown[];
   /** Previous snapshot for diffing (movement, kills, state changes). Null on first snapshot. */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  prevGameState?: any;
+  prevGameState?: unknown;
   /** Whether to animate the transition from prevGameState to gameState. False during scrubbing. */
   animate?: boolean;
   /**
@@ -28,9 +25,12 @@ export interface SpectatorViewProps {
    * WS lifecycle now lives in GamePage's `useSpectatorStream`; per-game
    * SpectatorViews must NOT open their own. In replay mode these are
    * undefined (replay state arrives via `gameState` / `replaySnapshots`).
+   *
+   * Typed as `unknown` here to keep `SpectatorPayload` out of this shared
+   * types file — CtL / OATHBREAKER views narrow it locally at the entry
+   * point.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: keeps SpectatorPayload import out of this shared types file; CtL/Oathbreaker views narrow it locally
-  liveSnapshot?: any;
+  liveSnapshot?: unknown;
   /** True while the live WS is OPEN; false during HTTP polling fallback. */
   liveIsLive?: boolean;
   /** Last live-stream error (transport-level), if any. */
@@ -40,8 +40,8 @@ export interface SpectatorViewProps {
 /** Props for a compact game card shown in lobby/game lists. */
 export interface GameCardProps {
   gameId: string;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  gameState: any;
+  /** Per-game state shape; cards narrow it at their entry point. */
+  gameState: unknown;
   handles: Record<string, string>;
   gameType: string;
   phase: string;
@@ -97,6 +97,6 @@ export interface SpectatorPlugin {
    * Required — the generic ReplayPage uses this to render the finish
    * badge without knowing the game's state shape.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: snapshot shape is per-game
-  getReplayChrome(snapshot: any): ReplayChrome;
+  /** Snapshot shape is per-game — plugins narrow via a type guard. */
+  getReplayChrome(snapshot: unknown): ReplayChrome;
 }

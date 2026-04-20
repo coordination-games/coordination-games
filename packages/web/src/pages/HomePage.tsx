@@ -65,7 +65,7 @@ const stagger = {
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: framer-motion's `ease` field is typed as the `Easing` union that rejects inline 4-tuple cubic-bezier literals without a widening cast.
   show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] as any } },
 };
 
@@ -115,8 +115,7 @@ export default function HomePage() {
       try {
         const games = await fetchGames();
         if (!cancelled) {
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-          const active = (games as any[]).filter((g: any) => !g.finished);
+          const active = games.filter((g) => !g.finished);
           setActiveCount(active.length);
         }
       } catch {}

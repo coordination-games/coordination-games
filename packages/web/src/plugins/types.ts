@@ -22,8 +22,8 @@ export type SlotName =
  */
 export interface RelayMessageView {
   type: string;
-  // biome-ignore lint/suspicious/noExplicitAny: wire payload is per-plugin; narrow at the consumer
-  data?: any;
+  /** Wire payload is per-plugin; narrow at the consumer. */
+  data?: unknown;
   sender?: string;
   timestamp?: number;
   scope?: { kind?: string; teamId?: string; recipientHandle?: string };

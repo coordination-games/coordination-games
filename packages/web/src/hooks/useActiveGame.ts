@@ -39,7 +39,7 @@ export function useActiveGame(): SpectatorPlugin {
       scope === 'lobby'
         ? fetchLobby(id).then((d) => d.gameType)
         : scope === 'game'
-          ? fetchGame(id).then((d) => d.gameType)
+          ? fetchGame(id).then((d) => (d as { gameType?: string } | null)?.gameType)
           : fetchReplay(id).then((d) => d.gameType);
     fetcher
       .then((gt) => {

@@ -29,8 +29,8 @@ interface LobbyAgent {
 type RelayScopeKind = 'all' | 'team' | 'dm';
 interface RelayMessage {
   type: string;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  data: any;
+  /** Per-type body shape is owned by the producing plugin; narrow on consume. */
+  data: unknown;
   scope: { kind: RelayScopeKind; teamId?: string; recipientHandle?: string };
   pluginId: string;
   sender: string;
@@ -44,10 +44,10 @@ interface LobbyState {
   currentPhase: {
     id: string; // e.g. 'team-formation', 'class-selection', 'open-queue'
     name: string; // e.g. 'Team Formation'
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    view: any; // phase-specific view data from phase.getView()
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    tools: any[]; // available tools in this phase
+    /** Phase-specific view data from phase.getView(); narrowed per-phase below. */
+    view: unknown;
+    /** Tool definitions available in this phase — opaque to the page. */
+    tools: unknown[];
   } | null;
   relay: RelayMessage[];
   phase: 'lobby' | 'in_progress' | 'finished';
@@ -62,15 +62,21 @@ interface LobbyState {
 // view shape: { validClasses: string[], classPicks: Record<string, string>, playerIds: string[] }
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function ClassSelectionPanel({ view, agents }: { view: any; agents: LobbyAgent[] }) {
+interface ClassSelectionView {
+  validClasses?: string[];
+  classPicks?: Record<string, string>;
+  playerIds?: string[];
+}
+
+function ClassSelectionPanel({ view, agents }: { view: unknown; agents: LobbyAgent[] }) {
   const classColors: Record<string, string> = {
     rogue: 'var(--color-forest)',
     knight: '#3a6aaa',
     mage: '#7a4aaa',
   };
-  const classPicks: Record<string, string> = view?.classPicks ?? {};
-  const playerIds: string[] = view?.playerIds ?? [];
+  const v = (view as ClassSelectionView | null | undefined) ?? {};
+  const classPicks: Record<string, string> = v.classPicks ?? {};
+  const playerIds: string[] = v.playerIds ?? [];
 
   return (
     <div className="space-y-4">
@@ -173,8 +179,7 @@ function phaseBadge(phase: string, currentPhaseId?: string) {
  */
 function payloadToLobbyState(payload: SpectatorPayload | undefined): LobbyState | null {
   if (!payload || payload.type !== 'state_update') return null;
-  // biome-ignore lint/suspicious/noExplicitAny: lobby state shape lives in this file's interface
-  const s = payload.state as any;
+  const s = payload.state as Partial<LobbyState> | null | undefined;
   if (!s?.lobbyId) return null;
   return {
     ...s,
@@ -304,7 +309,8 @@ export default function LobbyPage() {
 
   // Team formation view: { teams: [{id, members, invites}], unassigned, teamSize, numTeams }
   const teams: Array<{ id: string; members: string[]; invites: string[] }> = isTeamPhase
-    ? (phaseView?.teams ?? [])
+    ? ((phaseView as { teams?: Array<{ id: string; members: string[]; invites: string[] }> } | null)
+        ?.teams ?? [])
     : [];
 
   return (
@@ -406,11 +412,11 @@ export default function LobbyPage() {
       )}
 
       {/* Class selection phase (CtL) */}
-      {isClassSelection && phaseView && (
+      {isClassSelection && phaseView ? (
         <div className="rounded-lg parchment-strong p-4">
           <ClassSelectionPanel view={phaseView} agents={state.agents} />
         </div>
-      )}
+      ) : null}
 
       {/* Agents & Teams — shown during the lobby phase */}
       {state.phase === 'lobby' && (

@@ -15,8 +15,7 @@ import { useHexAnimations } from './useHexAnimations';
 // buildCtlSpectatorView in packages/games/capture-the-lobster/src/plugin.ts.
 // Kept as an open record to accept both /replay entries and WS envelopes
 // (which spread the snapshot plus type/gameType/handles/progressCounter).
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-type RawSnapshot = Record<string, any>;
+type RawSnapshot = Record<string, unknown>;
 
 type RewindState =
   | { mode: 'live' }
@@ -27,38 +26,93 @@ type RewindState =
 // Map server state -> frontend types (CtL-specific)
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function mapServerState(raw: any): SpectatorGameState | null {
-  if (!raw) return null;
-  const data = raw.data ?? raw;
+/**
+ * Loose shape the mapper walks — every field is optional because both the
+ * replay payload and the live WS envelope may be missing arbitrary parts.
+ * All narrowing happens here; downstream consumers see the strict
+ * `SpectatorGameState`.
+ */
+interface RawCtlStateLike {
+  tiles?: Array<{
+    q: number;
+    r: number;
+    type: 'ground' | 'wall' | 'base_a' | 'base_b';
+    unit?: {
+      id: string;
+      team: 'A' | 'B';
+      unitClass: 'rogue' | 'knight' | 'mage';
+      carryingFlag?: boolean;
+      alive?: boolean;
+    };
+    flag?: { team: 'A' | 'B' };
+  }>;
+  units?: Array<{
+    id: string;
+    team?: 'A' | 'B';
+    unitClass?: 'rogue' | 'knight' | 'mage';
+  }>;
+  kills?: Array<{
+    killerId: string;
+    victimId: string;
+    killerClass?: string;
+    killerUnitClass?: string;
+    killerTeam?: 'A' | 'B';
+    victimClass?: string;
+    victimUnitClass?: string;
+    victimTeam?: 'A' | 'B';
+    reason: string;
+    turn?: number;
+  }>;
+  turn?: number;
+  maxTurns?: number;
+  phase?: 'pre_game' | 'in_progress' | 'finished';
+  chatA?: SpectatorGameState['chatA'];
+  chatB?: SpectatorGameState['chatB'];
+  flagA?: { status?: string; carrier?: string };
+  flagB?: { status?: string; carrier?: string };
+  winner?: 'A' | 'B' | null;
+  mapRadius?: number;
+  visibleA?: string[];
+  visibleB?: string[];
+  visibleByUnit?: Record<string, string[]>;
+  handles?: Record<string, string>;
+  deathPositions?: Record<string, { q: number; r: number }>;
+}
+
+function mapServerState(raw: unknown): SpectatorGameState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const top = raw as { data?: unknown };
+  const dataCandidate = top.data ?? raw;
+  if (!dataCandidate || typeof dataCandidate !== 'object') return null;
+  const data = dataCandidate as RawCtlStateLike;
 
   if (!data.tiles || !Array.isArray(data.tiles)) return null;
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const tiles = data.tiles.map((t: any) => ({
-    q: t.q,
-    r: t.r,
-    type: t.type,
-    unit: t.unit
-      ? {
-          id: t.unit.id,
-          team: t.unit.team,
-          unitClass: t.unit.unitClass,
-          carryingFlag: t.unit.carryingFlag || false,
-          alive: t.unit.alive !== false,
-        }
-      : undefined,
-    flag: t.flag,
-  }));
+  const tiles: SpectatorGameState['tiles'] = data.tiles.map((t) => {
+    const base: SpectatorGameState['tiles'][number] = {
+      q: t.q,
+      r: t.r,
+      type: t.type,
+    };
+    if (t.unit) {
+      base.unit = {
+        id: t.unit.id,
+        team: t.unit.team,
+        unitClass: t.unit.unitClass,
+        carryingFlag: t.unit.carryingFlag || false,
+        alive: t.unit.alive !== false,
+      };
+    }
+    if (t.flag) base.flag = t.flag;
+    return base;
+  });
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const unitMap = new Map<string, any>();
+  const unitMap = new Map<string, { team?: 'A' | 'B'; unitClass?: string }>();
   for (const u of data.units ?? []) {
     unitMap.set(u.id, u);
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const kills: KillEvent[] = (data.kills ?? []).map((k: any) => {
+  const kills: KillEvent[] = (data.kills ?? []).map((k) => {
     const killer = unitMap.get(k.killerId);
     const victim = unitMap.get(k.victimId);
     return {
@@ -69,7 +123,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
       victimClass: victim?.unitClass ?? k.victimClass ?? k.victimUnitClass ?? 'unknown',
       victimTeam: victim?.team ?? k.victimTeam ?? 'B',
       reason: k.reason,
-      turn: k.turn ?? data.turn,
+      turn: k.turn ?? data.turn ?? 0,
     };
   });
 
@@ -81,7 +135,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
   const flagBStatus =
     flagB.status === 'carried' && flagB.carrier ? `Carried by ${flagB.carrier}` : 'At Base';
 
-  return {
+  const out: SpectatorGameState = {
     turn: data.turn ?? 0,
     maxTurns: data.maxTurns ?? 30,
     phase: data.phase ?? 'in_progress',
@@ -97,15 +151,12 @@ function mapServerState(raw: any): SpectatorGameState | null {
     visibleA: new Set(data.visibleA ?? []),
     visibleB: new Set(data.visibleB ?? []),
     visibleByUnit: Object.fromEntries(
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [
-        id,
-        new Set(hexes as string[]),
-      ]),
+      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]) => [id, new Set(hexes)]),
     ),
     handles: data.handles ?? {},
-    deathPositions: data.deathPositions ?? undefined,
   };
+  if (data.deathPositions) out.deathPositions = data.deathPositions;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +314,17 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   // `mapServerState` + the cache.
   // ---------------------------------------------------------------------------
 
-  const snapshot = isReplay ? undefined : liveSnapshot;
+  /**
+   * The live-mode spectator payload shape we actually touch. `SpectatorView`
+   * accepts `liveSnapshot` as `unknown` in the shared props (to keep the
+   * dependency graph one-way); narrow to the useful subset at this boundary.
+   */
+  interface LiveSnapshotLike {
+    type: 'state_update' | 'spectator_pending';
+    meta: { progressCounter: number | null; handles: Record<string, string> };
+    state: Record<string, unknown> | null;
+  }
+  const snapshot = isReplay ? undefined : (liveSnapshot as LiveSnapshotLike | undefined);
   const connected = !isReplay && (liveIsLive ?? false);
   const error = liveError ?? null;
 
@@ -284,10 +345,9 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     // change. This is a BOUNDARY adapter — once Phase 6 unifies the
     // SpectatorView API the cache can store payloads directly.
     const idx = snapshot.meta.progressCounter ?? 0;
-    // biome-ignore lint/suspicious/noExplicitAny: payload state is per-game
-    const stateAny = snapshot.state as any;
+    const stateObj: Record<string, unknown> = snapshot.state ?? {};
     const raw: RawSnapshot = {
-      ...stateAny,
+      ...stateObj,
       progressCounter: idx,
       handles: snapshot.meta.handles,
     };
@@ -305,9 +365,9 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     }
     // lobby/pre-game chat fields ride on the same state shape — pull
     // them through if the spectator state still exposes them.
-    if (Array.isArray(stateAny.lobbyChat)) setLobbyChat(stateAny.lobbyChat);
-    if (Array.isArray(stateAny.preGameChatA)) setPreGameChatA(stateAny.preGameChatA);
-    if (Array.isArray(stateAny.preGameChatB)) setPreGameChatB(stateAny.preGameChatB);
+    if (Array.isArray(stateObj.lobbyChat)) setLobbyChat(stateObj.lobbyChat);
+    if (Array.isArray(stateObj.preGameChatA)) setPreGameChatA(stateObj.preGameChatA);
+    if (Array.isArray(stateObj.preGameChatB)) setPreGameChatB(stateObj.preGameChatB);
   }, [isReplay, snapshot]);
 
   // ---------------------------------------------------------------------------

@@ -486,7 +486,7 @@ export default function HexGrid({
                       opacity={dim ? 0.3 : isDead ? 0.4 : 1}
                       style={{ cursor: onUnitClick ? 'pointer' : 'default' }}
                       onClick={(e) => {
-                        if (onUnitClick) {
+                        if (onUnitClick && u.id) {
                           e.stopPropagation();
                           onUnitClick(u.id, u.team);
                         }
@@ -544,7 +544,7 @@ export default function HexGrid({
                         style={{ pointerEvents: 'none' }}
                       >
                         {CLASS_LETTERS[u.unitClass]}
-                        {unitTeamIndex.get(u.id) ?? ''}
+                        {(u.id && unitTeamIndex.get(u.id)) ?? ''}
                       </text>
                       {/* Carrying flag indicator */}
                       {u.carryingFlag && (

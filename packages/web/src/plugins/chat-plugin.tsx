@@ -34,7 +34,8 @@ function extractChatMessages(relay: RelayMessageView[] | undefined): ChatMessage
   const out: ChatMessage[] = [];
   for (const m of relay) {
     if (m.type !== CHAT_RELAY_TYPE) continue;
-    const body = m.data?.body ?? m.data?.message;
+    const data = m.data as { body?: string; message?: string } | null | undefined;
+    const body = data?.body ?? data?.message;
     if (!body) continue;
     out.push({
       from: m.sender ?? 'unknown',

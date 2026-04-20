@@ -56,8 +56,8 @@ export interface RelayEnvelopeWire {
     | { kind: 'dm'; recipientHandle: string };
   turn: number | null;
   timestamp: number;
-  // biome-ignore lint/suspicious/noExplicitAny: per-type relay body shape is owned by the producing plugin
-  data: any;
+  /** Per-type relay body shape is owned by the producing plugin; narrow on consume. */
+  data: unknown;
 }
 
 export interface SpectatorPayloadMeta {

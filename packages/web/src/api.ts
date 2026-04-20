@@ -26,20 +26,19 @@ export interface GameSummary {
   players?: string[];
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export async function fetchLobbies(): Promise<any[]> {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  return request<any[]>('/lobbies');
+export async function fetchLobbies(): Promise<LobbySummary[]> {
+  return request<LobbySummary[]>('/lobbies');
 }
 
 export async function fetchGames(): Promise<GameSummary[]> {
   return request<GameSummary[]>('/games');
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export async function fetchGame(id: string): Promise<any> {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  return request<any>(`/games/${id}`);
+/**
+ * Game state payload shape is per-game; callers narrow at the SpectatorView boundary.
+ */
+export async function fetchGame(id: string): Promise<unknown> {
+  return request<unknown>(`/games/${id}`);
 }
 
 export interface ReplayData {
@@ -56,8 +55,8 @@ export interface ReplayData {
   teamMap: Record<string, string>;
   finished: boolean;
   progressCounter: number | null;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  snapshots: any[];
+  /** Per-game snapshot shape; consumers narrow at the replay-view boundary. */
+  snapshots: unknown[];
 }
 
 export async function fetchReplay(id: string): Promise<ReplayData> {
