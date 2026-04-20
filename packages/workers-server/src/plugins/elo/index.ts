@@ -91,8 +91,26 @@ export function clampOffset(raw: unknown): number {
   return Math.max(n, 0);
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: rows come back as plain objects from D1
-function rowToLeaderboard(r: any): EloLeaderboardRow {
+interface LeaderboardRawRow {
+  id: string;
+  handle: string;
+  elo: number;
+  games_played: number;
+  wins: number;
+}
+
+interface MatchRawRow {
+  id: string;
+  game_type: string;
+  team: string | null;
+  unit_class: string | null;
+  elo_before: number | null;
+  elo_after: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+function rowToLeaderboard(r: LeaderboardRawRow): EloLeaderboardRow {
   return {
     id: r.id,
     handle: r.handle,
@@ -102,8 +120,7 @@ function rowToLeaderboard(r: any): EloLeaderboardRow {
   };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: rows come back as plain objects from D1
-function rowToMatch(r: any): EloMatchRow {
+function rowToMatch(r: MatchRawRow): EloMatchRow {
   return {
     matchId: r.id,
     gameType: r.game_type,
@@ -151,8 +168,7 @@ export function createEloServerPlugin(): ServerPlugin<'d1'> {
       if (!db) throw new Error('elo plugin not initialised');
 
       if (name === 'leaderboard') {
-        // biome-ignore lint/suspicious/noExplicitAny: tagged-call args validated below
-        const a = (args ?? {}) as any;
+        const a = (args ?? {}) as { limit?: unknown; offset?: unknown };
         const limit = clampLimit(a.limit, DEFAULT_LEADERBOARD_LIMIT, MAX_LEADERBOARD_LIMIT);
         const offset = clampOffset(a.offset);
         const result = await db
@@ -160,16 +176,14 @@ export function createEloServerPlugin(): ServerPlugin<'d1'> {
             'SELECT id, handle, elo, games_played, wins FROM players ORDER BY elo DESC LIMIT ? OFFSET ?',
           )
           .bind(limit, offset)
-          // biome-ignore lint/suspicious/noExplicitAny: D1 .all<any>() shape
-          .all<any>();
+          .all<LeaderboardRawRow>();
         return result.results.map(rowToLeaderboard);
       }
 
       if (name === 'my-stats') {
         const playerId = playerIdFromViewer(viewer);
         if (!playerId) throw new EloAuthRequiredError(name);
-        // biome-ignore lint/suspicious/noExplicitAny: tagged-call args validated below
-        const a = (args ?? {}) as any;
+        const a = (args ?? {}) as { matchLimit?: unknown };
         const matchLimit = clampLimit(
           a.matchLimit,
           DEFAULT_RECENT_MATCH_LIMIT,
@@ -179,8 +193,7 @@ export function createEloServerPlugin(): ServerPlugin<'d1'> {
         const player = await db
           .prepare('SELECT id, handle, elo, games_played, wins FROM players WHERE id = ?')
           .bind(playerId)
-          // biome-ignore lint/suspicious/noExplicitAny: D1 .first<any>() shape
-          .first<any>();
+          .first<LeaderboardRawRow>();
         if (!player) return null;
 
         const matches = await db
@@ -194,8 +207,7 @@ export function createEloServerPlugin(): ServerPlugin<'d1'> {
               LIMIT ?`,
           )
           .bind(playerId, matchLimit)
-          // biome-ignore lint/suspicious/noExplicitAny: D1 .all<any>() shape
-          .all<any>();
+          .all<MatchRawRow>();
 
         const stats: EloPlayerStats = {
           ...rowToLeaderboard(player),

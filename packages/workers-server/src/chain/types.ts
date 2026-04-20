@@ -53,8 +53,7 @@ export interface GameSettlement {
   gameId: string;
   gameType: string;
   playerIds: string[];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  outcome: any;
+  outcome: unknown;
   movesRoot: string;
   configHash: string;
   turnCount: number;

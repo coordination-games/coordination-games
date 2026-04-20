@@ -38,8 +38,10 @@ export interface ServerPlugin<R extends CapName = never> {
 }
 
 interface RegisteredPlugin {
-  // biome-ignore lint/suspicious/noExplicitAny: heterogeneous plugin entries — each has its own R
-  plugin: ServerPlugin<any>;
+  // Heterogeneous entries: the runtime stores plugins with different `R`
+  // subsets, so we erase the generic at the collection boundary. Each
+  // plugin was already validated against its own `R` in `register()`.
+  plugin: ServerPlugin<CapName>;
   initialized: boolean;
 }
 
@@ -62,12 +64,16 @@ export class ServerPluginRuntime {
     }
     const subset = {} as Pick<Capabilities, R>;
     for (const cap of plugin.requires) {
-      // biome-ignore lint/suspicious/noExplicitAny: index assignment over discriminated key set
-      (subset as any)[cap] = this.caps[cap];
+      // Index assignment across a discriminated key set is safe — each
+      // iteration writes `subset[cap]` from `caps[cap]` at the same key.
+      (subset as Record<CapName, Capabilities[CapName]>)[cap] = this.caps[cap];
     }
     try {
       await plugin.init(subset, this.game);
-      this.plugins.set(plugin.id, { plugin, initialized: true });
+      this.plugins.set(plugin.id, {
+        plugin: plugin as unknown as ServerPlugin<CapName>,
+        initialized: true,
+      });
     } catch (err) {
       console.error(`[plugin-runtime] init failed for ${plugin.id}:`, err);
       throw err;

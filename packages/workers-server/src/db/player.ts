@@ -26,8 +26,19 @@ export class PlayerHandleTakenError extends Error {
   }
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export function rowToPlayer(row: any): Player {
+/** Shape of a raw `players` row as returned by D1. */
+export interface PlayerRow {
+  id: string;
+  handle: string;
+  wallet_address: string;
+  chain_agent_id: number | null;
+  elo: number;
+  games_played: number;
+  wins: number;
+  created_at: string;
+}
+
+export function rowToPlayer(row: PlayerRow): Player {
   return {
     id: row.id,
     handle: row.handle,
@@ -62,8 +73,7 @@ export async function resolvePlayer(
   const row = await db
     .prepare('SELECT * FROM players WHERE wallet_address = ? COLLATE NOCASE')
     .bind(addressLower)
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    .first<any>();
+    .first<PlayerRow>();
 
   if (row) {
     const player = rowToPlayer(row);
@@ -76,9 +86,9 @@ export async function resolvePlayer(
           .bind(hint.handle, player.id)
           .run();
         player.handle = hint.handle;
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        if (err.message?.includes('UNIQUE')) throw new PlayerHandleTakenError(hint.handle);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('UNIQUE')) throw new PlayerHandleTakenError(hint.handle);
         throw err;
       }
     }
@@ -117,15 +127,14 @@ export async function resolvePlayer(
       )
       .bind(playerId, addressLower, handle, chainAgentId, now)
       .run();
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
-    if (err.message?.includes('UNIQUE')) {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('UNIQUE')) {
       // Race condition: another request created the row — retry lookup
       const retryRow = await db
         .prepare('SELECT * FROM players WHERE wallet_address = ? COLLATE NOCASE')
         .bind(addressLower)
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-        .first<any>();
+        .first<PlayerRow>();
       if (retryRow) return { player: rowToPlayer(retryRow), created: false };
       // If still not found, the UNIQUE was on handle, not wallet_address
       throw new PlayerHandleTakenError(handle);

@@ -85,12 +85,9 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
       message,
       signature: signature as `0x${string}`,
     });
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
-    return Response.json(
-      { error: `Signature verification failed: ${err.message}` },
-      { status: 401 },
-    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return Response.json({ error: `Signature verification failed: ${msg}` }, { status: 401 });
   }
 
   if (!isValid) {
@@ -123,8 +120,7 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
         abi: registryAbi,
         functionName: 'nameToAgent',
         args: [nameKey],
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } as any);
+      });
 
       if (agentId === 0n) {
         return Response.json(
@@ -147,8 +143,7 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
         abi: erc8004Abi,
         functionName: 'ownerOf',
         args: [agentId],
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } as any)) as `0x${string}`;
+      })) as `0x${string}`;
 
       if (owner.toLowerCase() !== address.toLowerCase()) {
         return Response.json(
@@ -158,13 +153,10 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
       }
 
       console.log(`[auth] On-chain verified: "${name}" owned by ${address}`);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      console.error('[auth] On-chain verification failed:', err.message);
-      return Response.json(
-        { error: `On-chain verification failed: ${err.message}` },
-        { status: 500 },
-      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[auth] On-chain verification failed:', msg);
+      return Response.json({ error: `On-chain verification failed: ${msg}` }, { status: 500 });
     }
   }
 

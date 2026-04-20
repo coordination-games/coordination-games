@@ -88,8 +88,7 @@ const erc20Abi = [
 ] as const;
 
 export class OnChainRelay implements ChainRelay {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- viem 2.x PublicClient generics fight inline ABIs
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: viem 2.x PublicClient generics fight inline `as const` ABIs — every readContract/writeContract call through a typed client needs matching `TAbi`/`TFunctionName` parameters, which defeat the point of ad-hoc ABIs here; `any` keeps this file readable.
   private client: any;
 
   constructor(private env: Env) {
@@ -226,7 +225,7 @@ export class OnChainRelay implements ChainRelay {
         params.r as `0x${string}`,
         params.s as `0x${string}`,
       ],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem writeContract generics reject inline `as const` ABIs through the untyped `client: any` above; the ABI+args above are already compile-time validated by `as const`.
     } as any);
 
     // Wait for receipt
@@ -235,9 +234,10 @@ export class OnChainRelay implements ChainRelay {
     // Parse Registered event to get agentId
     // Event: Registered(address indexed user, uint256 indexed agentId, string name)
     const registeredTopic = keccak256(toBytes('Registered(address,uint256,string)'));
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const registeredLog = receipt.logs.find((l: any) => l.topics[0] === registeredTopic);
-    const agentId = registeredLog ? BigInt(registeredLog.topics[2]).toString() : '0';
+    const registeredLog = (receipt.logs as Array<{ topics: string[] }>).find(
+      (l) => l.topics[0] === registeredTopic,
+    );
+    const agentId = registeredLog ? BigInt(registeredLog.topics[2] ?? '0').toString() : '0';
 
     // Ensure player row exists and cache chain_agent_id
     await resolvePlayer(params.address, this, this.env.DB, {
@@ -355,7 +355,7 @@ export class OnChainRelay implements ChainRelay {
         onChainDeltas,
       ],
       nonce,
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem signTypedData generics reject inline `as const` types through the untyped client; the outer `as \`0x\${string}\`` confirms the signature shape.
     } as any)) as `0x${string}`;
 
     return { txHash, nonce };
@@ -376,13 +376,12 @@ export class OnChainRelay implements ChainRelay {
         status: 'success' | 'reverted';
         blockNumber: bigint;
       } | null;
-      // biome-ignore lint/suspicious/noExplicitAny: viem throws TransactionReceiptNotFoundError until mined
-    } catch (err: any) {
+    } catch (err) {
       // viem raises when the receipt isn't available yet; treat as pending
       // rather than letting the error bubble to the state machine as a
       // failure (which would burn a retry attempt for normal mempool delay).
-      const name = err?.name ?? '';
-      const msg = String(err?.message ?? err);
+      const name = err instanceof Error ? err.name : '';
+      const msg = err instanceof Error ? err.message : String(err);
       if (name.includes('TransactionReceiptNotFound') || msg.includes('could not be found')) {
         return { status: 'pending' };
       }
@@ -425,7 +424,7 @@ export class OnChainRelay implements ChainRelay {
       ] as const,
       functionName: 'mint',
       args: [BigInt(agentId), BigInt(permit.amount)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem writeContract generics reject inline `as const` ABIs through the untyped `client: any` above; the ABI+args above are already compile-time validated by `as const`.
     } as any);
     await this.client.waitForTransactionReceipt({ hash: txHash });
 
@@ -434,7 +433,7 @@ export class OnChainRelay implements ChainRelay {
       abi: creditsAbi,
       functionName: 'balances',
       args: [BigInt(agentId)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem readContract generics reject inline `as const` ABIs through the untyped `client: any`; the returned tuple is narrowed by the outer `as bigint`/`as [bigint, bigint]` cast.
     } as any)) as bigint;
     return { credits: credits.toString() };
   }
@@ -463,7 +462,7 @@ export class OnChainRelay implements ChainRelay {
       ] as const,
       functionName: 'requestBurn',
       args: [BigInt(agentId), BigInt(amount)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem writeContract generics reject inline `as const` ABIs through the untyped `client: any` above; the ABI+args above are already compile-time validated by `as const`.
     } as any);
     await this.client.waitForTransactionReceipt({ hash: txHash });
 
@@ -483,7 +482,7 @@ export class OnChainRelay implements ChainRelay {
       ] as const,
       functionName: 'pendingBurns',
       args: [BigInt(agentId)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem readContract generics reject inline `as const` ABIs through the untyped `client: any`; the returned tuple is narrowed by the outer `as [bigint, bigint]` cast.
     } as any)) as [bigint, bigint];
 
     return { pendingAmount: pending[0].toString(), executeAfter: Number(pending[1]) };
@@ -510,7 +509,7 @@ export class OnChainRelay implements ChainRelay {
       ] as const,
       functionName: 'executeBurn',
       args: [BigInt(agentId)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem writeContract generics reject inline `as const` ABIs through the untyped `client: any` above; the ABI+args above are already compile-time validated by `as const`.
     } as any);
     await this.client.waitForTransactionReceipt({ hash: txHash });
 
@@ -519,7 +518,7 @@ export class OnChainRelay implements ChainRelay {
       abi: creditsAbi,
       functionName: 'balances',
       args: [BigInt(agentId)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem readContract generics reject inline `as const` ABIs through the untyped `client: any`; the returned tuple is narrowed by the outer `as bigint`/`as [bigint, bigint]` cast.
     } as any)) as bigint;
     return { credits: credits.toString() };
   }
@@ -545,7 +544,7 @@ export class OnChainRelay implements ChainRelay {
       ] as const,
       functionName: 'cancelBurn',
       args: [BigInt(agentId)],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: viem writeContract generics reject inline `as const` ABIs through the untyped `client: any` above; the ABI+args above are already compile-time validated by `as const`.
     } as any);
     await this.client.waitForTransactionReceipt({ hash: txHash });
   }

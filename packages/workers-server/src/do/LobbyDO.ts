@@ -77,8 +77,7 @@ interface LobbyMeta {
   lobbyId: string;
   gameType: string;
   currentPhaseIndex: number;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  accumulatedMetadata: Record<string, any>;
+  accumulatedMetadata: Record<string, unknown>;
   /**
    * Unified `GamePhaseKind` per Phase 4.6:
    *   - 'lobby'       : pre-game lobby (was 'running' / 'starting')
@@ -109,8 +108,7 @@ export class LobbyDO extends DurableObject<Env> {
   private _loaded = false;
   private _meta: LobbyMeta | null = null;
   private _agents: AgentEntry[] = [];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
-  private _phaseState: any = null;
+  private _phaseState: unknown = null;
   private _relayClient: DOStorageRelayClient | null = null;
 
   /**
@@ -204,9 +202,9 @@ export class LobbyDO extends DurableObject<Env> {
       } else {
         await this.failLobby('Lobby timed out');
       }
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      await this.failLobby(`Phase timeout error: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.failLobby(`Phase timeout error: ${msg}`);
     }
   }
 
@@ -225,7 +223,9 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleCreate(request: Request): Promise<Response> {
     if (this._meta) return Response.json({ error: 'Lobby already created' }, { status: 409 });
 
-    const body = await this.parseJson(request);
+    const body = (await this.parseJson(request)) as
+      | Response
+      | { lobbyId?: string; gameType?: string; noTimeout?: boolean };
     if (body instanceof Response) return body;
 
     const { lobbyId, gameType, noTimeout } = body;
@@ -250,14 +250,13 @@ export class LobbyDO extends DurableObject<Env> {
     const firstPhase = phases[0];
 
     // Initialize first phase with empty player list
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    let phaseState: any;
+    let phaseState: unknown;
     try {
       // @ts-expect-error TS18048: 'firstPhase' is possibly 'undefined'. — TODO(2.3-followup)
       phaseState = firstPhase.init([], {});
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: `Phase init failed: ${err.message}` }, { status: 500 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: `Phase init failed: ${msg}` }, { status: 500 });
     }
 
     const now = Date.now();
@@ -323,7 +322,7 @@ export class LobbyDO extends DurableObject<Env> {
       );
     }
 
-    const body = await this.parseJson(request);
+    const body = (await this.parseJson(request)) as Response | { handle?: string; elo?: number };
     if (body instanceof Response) return body;
 
     const { handle, elo } = body;
@@ -365,9 +364,9 @@ export class LobbyDO extends DurableObject<Env> {
       try {
         const result = phase.handleJoin(this._phaseState, agentInfo, this.agentInfos());
         await this.processActionResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        await this.failLobby(`Phase handleJoin error: ${err.message}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.failLobby(`Phase handleJoin error: ${msg}`);
         return Response.json({ error: 'Lobby failed during join' }, { status: 500 });
       }
     }
@@ -388,7 +387,7 @@ export class LobbyDO extends DurableObject<Env> {
       );
     }
 
-    const body = await this.parseJson(request);
+    const body = (await this.parseJson(request)) as Response | { type?: string; payload?: unknown };
     if (body instanceof Response) return body;
 
     const { type, payload } = body;
@@ -408,9 +407,9 @@ export class LobbyDO extends DurableObject<Env> {
     let result: PhaseActionResult;
     try {
       result = phase.handleAction(this._phaseState, { type, playerId, payload }, this.agentInfos());
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: `Phase action error: ${err.message}` }, { status: 500 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: `Phase action error: ${msg}` }, { status: 500 });
     }
 
     if (result.error) {
@@ -427,7 +426,16 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleTool(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
 
-    const body = await this.parseJson(request);
+    const body = (await this.parseJson(request)) as
+      | Response
+      | {
+          relay?: {
+            type?: string;
+            pluginId?: string;
+            data?: unknown;
+            scope?: string;
+          };
+        };
     if (body instanceof Response) return body;
 
     const { relay } = body;
@@ -569,9 +577,9 @@ export class LobbyDO extends DurableObject<Env> {
       try {
         // @ts-expect-error TS18048: 'nextPhase' is possibly 'undefined'. — TODO(2.3-followup)
         this._phaseState = nextPhase.init(players, this._meta.accumulatedMetadata);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        await this.failLobby(`Phase init error: ${err.message}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.failLobby(`Phase init error: ${msg}`);
         return;
       }
 
@@ -630,9 +638,9 @@ export class LobbyDO extends DurableObject<Env> {
     let setup: { config: unknown; players: { id: string; team: string }[] };
     try {
       setup = plugin.createConfig(playerEntries, seed, metadata);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      await this.failLobby(`createConfig failed: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.failLobby(`createConfig failed: ${msg}`);
       return;
     }
 
@@ -662,8 +670,7 @@ export class LobbyDO extends DurableObject<Env> {
         }),
       );
       if (!createResp.ok) {
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-        const err = (await createResp.json()) as any;
+        const err = (await createResp.json()) as { error?: string };
         throw new Error(err.error ?? 'Game creation failed');
       }
 
@@ -698,10 +705,9 @@ export class LobbyDO extends DurableObject<Env> {
       console.log(
         `[LobbyDO] ${this._meta.gameType} game ${gameId} created from lobby ${this._meta.lobbyId}`,
       );
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
+    } catch (err) {
       console.error(`[LobbyDO] Game creation error:`, err);
-      await this.failLobby(err.message ?? String(err));
+      await this.failLobby(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -736,8 +742,7 @@ export class LobbyDO extends DurableObject<Env> {
       playerId === null ? { kind: 'spectator' } : { kind: 'player', playerId };
     const filteredRelay = await this.getRelayClient().visibleTo(viewer);
 
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const state: Record<string, any> = {
+    const state: Record<string, unknown> = {
       lobbyId: this._meta.lobbyId,
       gameType: this._meta.gameType,
       agents: this._agents.map((a) => ({
@@ -969,8 +974,7 @@ export class LobbyDO extends DurableObject<Env> {
     console.log(`[LobbyDO] ${this._meta.lobbyId} failed: ${error}`);
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  private async parseJson(request: Request): Promise<any | Response> {
+  private async parseJson(request: Request): Promise<unknown | Response> {
     try {
       return await request.json();
     } catch {
@@ -1012,8 +1016,7 @@ export class LobbyDO extends DurableObject<Env> {
       const [meta, agents, phaseState] = await Promise.all([
         this.ctx.storage.get<LobbyMeta>('meta'),
         this.ctx.storage.get<AgentEntry[]>('agents'),
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
-        this.ctx.storage.get<any>('phaseState'),
+        this.ctx.storage.get<unknown>('phaseState'),
       ]);
 
       // Drop the legacy single-array 'relay' key from pre-Phase-4.4 DOs.

@@ -138,8 +138,7 @@ export class GameRoomDO extends DurableObject<Env> {
   // In-memory cache — valid for the lifetime of this DO instance
   private _loaded = false;
   private _meta: GameMeta | null = null;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  private _plugin: CoordinationGame<any, any, any, any> | null = null;
+  private _plugin: CoordinationGame<unknown, unknown, unknown, unknown> | null = null;
   private _state: unknown = null;
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0 };
@@ -447,9 +446,8 @@ export class GameRoomDO extends DurableObject<Env> {
     );
     try {
       await this.applyActionInternal(null, payload.action);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      console.error(`[GameRoomDO] Deadline action failed:`, err?.stack ?? err);
+    } catch (err) {
+      console.error(`[GameRoomDO] Deadline action failed:`, err instanceof Error ? err.stack : err);
       // The popDue() already removed this entry, so we won't infinite-loop;
       // just rethrow for observability.
       throw err;
@@ -505,9 +503,9 @@ export class GameRoomDO extends DurableObject<Env> {
     let initialState: unknown;
     try {
       initialState = plugin.createInitialState(config);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: `createInitialState failed: ${err.message}` }, { status: 400 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: `createInitialState failed: ${msg}` }, { status: 400 });
     }
 
     // Authoritative: ctx.id.name IS the gameId. Body field is optional and
@@ -587,11 +585,11 @@ export class GameRoomDO extends DurableObject<Env> {
 
     try {
       return Response.json(await this.applyActionInternal(playerId, action));
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      console.error(`[GameRoomDO] Error in applyActionInternal:`, err?.stack ?? err);
+    } catch (err) {
+      const stack = err instanceof Error ? err.stack : undefined;
+      console.error(`[GameRoomDO] Error in applyActionInternal:`, stack ?? err);
       return Response.json(
-        { error: 'Internal server error', details: String(err), stack: err?.stack ?? '' },
+        { error: 'Internal server error', details: String(err), stack: stack ?? '' },
         { status: 500 },
       );
     }
@@ -637,8 +635,7 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin)
       return Response.json({ error: 'Game not found' }, { status: 404 });
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    if (!this._plugin.isOver(this._state as any)) {
+    if (!this._plugin.isOver(this._state)) {
       return Response.json({ error: 'Game not finished yet' }, { status: 409 });
     }
 
@@ -680,8 +677,7 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin)
       return Response.json({ error: 'Game not found' }, { status: 404 });
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    if (!this._plugin.isOver(this._state as any)) {
+    if (!this._plugin.isOver(this._state)) {
       return Response.json({ error: 'Game not finished yet' }, { status: 409 });
     }
 
@@ -868,8 +864,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this.fanRelayToPlugins(synthesized);
 
       return Response.json({ ok: true });
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
-    } catch (err: any) {
+    } catch (err) {
       console.error(`[GameRoomDO] Error in handleTool:`, err);
       return Response.json(
         { error: 'Internal server error', details: String(err) },
@@ -1026,8 +1021,7 @@ export class GameRoomDO extends DurableObject<Env> {
     }
     await Promise.all(storagePuts);
 
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const finished = this._plugin.isOver(this._state as any);
+    const finished = this._plugin.isOver(this._state);
     if (finished && !this._meta.finished) {
       this._meta.finished = true;
       await this.ctx.storage.put('meta', this._meta);
@@ -1086,8 +1080,7 @@ export class GameRoomDO extends DurableObject<Env> {
 
     try {
       // Build merkle + configHash
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const leaves: MerkleLeafData[] = this._actionLog.map((e: any, i: number) => ({
+      const leaves: MerkleLeafData[] = this._actionLog.map((e, i) => ({
         actionIndex: i,
         playerId: e.playerId,
         actionData: JSON.stringify(e.action),
@@ -1205,15 +1198,13 @@ export class GameRoomDO extends DurableObject<Env> {
     if (idx === null) return;
 
     const publicSnapshot = this._spectatorSnapshots[idx];
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    let summary: Record<string, any> = {};
+    let summary: Record<string, unknown> = {};
     if (typeof this._plugin.getSummaryFromSpectator === 'function') {
       summary = this._plugin.getSummaryFromSpectator(publicSnapshot);
     } else if (typeof this._plugin.getSummary === 'function') {
       // Plugins that omit getSummaryFromSpectator must have a spectator
       // shape that getSummary can read directly (same field names).
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      summary = this._plugin.getSummary(publicSnapshot as any);
+      summary = this._plugin.getSummary(publicSnapshot);
     }
     const json = JSON.stringify(summary);
     // Fire-and-forget: catch all errors to prevent unhandled rejections
@@ -1227,8 +1218,7 @@ export class GameRoomDO extends DurableObject<Env> {
         )
           .bind(this._meta?.gameId, idx, json)
           .run();
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
+      } catch (err) {
         // Auto-create table if it doesn't exist yet (migration not applied)
         if (String(err).includes('no such table')) {
           try {
@@ -1266,8 +1256,7 @@ export class GameRoomDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
 
   private async buildPlayerMessage(playerId: string | null): Promise<object> {
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const finished = this._plugin?.isOver(this._state as any);
+    const finished = this._plugin?.isOver(this._state);
     const visible = this._plugin?.getVisibleState(this._state, playerId);
     // Identity → viewer shape. Null = unauthenticated WS path that landed
     // here (handleSpectator goes through buildSpectatorMessage instead, but

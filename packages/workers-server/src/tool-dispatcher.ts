@@ -61,12 +61,10 @@ interface Validator {
   errors?: FieldError[];
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function _getValidator(schema: Record<string, any>): Validator {
+function _getValidator(schema: Record<string, unknown>): Validator {
   const validator = (value: unknown): boolean => {
     const errs = validateArgs(schema, value);
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    (validator as any).errors = errs;
+    (validator as Validator).errors = errs;
     return errs.length === 0;
   };
   return validator;
@@ -112,10 +110,31 @@ function typeOf(v: unknown): string {
   return typeof v;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function validateSchema(schema: any, value: unknown, path: string, errs: FieldError[]): void {
+/**
+ * Shape of a JSON-Schema node we accept. Hand-rolled against the keywords
+ * we actually implement below; unknown keys are ignored.
+ */
+interface SchemaNode {
+  type?: string | string[];
+  enum?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+  items?: SchemaNode;
+  required?: string[];
+  properties?: Record<string, SchemaNode>;
+  additionalProperties?: boolean;
+}
+
+function validateSchema(
+  schema: SchemaNode | undefined,
+  value: unknown,
+  path: string,
+  errs: FieldError[],
+): void {
   if (!schema || typeof schema !== 'object') return;
-  const expected: string | string[] | undefined = schema.type;
+  const expected = schema.type;
   if (expected) {
     const actual = typeOf(value);
     const matches = Array.isArray(expected)
@@ -173,10 +192,9 @@ function validateSchema(schema: any, value: unknown, path: string, errs: FieldEr
   }
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function validateArgs(schema: Record<string, any>, args: unknown): FieldError[] {
+function validateArgs(schema: Record<string, unknown>, args: unknown): FieldError[] {
   const errs: FieldError[] = [];
-  validateSchema(schema, args, '', errs);
+  validateSchema(schema as SchemaNode, args, '', errs);
   return errs;
 }
 
@@ -212,8 +230,9 @@ export interface SessionRegistry {
  * Build the static per-game view of all declared tools (game + every lobby
  * phase). Used by both the dispatcher and the admin introspection endpoint.
  */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export function buildDeclaredToolSurface(plugin: CoordinationGame<any, any, any, any>): {
+export function buildDeclaredToolSurface(
+  plugin: CoordinationGame<unknown, unknown, unknown, unknown>,
+): {
   gameTools: ToolDefinition[];
   lobbyPhaseTools: Record<string, ToolDefinition[]>;
   allTools: Map<string, ToolRegistryEntry>;
@@ -324,22 +343,23 @@ async function buildSessionRegistry(
     let stateResp: Response;
     try {
       stateResp = await stub.fetch(new Request('https://do/state', { method: 'GET' }));
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return errorResponse('DISPATCH_FAILED', `LobbyDO unreachable: ${err?.message ?? err}`, {});
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResponse('DISPATCH_FAILED', `LobbyDO unreachable: ${msg}`, {});
     }
     if (!stateResp.ok) {
       return errorResponse('DISPATCH_FAILED', `LobbyDO /state returned ${stateResp.status}`, {});
     }
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const state = (await stateResp.json()) as any;
+    const state = (await stateResp.json()) as {
+      currentPhase?: { id?: string; name?: string; tools?: ToolDefinition[] };
+    } | null;
     const phase = state?.currentPhase;
     if (!phase?.id) {
       return errorResponse('DISPATCH_FAILED', 'Lobby has no current phase', {});
     }
-    currentPhaseId = phase.id as string;
-    currentPhaseName = phase.name as string;
-    currentTools = Array.isArray(phase.tools) ? (phase.tools as ToolDefinition[]) : [];
+    currentPhaseId = phase.id;
+    currentPhaseName = phase.name ?? phase.id;
+    currentTools = Array.isArray(phase.tools) ? phase.tools : [];
   }
 
   return {
@@ -394,20 +414,16 @@ function logToolCall(entry: ToolCallLog): void {
 
 const PLUGIN_RELAY_TOOL_NAME = 'plugin_relay';
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function isPluginRelayCall(toolName: string, args: any): boolean {
+function isPluginRelayCall(toolName: string, args: unknown): boolean {
   if (toolName === PLUGIN_RELAY_TOOL_NAME) return true;
   // Convenience: if args carries a `relay` envelope with type+pluginId, treat
   // as a plugin relay. This is what client-side plugins produce via
   // `plugin.handleCall()`.
-  return !!(
-    args &&
-    typeof args === 'object' &&
-    args.relay &&
-    typeof args.relay === 'object' &&
-    args.relay.type &&
-    args.relay.pluginId
-  );
+  if (!args || typeof args !== 'object') return false;
+  const relay = (args as { relay?: unknown }).relay;
+  if (!relay || typeof relay !== 'object') return false;
+  const r = relay as { type?: unknown; pluginId?: unknown };
+  return !!(r.type && r.pluginId);
 }
 
 // ---------------------------------------------------------------------------
@@ -470,8 +486,7 @@ export async function dispatchToolCall(
 
   // ── Plugin relay shortcut (legacy ToolPlugin.handleCall relay post) ─────
   if (isPluginRelayCall(toolName, args)) {
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const relay = (args as any).relay;
+    const relay = (args as { relay?: { type?: string; pluginId?: string } }).relay;
     if (!relay?.type || !relay?.pluginId) {
       const res = errorResponse(
         'INVALID_ARGS',
@@ -509,8 +524,8 @@ export async function dispatchToolCall(
         latencyMs: Date.now() - started,
       });
       return resp;
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       logToolCall({
         sessionId,
         playerId,
@@ -520,13 +535,11 @@ export async function dispatchToolCall(
         validationResult: 'dispatch_failed',
         latencyMs: Date.now() - started,
         errorCode: 'DISPATCH_FAILED',
-        errorMessage: String(err?.message ?? err),
+        errorMessage: msg,
       });
-      return errorResponse(
-        'DISPATCH_FAILED',
-        `Plugin relay DO unreachable: ${err?.message ?? err}`,
-        { sessionId },
-      );
+      return errorResponse('DISPATCH_FAILED', `Plugin relay DO unreachable: ${msg}`, {
+        sessionId,
+      });
     }
   }
 
@@ -584,8 +597,7 @@ export async function dispatchToolCall(
   }
 
   // ── 5. inputSchema validation ───────────────────────────────────────────
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const fieldErrors = validateArgs(entry.tool.inputSchema as Record<string, any>, args);
+  const fieldErrors = validateArgs(entry.tool.inputSchema as Record<string, unknown>, args);
   if (fieldErrors.length > 0) {
     const res = errorResponse(
       'INVALID_ARGS',
@@ -639,8 +651,7 @@ export async function dispatchToolCall(
       const bodyClone = (await resp
         .clone()
         .json()
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-        .catch(() => null)) as any;
+        .catch(() => null)) as { success?: boolean; error?: string } | null;
       // GameRoomDO /action returns 500 on throw and 200 { success: false } on
       // validateAction rejection. Translate the rejection into VALIDATION_FAILED.
       if (resp.ok && bodyClone && bodyClone.success === false) {
@@ -721,8 +732,7 @@ export async function dispatchToolCall(
     const bodyClone = (await resp
       .clone()
       .json()
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      .catch(() => null)) as any;
+      .catch(() => null)) as { error?: string } | null;
 
     if (!resp.ok) {
       const msg = bodyClone?.error ?? `LobbyDO returned ${resp.status}`;
@@ -771,9 +781,8 @@ export async function dispatchToolCall(
       latencyMs: Date.now() - started,
     });
     return Response.json(bodyClone ?? { ok: true });
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
-    const msg = String(err?.message ?? err);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     logToolCall({
       sessionId,
       playerId,
@@ -850,8 +859,11 @@ export async function handleAdminSessionTools(
     const stub = getLobbyDO(env as Env, row.lobby_id);
     try {
       const stateResp = await stub.fetch(new Request('https://do/state', { method: 'GET' }));
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const state = stateResp.ok ? ((await stateResp.json()) as any) : null;
+      const state = stateResp.ok
+        ? ((await stateResp.json()) as {
+            currentPhase?: { id: string; name: string; tools?: ToolDefinition[] };
+          } | null)
+        : null;
       const phase = state?.currentPhase;
       currentPhase = phase
         ? { id: phase.id, name: phase.name, tools: phase.tools ?? [] }

@@ -75,8 +75,8 @@ export type SettlementSubmitPayload = {
   gameId: string;
   gameType: string;
   playerIds: string[];
-  // biome-ignore lint/suspicious/noExplicitAny: outcome shape is per-game; chain adapter encodes it as bytes
-  outcome: any;
+  /** Outcome shape is per-game; chain adapter encodes it as bytes via canonicalEncode. */
+  outcome: unknown;
   movesRoot: `0x${string}`;
   configHash: `0x${string}`;
   turnCount: number;

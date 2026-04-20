@@ -37,13 +37,17 @@ function withCors(response: Response): Response {
 // ---------------------------------------------------------------------------
 
 /** Parse JSON body from a request, returning the parsed object or an error Response. */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-async function parseJsonBody<T = any>(request: Request): Promise<T | Response> {
+async function parseJsonBody<T = unknown>(request: Request): Promise<T | Response> {
   try {
     return (await request.json()) as T;
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
+}
+
+/** Best-effort message extraction for an unknown thrown value. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Validate bearer token and return playerId, or return a 401 Response. */
@@ -115,10 +119,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const address = decodeURIComponent(relayStatusMatch[1]);
       const agent = await relay.getAgentByAddress(address);
       return Response.json(agent ?? { registered: false });
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
+    } catch (err) {
       console.error('[relay/status] Error:', err);
-      return Response.json({ error: err.message }, { status: 500 });
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
@@ -129,10 +132,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const name = decodeURIComponent(relayNameMatch[1]);
       const result = await relay.checkName(name);
       return Response.json(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
+    } catch (err) {
       console.error('[relay/check-name] Error:', err);
-      return Response.json({ error: err.message }, { status: 500 });
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
@@ -143,10 +145,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const agentId = decodeURIComponent(relayBalanceMatch[1]);
       const result = await relay.getBalance(agentId);
       return Response.json(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
+    } catch (err) {
       console.error('[relay/balance] Error:', err);
-      return Response.json({ error: err.message }, { status: 500 });
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
@@ -154,28 +155,48 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   const registerMatch = pathname === '/api/relay/register' && method === 'POST';
   if (registerMatch) {
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const body = (await request.json()) as any;
+      const body = (await request.json()) as Partial<{
+        name: string;
+        address: string;
+        agentURI: string;
+        permitDeadline: number;
+        v: number;
+        r: string;
+        s: string;
+      }>;
       const { name, address, agentURI, permitDeadline, v, r, s } = body;
-      if (!name || !address || !agentURI) {
+      if (
+        !name ||
+        !address ||
+        !agentURI ||
+        typeof permitDeadline !== 'number' ||
+        typeof v !== 'number' ||
+        typeof r !== 'string' ||
+        typeof s !== 'string'
+      ) {
         return Response.json(
-          { error: 'name, address, and agentURI are required' },
+          { error: 'name, address, agentURI, and permit (deadline/v/r/s) are required' },
           { status: 400 },
         );
       }
       const result = await relay.register({ name, address, agentURI, permitDeadline, v, r, s });
       return Response.json(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
   // POST /api/relay/topup
   if (pathname === '/api/relay/topup' && method === 'POST') {
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const body = (await request.json()) as any;
+      const body = (await request.json()) as {
+        agentId: string;
+        permitDeadline: number;
+        v: number;
+        r: string;
+        s: string;
+        amount: string;
+      };
       const result = await relay.topup(body.agentId, {
         deadline: body.permitDeadline,
         v: body.v,
@@ -184,48 +205,41 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         amount: body.amount,
       });
       return Response.json(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
   // POST /api/relay/burn-request
   if (pathname === '/api/relay/burn-request' && method === 'POST') {
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const body = (await request.json()) as any;
+      const body = (await request.json()) as { agentId: string; amount: string };
       const result = await relay.requestBurn(body.agentId, body.amount);
       return Response.json(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
   // POST /api/relay/burn-execute
   if (pathname === '/api/relay/burn-execute' && method === 'POST') {
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const body = (await request.json()) as any;
+      const body = (await request.json()) as { agentId: string };
       const result = await relay.executeBurn(body.agentId);
       return Response.json(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
   // POST /api/relay/burn-cancel
   if (pathname === '/api/relay/burn-cancel' && method === 'POST') {
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const body = (await request.json()) as any;
+      const body = (await request.json()) as { agentId: string };
       await relay.cancelBurn(body.agentId);
       return Response.json({ ok: true });
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
@@ -265,13 +279,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         ] as const,
         functionName: 'mint',
         args: [address as `0x${string}`, 100_000_000n],
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: viem writeContract requires a `chain` property even though the walletClient binds one; untyped-overload workaround
       } as any);
 
       return Response.json({ txHash, amount: '100000000' });
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return Response.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
   }
 
@@ -539,7 +552,11 @@ async function handleListLobbies(env: Env): Promise<Response> {
 }
 
 async function handleCreateLobby(request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
+  const body = await parseJsonBody<{
+    gameType?: string;
+    noTimeout?: boolean;
+    teamSize?: number;
+  }>(request);
   if (body instanceof Response) return body;
 
   // Default to the first registered game (matches the web shell's
@@ -550,10 +567,10 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   if (!defaultGameType) {
     return Response.json({ error: 'No games registered' }, { status: 500 });
   }
-  const gameType = (body?.gameType as string) ?? defaultGameType;
+  const gameType = body?.gameType ?? defaultGameType;
   const noTimeout = !!body?.noTimeout;
   // Broad bounds — LobbyDO enforces per-game limits via plugin.lobby.matchmaking
-  const teamSize = Math.min(20, Math.max(1, Math.floor((body?.teamSize as number) ?? 2)));
+  const teamSize = Math.min(20, Math.max(1, Math.floor(body?.teamSize ?? 2)));
 
   const lobbyId = crypto.randomUUID();
 
@@ -584,8 +601,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
       .bind(lobbyId)
       .run()
       .catch(() => {});
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const err = (await createResp.json()) as any;
+    const err = (await createResp.json()) as { error?: string };
     return Response.json(
       { error: err.error ?? 'Lobby creation failed' },
       { status: createResp.status },
@@ -670,7 +686,13 @@ async function ensureGameSummariesTable(env: Env): Promise<void> {
 }
 
 async function handleCreateGame(request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
+  const body = await parseJsonBody<{
+    gameType?: string;
+    config?: unknown;
+    playerIds?: unknown;
+    handleMap?: Record<string, string>;
+    teamMap?: Record<string, string>;
+  }>(request);
   if (body instanceof Response) return body;
 
   const { gameType, config, playerIds, handleMap, teamMap } = body ?? {};
@@ -700,8 +722,7 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
   );
 
   if (!createResp.ok) {
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const err = (await createResp.json()) as any;
+    const err = (await createResp.json()) as { error?: string };
     return Response.json(
       { error: err.error ?? 'Game creation failed' },
       { status: createResp.status },
@@ -760,7 +781,7 @@ export async function handlePlayerLobbyJoin(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  const body = await parseJsonBody(request);
+  const body = await parseJsonBody<{ lobbyId?: string; gameId?: string }>(request);
   if (body instanceof Response) return body;
 
   const lobbyId = body?.lobbyId ?? body?.gameId;
@@ -842,8 +863,7 @@ export async function handlePlayerLobbyJoin(
   if (!joinResp.ok) return joinResp;
 
   // Clone the response so we can inspect it and still return it
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const joinBody = (await joinResp.json()) as any;
+  const joinBody = (await joinResp.json()) as unknown;
 
   // Point the player's session at this lobby. Works for all phases — if the
   // join immediately transitioned the lobby into 'game' phase, the session
@@ -887,8 +907,7 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
   if (plugin.lobby?.phases) {
     for (const phase of plugin.lobby.phases) {
       if (phase.tools) {
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-        tools.push(...phase.tools.map((t: any) => t.name ?? t));
+        tools.push(...phase.tools.map((t) => t.name ?? String(t)));
       }
     }
   }
