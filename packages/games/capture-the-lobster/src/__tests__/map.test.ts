@@ -14,8 +14,8 @@ function bfsReachable(startKey: string, tiles: Map<string, TileType>): Set<strin
   const queue: string[] = [startKey];
   visited.add(startKey);
   while (queue.length > 0) {
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (current === undefined) break;
     const hex = stringToHex(current);
     for (const n of getNeighbors(hex)) {
       const key = hexToString(n);

@@ -64,8 +64,8 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(r2.error).toBeUndefined();
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const team = r2.state.teams.find((t) => t.id === teamId)!;
+    const team = r2.state.teams.find((t) => t.id === teamId);
+    if (!team) throw new Error(`expected team ${teamId}`);
     expect(team.members).toContain('alice');
     expect(team.members).toContain('bob');
     expect(team.invites).not.toContain('bob');

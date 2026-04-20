@@ -1,3 +1,4 @@
+import { mustFind } from '@coordination-games/engine';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   allMovesSubmitted,
@@ -96,17 +97,13 @@ describe('Game (pure functions)', () => {
       const state = createGameState(map, players);
 
       expect(state.units).toHaveLength(4);
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const a0 = state.units.find((u) => u.id === 'a0')!;
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const a1 = state.units.find((u) => u.id === 'a1')!;
+      const a0 = mustFind(state.units, (u) => u.id === 'a0');
+      const a1 = mustFind(state.units, (u) => u.id === 'a1');
       expect(hexEquals(a0.position, map.bases.A[0].spawns[0])).toBe(true);
       expect(hexEquals(a1.position, map.bases.A[0].spawns[1])).toBe(true);
 
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const b0 = state.units.find((u) => u.id === 'b0')!;
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const b1 = state.units.find((u) => u.id === 'b1')!;
+      const b0 = mustFind(state.units, (u) => u.id === 'b0');
+      const b1 = mustFind(state.units, (u) => u.id === 'b1');
       expect(hexEquals(b0.position, map.bases.B[0].spawns[0])).toBe(true);
       expect(hexEquals(b1.position, map.bases.B[0].spawns[1])).toBe(true);
     });
@@ -172,8 +169,7 @@ describe('Game (pure functions)', () => {
       state = submitMove(state, 'a0', ['N']).state;
       const { state: newState, record } = resolveTurn(state);
 
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const a0 = newState.units.find((u) => u.id === 'a0')!;
+      const a0 = mustFind(newState.units, (u) => u.id === 'a0');
       expect(hexEquals(a0.position, { q: 0, r: 1 })).toBe(true);
       expect(record.unitPositionsBefore.get('a0')).toEqual({ q: 0, r: 2 });
       expect(record.unitPositionsAfter.get('a0')).toEqual({ q: 0, r: 1 });
@@ -183,8 +179,7 @@ describe('Game (pure functions)', () => {
       const state = createInProgressState(map, makePlayers(1));
       const { state: newState } = resolveTurn(state);
 
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const a0 = newState.units.find((u) => u.id === 'a0')!;
+      const a0 = mustFind(newState.units, (u) => u.id === 'a0');
       expect(hexEquals(a0.position, map.bases.A[0].spawns[0])).toBe(true);
     });
 
@@ -231,8 +226,7 @@ describe('Game (pure functions)', () => {
 
       // Turn 0: mage dies, respawnTurn = 2
       state = resolveTurn(state).state;
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      let mage = state.units.find((u) => u.id === 'mage_b')!;
+      let mage = mustFind(state.units, (u) => u.id === 'mage_b');
       expect(mage.alive).toBe(false);
       expect(mage.respawnTurn).toBe(2);
       // Moved to spawn position immediately (for spectator visibility)
@@ -240,14 +234,12 @@ describe('Game (pure functions)', () => {
 
       // Turn 1: still dead
       state = resolveTurn(state).state;
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      mage = state.units.find((u) => u.id === 'mage_b')!;
+      mage = mustFind(state.units, (u) => u.id === 'mage_b');
       expect(mage.alive).toBe(false);
 
       // Turn 2: respawns
       state = resolveTurn(state).state;
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      mage = state.units.find((u) => u.id === 'mage_b')!;
+      mage = mustFind(state.units, (u) => u.id === 'mage_b');
       expect(mage.alive).toBe(true);
       expect(hexEquals(mage.position, map.bases.B[0].spawns[0])).toBe(true);
     });
@@ -276,8 +268,7 @@ describe('Game (pure functions)', () => {
       expect(record.flagEvents.some((e) => e.includes('picked up'))).toBe(true);
       expect(newState.flags.B[0].carried).toBe(true);
       expect(newState.flags.B[0].carrierId).toBe('fast');
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const unit = newState.units.find((u) => u.id === 'fast')!;
+      const unit = mustFind(newState.units, (u) => u.id === 'fast');
       expect(unit.carryingFlag).toBe(true);
     });
 

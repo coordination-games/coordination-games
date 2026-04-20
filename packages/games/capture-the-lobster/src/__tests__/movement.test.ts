@@ -25,8 +25,9 @@ function makeGrid(radius = 3): Set<string> {
 }
 
 function findResult(results: ReturnType<typeof resolveMovements>, unitId: string) {
-  // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-  return results.find((r) => r.unitId === unitId)!;
+  const r = results.find((x) => x.unitId === unitId);
+  if (!r) throw new Error(`expected movement result for ${unitId}`);
+  return r;
 }
 
 // ─── validatePath ───────────────────────────────────────────────────────────
