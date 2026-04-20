@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { ApiClient } from '../api-client.js';
 import { loadConfig } from '../config.js';
+import { formatCreditsDisplay, parseCreditsInput } from '../credits.js';
 import { exportKey, importKey, loadKey } from '../keys.js';
 
 export function registerWalletCommands(program: Command) {
@@ -31,8 +32,10 @@ export function registerWalletCommands(program: Command) {
 
         const data = await client.get(`/api/relay/balance/${status.agentId}`);
         process.stdout.write(`  Agent ID: ${status.agentId}\n`);
-        process.stdout.write(`  USDC:     ${data.usdc ?? 'N/A'}\n`);
-        process.stdout.write(`  Credits:  ${data.credits ?? 'N/A'}\n`);
+        // USDC is returned in raw 6-decimal units. Credits are also
+        // raw 6-decimal units on-chain; format both as whole-unit displays.
+        process.stdout.write(`  USDC:     ${formatCreditsDisplay(data.usdc)}\n`);
+        process.stdout.write(`  Credits:  ${formatCreditsDisplay(data.credits)}\n`);
         // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stdout.write(`  Server unreachable: ${err.message}\n`);
@@ -59,7 +62,9 @@ export function registerWalletCommands(program: Command) {
 
   program
     .command('withdraw <amount>')
-    .description('Request withdrawal of credits (two-step: request then execute after cooldown)')
+    .description(
+      'Request withdrawal of <amount> whole credits (two-step: request then execute after cooldown)',
+    )
     .option('--execute', 'Execute a pending withdrawal (skip request step)')
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     .action(async (amount: string, opts: any) => {
@@ -87,17 +92,20 @@ export function registerWalletCommands(program: Command) {
           });
           process.stdout.write(`\n  Withdrawal executed!\n`);
           process.stdout.write(`  Tx: ${result.txHash}\n`);
-          process.stdout.write(`  Remaining credits: ${result.credits}\n`);
+          process.stdout.write(`  Remaining credits: ${formatCreditsDisplay(result.credits)}\n`);
         } else {
-          // Request a new burn
-          const creditAmount = BigInt(Math.floor(parseFloat(amount) * 100_000_000));
+          // `amount` is a user-facing whole-credit value. Scale to raw
+          // 6-decimal on-chain units before hitting the contract.
+          const rawAmount = parseCreditsInput(amount);
           const result = await client.post('/api/relay/burn-request', {
             agentId: status.agentId,
-            amount: creditAmount.toString(),
+            amount: rawAmount.toString(),
           });
           const executeAfter = new Date(Number(result.executeAfter) * 1000);
-          process.stdout.write(`\n  Withdrawal requested: ${amount} USDC worth of credits\n`);
-          process.stdout.write(`  Pending amount: ${result.pendingAmount} credits\n`);
+          process.stdout.write(`\n  Withdrawal requested: ${amount} credits\n`);
+          process.stdout.write(
+            `  Pending amount: ${formatCreditsDisplay(result.pendingAmount)} credits\n`,
+          );
           process.stdout.write(`  Executable after: ${executeAfter.toISOString()}\n`);
           process.stdout.write(
             `\n  Run 'coordination withdraw ${amount} --execute' after cooldown.\n`,

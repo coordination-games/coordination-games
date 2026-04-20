@@ -6,6 +6,25 @@ import { API_BASE } from '../config.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Credits are stored on-chain with 6 decimals of precision (see
+// `packages/engine/src/money.ts`). The relay API returns raw units; divide
+// for display. The `web` package doesn't depend on `@coordination-games/engine`
+// (it's a thin UI over the HTTP API), so we mirror the constant here.
+const CREDIT_SCALE_DIGITS = 6;
+const CREDIT_SCALE_BIG = 10n ** BigInt(CREDIT_SCALE_DIGITS);
+
+function formatRawCreditsForDisplay(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
+  try {
+    const asBig = BigInt(raw);
+    // Drop the fractional component for the hero number; any remainder is
+    // tiny dust relative to whole-credit balances users actually hold.
+    return Number(asBig / CREDIT_SCALE_BIG);
+  } catch {
+    return null;
+  }
+}
+
 function truncateAddr(addr: string): string {
   if (addr.length <= 14) return addr;
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -305,7 +324,7 @@ function useRegistrationPoll(address: string | null) {
           setStatus('success');
           setResult({
             agentId: data.agentId,
-            credits: data.credits ?? 400,
+            credits: formatRawCreditsForDisplay(data.credits) ?? 400,
             name: data.name,
           });
         } else if (data.status === 'registering' || data.status === 'pending_relay') {

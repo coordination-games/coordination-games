@@ -10,7 +10,6 @@ export {
 } from './canonical-encoding.js';
 // Chat scope validation
 export { type ChatScopeKind, classifyScope, validateChatScope } from './chat-scope.js';
-
 // Merkle tree construction and verification
 export {
   buildActionMerkleTree,
@@ -23,6 +22,8 @@ export {
   type MerkleTree,
   verifyProof,
 } from './merkle.js';
+// Credit decimal scaling (6 decimals, matching USDC)
+export { CREDIT_DECIMALS, CREDIT_SCALE } from './money.js';
 // Built-in lobby phases
 export { OpenQueuePhase, type OpenQueueState } from './phases/open-queue.js';
 // Plugin loader and pipeline

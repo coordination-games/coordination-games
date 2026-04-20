@@ -13,6 +13,22 @@ import type {
   RegisterParams,
 } from './types.js';
 
+/**
+ * In-memory dev/test relay.
+ *
+ * MockRelay does NOT track credit balances: `getAgentByAddress` / `getBalance`
+ * always return `credits: '0'`, `topup` / `requestBurn` / `executeBurn` throw
+ * ("Credits not available in mock mode"), and `submit` is a no-op that
+ * discards the deltas after returning a fake tx hash. Because of that, the
+ * 6-decimal scaling applied in `GameRoomDO.kickOffSettlement` (see
+ * `CREDIT_SCALE` in `@coordination-games/engine`) has no observable effect
+ * here — scaled or unscaled, the numbers go nowhere.
+ *
+ * Consequence: in-memory mode stays internally consistent whether deltas are
+ * scaled or not, which is why the pre-scaling bug was silent. On-chain mode
+ * is the only path where the scale mismatch would corrupt balances, and
+ * that path is fixed at the settlement boundary.
+ */
 export class MockRelay implements ChainRelay {
   constructor(private db: D1Database) {}
 

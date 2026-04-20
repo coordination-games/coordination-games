@@ -4,10 +4,37 @@ Games cost credits to play. Credits map to `CoordinationCredits` contract (on-ch
 
 ## Entry and Payouts
 
-- Each game declares `entryCost` (credits per player).
+- Each game declares `entryCost` (credits per player, in **whole credits** — see "Decimal scaling" below).
 - **No upfront deduction** — credits are rebalanced at game end, not held in escrow. Withdrawal cooldown (`pendingBurns`) prevents flash-loan / rug attacks.
 - `computePayouts(outcome, playerIds, entryCost)` returns `Map<string, bigint>` of credit deltas. All settlement math is BigInt end-to-end per the Phase 3.3 number policy (`wiki/architecture/contracts.md`).
 - Server-side invariants checked before anchoring: `sum(deltas) === 0n` and every delta `≥ -entryCost` (no player loses more than their stake). `GameAnchor.settleGame` re-enforces zero-sum on-chain.
+
+## Decimal scaling
+
+Credits have **6 decimals** on-chain, matching USDC. Exported constants:
+
+```typescript
+// packages/engine/src/money.ts
+export const CREDIT_DECIMALS = 6;
+export const CREDIT_SCALE = 10n ** 6n; // 1_000_000n
+```
+
+- Plugin `entryCost` is declared in **whole credits** (e.g. CtL = 10, OATH = 1).
+- `GameRoomDO.kickOffSettlement` scales at the settlement boundary: `BigInt(plugin.entryCost) * CREDIT_SCALE`. The scaled value is what `computePayouts` consumes, what invariant checks (`sum === 0n`, `delta ≥ -entryCost`) run against, and what gets relayed to `settleGame` as int256 deltas.
+- Plugin `computePayouts` functions do **not** need to be scale-aware — they do proportional math and conservation; scale passes through from input to output.
+- Consumer-facing surfaces (`coga balance`, `coga status`, web register flow) divide by `CREDIT_SCALE` before display. User-typed burn amounts (`coga withdraw 100`) are multiplied by `CREDIT_SCALE` before hitting the contract.
+- `MockRelay` (in-memory mode) does not track balances at all — `getBalance` returns `'0'`, mint/burn throw, settlement `submit` is a no-op. Scaling is a silent no-op in that mode, which is why the bug was invisible until on-chain settlement landed.
+
+Worked example (CtL, `entryCost: 10`, Alice beats Bob):
+
+| Layer | Value |
+| --- | --- |
+| `plugin.entryCost` | `10` (number, whole credits) |
+| `GameRoomDO` after scaling | `10_000_000n` (bigint, raw units) |
+| `computePayouts` output | Alice `+10_000_000n`, Bob `-10_000_000n` |
+| `int256[]` to `settleGame` | `[10_000_000, -10_000_000]` |
+| Contract `balances` delta | +10_000_000 / -10_000_000 raw = +10 / -10 whole credits |
+| `coga balance` display | `Credits: 410` (for a 400-credit starting balance + 10) |
 
 ## Payout Models
 

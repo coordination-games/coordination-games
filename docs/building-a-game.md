@@ -436,7 +436,7 @@ Iterated prisoner's dilemma, FFA.
 
 ## Payouts
 
-Every game defines `entryCost` (credits per player) and `computePayouts(outcome, playerIds)`. Payouts must be zero-sum relative to the entry pool.
+Every game defines `entryCost` (whole credits per player — see `wiki/architecture/credit-economics.md` for the 6-decimal scale; the server scales at the settlement boundary, plugins stay in whole-unit-equivalent bigint math) and `computePayouts(outcome, playerIds, entryCost)`. Payouts must be zero-sum relative to the entry pool.
 
 **CtL:** Winners get +10, losers get -10, draws get 0. Simple binary outcome.
 

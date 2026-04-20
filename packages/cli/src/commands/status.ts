@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { ApiClient } from '../api-client.js';
 import { loadConfig, loadSession, saveSession } from '../config.js';
+import { formatCreditsDisplay } from '../credits.js';
 import { checkPermissions, loadKey } from '../keys.js';
 
 export function registerStatusCommand(program: Command) {
@@ -40,7 +41,7 @@ export function registerStatusCommand(program: Command) {
           }
           process.stdout.write(`  Agent ID: ${data.agentId}\n`);
           process.stdout.write(`  Name:     ${data.name}\n`);
-          process.stdout.write(`  Credits:  ${data.credits}\n`);
+          process.stdout.write(`  Credits:  ${formatCreditsDisplay(data.credits)}\n`);
         } else {
           process.stdout.write(`  Status:   Not registered\n`);
           process.stdout.write(`\n  Get started with: coordination check-name <your-name>\n`);

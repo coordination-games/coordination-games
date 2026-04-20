@@ -34,7 +34,12 @@ import type {
   RelayEnvelope,
   RelayScope,
 } from '@coordination-games/engine';
-import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
+import {
+  buildActionMerkleTree,
+  CREDIT_SCALE,
+  getGame,
+  validateChatScope,
+} from '@coordination-games/engine';
 import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
 import { SETTLEMENT_ALARM_KIND } from '../chain/SettlementStateMachine.js';
 import type { Env } from '../env.js';
@@ -1110,10 +1115,15 @@ export class GameRoomDO extends DurableObject<Env> {
           .join('')) as `0x${string}`;
 
       const outcome = this._plugin.getOutcome(this._state);
-      // Plugins still declare `entryCost` as `number` (a small constant per
-      // game type); settlement math is BigInt end-to-end per the Phase 3.3
-      // number policy. Convert at this single boundary.
-      const entryCost = BigInt(this._plugin.entryCost);
+      // Plugins declare `entryCost` as a `number` in WHOLE credits. The
+      // on-chain `CoordinationCredits` contract stores balances with 6
+      // decimals of precision (matching USDC — see
+      // `packages/engine/src/money.ts` and
+      // `wiki/architecture/credit-economics.md`). Scale to raw credit units
+      // here so `computePayouts` math, invariant checks, and the int256
+      // deltas we relay to the contract are all in the same (raw) space.
+      // MockRelay ignores deltas, so scaling is a no-op for in-memory mode.
+      const entryCost = BigInt(this._plugin.entryCost) * CREDIT_SCALE;
       const payouts = this._plugin.computePayouts(outcome, playerIds, entryCost);
 
       // Build delta array in playerIds order; default to 0n for any missing entry

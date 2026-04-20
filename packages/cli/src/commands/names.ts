@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { ApiClient } from '../api-client.js';
 import { loadConfig, loadSession, saveSession } from '../config.js';
+import { formatCreditsDisplay } from '../credits.js';
 import { loadKey } from '../keys.js';
 import { signPermit } from '../signing.js';
 
@@ -117,7 +118,7 @@ export function registerNameCommands(program: Command) {
         process.stdout.write(`\n  Registered!\n`);
         process.stdout.write(`  Name:     ${result.name}\n`);
         process.stdout.write(`  Agent ID: ${result.agentId}\n`);
-        process.stdout.write(`  Credits:  ${result.credits}\n\n`);
+        process.stdout.write(`  Credits:  ${formatCreditsDisplay(result.credits)}\n\n`);
         // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Registration failed: ${err.message}\n`);
