@@ -842,11 +842,16 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
 
     if (hasTeams) {
       // Map lobby team IDs (e.g. 'team_1', 'team_2') to CtL teams ('A', 'B')
-      const uniqueTeamIds = [...new Set(enrichedPlayers.map((p) => p.team).filter(Boolean))];
+      const uniqueTeamIds = [
+        ...new Set(
+          enrichedPlayers
+            .map((p) => p.team)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0),
+        ),
+      ];
       const teamIdMap: Record<string, 'A' | 'B'> = {};
       uniqueTeamIds.forEach((id, i) => {
-        // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-        teamIdMap[id!] = i === 0 ? 'A' : 'B';
+        teamIdMap[id] = i === 0 ? 'A' : 'B';
       });
 
       ctlPlayers = enrichedPlayers.map((p) => ({

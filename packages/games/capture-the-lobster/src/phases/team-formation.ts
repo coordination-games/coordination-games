@@ -6,12 +6,13 @@
  * Phase completes when `numTeams` teams of `teamSize` members exist.
  */
 
-import type {
-  AgentInfo,
-  LobbyPhase,
-  PhaseActionResult,
-  PhaseResult,
-  ToolDefinition,
+import {
+  type AgentInfo,
+  type LobbyPhase,
+  mustFind,
+  type PhaseActionResult,
+  type PhaseResult,
+  type ToolDefinition,
 } from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
@@ -335,8 +336,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
     if (toTeam && !fromTeam) {
       // Target is on a team, proposer is solo — invite proposer to target's team
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const team = newState.teams.find((t) => t.id === toTeam.id)!;
+      const team = mustFind(newState.teams, (t) => t.id === toTeam.id, 'toTeam');
       if (team.members.length >= this.teamSize) {
         return { state, error: { message: 'Team is full', status: 409 } };
       }
@@ -346,8 +346,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
     if (fromTeam && !toTeam) {
       // Proposer is on a team, target is solo — invite target
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const team = newState.teams.find((t) => t.id === fromTeam.id)!;
+      const team = mustFind(newState.teams, (t) => t.id === fromTeam.id, 'fromTeam');
       if (team.members.length >= this.teamSize) {
         return { state, error: { message: 'Team is full', status: 409 } };
       }
@@ -425,8 +424,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
       teams: state.teams.map((t) => ({ ...t, members: [...t.members], invites: [...t.invites] })),
     };
 
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const targetTeam = newState.teams.find((t) => t.id === team.id)!;
+    const targetTeam = mustFind(newState.teams, (t) => t.id === team.id, 'targetTeam');
     targetTeam.members = targetTeam.members.filter((id) => id !== playerId);
 
     if (targetTeam.members.length === 0) {

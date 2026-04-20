@@ -1,6 +1,7 @@
 // Procedural map generator for Capture the Lobster
 // Generates rotationally symmetric hex maps with bases, walls, and chokepoints
 
+import { mustGet } from '@coordination-games/engine';
 import {
   getNeighbors,
   type Hex,
@@ -83,8 +84,8 @@ function bfsReachable(
   const queue: string[] = [start];
   visited.add(start);
   while (queue.length > 0) {
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (current === undefined) break;
     const hex = stringToHex(current);
     for (const neighbor of getNeighbors(hex)) {
       const key = hexToString(neighbor);
@@ -417,8 +418,8 @@ function ensureConnectivity(
   visited.add(flagAKey);
 
   while (queue.length > 0) {
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (current === undefined) break;
     if (current === flagBKey) break;
     const hex = stringToHex(current);
     const neighbors = getNeighbors(hex);
@@ -455,8 +456,7 @@ function ensureConnectivity(
         wallKeys.delete(mirrorKey);
       }
     }
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    current = parent.get(current)!;
+    current = mustGet(parent, current, 'parent pointer');
   }
 
   // Verify connectivity after fix

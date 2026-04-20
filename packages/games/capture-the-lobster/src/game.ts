@@ -6,6 +6,7 @@
  * and passes it to these functions each turn.
  */
 
+import { mustFind } from '@coordination-games/engine';
 import { type CombatUnit, resolveCombat } from './combat.js';
 import { buildVisibleState, type FogUnit, type VisibleTile } from './fog.js';
 import { type Direction, type Hex, hexEquals, hexToString } from './hex.js';
@@ -322,8 +323,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
 
   // 4. Update unit positions
   for (const result of moveResults) {
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const unit = units.find((u) => u.id === result.unitId)!;
+    const unit = mustFind(units, (u) => u.id === result.unitId, 'moveResult.unitId');
     unit.position = { ...result.to };
 
     if (unit.carryingFlag) {
@@ -351,8 +351,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   // Capture post-move positions for dead units (before teleport to spawn)
   const deathPositions: Record<string, { q: number; r: number }> = {};
   for (const deadId of combatResult.deaths) {
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const unit = units.find((u) => u.id === deadId)!;
+    const unit = mustFind(units, (u) => u.id === deadId, 'deadId');
     deathPositions[deadId] = { q: unit.position.q, r: unit.position.r };
   }
 
@@ -364,8 +363,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   const spawnCountB = { current: 0 };
 
   for (const deadId of combatResult.deaths) {
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const unit = units.find((u) => u.id === deadId)!;
+    const unit = mustFind(units, (u) => u.id === deadId, 'deadId');
     unit.alive = false;
     // Respawn 2 turns later (skip next turn entirely)
     unit.respawnTurn = currentTurn + 2;
