@@ -296,8 +296,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // ------------------------------------------------------------------
   const pluginCallMatch = pathname.match(/^\/api\/plugin\/([^/]+)\/call$/);
   if (pluginCallMatch && method === 'POST') {
-    // biome-ignore lint/style/noNonNullAssertion: regex group always present when match() returns
-    const pluginId = pluginCallMatch[1]!;
+    const pluginId = pluginCallMatch[1];
+    if (!pluginId) {
+      return Response.json({ error: 'plugin id missing' }, { status: 400 });
+    }
     // Optional auth — leaderboard is public, my-stats requires playerId.
     const playerId = await validateBearerToken(request, env);
     try {

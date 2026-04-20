@@ -160,8 +160,8 @@ export class PluginLoader {
     let processed = 0;
 
     while (queue.length > 0) {
-      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-      const idx = queue.shift()!;
+      const idx = queue.shift();
+      if (idx === undefined) break;
       // @ts-expect-error TS2345: Argument of type 'PipelineStep | undefined' is not assignable to parameter of ty — TODO(2.3-followup)
       sorted.push(steps[idx]);
       processed++;

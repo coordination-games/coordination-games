@@ -10,6 +10,8 @@ export {
 } from './canonical-encoding.js';
 // Chat scope validation
 export { type ChatScopeKind, classifyScope, validateChatScope } from './chat-scope.js';
+// Runtime invariants / non-null helpers
+export { invariant, mustFind, mustGet } from './invariant.js';
 // Merkle tree construction and verification
 export {
   buildActionMerkleTree,
