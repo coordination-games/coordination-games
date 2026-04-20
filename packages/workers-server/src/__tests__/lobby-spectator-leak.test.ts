@@ -1,23 +1,18 @@
 /**
- * LobbyDO relay-leak invariant — privacy fix (Phase 0.1 of cleanup plan).
+ * LobbyDO relay-leak invariant.
  *
  * Spectator-facing emission boundaries (HTTP `/state` without an
  * `X-Player-Id` header, and the WS broadcast) must NOT leak relay
- * envelopes whose `scope !== 'all'`. Player-authenticated requests
+ * envelopes whose `scope.kind !== 'all'`. Player-authenticated requests
  * continue to see team-scoped + DM messages addressed to that player.
  *
- * The implementation under test is the inline filter pair in
- * `LobbyDO.ts` (`filterRelayForSpectator` + `filterRelayForPlayer`).
- * Phase 4.4 will collapse these into a shared `RelayClient.visibleTo`,
- * at which point this test moves with the helper.
- *
- * The DO is constructed via `Object.create(prototype)` so we can skip
- * the `DurableObject` ctor entirely — the filter logic only depends on
- * `_meta`, `_agents`, `_phaseState`, `_relay`, and the registered game
- * plugin's lobby phase. No `ctx` / `env` access on the paths exercised
- * here.
+ * Phase 4.4 replaced Phase 0.1's inline filter pair with the canonical
+ * `DOStorageRelayClient`. The envelopes now live in DO storage under
+ * `relay:<paddedIndex>` keys, so the fixture seeds them there and stubs
+ * `ctx.storage` with an in-memory map.
  */
 
+import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Stub the `cloudflare:workers` module so importing LobbyDO does not
@@ -57,15 +52,57 @@ const PLAYERS = [
   { id: 'p4', handle: 'dave' },
 ];
 
-/** Build a LobbyDO instance frozen mid-team-formation with two formed teams:
- *  team_1 = {p1, p2}, team_2 = {p3, p4}. Then plant a representative relay
- *  history covering all scopes so the filters have something to do. */
+const PADDED_INDEX_LEN = 10;
+
+function padded(index: number): string {
+  return `relay:${String(index).padStart(PADDED_INDEX_LEN, '0')}`;
+}
+
+/** Minimal in-memory DurableObjectStorage — only the methods the relay
+ *  client and LobbyDO hit in the spectator-leak code path. */
+function makeMemoryStorage(): DurableObjectStorage {
+  const map = new Map<string, unknown>();
+  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset under test
+  const stub: any = {
+    async get(keyOrKeys: string | string[]): Promise<unknown> {
+      if (Array.isArray(keyOrKeys)) {
+        const out = new Map<string, unknown>();
+        for (const k of keyOrKeys) if (map.has(k)) out.set(k, map.get(k));
+        return out;
+      }
+      return map.get(keyOrKeys);
+    },
+    async put(key: string, value: unknown): Promise<void> {
+      map.set(key, value);
+    },
+    async delete(key: string): Promise<boolean> {
+      return map.delete(key);
+    },
+    async list(opts?: { prefix?: string; start?: string }): Promise<Map<string, unknown>> {
+      const prefix = opts?.prefix ?? '';
+      const start = opts?.start;
+      const keys = [...map.keys()].sort();
+      const out = new Map<string, unknown>();
+      for (const k of keys) {
+        if (prefix && !k.startsWith(prefix)) continue;
+        if (start && k < start) continue;
+        out.set(k, map.get(k));
+      }
+      return out;
+    },
+  };
+  return stub as DurableObjectStorage;
+}
+
+/** Build a LobbyDO instance frozen mid-team-formation with two formed teams.
+ *  Seeds a representative relay log (public + both teams + DM) into the
+ *  stubbed DO storage so the real `DOStorageRelayClient` filters it. */
 function buildLobbyAtTeamFormation() {
-  // Skip the DurableObject constructor — we never touch ctx/env on the
-  // code paths under test.
+  const storage = makeMemoryStorage();
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const lobby: any = Object.create(LobbyDO.prototype);
   lobby._loaded = true;
+  lobby.ctx = { storage };
   lobby._meta = {
     lobbyId: 'lobby-test-1',
     gameType: 'capture-the-lobster',
@@ -79,24 +116,20 @@ function buildLobbyAtTeamFormation() {
     createdAt: 0,
   };
   lobby._agents = PLAYERS.map((p) => ({ id: p.id, handle: p.handle, elo: 1000, joinedAt: 0 }));
-  lobby._spectatorFilterDrops = 0;
 
   // Drive the real phase through propose+accept so getTeamForPlayer
   // returns truthful answers for both teams.
   let state = teamFormationPhase.init(PLAYERS, {});
-  // p1 invites p2 → team_1 created with p1 as member, p2 as invitee.
   state = teamFormationPhase.handleAction(
     state,
     { type: 'propose_team', playerId: 'p1', payload: { targetHandle: 'bob' } },
     PLAYERS,
   ).state;
-  // p2 accepts team_1.
   state = teamFormationPhase.handleAction(
     state,
     { type: 'accept_team', playerId: 'p2', payload: { teamId: 'team_1' } },
     PLAYERS,
   ).state;
-  // p3 invites p4 → team_2.
   state = teamFormationPhase.handleAction(
     state,
     { type: 'propose_team', playerId: 'p3', payload: { targetHandle: 'dave' } },
@@ -116,9 +149,9 @@ function buildLobbyAtTeamFormation() {
     throw new Error(`test setup: expected two distinct teams, got ${t1} / ${t2}`);
   }
 
-  // Seed a representative relay log: one public, one team-A, one team-B,
-  // and one DM-style envelope (scope.kind 'dm' goes to sender + recipient).
-  lobby._relay = [
+  // Seed a representative relay log directly in the storage stub. Four
+  // envelopes: public, team-A, team-B, and a DM from p1 to p1's handle.
+  const envs = [
     {
       index: 0,
       type: 'messaging',
@@ -160,6 +193,12 @@ function buildLobbyAtTeamFormation() {
       timestamp: 4,
     },
   ];
+  for (const env of envs) {
+    // Synchronous put — stub awaits internally, but we don't need to await
+    // here since the Map set is instant. Kept as await for parity.
+    storage.put(padded(env.index), env);
+  }
+  storage.put('relay:tip', envs.length);
 
   return lobby;
 }
@@ -180,8 +219,6 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
     for (const m of body.relay) {
       expect(m.scope.kind).toBe('all');
     }
-    // Observability: at least one non-'all' envelope was dropped.
-    expect(lobby._spectatorFilterDrops).toBeGreaterThan(0);
   });
 
   it('GET /state with X-Player-Id=p1 (team A) hides team-B envelopes', async () => {
@@ -197,8 +234,7 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
     const body: any = await resp.json();
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
     const scopes = body.relay.map((m: any) => `${m.scope.kind}:${m.sender}`);
-    // p1 must see: own public 'all' (sender p1), own team-A team msg (sender p1),
-    // own DM (sender p1). Must NOT see: p3's team-B message.
+    // p1 must see: own public 'all', own team-A, own DM. Must NOT see team-B.
     expect(scopes).toContain('all:p1');
     expect(scopes).toContain('team:p1');
     expect(scopes).toContain('dm:p1');
@@ -206,8 +242,6 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
     const teamFromP3 = body.relay.filter((m: any) => m.scope.kind === 'team' && m.sender === 'p3');
     expect(teamFromP3).toEqual([]);
-    // Spectator-drop counter is NOT incremented on the player path.
-    expect(lobby._spectatorFilterDrops).toBe(0);
   });
 
   it('GET /state with X-Player-Id=p3 (team B) hides team-A envelopes', async () => {

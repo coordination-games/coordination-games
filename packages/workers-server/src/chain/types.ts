@@ -39,10 +39,13 @@ export interface BurnRequest {
   executeAfter: number;
 }
 
-/** Credit delta for game settlement. */
+/** Credit delta for game settlement. Per the locked number policy
+ *  (`wiki/architecture/contracts.md`), all money values cross the chain
+ *  boundary as `bigint`. The on-chain `int256` ABI parameter accepts BigInt
+ *  natively via viem; the mock relay simply ignores the field. */
 export interface CreditDelta {
   agentId: string;
-  delta: number;
+  delta: bigint;
 }
 
 /** Game result for on-chain settlement. */

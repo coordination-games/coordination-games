@@ -9,8 +9,14 @@ export {
   getSpectatorView,
   validateAction,
 } from './game.js';
-export { OATHBREAKER_SYSTEM_ACTION_TYPES, OathbreakerPlugin } from './plugin.js';
+export {
+  distributePot,
+  OATHBREAKER_SYSTEM_ACTION_TYPES,
+  OathbreakerPlugin,
+  rankPlayersForSettlement,
+} from './plugin.js';
 export type {
+  CreditAmount,
   GameStartAction,
   OathAction,
   OathConfig,

@@ -28,14 +28,11 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import type {
-  CoordinationGame,
-  MerkleLeafData,
-  RelayEnvelope,
-  RelayScope,
-} from '@coordination-games/engine';
+import type { CoordinationGame, MerkleLeafData, RelayScope } from '@coordination-games/engine';
 import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
 import type { Env } from '../env.js';
+import type { SpectatorViewer } from '../plugins/capabilities.js';
+import { DOStorageRelayClient } from '../plugins/relay-client.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
 
@@ -117,11 +114,31 @@ export class GameRoomDO extends DurableObject<Env> {
   private _state: unknown = null;
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0, snapshots: [0] };
-  private _relay: RelayEnvelope[] = [];
+  private _relayClient: DOStorageRelayClient | null = null;
   private _spectatorSnapshots: unknown[] = []; // spectator view at each progress point
   // Last publicSnapshotIndex() value pushed to spectator WS sockets —
   // broadcastUpdates skips the push when the index hasn't advanced.
   private _lastSpectatorIdx: number | null = null;
+
+  /**
+   * Lazy accessor for the canonical relay client. Resolves team membership
+   * from `_meta.teamMap` (FFA → no team → team-scoped envelopes hidden) and
+   * display handle from `_meta.handleMap`.
+   */
+  private getRelayClient(): DOStorageRelayClient {
+    if (!this._relayClient) {
+      this._relayClient = new DOStorageRelayClient(this.ctx.storage, {
+        getTeamForPlayer: (playerId) => {
+          const t = this._meta?.teamMap[playerId];
+          return t && t !== 'FFA' ? t : null;
+        },
+        getHandleForPlayer: (playerId) => {
+          return this._meta?.handleMap[playerId] ?? null;
+        },
+      });
+    }
+    return this._relayClient;
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -266,7 +283,6 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.storage.put('state', initialState),
       this.ctx.storage.put('actionLog', []),
       this.ctx.storage.put('progress', progress),
-      this.ctx.storage.put('relay', []),
       this.ctx.storage.put('config', config),
       this.ctx.storage.put('snapshotCount', 1),
       this.ctx.storage.put('snapshot:0', initialSnapshot),
@@ -277,7 +293,6 @@ export class GameRoomDO extends DurableObject<Env> {
     this._state = initialState;
     this._actionLog = [];
     this._progress = progress;
-    this._relay = [];
     // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
     this._config = config;
     this._spectatorSnapshots = [initialSnapshot];
@@ -330,7 +345,7 @@ export class GameRoomDO extends DurableObject<Env> {
     const playerId = this.trustedPlayerId(request);
     if (playerId instanceof Response) return playerId;
 
-    return Response.json(this.buildPlayerMessage(playerId));
+    return Response.json(await this.buildPlayerMessage(playerId));
   }
 
   /**
@@ -481,7 +496,7 @@ export class GameRoomDO extends DurableObject<Env> {
       // Authenticated player connection
       this.ctx.acceptWebSocket(server, [playerId]);
       if (this._meta && this._plugin) {
-        server.send(JSON.stringify(this.buildPlayerMessage(playerId)));
+        server.send(JSON.stringify(await this.buildPlayerMessage(playerId)));
       }
     } else {
       // Unauthenticated spectator connection
@@ -546,21 +561,26 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     try {
-      const env: RelayEnvelope = {
-        index: this._relay.length,
+      const scope = resolveWireScope(
+        relayObj.scope as string | undefined,
+        playerId,
+        this._meta.teamMap,
+      );
+      const partial = {
         type: relayObj.type as string,
         data: relayObj.data ?? null,
-        scope: resolveWireScope(relayObj.scope as string | undefined, playerId, this._meta.teamMap),
+        scope,
         pluginId: relayObj.pluginId as string,
         sender: playerId,
         turn: this._progress.counter,
-        timestamp: Date.now(),
       };
-      this._relay.push(env);
-      await this.ctx.storage.put('relay', this._relay);
-      this.broadcastRelayMessage(env);
+      await this.getRelayClient().publish(partial);
+      // After publish the envelope's index is the relay tip - 1; we re-read
+      // it from a tiny visibleTo({admin}) below only when we need the full
+      // envelope to push. For the broadcast we just rebuild player messages.
+      await this.broadcastRelayMessage(scope);
 
-      return Response.json({ ok: true, index: env.index });
+      return Response.json({ ok: true });
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
     } catch (err: any) {
       console.error(`[GameRoomDO] Error in handleTool:`, err);
@@ -576,71 +596,51 @@ export class GameRoomDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Returns relay envelopes visible to a given player, based on scope:
-   *   { kind: 'all' }           → everyone
-   *   { kind: 'team', teamId }  → sender's teammates (same teamMap value)
-   *   { kind: 'dm', recipientHandle } → only sender + recipient
+   * Push a freshly-published relay envelope to the players who should
+   * receive it. We compute the recipient set from the envelope's scope
+   * (avoids shipping a full per-player rebuild to every WS connection in
+   * the game when only a DM/team subset is interested), then build and
+   * send a fresh player message for each recipient — the message
+   * embeds the player's full visible relay slice via `visibleTo`.
    */
-  private getVisibleRelay(playerId: string | null): RelayEnvelope[] {
-    if (!this._meta) return [];
-    const team = playerId ? this._meta.teamMap[playerId] : null;
-    const handle = playerId ? (this._meta.handleMap[playerId] ?? playerId) : null;
-
-    return this._relay.filter((env) => {
-      if (env.scope.kind === 'all') return true;
-
-      if (env.scope.kind === 'team') {
-        if (!playerId || !team) return false;
-        return env.scope.teamId === team;
-      }
-
-      // DM: visible to sender and recipient
-      if (playerId === env.sender) return true;
-      if (handle && env.scope.recipientHandle === handle) return true;
-      if (env.scope.recipientHandle === playerId) return true;
-      return false;
-    });
-  }
-
-  /**
-   * Resolve which playerIds should receive a relay envelope push.
-   * Same scoping rules as getVisibleRelay, but returns the set of pids to push to.
-   */
-  private resolveRelayRecipients(env: RelayEnvelope): string[] {
-    if (!this._meta) return [];
-    const { playerIds, teamMap, handleMap } = this._meta;
-    const scope = env.scope;
-
-    if (scope.kind === 'all') return playerIds;
-
-    if (scope.kind === 'team') {
-      const teamId = scope.teamId;
-      return playerIds.filter((pid) => teamMap[pid] === teamId);
-    }
-
-    // DM: find the recipient by playerId or handle
-    const target = scope.recipientHandle;
-    const recipientId = playerIds.find(
-      (pid) => pid === target || (handleMap[pid] ?? pid) === target,
-    );
-    // Sender always sees their own DM; recipient gets it too
-    const recipients = new Set<string>([env.sender]);
-    if (recipientId) recipients.add(recipientId);
-    return [...recipients];
-  }
-
-  private broadcastRelayMessage(env: RelayEnvelope): void {
-    const recipients = this.resolveRelayRecipients(env);
+  private async broadcastRelayMessage(scope: RelayScope): Promise<void> {
+    if (!this._meta) return;
+    const recipients = this.resolveRelayRecipients(scope);
     for (const pid of recipients) {
       const conns = this.ctx.getWebSockets(pid);
       if (conns.length === 0) continue;
-      const payload = JSON.stringify(this.buildPlayerMessage(pid));
+      const payload = JSON.stringify(await this.buildPlayerMessage(pid));
       for (const ws of conns) {
         try {
           ws.send(payload);
         } catch {}
       }
     }
+  }
+
+  /**
+   * Resolve recipient playerIds for a scope. `'all'` → every player.
+   * `'team'` → all players whose teamMap entry matches. `'dm'` → the
+   * recipient (matched by playerId OR display handle).
+   *
+   * Note: for DMs we deliberately do NOT include the sender here. The
+   * sender's own connection sees their just-published DM via the next
+   * /tool POST response or the next state read; pushing a duplicate
+   * here would only matter for the sender's own DM on a different tab
+   * (a WS push) — and that case is rare enough that we accept the
+   * trade-off in exchange for a simpler scope→pids mapping.
+   */
+  private resolveRelayRecipients(scope: RelayScope): string[] {
+    if (!this._meta) return [];
+    const { playerIds, teamMap, handleMap } = this._meta;
+    if (scope.kind === 'all') return playerIds;
+    if (scope.kind === 'team') {
+      return playerIds.filter((pid) => teamMap[pid] === scope.teamId);
+    }
+    // DM: find recipient by playerId or display handle.
+    const target = scope.recipientHandle;
+    const recipient = playerIds.find((pid) => pid === target || (handleMap[pid] ?? pid) === target);
+    return recipient ? [recipient] : [];
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -684,9 +684,14 @@ export class GameRoomDO extends DurableObject<Env> {
       this._progress.counter++;
       this._progress.snapshots.push(this._actionLog.length - 1);
 
-      // Capture spectator snapshot at this progress point
-      // Include all relay messages up to this turn for chat replay
-      const snapshotRelay = this._relay.filter(
+      // Capture spectator snapshot at this progress point.
+      // Include all 'all' + 'team' relay messages up to this turn for chat
+      // replay (DMs are excluded by definition — they're 1:1). We pull the
+      // full envelope set through the admin viewer (no filtering at the
+      // client) and filter scope here so the snapshot semantics match the
+      // pre-Phase-4.4 behavior exactly.
+      const allEnvelopes = await this.getRelayClient().visibleTo({ kind: 'admin' });
+      const snapshotRelay = allEnvelopes.filter(
         (m) => m.scope.kind === 'all' || m.scope.kind === 'team',
       );
       const snapshotCtx = { handles: this._meta.handleMap, relayMessages: snapshotRelay };
@@ -742,7 +747,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.waitUntil(this.settleOnChain());
     }
 
-    this.broadcastUpdates();
+    await this.broadcastUpdates();
 
     return { success: true, progressCounter: this._progress.counter };
   }
@@ -786,28 +791,38 @@ export class GameRoomDO extends DurableObject<Env> {
           .join('');
 
       const outcome = this._plugin.getOutcome(this._state);
-      const entryCost = this._plugin.entryCost;
+      // Plugins still declare `entryCost` as `number` (a small constant per
+      // game type); settlement math is BigInt end-to-end per the Phase 3.3
+      // number policy. Convert at this single boundary.
+      const entryCost = BigInt(this._plugin.entryCost);
       const payouts = this._plugin.computePayouts(outcome, playerIds, entryCost);
 
-      // Build delta array in playerIds order; default to 0 for any missing entry
-      const deltas: { agentId: string; delta: number }[] = playerIds.map((id) => ({
+      // Build delta array in playerIds order; default to 0n for any missing entry
+      const deltas: { agentId: string; delta: bigint }[] = playerIds.map((id) => ({
         agentId: id,
-        delta: payouts.get(id) ?? 0,
+        delta: payouts.get(id) ?? 0n,
       }));
 
-      // Invariant 1: zero-sum
-      const sum = deltas.reduce((acc, d) => acc + d.delta, 0);
-      if (sum !== 0) {
-        console.error(`[settle ${gameId}] skip: non-zero-sum deltas sum=${sum}`, deltas);
+      // Logs need string-rendered BigInt (BigInt isn't JSON-serializable).
+      const renderDeltas = () =>
+        deltas.map((d) => ({ agentId: d.agentId, delta: d.delta.toString() }));
+
+      // Invariant 1: zero-sum (BigInt-exact — no float rounding to mask bugs).
+      const sum = deltas.reduce((acc, d) => acc + d.delta, 0n);
+      if (sum !== 0n) {
+        console.error(
+          `[settle ${gameId}] skip: non-zero-sum deltas sum=${sum.toString()}`,
+          renderDeltas(),
+        );
         return;
       }
 
-      // Invariant 2: no player loses more than their stake
+      // Invariant 2: no player loses more than their stake.
       const floorViolation = deltas.find((d) => d.delta < -entryCost);
       if (floorViolation) {
         console.error(
-          `[settle ${gameId}] skip: delta ${floorViolation.delta} < -entryCost(${entryCost}) for ${floorViolation.agentId}`,
-          deltas,
+          `[settle ${gameId}] skip: delta ${floorViolation.delta.toString()} < -entryCost(${entryCost.toString()}) for ${floorViolation.agentId}`,
+          renderDeltas(),
         );
         return;
       }
@@ -852,7 +867,7 @@ export class GameRoomDO extends DurableObject<Env> {
       );
 
       console.log(
-        `[settle ${gameId}] ok tx=${receipt.txHash ?? 'mock'} deltas=${JSON.stringify(deltas)}`,
+        `[settle ${gameId}] ok tx=${receipt.txHash ?? 'mock'} deltas=${JSON.stringify(renderDeltas())}`,
       );
     } catch (err) {
       console.error(`[settle ${gameId}] failed:`, err);
@@ -931,11 +946,16 @@ export class GameRoomDO extends DurableObject<Env> {
   // Message builders
   // ─────────────────────────────────────────────────────────────────────────
 
-  private buildPlayerMessage(playerId: string | null): object {
+  private async buildPlayerMessage(playerId: string | null): Promise<object> {
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const finished = this._plugin?.isOver(this._state as any);
     const visible = this._plugin?.getVisibleState(this._state, playerId);
-    const relayMessages = this.getVisibleRelay(playerId);
+    // Identity → viewer shape. Null = unauthenticated WS path that landed
+    // here (handleSpectator goes through buildSpectatorMessage instead, but
+    // legacy callers may still pass null; treat as spectator).
+    const viewer: SpectatorViewer =
+      playerId === null ? { kind: 'spectator' } : { kind: 'player', playerId };
+    const relayMessages = await this.getRelayClient().visibleTo(viewer);
     // Tool discovery: mirror LobbyDO.buildState() currentPhase.tools shape so
     // CLI + MCP consume one uniform surface. Today every game has one game
     // phase — when GamePhase[] lands, this becomes the current GamePhase's
@@ -991,7 +1011,7 @@ export class GameRoomDO extends DurableObject<Env> {
     };
   }
 
-  private broadcastUpdates(): void {
+  private async broadcastUpdates(): Promise<void> {
     if (!this._meta || !this._plugin) return;
 
     try {
@@ -1011,7 +1031,7 @@ export class GameRoomDO extends DurableObject<Env> {
       for (const pid of this._meta.playerIds) {
         const playerConns = this.ctx.getWebSockets(pid);
         if (playerConns.length === 0) continue;
-        const playerMsg = JSON.stringify(this.buildPlayerMessage(pid));
+        const playerMsg = JSON.stringify(await this.buildPlayerMessage(pid));
         for (const ws of playerConns) {
           try {
             ws.send(playerMsg);
@@ -1032,20 +1052,24 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, actionLog, progress, relay, deadline, config, snapshotCount] =
-        await Promise.all([
+      const [meta, state, actionLog, progress, deadline, config, snapshotCount] = await Promise.all(
+        [
           this.ctx.storage.get<GameMeta>('meta'),
           this.ctx.storage.get<unknown>('state'),
           this.ctx.storage.get<ActionEntry[]>('actionLog'),
           this.ctx.storage.get<ProgressState>('progress'),
-          this.ctx.storage.get<RelayEnvelope[]>('relay'),
           this.ctx.storage.get<DeadlineEntry>('deadline'),
           this.ctx.storage.get<unknown>('config'),
           this.ctx.storage.get<number>('snapshotCount'),
-        ]);
+        ],
+      );
 
       // Drop the legacy prevProgressState key from older games.
       this.ctx.storage.delete('prevProgressState').catch(() => {});
+      // Phase 4.4: drop the legacy single-array 'relay' key. Envelopes
+      // now live under 'relay:<paddedIndex>' + 'relay:tip'. No migration
+      // (per the no-backwards-compat rule for pre-launch).
+      this.ctx.storage.delete('relay').catch(() => {});
 
       if (!meta) {
         this._loaded = true;
@@ -1078,7 +1102,6 @@ export class GameRoomDO extends DurableObject<Env> {
       this._state = state ?? null;
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0, snapshots: [0] };
-      this._relay = relay ?? [];
       // @ts-expect-error TS2339: Property '_deadlineMs' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
       this._deadlineMs = deadline?.deadlineMs ?? null;
       // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)

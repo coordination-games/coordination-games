@@ -10,14 +10,13 @@ import { OpenQueuePhase, registerGame } from '@coordination-games/engine';
 import {
   applyAction,
   createInitialState,
-  dollarPerPoint,
-  dollarValue,
   getAgentView,
   getSpectatorView,
   type SpectatorView,
   validateAction,
 } from './game.js';
 import {
+  type CreditAmount,
   DEFAULT_OATH_CONFIG,
   type OathConfig,
   type OathOutcome,
@@ -327,42 +326,54 @@ export const OathbreakerPlugin = {
   },
 
   getOutcome(state: OathState): OathOutcome {
-    const { players, totalPrinted, totalBurned, totalSupply } = state;
-    const dpp = dollarPerPoint(state.totalDollarsInvested, totalSupply);
+    const { players, totalPrinted, totalBurned } = state;
 
-    const rankings: OathPlayerRanking[] = players
-      .map((p) => {
-        const total = p.oathsKept + p.oathsBroken;
-        return {
-          id: p.id,
-          finalBalance: p.balance,
-          dollarValue: dollarValue(p.balance, state.totalDollarsInvested, totalSupply),
-          oathsKept: p.oathsKept,
-          oathsBroken: p.oathsBroken,
-          cooperationRate: total > 0 ? p.oathsKept / total : 1,
-        };
-      })
-      .sort((a, b) => b.dollarValue - a.dollarValue);
+    // Rank in canonical settlement order so index 0 = highest-rank player
+    // who collects the rounding remainder per the locked policy.
+    const rankings: OathPlayerRanking[] = rankPlayersForSettlement(
+      players.map((p) => ({
+        id: p.id,
+        finalBalance: Math.max(0, Math.floor(p.balance)),
+        oathsKept: p.oathsKept,
+        oathsBroken: p.oathsBroken,
+      })),
+      state.config.playerIds,
+    );
 
     return {
       rankings,
-      dollarPerPoint: dpp,
       roundsPlayed: state.round,
-      totalPrinted,
-      totalBurned,
-      finalSupply: totalSupply,
+      totalPrinted: Math.max(0, Math.floor(totalPrinted)),
+      totalBurned: Math.max(0, Math.floor(totalBurned)),
+      finalSupply: rankings.reduce((s, r) => s + r.finalBalance, 0),
     };
   },
 
   computePayouts(
     outcome: OathOutcome,
     playerIds: string[],
-    entryCost: number,
-  ): Map<string, number> {
-    const payouts = new Map<string, number>();
+    entryCost: CreditAmount,
+  ): Map<string, CreditAmount> {
+    const potTotal = entryCost * BigInt(playerIds.length);
+    // Re-rank against this exact playerIds order so tie-breakers are anchored
+    // in lobby join order (the order the engine handed us).
+    const ranked = rankPlayersForSettlement(
+      outcome.rankings.map((r) => ({
+        id: r.id,
+        finalBalance: r.finalBalance,
+        oathsKept: r.oathsKept,
+        oathsBroken: r.oathsBroken,
+      })),
+      playerIds,
+    );
+    const shares = distributePot(potTotal, ranked);
+
+    const payouts = new Map<string, CreditAmount>();
     for (const id of playerIds) {
-      const ranking = outcome.rankings.find((r) => r.id === id);
-      payouts.set(id, ranking ? ranking.dollarValue - entryCost : 0);
+      const share = shares.get(id);
+      // Players outside the ranking (shouldn't happen — getOutcome iterates
+      // state.players which mirrors playerIds) are treated as zero share.
+      payouts.set(id, (share ?? 0n) - entryCost);
     }
     return payouts;
   },
@@ -385,6 +396,100 @@ export const OathbreakerPlugin = {
     };
   },
 };
+
+// ---------------------------------------------------------------------------
+// Settlement helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Sort players into the canonical settlement order:
+ *   1. floored balance, descending (highest first)
+ *   2. join order — index in `joinOrder` ascending (earliest joined first)
+ *   3. playerId lexicographic ascending (final tiebreaker)
+ *
+ * Index 0 of the returned array is the "highest-rank player" who receives
+ * the pot rounding remainder per `wiki/architecture/credit-economics.md`.
+ *
+ * Players whose ids are absent from `joinOrder` are treated as having
+ * joined "after" everyone in `joinOrder` (index = +Infinity), then fall
+ * through to the lex tiebreaker. This is a defensive guard — in practice
+ * the engine guarantees `state.players[i].id ∈ state.config.playerIds`.
+ */
+export function rankPlayersForSettlement(
+  rankings: OathPlayerRanking[],
+  joinOrder: readonly string[],
+): OathPlayerRanking[] {
+  const joinIndex = new Map<string, number>();
+  for (let i = 0; i < joinOrder.length; i++) {
+    // biome-ignore lint/style/noNonNullAssertion: index is in [0, length)
+    joinIndex.set(joinOrder[i]!, i);
+  }
+  const indexOf = (id: string): number => joinIndex.get(id) ?? Number.POSITIVE_INFINITY;
+
+  return [...rankings].sort((a, b) => {
+    if (a.finalBalance !== b.finalBalance) return b.finalBalance - a.finalBalance;
+    const ai = indexOf(a.id);
+    const bi = indexOf(b.id);
+    if (ai !== bi) return ai - bi;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
+/**
+ * Distribute `potTotal` (BigInt credits) across `ranked` players in proportion
+ * to their floored balances. Each share is the floor of
+ *   `(potTotal * BigInt(balance)) / BigInt(totalSupply)`,
+ * and the rounding remainder (`potTotal - sum(floors)`) is added to
+ * `ranked[0]` — the highest-rank player per `rankPlayersForSettlement`.
+ *
+ * Edge cases:
+ * - `ranked.length === 0` → empty map (caller's responsibility).
+ * - `totalSupply === 0` (everyone bankrupt) → entire pot goes to `ranked[0]`.
+ *   This preserves zero-sum: `sum(shares) === potTotal` always.
+ * - `potTotal === 0n` → every share is 0; remainder is 0; nothing to allocate.
+ */
+export function distributePot(
+  potTotal: CreditAmount,
+  ranked: OathPlayerRanking[],
+): Map<string, CreditAmount> {
+  const shares = new Map<string, CreditAmount>();
+  if (ranked.length === 0) return shares;
+
+  const totalSupply = ranked.reduce((s, p) => s + p.finalBalance, 0);
+
+  // No supply → the highest-rank player gets the whole pot. (Without this
+  // guard we'd divide by zero. With this guard zero-sum holds: the only
+  // entry in `shares` sums to potTotal.)
+  if (totalSupply <= 0) {
+    for (const p of ranked) shares.set(p.id, 0n);
+    if (potTotal !== 0n) {
+      // biome-ignore lint/style/noNonNullAssertion: ranked.length > 0 checked above
+      shares.set(ranked[0]!.id, potTotal);
+    }
+    return shares;
+  }
+
+  const totalSupplyBig = BigInt(totalSupply);
+  let distributed = 0n;
+  for (const p of ranked) {
+    const f = (potTotal * BigInt(p.finalBalance)) / totalSupplyBig;
+    shares.set(p.id, f);
+    distributed += f;
+  }
+
+  const remainder = potTotal - distributed;
+  if (remainder !== 0n) {
+    // BigInt division floors toward -∞ for negative numerators in some langs,
+    // but `potTotal` here is always ≥ 0 and `finalBalance` is ≥ 0, so
+    // `distributed ≤ potTotal` always holds → `remainder ≥ 0`. Defensive:
+    // we still allocate any non-zero remainder to the highest-rank player.
+    // biome-ignore lint/style/noNonNullAssertion: ranked.length > 0 checked above
+    const winnerId = ranked[0]!.id;
+    // biome-ignore lint/style/noNonNullAssertion: winner was just inserted
+    shares.set(winnerId, shares.get(winnerId)! + remainder);
+  }
+  return shares;
+}
 
 // Self-register with the engine's game registry
 registerGame(OathbreakerPlugin);

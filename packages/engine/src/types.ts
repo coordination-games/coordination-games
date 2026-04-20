@@ -145,8 +145,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    * Credit payouts from outcome. Must be zero-sum and no single player delta may
    * be more negative than -entryCost (a player never loses more than their stake).
    * The framework re-validates both invariants before anchoring on-chain.
+   *
+   * All money values are `bigint` per the locked number policy
+   * (`wiki/architecture/contracts.md`). Plugins MUST floor any divisions so the
+   * result is integer-valued and deterministic.
    */
-  computePayouts(outcome: TOutcome, playerIds: string[], entryCost: number): Map<string, number>;
+  computePayouts(outcome: TOutcome, playerIds: string[], entryCost: bigint): Map<string, bigint>;
 
   /** Lobby configuration. */
   readonly lobby?: GameLobbyConfig;

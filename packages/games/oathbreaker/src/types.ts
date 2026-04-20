@@ -199,14 +199,30 @@ export interface OathState {
 // Outcome
 // ---------------------------------------------------------------------------
 
+/**
+ * BigInt money type for OATHBREAKER payouts. All settlement math (entryCost
+ * pot, per-player payouts, deltas) goes through this type. Rationale: float
+ * division (the old `dollarPerPoint = totalDollarsInvested / totalSupply`)
+ * tripped the GameRoomDO zero-sum invariant and is rejected by canonicalEncode
+ * (Phase 3.3). The unit is "credits" (whatever the smallest indivisible unit
+ * of `entryCost` is — currently 1 credit per player).
+ */
+export type CreditAmount = bigint;
+
 export interface OathOutcome {
-  /** Final rankings sorted by dollar value (descending). */
+  /**
+   * Final rankings, sorted in canonical settlement order:
+   *   1. floored balance, descending (highest first)
+   *   2. join order (joinedAt index in `state.config.playerIds`), ascending
+   *   3. playerId, lexicographic ascending
+   *
+   * Index 0 is the "highest-rank player" who receives the pot rounding
+   * remainder per `wiki/architecture/credit-economics.md`.
+   */
   rankings: OathPlayerRanking[];
-  /** Dollar value per point at game end. */
-  dollarPerPoint: number;
   /** Total rounds played. */
   roundsPlayed: number;
-  /** Economy summary. */
+  /** Economy summary — floored to integers for canonicalEncode safety. */
   totalPrinted: number;
   totalBurned: number;
   finalSupply: number;
@@ -214,10 +230,8 @@ export interface OathOutcome {
 
 export interface OathPlayerRanking {
   id: string;
+  /** Floored final point balance — used for pot distribution. */
   finalBalance: number;
-  /** Dollar value of final balance. Above entry = profit, below = loss. */
-  dollarValue: number;
   oathsKept: number;
   oathsBroken: number;
-  cooperationRate: number;
 }

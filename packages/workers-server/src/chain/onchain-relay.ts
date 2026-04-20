@@ -271,11 +271,12 @@ export class OnChainRelay implements ChainRelay {
       onChainPlayers.push(BigInt(row.chain_agent_id));
     }
 
-    // Build on-chain deltas (parallel to onChainPlayers)
+    // Build on-chain deltas (parallel to onChainPlayers). Deltas are already
+    // BigInt — viem's int256 binding consumes BigInt directly.
     const onChainDeltas = deltas.map((d) => {
       const idx = result.playerIds.indexOf(d.agentId);
       if (idx === -1) throw new Error(`Delta for unknown player ${d.agentId}`);
-      return BigInt(d.delta);
+      return d.delta;
     });
 
     const gameIdBytes = keccak256(toBytes(result.gameId)) as `0x${string}`;

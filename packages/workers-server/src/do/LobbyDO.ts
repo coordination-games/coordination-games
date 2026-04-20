@@ -29,11 +29,11 @@ import type {
   LobbyPhase,
   PhaseActionResult,
   PhaseResult,
-  RelayEnvelope,
   RelayScope,
 } from '@coordination-games/engine';
 import { getGame, validateChatScope } from '@coordination-games/engine';
 import type { Env } from '../env.js';
+import { DOStorageRelayClient } from '../plugins/relay-client.js';
 
 // Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
@@ -95,10 +95,30 @@ export class LobbyDO extends DurableObject<Env> {
   private _agents: AgentEntry[] = [];
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
   private _phaseState: any = null;
-  private _relay: RelayEnvelope[] = [];
-  // Counter for observability — number of non-'all' envelopes filtered out
-  // of a spectator-bound payload since this DO instance was loaded.
-  private _spectatorFilterDrops = 0;
+  private _relayClient: DOStorageRelayClient | null = null;
+
+  /**
+   * Lazy accessor — constructs the canonical relay client on first use.
+   * Both publish paths (handleTool, processActionResult) and read paths
+   * (buildStateForViewer, broadcastUpdate) go through this. The team
+   * resolver consults the current phase's `getTeamForPlayer`; the handle
+   * resolver looks up `_agents`.
+   */
+  private getRelayClient(): DOStorageRelayClient {
+    if (!this._relayClient) {
+      this._relayClient = new DOStorageRelayClient(this.ctx.storage, {
+        getTeamForPlayer: (playerId) => {
+          const phase = this.getCurrentPhase();
+          if (!phase?.getTeamForPlayer) return null;
+          return phase.getTeamForPlayer(this._phaseState, playerId) ?? null;
+        },
+        getHandleForPlayer: (playerId) => {
+          return this._agents.find((a) => a.id === playerId)?.handle ?? null;
+        },
+      });
+    }
+    return this._relayClient;
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -111,7 +131,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       await this.ensureLoaded();
-      return this.handleWebSocket();
+      return await this.handleWebSocket();
     }
 
     // Create is allowed before loading (it's the initializer)
@@ -230,7 +250,6 @@ export class LobbyDO extends DurableObject<Env> {
     };
     this._agents = [];
     this._phaseState = phaseState;
-    this._relay = [];
 
     await this.saveState();
     if (deadlineMs && !noTimeout) {
@@ -244,7 +263,7 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleGetState(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
     const playerId = this.headerPlayerId(request);
-    return Response.json(this.buildStateForViewer(playerId));
+    return Response.json(await this.buildStateForViewer(playerId));
   }
 
   /** X-Player-Id header. Absent = spectator/system. Never read from body or URL. */
@@ -276,7 +295,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     // Idempotent — don't add twice
     if (this._agents.find((a) => a.id === playerId)) {
-      return Response.json({ ok: true, ...this.buildStateForViewer(playerId) });
+      return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
     }
 
     const agent: AgentEntry = { id: playerId, handle, elo: elo ?? 1000, joinedAt: Date.now() };
@@ -301,10 +320,10 @@ export class LobbyDO extends DurableObject<Env> {
     }
 
     await this.saveState();
-    this.broadcastUpdate();
+    await this.broadcastUpdate();
 
     console.log(`[LobbyDO] ${handle} joined lobby ${this._meta.lobbyId}`);
-    return Response.json({ ok: true, ...this.buildStateForViewer(playerId) });
+    return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
   }
 
   private async handleAction(request: Request): Promise<Response> {
@@ -347,9 +366,9 @@ export class LobbyDO extends DurableObject<Env> {
 
     await this.processActionResult(result);
     await this.saveState();
-    this.broadcastUpdate();
+    await this.broadcastUpdate();
 
-    return Response.json({ ok: true, ...this.buildStateForViewer(playerId) });
+    return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
   }
 
   private async handleTool(request: Request): Promise<Response> {
@@ -387,21 +406,17 @@ export class LobbyDO extends DurableObject<Env> {
     const senderTeam = phaseForScope?.getTeamForPlayer?.(this._phaseState, playerId) ?? null;
     const resolvedScope = resolveWireScope(relay.scope, senderTeam);
 
-    // Store relay envelope
-    const env: RelayEnvelope = {
-      index: this._relay.length,
+    await this.getRelayClient().publish({
       type: relay.type,
       data: relay.data,
       scope: resolvedScope,
       pluginId: relay.pluginId,
       sender: playerId,
       turn: null,
-      timestamp: Date.now(),
-    };
-    this._relay.push(env);
+    });
 
     await this.saveState();
-    this.broadcastUpdate();
+    await this.broadcastUpdate();
     return Response.json({ ok: true });
   }
 
@@ -414,7 +429,7 @@ export class LobbyDO extends DurableObject<Env> {
     } catch {}
     await this.saveState();
     await this.updateLobbyPhaseInD1();
-    this.broadcastUpdate();
+    await this.broadcastUpdate();
     for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
       try {
         ws.close(1000, 'Lobby disbanded');
@@ -423,14 +438,14 @@ export class LobbyDO extends DurableObject<Env> {
     return Response.json({ ok: true });
   }
 
-  private handleWebSocket(): Response {
+  private async handleWebSocket(): Promise<Response> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
     if (this._meta) {
       // WS connections are unauthenticated spectators — always use the
       // spectator filter for the initial payload.
-      server.send(JSON.stringify(this.buildStateForViewer(null)));
+      server.send(JSON.stringify(await this.buildStateForViewer(null)));
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -444,16 +459,15 @@ export class LobbyDO extends DurableObject<Env> {
 
     // Buffer any relay envelopes from the phase
     if (result.relay) {
+      const client = this.getRelayClient();
       for (const r of result.relay) {
-        this._relay.push({
-          index: this._relay.length,
+        await client.publish({
           type: r.type,
           data: r.data,
           scope: r.scope,
           pluginId: r.pluginId,
           sender: 'system',
           turn: null,
-          timestamp: Date.now(),
         });
       }
     }
@@ -520,7 +534,7 @@ export class LobbyDO extends DurableObject<Env> {
 
       await this.saveState();
       await this.updateLobbyPhaseInD1();
-      this.broadcastUpdate();
+      await this.broadcastUpdate();
 
       // @ts-expect-error TS18048: 'nextPhase' is possibly 'undefined'. — TODO(2.3-followup)
       console.log(`[LobbyDO] ${this._meta.lobbyId} → phase "${nextPhase.id}"`);
@@ -623,7 +637,7 @@ export class LobbyDO extends DurableObject<Env> {
       this._meta.phase = 'game';
       await this.saveState();
       await this.updateLobbyPhaseInD1();
-      this.broadcastUpdate();
+      await this.broadcastUpdate();
       console.log(
         `[LobbyDO] ${this._meta.gameType} game ${gameId} created from lobby ${this._meta.lobbyId}`,
       );
@@ -643,21 +657,20 @@ export class LobbyDO extends DurableObject<Env> {
    * means an unauthenticated spectator (HTTP `/state` without `X-Player-Id`,
    * or any WS connection — WS has no auth surface).
    *
-   * Routes the relay through one of two filters:
-   *  - spectator filter: only `scope: 'all'` envelopes
-   *  - player filter: `all` + own messages + same-team `team` + DMs to me
+   * Relay filtering is delegated entirely to the canonical
+   * `DOStorageRelayClient.visibleTo(viewer)` — Phase 0.1's inline
+   * `filterRelayForSpectator` / `filterRelayForPlayer` helpers are gone.
    */
-  private buildStateForViewer(playerId: string | null): object {
+  private async buildStateForViewer(playerId: string | null): Promise<object> {
     if (!this._meta) return { error: 'Lobby not found' };
 
     const plugin = getGame(this._meta.gameType);
     const phases = plugin?.lobby?.phases ?? [];
     const currentPhase = phases[this._meta.currentPhaseIndex];
 
-    const filteredRelay =
-      playerId === null
-        ? this.filterRelayForSpectator(this._relay)
-        : this.filterRelayForPlayer(this._relay, playerId, currentPhase);
+    const viewer: import('../plugins/capabilities.js').SpectatorViewer =
+      playerId === null ? { kind: 'spectator' } : { kind: 'player', playerId };
+    const filteredRelay = await this.getRelayClient().visibleTo(viewer);
 
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const state: Record<string, any> = {
@@ -687,65 +700,12 @@ export class LobbyDO extends DurableObject<Env> {
     return state;
   }
 
-  /** Spectator filter — only public (`scope.kind === 'all'`) envelopes survive. */
-  private filterRelayForSpectator(relay: RelayEnvelope[]): RelayEnvelope[] {
-    const out: RelayEnvelope[] = [];
-    let dropped = 0;
-    for (const m of relay) {
-      if (m.scope.kind === 'all') {
-        out.push(m);
-      } else {
-        dropped++;
-      }
-    }
-    if (dropped > 0) {
-      this._spectatorFilterDrops += dropped;
-      // Periodic counter log — keeps observability cheap. We log on every
-      // call that drops anything; volume is bounded by chat activity.
-      console.log(
-        `[LobbyDO] spectator filter dropped ${dropped} non-'all' envelope(s) ` +
-          `(lobby ${this._meta?.lobbyId}, total drops since load: ${this._spectatorFilterDrops})`,
-      );
-    }
-    return out;
-  }
-
-  /** Player filter — `all` + own + same-team + DMs addressed to this player. */
-  private filterRelayForPlayer(
-    relay: RelayEnvelope[],
-    playerId: string,
-    currentPhase?: LobbyPhase,
-  ): RelayEnvelope[] {
-    return relay.filter((m) => this.isRelayVisible(m, playerId, currentPhase));
-  }
-
-  private isRelayVisible(msg: RelayEnvelope, playerId: string, currentPhase?: LobbyPhase): boolean {
-    if (msg.scope.kind === 'all') return true;
-    if (msg.sender === playerId) return true;
-
-    if (msg.scope.kind === 'team') {
-      const team = msg.scope.teamId;
-      const playerTeam = currentPhase?.getTeamForPlayer?.(this._phaseState, playerId);
-      // If the phase doesn't model teams at all, fall back to broadcasting team
-      // messages — preserves prior behaviour.
-      if (!currentPhase?.getTeamForPlayer) return true;
-      return playerTeam != null && playerTeam === team;
-    }
-
-    if (msg.scope.kind === 'dm') {
-      const handle = this._agents.find((a) => a.id === playerId)?.handle;
-      return msg.scope.recipientHandle === playerId || msg.scope.recipientHandle === handle;
-    }
-
-    return false;
-  }
-
-  private broadcastUpdate(): void {
+  private async broadcastUpdate(): Promise<void> {
     if (!this._meta) return;
     // WS connections are unauthenticated spectators — broadcast the
     // spectator-filtered payload to every connection. (If WS auth lands
     // later, switch to per-connection per-viewer filtering here.)
-    const msg = JSON.stringify(this.buildStateForViewer(null));
+    const msg = JSON.stringify(await this.buildStateForViewer(null));
     for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
       try {
         ws.send(msg);
@@ -779,7 +739,7 @@ export class LobbyDO extends DurableObject<Env> {
     } catch {}
     await this.saveState();
     await this.updateLobbyPhaseInD1();
-    this.broadcastUpdate();
+    await this.broadcastUpdate();
     console.log(`[LobbyDO] ${this._meta.lobbyId} failed: ${error}`);
   }
 
@@ -816,7 +776,6 @@ export class LobbyDO extends DurableObject<Env> {
       this.ctx.storage.put('meta', this._meta),
       this.ctx.storage.put('agents', this._agents),
       this.ctx.storage.put('phaseState', this._phaseState),
-      this.ctx.storage.put('relay', this._relay),
     ]);
   }
 
@@ -824,18 +783,22 @@ export class LobbyDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, agents, phaseState, relay] = await Promise.all([
+      const [meta, agents, phaseState] = await Promise.all([
         this.ctx.storage.get<LobbyMeta>('meta'),
         this.ctx.storage.get<AgentEntry[]>('agents'),
         // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
         this.ctx.storage.get<any>('phaseState'),
-        this.ctx.storage.get<RelayEnvelope[]>('relay'),
       ]);
+
+      // Drop the legacy single-array 'relay' key from pre-Phase-4.4 DOs.
+      // Relay envelopes now live under 'relay:<paddedIndex>' + 'relay:tip'.
+      // Per the no-backwards-compat rule we don't migrate data — we just
+      // evict the stale value so it can't confuse anything.
+      this.ctx.storage.delete('relay').catch(() => {});
 
       this._meta = meta ?? null;
       this._agents = agents ?? [];
       this._phaseState = phaseState ?? null;
-      this._relay = relay ?? [];
       this._loaded = true;
     });
   }
