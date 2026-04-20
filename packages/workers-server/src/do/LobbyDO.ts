@@ -34,7 +34,9 @@ import type {
 } from '@coordination-games/engine';
 import { getGame, validateChatScope } from '@coordination-games/engine';
 import type { Env } from '../env.js';
+import type { SpectatorViewer } from '../plugins/capabilities.js';
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
+import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
 
 // Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
@@ -276,7 +278,16 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleGetState(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
     const playerId = this.headerPlayerId(request);
-    return Response.json(await this.buildStateForViewer(playerId));
+    // Authenticated player → legacy per-player view (auth-gated, includes
+    // phase tools the spectator payload omits). Unauthenticated caller →
+    // unified spectator payload (Phase 7.1) with optional `?sinceIdx=`.
+    if (playerId !== null) {
+      return Response.json(await this.buildStateForViewer(playerId));
+    }
+    const url = new URL(request.url);
+    const rawSince = url.searchParams.get('sinceIdx');
+    const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    return Response.json(await this.buildLobbySpectatorPayload(sinceIdx));
   }
 
   /** X-Player-Id header. Absent = spectator/system. Never read from body or URL. */
@@ -456,9 +467,10 @@ export class LobbyDO extends DurableObject<Env> {
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
     if (this._meta) {
-      // WS connections are unauthenticated spectators — always use the
-      // spectator filter for the initial payload.
-      server.send(JSON.stringify(await this.buildStateForViewer(null)));
+      // Phase 7.1 — spectator WS receives the same unified payload that
+      // HTTP `/state` returns. Initial connect → full snapshot (no
+      // `sinceIdx`); subsequent broadcasts emit deltas.
+      server.send(JSON.stringify(await this.buildLobbySpectatorPayload()));
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -676,6 +688,13 @@ export class LobbyDO extends DurableObject<Env> {
    * Relay filtering is delegated entirely to the canonical
    * `DOStorageRelayClient.visibleTo(viewer)` — Phase 0.1's inline
    * `filterRelayForSpectator` / `filterRelayForPlayer` helpers are gone.
+   *
+   * Phase 7.1 — spectator callers (`playerId === null`) route through
+   * `buildSpectatorPayload` so HTTP and WS share one builder. Player
+   * callers stay on the legacy shape (auth-gated, includes phase tools).
+   * The lobby's spectator "state" is the same field bundle as the player
+   * view minus the relay slice (which lives at the unified-payload top
+   * level via `RelayClient.visibleTo`).
    */
   private async buildStateForViewer(playerId: string | null): Promise<object> {
     if (!this._meta) return { error: 'Lobby not found' };
@@ -684,7 +703,7 @@ export class LobbyDO extends DurableObject<Env> {
     const phases = plugin?.lobby?.phases ?? [];
     const currentPhase = phases[this._meta.currentPhaseIndex];
 
-    const viewer: import('../plugins/capabilities.js').SpectatorViewer =
+    const viewer: SpectatorViewer =
       playerId === null ? { kind: 'spectator' } : { kind: 'player', playerId };
     const filteredRelay = await this.getRelayClient().visibleTo(viewer);
 
@@ -716,17 +735,97 @@ export class LobbyDO extends DurableObject<Env> {
     return state;
   }
 
+  /**
+   * Phase 7.1 — unified spectator payload (HTTP + WS share this builder).
+   * The lobby state itself becomes the `state` field; `relay` lives at
+   * the top level of the payload (same shape as GameRoomDO emits).
+   * `sinceIdx` is clamped to `[0, relayTip]` server-side.
+   */
+  private async buildLobbySpectatorPayload(sinceIdx?: number): Promise<SpectatorPayload> {
+    if (!this._meta) {
+      return {
+        type: 'spectator_pending',
+        meta: {
+          gameId: this.ctx.id.name ?? '__unknown__',
+          gameType: '__unknown__',
+          handles: {},
+          progressCounter: null,
+          finished: false,
+          sinceIdx: 0,
+          lastUpdate: Date.now(),
+        },
+      };
+    }
+    const plugin = getGame(this._meta.gameType);
+    const phases = plugin?.lobby?.phases ?? [];
+    const currentPhase = phases[this._meta.currentPhaseIndex];
+    const handles: Record<string, string> = {};
+    for (const a of this._agents) handles[a.id] = a.handle;
+
+    // Lobby-shaped "state" — same field bundle the frontend already
+    // consumes (agents, currentPhase, gameId, etc.). `relay` is omitted
+    // because the unified payload exposes it at the top level.
+    const state = {
+      lobbyId: this._meta.lobbyId,
+      gameType: this._meta.gameType,
+      agents: this._agents.map((a) => ({ id: a.id, handle: a.handle, elo: a.elo })),
+      currentPhase: currentPhase
+        ? {
+            id: currentPhase.id,
+            name: currentPhase.name,
+            view: currentPhase.getView(this._phaseState, undefined),
+            tools: currentPhase.tools ?? [],
+          }
+        : null,
+      phase: this._meta.phase,
+      deadlineMs: this._meta.deadlineMs,
+      gameId: this._meta.gameId,
+      error: this._meta.error,
+      noTimeout: this._meta.noTimeout,
+    };
+
+    const relayClient = this.getRelayClient();
+    const relayTip = await relayClient.getTip();
+    return buildSpectatorPayload({
+      gameId: this._meta.lobbyId,
+      gameType: this._meta.gameType,
+      handles,
+      // Lobbies don't go through a spectator-delay window — there's no
+      // public snapshot index to clamp to. We mirror the lobby's lifecycle
+      // phase as a coarse "is something visible yet?" signal: whatever
+      // phase the lobby is in, the state above is always public-safe.
+      finished: this._meta.phase === 'finished',
+      publicSnapshotIndex: 0,
+      state,
+      viewer: { kind: 'spectator' },
+      relay: relayClient,
+      relayTip,
+      sinceIdx,
+    });
+  }
+
+  /**
+   * Phase 7.1 — broadcast the unified spectator payload to every
+   * spectator WS. Sends a delta from `_lastBroadcastRelayIdx`; freshly
+   * connecting spectators get a full snapshot through `handleWebSocket`.
+   */
+  private _lastBroadcastRelayIdx = 0;
   private async broadcastUpdate(): Promise<void> {
     if (!this._meta) return;
-    // WS connections are unauthenticated spectators — broadcast the
-    // spectator-filtered payload to every connection. (If WS auth lands
-    // later, switch to per-connection per-viewer filtering here.)
-    const msg = JSON.stringify(await this.buildStateForViewer(null));
-    for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
+    const conns = this.ctx.getWebSockets(TAG_SPECTATOR);
+    if (conns.length === 0) {
+      const tip = await this.getRelayClient().getTip();
+      this._lastBroadcastRelayIdx = tip;
+      return;
+    }
+    const payload = await this.buildLobbySpectatorPayload(this._lastBroadcastRelayIdx);
+    const json = JSON.stringify(payload);
+    for (const ws of conns) {
       try {
-        ws.send(msg);
+        ws.send(json);
       } catch {}
     }
+    this._lastBroadcastRelayIdx = payload.meta.sinceIdx;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

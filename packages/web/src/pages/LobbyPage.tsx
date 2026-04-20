@@ -1,8 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { JoinInstructions, PlayerList, TeamPanel, TimerBar } from '../components/lobby';
-import { API_BASE, getWsUrl } from '../config.js';
+import { API_BASE } from '../config.js';
 import { getDefaultPlugin, getSpectatorPlugin } from '../games/registry';
+import {
+  lobbyHttpPath,
+  lobbyWsPath,
+  type SpectatorPayload,
+  useSpectatorStream,
+} from '../hooks/useSpectatorStream';
 import { SlotHost } from '../plugins';
 
 // ---------------------------------------------------------------------------
@@ -157,50 +163,43 @@ function phaseBadge(phase: string, currentPhaseId?: string) {
 // Unified Lobby View (works for all game types via generic phase runner)
 // ---------------------------------------------------------------------------
 
+/**
+ * Project the unified spectator payload onto the legacy `LobbyState`
+ * shape this page consumes. The spectator payload's `state` field IS
+ * the lobby fields (lobbyId, agents, currentPhase, etc.); `relay` lives
+ * at the payload top level. Returns `null` for `spectator_pending`
+ * payloads (lobby never enters this branch in practice — lobbies have
+ * no spectator-delay window — but the type system requires the guard).
+ */
+function payloadToLobbyState(payload: SpectatorPayload | undefined): LobbyState | null {
+  if (!payload || payload.type !== 'state_update') return null;
+  // biome-ignore lint/suspicious/noExplicitAny: lobby state shape lives in this file's interface
+  const s = payload.state as any;
+  if (!s?.lobbyId) return null;
+  return {
+    ...s,
+    relay: payload.relay,
+  } as LobbyState;
+}
+
 export default function LobbyPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [state, setState] = useState<LobbyState | null>(null);
-  const [connected, setConnected] = useState(false);
+  const { snapshot, isLive } = useSpectatorStream(id ?? '', {
+    wsPath: lobbyWsPath,
+    httpPath: lobbyHttpPath,
+  });
+  const state = payloadToLobbyState(snapshot);
+  const connected = isLive;
   const [noTimeout, setNoTimeout] = useState(false);
   const [lobbyTimer, setLobbyTimer] = useState<number | null>(null);
   const [gameStarted, setGameStarted] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (!id) return;
-
-    // Fetch initial state via REST
-    fetch(`${API_BASE}/lobbies/${id}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.lobbyId) setState(d);
-      })
-      .catch(() => {});
-
-    // Connect to unified /ws/lobby/:id — new LobbyDO sends raw state (no wrapper)
-    const ws = new WebSocket(getWsUrl(`/ws/lobby/${id}`));
-    wsRef.current = ws;
-    ws.onopen = () => setConnected(true);
-    ws.onmessage = (e) => {
-      try {
-        const d = JSON.parse(e.data);
-        if (d?.lobbyId) {
-          // Raw lobby state from new LobbyDO
-          if (d.phase === 'game' && d.gameId) {
-            setGameStarted(d.gameId);
-          }
-          setState(d);
-        }
-      } catch {}
-    };
-    ws.onerror = () => {};
-    ws.onclose = () => setConnected(false);
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [id]);
+    if (state?.phase === 'in_progress' && state.gameId) {
+      setGameStarted(state.gameId);
+    }
+  }, [state?.phase, state?.gameId]);
 
   useEffect(() => {
     if (state?.noTimeout) setNoTimeout(true);

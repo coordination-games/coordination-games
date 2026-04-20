@@ -84,6 +84,16 @@ export class DOStorageRelayClient implements RelayClient {
     return this.nextIndex;
   }
 
+  /**
+   * Public read of the next-index tip (i.e. one past the last published
+   * envelope). Used by the unified spectator payload builder to clamp
+   * client-supplied `sinceIdx` cursors. Equivalent to `ensureTip` —
+   * separate name to clarify the public contract.
+   */
+  async getTip(): Promise<number> {
+    return this.ensureTip();
+  }
+
   async publish(
     env: Omit<RelayEnvelope, 'index' | 'timestamp'>,
     opts?: { dedupeKey?: string },

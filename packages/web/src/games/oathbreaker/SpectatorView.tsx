@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE, getWsUrl } from '../../config.js';
+import { useMemo, useState } from 'react';
+import { useSpectatorStream } from '../../hooks/useSpectatorStream';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
 import { ArcadeOverview } from './components/ArcadeOverview';
@@ -57,6 +57,10 @@ interface OathSpectatorState {
 // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function mapServerState(raw: any): OathSpectatorState | null {
   if (!raw) return null;
+  // Phase 7.1: live mode hands us the unified spectator payload's
+  // `state` field directly. Replay mode (and legacy callers) still pass
+  // the snapshot at the top level. `raw.data ?? raw` keeps both shapes
+  // working while replay is on the legacy `/replay` path.
   const data = raw.data ?? raw;
   if (!data.players || !Array.isArray(data.players)) return null;
   return {
@@ -85,11 +89,16 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   } = props;
   const isReplay = replaySnapshots != null;
 
-  const [liveState, setLiveState] = useState<OathSpectatorState | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Phase 7.1 — WS lifecycle now lives in `useSpectatorStream`. We only
+  // open the stream in live mode; replay derives state from props.
+  const { snapshot, error: streamError } = useSpectatorStream(gameId ?? '', {
+    mode: isReplay ? 'replay' : 'live',
+  });
+  const liveState =
+    !isReplay && snapshot?.type === 'state_update' ? mapServerState(snapshot.state) : null;
+  const connected = !isReplay && snapshot != null;
+  const error = streamError?.message ?? null;
   const [followedPlayerId, setFollowedPlayerId] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   // ---------------------------------------------------------------------------
   // Replay mode: derive state from props
@@ -104,50 +113,6 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     if (!isReplay || !rawPrevGameState) return null;
     return mapServerState(rawPrevGameState);
   }, [isReplay, rawPrevGameState]);
-
-  // ---------------------------------------------------------------------------
-  // Live mode: fetch initial state + connect WebSocket
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    if (isReplay || !gameId) return;
-
-    fetch(`${API_BASE}/games/${gameId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        // Symmetric guard; spectator_pending never fires for delay=0.
-        if (data?.type === 'spectator_pending') return;
-        const mapped = mapServerState(data);
-        if (mapped) setLiveState(mapped);
-      })
-      .catch(() => {});
-
-    const wsUrl = getWsUrl(`/ws/game/${gameId}`);
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      setError(null);
-    };
-    ws.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data);
-        if (raw?.type === 'spectator_pending') return;
-        const mapped = mapServerState(raw);
-        if (mapped) setLiveState(mapped);
-      } catch {
-        console.warn('Failed to parse OATHBREAKER WS message');
-      }
-    };
-    ws.onerror = () => setError('WebSocket error');
-    ws.onclose = () => setConnected(false);
-
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [gameId, isReplay]);
 
   // ---------------------------------------------------------------------------
   // Unified state: replay or live

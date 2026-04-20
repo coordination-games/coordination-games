@@ -132,6 +132,9 @@ function buildWorkerCapabilities(d1: D1Database): Capabilities {
       async since() {
         return reject('relay');
       },
+      async getTip() {
+        return reject('relay');
+      },
     },
     alarms: {
       async scheduleAt() {

@@ -36,6 +36,13 @@ export interface RelayClient {
   ): Promise<void>;
   visibleTo(viewer: SpectatorViewer): Promise<RelayEnvelope[]>;
   since(index: number, viewer: SpectatorViewer): Promise<RelayEnvelope[]>;
+  /**
+   * Next-index tip — one past the last published envelope. Phase 7.1's
+   * `buildSpectatorPayload` uses this to clamp client-supplied `sinceIdx`
+   * cursors so a malicious or stale client can't ask for envelopes that
+   * don't exist.
+   */
+  getTip(): Promise<number>;
 }
 
 /**

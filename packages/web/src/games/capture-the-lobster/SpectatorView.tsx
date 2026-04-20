@@ -7,7 +7,8 @@ import type {
 } from '../../../../games/capture-the-lobster/web/types';
 import { ScrubberSlider } from '../../components/ScrubberSlider';
 import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
-import { API_BASE, getWsUrl } from '../../config.js';
+import { API_BASE } from '../../config.js';
+import { useSpectatorStream } from '../../hooks/useSpectatorStream';
 import type { SpectatorViewProps } from '../types';
 import { useHexAnimations } from './useHexAnimations';
 
@@ -224,15 +225,12 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [liveState, setLiveState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
-  const [connected, setConnected] = useState(false);
   // Server reported { type: 'spectator_pending' } — delay hasn't elapsed.
   const [pendingWindow, setPendingWindow] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [lobbyChat, setLobbyChat] = useState<LobbyChatMessage[]>([]);
   const [preGameChatA, setPreGameChatA] = useState<LobbyChatMessage[]>([]);
   const [preGameChatB, setPreGameChatB] = useState<LobbyChatMessage[]>([]);
   const [showLobbyChat, setShowLobbyChat] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
 
   // Live scrubber state — see docs/plans/live-scrubber.md
   const [rewind, setRewind] = useState<RewindState>({ mode: 'live' });
@@ -258,92 +256,64 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   }, [isReplay, rawPrevState]);
 
   // ---------------------------------------------------------------------------
-  // Live mode: fetch initial state + connect WebSocket
+  // Live mode (Phase 7.1): WS lifecycle delegated to `useSpectatorStream`.
+  // We project the unified spectator payload onto the CtL-specific
+  // (liveState, snapshot cache, rewind) state. Rewind machinery stays
+  // co-located here because it depends on `mapServerState` + the cache.
   // ---------------------------------------------------------------------------
 
+  const {
+    snapshot,
+    isLive,
+    error: streamError,
+  } = useSpectatorStream(gameId ?? '', {
+    mode: isReplay ? 'replay' : 'live',
+  });
+  const connected = !isReplay && isLive;
+  const error = streamError?.message ?? null;
+
   useEffect(() => {
-    if (isReplay || !gameId) return;
-
-    fetch(`${API_BASE}/games/${gameId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.type === 'spectator_pending') {
-          setPendingWindow(true);
-          setLiveState(null);
-        } else {
-          setPendingWindow(false);
-          const mapped = mapServerState(data);
-          if (mapped) {
-            setLiveState(mapped);
-            if (mapped.kills.length > 0) {
-              setAllKills(mapped.kills);
-            }
-          }
-        }
-        if (data.lobbyChat && Array.isArray(data.lobbyChat)) {
-          setLobbyChat(data.lobbyChat);
-        }
-        if (data.preGameChatA && Array.isArray(data.preGameChatA)) {
-          setPreGameChatA(data.preGameChatA);
-        }
-        if (data.preGameChatB && Array.isArray(data.preGameChatB)) {
-          setPreGameChatB(data.preGameChatB);
-        }
-      })
-      .catch(() => {});
-
-    const wsUrl = getWsUrl(`/ws/game/${gameId}`);
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      setError(null);
+    if (isReplay || !snapshot) return;
+    if (snapshot.type === 'spectator_pending') {
+      setPendingWindow(true);
+      // Preserve liveState during an open rewind session — otherwise the
+      // !gameState gate below would tear down the rewind UI even though
+      // the cached snapshots are still valid.
+      if (rewindRef.current.mode === 'live') setLiveState(null);
+      return;
+    }
+    setPendingWindow(false);
+    // The unified payload's `state` IS the spectator snapshot. Rebuild a
+    // legacy-shaped raw envelope (with progressCounter at top level) so
+    // `mapServerState` and the snapshot cache keep working without
+    // change. This is a BOUNDARY adapter — once Phase 6 unifies the
+    // SpectatorView API the cache can store payloads directly.
+    const idx = snapshot.meta.progressCounter ?? 0;
+    // biome-ignore lint/suspicious/noExplicitAny: payload state is per-game
+    const stateAny = snapshot.state as any;
+    const raw: RawSnapshot = {
+      ...stateAny,
+      progressCounter: idx,
+      handles: snapshot.meta.handles,
     };
-
-    ws.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data);
-        if (raw?.type === 'spectator_pending') {
-          setPendingWindow(true);
-          // Preserve liveState during an open rewind session — otherwise
-          // the !gameState gate below would tear down the rewind UI even
-          // though the cached snapshots are still valid.
-          if (rewindRef.current.mode === 'live') setLiveState(null);
-          return;
-        }
-        setPendingWindow(false);
-        const mapped = mapServerState(raw);
-        if (mapped) {
-          setLiveState(mapped);
-          // Accumulate raw snapshot by public index for the scrubber.
-          if (typeof raw.progressCounter === 'number') {
-            snapshotCacheRef.current.set(raw.progressCounter, raw);
-            setLatestProgress((prev) =>
-              prev === null || raw.progressCounter > prev ? raw.progressCounter : prev,
-            );
-          }
-          if (mapped.kills.length > 0) {
-            setAllKills((prev) => {
-              const existing = new Set(prev.map((k) => `${k.turn}:${k.victimId}`));
-              const newKills = mapped.kills.filter((k) => !existing.has(`${k.turn}:${k.victimId}`));
-              return newKills.length > 0 ? [...prev, ...newKills] : prev;
-            });
-          }
-        }
-      } catch {
-        console.warn('Failed to parse WS message');
-      }
-    };
-
-    ws.onerror = () => setError('WebSocket error');
-    ws.onclose = () => setConnected(false);
-
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [gameId, isReplay]);
+    const mapped = mapServerState(raw);
+    if (!mapped) return;
+    setLiveState(mapped);
+    snapshotCacheRef.current.set(idx, raw);
+    setLatestProgress((prev) => (prev === null || idx > prev ? idx : prev));
+    if (mapped.kills.length > 0) {
+      setAllKills((prev) => {
+        const existing = new Set(prev.map((k) => `${k.turn}:${k.victimId}`));
+        const newKills = mapped.kills.filter((k) => !existing.has(`${k.turn}:${k.victimId}`));
+        return newKills.length > 0 ? [...prev, ...newKills] : prev;
+      });
+    }
+    // lobby/pre-game chat fields ride on the same state shape — pull
+    // them through if the spectator state still exposes them.
+    if (Array.isArray(stateAny.lobbyChat)) setLobbyChat(stateAny.lobbyChat);
+    if (Array.isArray(stateAny.preGameChatA)) setPreGameChatA(stateAny.preGameChatA);
+    if (Array.isArray(stateAny.preGameChatB)) setPreGameChatB(stateAny.preGameChatB);
+  }, [isReplay, snapshot]);
 
   // ---------------------------------------------------------------------------
   // Live scrubber — enterRewind, backToLive, cache alignment, auto-exit

@@ -130,6 +130,7 @@ function buildCaps(d1: D1Database): Capabilities {
     publish: vi.fn(async () => {}),
     visibleTo: vi.fn(async (_v: SpectatorViewer) => [] as RelayEnvelope[]),
     since: vi.fn(async (_i: number, _v: SpectatorViewer) => [] as RelayEnvelope[]),
+    getTip: vi.fn(async () => 0),
   };
   return {
     storage: new NamespacedStorage(makeMemoryStorage(), '__test__'),

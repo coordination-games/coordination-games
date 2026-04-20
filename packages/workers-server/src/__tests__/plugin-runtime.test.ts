@@ -61,6 +61,7 @@ function buildCaps(storage: DurableObjectStorage): Capabilities {
     publish: vi.fn(async () => {}),
     visibleTo: vi.fn(async (_v: SpectatorViewer) => [] as RelayEnvelope[]),
     since: vi.fn(async (_i: number, _v: SpectatorViewer) => [] as RelayEnvelope[]),
+    getTip: vi.fn(async () => 0),
   };
   return {
     storage: new NamespacedStorage(storage, '__unused__'),

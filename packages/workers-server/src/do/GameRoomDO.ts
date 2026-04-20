@@ -41,6 +41,7 @@ import {
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
 import { ServerPluginRuntime } from '../plugins/runtime.js';
 import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlement/index.js';
+import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
 
@@ -141,6 +142,16 @@ export class GameRoomDO extends DurableObject<Env> {
   // wakes up would always re-broadcast the latest index even when
   // spectators already have it.
   private _lastSpectatorIdx: number | null = null;
+  /**
+   * Phase 7.1 — relay-tip cursor used by `broadcastUpdates` to send only
+   * envelopes published since the last spectator bump. In-memory only:
+   * a fresh DO wake-up emits a full snapshot to whichever spectators
+   * happen to reconnect, then resumes incremental broadcasts. (Persisting
+   * this would write-amp without buying meaningful bandwidth savings —
+   * spectators reconnecting after a hibernation already need the full
+   * payload anyway.)
+   */
+  private _lastBroadcastRelayIdx: number = 0;
 
   /**
    * Phase 3.2 — alarm multiplexer. The DO has one alarm slot but two
@@ -308,7 +319,7 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'POST' && path === '/tool') return this.handleTool(request);
     if (method === 'GET' && path === '/state') return this.handleState(request);
     if (method === 'GET' && path === '/result') return this.handleResult();
-    if (method === 'GET' && path === '/spectator') return this.handleSpectator();
+    if (method === 'GET' && path === '/spectator') return this.handleSpectator(request);
     if (method === 'GET' && path === '/replay') return this.handleReplay();
     if (method === 'GET' && path === '/bundle') return this.handleBundle();
 
@@ -556,7 +567,16 @@ export class GameRoomDO extends DurableObject<Env> {
     const playerId = this.trustedPlayerId(request);
     if (playerId instanceof Response) return playerId;
 
-    return Response.json(await this.buildPlayerMessage(playerId));
+    // Authenticated player → fog-filtered per-player view (unchanged).
+    // Unauthenticated caller → unified spectator payload (Phase 7.1) with
+    // optional `?sinceIdx=` query for incremental relay updates.
+    if (playerId !== null) {
+      return Response.json(await this.buildPlayerMessage(playerId));
+    }
+    const url = new URL(request.url);
+    const rawSince = url.searchParams.get('sinceIdx');
+    const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    return Response.json(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx));
   }
 
   /**
@@ -651,11 +671,14 @@ export class GameRoomDO extends DurableObject<Env> {
     return Response.json({ config, turns });
   }
 
-  private async handleSpectator(): Promise<Response> {
+  private async handleSpectator(request: Request): Promise<Response> {
     await this.ensureLoaded();
     if (!this._meta || !this._plugin)
       return Response.json({ error: 'Game not found' }, { status: 404 });
-    return Response.json(this.buildSpectatorMessage());
+    const url = new URL(request.url);
+    const rawSince = url.searchParams.get('sinceIdx');
+    const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    return Response.json(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx));
   }
 
   private async handleReplay(): Promise<Response> {
@@ -710,10 +733,12 @@ export class GameRoomDO extends DurableObject<Env> {
         server.send(JSON.stringify(await this.buildPlayerMessage(playerId)));
       }
     } else {
-      // Unauthenticated spectator connection
+      // Unauthenticated spectator connection — same unified payload that
+      // HTTP /state and /spectator return. WS sends the full snapshot on
+      // connect (sinceIdx omitted), then deltas on each broadcast.
       this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
       if (this._meta && this._plugin) {
-        server.send(JSON.stringify(this.buildSpectatorMessage()));
+        server.send(JSON.stringify(await this.buildSpectatorPayload({ kind: 'spectator' })));
       }
     }
 
@@ -826,6 +851,12 @@ export class GameRoomDO extends DurableObject<Env> {
           ws.send(payload);
         } catch {}
       }
+    }
+    // Phase 7.1 — when chat is publicly visible (`'all'` scope) also bump
+    // every spectator WS so the unified payload gains the new envelope.
+    // Team/DM chat stays hidden from spectators per `isVisible`.
+    if (scope.kind === 'all') {
+      await this.broadcastSpectatorPayload();
     }
   }
 
@@ -1223,24 +1254,51 @@ export class GameRoomDO extends DurableObject<Env> {
     );
   }
 
-  private buildSpectatorMessage(): object {
-    const idx = this.publicSnapshotIndex();
-    if (idx === null) {
+  /**
+   * Phase 7.1 — unified spectator payload (HTTP + WS share this builder).
+   *
+   * Same shape on both transports. The `viewer` is supplied by the call
+   * site (always `{kind:'spectator'}` today; admin/replay viewers route
+   * through `handleReplay`). `sinceIdx` is clamped to `[0, relayTip]` —
+   * see `clampSinceIdx` in `spectator-payload.ts`.
+   */
+  private async buildSpectatorPayload(
+    viewer: SpectatorViewer,
+    sinceIdx?: number,
+  ): Promise<SpectatorPayload> {
+    if (!this._meta) {
+      // Defensive: caller should have checked meta before invoking us, but
+      // surface a synthetic pending payload rather than throw so the WS
+      // path doesn't crash if a connection lands during a teardown race.
       return {
         type: 'spectator_pending',
-        gameType: this._meta?.gameType,
-        handles: this._meta?.handleMap,
-        progressCounter: null,
+        meta: {
+          gameId: this.ctx.id.name ?? '__unknown__',
+          gameType: '__unknown__',
+          handles: {},
+          progressCounter: null,
+          finished: false,
+          sinceIdx: 0,
+          lastUpdate: Date.now(),
+        },
       };
     }
-    const snapshot = this._spectatorSnapshots[idx] as Record<string, unknown>;
-    return {
-      type: 'state_update',
-      gameType: this._meta?.gameType,
-      handles: this._meta?.handleMap,
-      progressCounter: idx,
-      ...snapshot,
-    };
+    const idx = this.publicSnapshotIndex();
+    const state = idx !== null ? this._spectatorSnapshots[idx] : null;
+    const relayClient = this.getRelayClient();
+    const relayTip = await relayClient.getTip();
+    return buildSpectatorPayload({
+      gameId: this._meta.gameId,
+      gameType: this._meta.gameType,
+      handles: this._meta.handleMap,
+      finished: this._meta.finished,
+      publicSnapshotIndex: idx,
+      state: state ?? null,
+      viewer,
+      relay: relayClient,
+      relayTip,
+      sinceIdx,
+    });
   }
 
   private async broadcastUpdates(): Promise<void> {
@@ -1251,12 +1309,7 @@ export class GameRoomDO extends DurableObject<Env> {
       // counting push events to infer hidden action cadence.
       const idx = this.publicSnapshotIndex();
       if (idx !== this._lastSpectatorIdx) {
-        const spectatorMsg = JSON.stringify(this.buildSpectatorMessage());
-        for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
-          try {
-            ws.send(spectatorMsg);
-          } catch {}
-        }
+        await this.broadcastSpectatorPayload();
         this._lastSpectatorIdx = idx;
         // Persist so a post-eviction wake-up doesn't re-broadcast the
         // same index spectators already have. Write only on actual
@@ -1279,6 +1332,36 @@ export class GameRoomDO extends DurableObject<Env> {
       // Don't let broadcast errors crash the alarm handler / action pipeline
       console.error('[GameRoomDO] broadcastUpdates failed:', err);
     }
+  }
+
+  /**
+   * Phase 7.1 — push a unified spectator payload to every spectator WS.
+   * Sends a delta (envelopes since `_lastBroadcastRelayIdx`); the
+   * payload's `meta.sinceIdx` advances `_lastBroadcastRelayIdx` so the
+   * NEXT push is also a delta. Spectators landing fresh receive a full
+   * snapshot through `handleWebSocket` — they're never missing context.
+   */
+  private async broadcastSpectatorPayload(): Promise<void> {
+    const conns = this.ctx.getWebSockets(TAG_SPECTATOR);
+    if (conns.length === 0) {
+      // Still advance the cursor so a future spectator landing (which
+      // gets a full snapshot) doesn't cause us to redeliver every
+      // envelope on the next bump.
+      const tip = await this.getRelayClient().getTip();
+      this._lastBroadcastRelayIdx = tip;
+      return;
+    }
+    const payload = await this.buildSpectatorPayload(
+      { kind: 'spectator' },
+      this._lastBroadcastRelayIdx,
+    );
+    const json = JSON.stringify(payload);
+    for (const ws of conns) {
+      try {
+        ws.send(json);
+      } catch {}
+    }
+    this._lastBroadcastRelayIdx = payload.meta.sinceIdx;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
