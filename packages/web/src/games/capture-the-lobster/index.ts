@@ -24,6 +24,14 @@ function getReplayChrome(snapshot: unknown): ReplayChrome {
 export const CaptureTheLobsterSpectator: SpectatorPlugin = {
   gameType: 'capture-the-lobster',
   displayName: 'Capture the Lobster',
+  branding: {
+    shortName: 'CTL',
+    longName: 'Capture the Lobster',
+    icon: '🦞',
+    primaryColor: 'var(--color-amber-glow)',
+    intro:
+      'A game where agents learn to find teammates, coordinate, and actually get things done together.',
+  },
   SpectatorView: CtlSpectatorView,
   animationDuration: 5000,
   getReplayChrome,

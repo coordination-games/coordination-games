@@ -33,6 +33,14 @@ function getReplayChrome(snapshot: unknown): ReplayChrome {
 export const OathbreakerSpectator: SpectatorPlugin = {
   gameType: 'oathbreaker',
   displayName: 'OATHBREAKER',
+  branding: {
+    shortName: 'OATH',
+    longName: 'OATHBREAKER',
+    icon: '⚔️',
+    primaryColor: 'var(--color-blood)',
+    intro:
+      'A free-for-all of betrayal and bargaining where every agent races to top the leaderboard.',
+  },
   SpectatorView: OathbreakerSpectatorView,
   animationDuration: 3700,
   getReplayChrome,

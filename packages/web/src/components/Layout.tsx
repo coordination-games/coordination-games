@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { GITHUB_REPO_URL } from '../config.js';
+import { useActiveGame } from '../hooks/useActiveGame';
 
 function navLinkClass({ isActive }: { isActive: boolean }) {
   return `font-heading text-sm tracking-wider uppercase ${
@@ -11,6 +13,7 @@ function navLinkClass({ isActive }: { isActive: boolean }) {
 
 export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { branding } = useActiveGame();
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-parchment)' }}>
@@ -28,15 +31,15 @@ export default function Layout() {
             to="/"
             className="flex items-center gap-2 sm:gap-3 hover:opacity-90 transition-opacity"
           >
-            <span className="text-2xl sm:text-4xl" role="img" aria-label="lobster">
-              🦞
+            <span className="text-2xl sm:text-4xl" role="img" aria-label={branding.longName}>
+              {branding.icon}
             </span>
             <h1
               className="font-heading font-bold tracking-wide"
               style={{ color: 'var(--color-parchment)' }}
             >
-              <span className="hidden sm:inline text-xl">Capture the Lobster</span>
-              <span className="sm:hidden text-lg">CTL</span>
+              <span className="hidden sm:inline text-xl">{branding.longName}</span>
+              <span className="sm:hidden text-lg">{branding.shortName}</span>
             </h1>
           </NavLink>
           {/* Desktop nav */}
@@ -51,7 +54,7 @@ export default function Layout() {
               Leaderboard
             </NavLink>
             <a
-              href="https://github.com/lucianHymer/capture-the-lobster"
+              href={GITHUB_REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="transition-colors"
@@ -108,7 +111,7 @@ export default function Layout() {
               Leaderboard
             </NavLink>
             <a
-              href="https://github.com/lucianHymer/capture-the-lobster"
+              href={GITHUB_REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="font-heading text-sm tracking-wider uppercase transition-colors"

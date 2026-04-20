@@ -1,2 +1,12 @@
-export { getAllGameTypes, getAllPlugins, getSpectatorPlugin } from './registry';
-export type { GameCardProps, SpectatorPlugin, SpectatorViewProps } from './types';
+export {
+  getAllGameTypes,
+  getAllPlugins,
+  getDefaultPlugin,
+  getSpectatorPlugin,
+} from './registry';
+export type {
+  GameBranding,
+  GameCardProps,
+  SpectatorPlugin,
+  SpectatorViewProps,
+} from './types';

@@ -32,7 +32,6 @@ function extractRelay(data: any): RelayMessageView[] {
 
 export default function GamePage() {
   const { id } = useParams<{ id: string }>();
-  const [perspective, setPerspective] = useState<'all' | 'A' | 'B'>('all');
   const [gameType, setGameType] = useState<string | null>(null);
   const [handles, setHandles] = useState<Record<string, string>>({});
   const [relayMessages, setRelayMessages] = useState<RelayMessageView[]>([]);
@@ -118,8 +117,6 @@ export default function GamePage() {
         gameId={id ?? ''}
         gameType={gameType}
         phase="in_progress"
-        perspective={perspective}
-        onPerspectiveChange={setPerspective}
       />
     </>
   );

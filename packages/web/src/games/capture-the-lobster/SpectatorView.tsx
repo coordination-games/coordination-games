@@ -220,7 +220,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const isReplay = replaySnapshots != null;
 
   // Internal state for CtL-specific rendering
-  const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>(props.perspective ?? 'all');
+  const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>('all');
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [liveState, setLiveState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
@@ -242,13 +242,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   useEffect(() => {
     rewindRef.current = rewind;
   }, [rewind]);
-
-  // Sync perspective from props
-  useEffect(() => {
-    if (props.perspective) {
-      setSelectedTeam(props.perspective);
-    }
-  }, [props.perspective]);
 
   // ---------------------------------------------------------------------------
   // Replay mode: derive state from props (no fetch, no websocket)
@@ -544,7 +537,6 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const handlePerspectiveChange = (value: 'A' | 'B' | 'all') => {
     setSelectedTeam(value);
     setSelectedUnit(null);
-    props.onPerspectiveChange?.(value);
   };
 
   return (

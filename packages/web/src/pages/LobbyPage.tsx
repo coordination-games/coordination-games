@@ -356,7 +356,9 @@ export default function LobbyPage() {
       )}
 
       {/* Running phase: Join instructions */}
-      {state.phase === 'lobby' && <JoinInstructions lobbyId={state.lobbyId} />}
+      {state.phase === 'lobby' && (
+        <JoinInstructions lobbyId={state.lobbyId} gameType={state.gameType} />
+      )}
 
       {/* Game redirect */}
       {state.phase === 'in_progress' && state.gameId && (

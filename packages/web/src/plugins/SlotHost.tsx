@@ -16,6 +16,12 @@ export function SlotHost(props: { name: SlotName } & SlotProps) {
     <>
       {all
         .filter((p) => p.slots[name])
+        // gameType filter: universal plugins (no gameType) always pass.
+        // Game-specific plugins only render when the slot's gameType matches.
+        // If the slot has no gameType, treat game-specific plugins as
+        // unconditional too — universal slots like `lobby:panel` should still
+        // get every plugin's panel.
+        .filter((p) => !p.gameType || !rest.gameType || p.gameType === rest.gameType)
         .map((p) => {
           const Comp = p.slots[name];
           if (!Comp) return null;

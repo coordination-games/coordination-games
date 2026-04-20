@@ -36,30 +36,89 @@ export interface SlotAgent {
 }
 
 /**
+ * Compact lobby summary passed to `lobby:card` slot components. Mirrors the
+ * `/lobbies` endpoint shape — the LobbiesPage shell forwards this verbatim.
+ *
+ * Optional fields explicitly allow `undefined` so the shell can mirror raw
+ * API payloads without conditionally constructing the object — important
+ * for tsconfig's `exactOptionalPropertyTypes: true`.
+ */
+export interface LobbySummaryView {
+  lobbyId: string;
+  gameType?: string | undefined;
+  phase: 'lobby' | 'in_progress' | 'finished';
+  teamSize?: number | undefined;
+  playerCount?: number | undefined;
+  createdAt?: string | undefined;
+  gameId?: string | null | undefined;
+}
+
+/**
+ * Compact game summary passed to `lobby:card` slot components. Mirrors the
+ * `/games` endpoint shape (mapped through LobbiesPage's loader).
+ */
+export interface GameSummaryView {
+  id: string;
+  gameType?: string | undefined;
+  turn: number;
+  maxTurns: number;
+  phase: 'in_progress' | 'finished';
+  winner?: string | undefined;
+  teamsA: number;
+  teamsB: number;
+  // OATHBREAKER fields
+  round?: number | undefined;
+  maxRounds?: number | undefined;
+  playerCount?: number | undefined;
+}
+
+/**
  * Common props every slot receives. Kept liberal on purpose — start with the
  * obvious context (active lobby/game) and expand as Phase 5/6 wires real
  * plugins. Slot components should treat all fields as optional; the host
  * does not guarantee any particular field is set in every shell.
  */
 export interface SlotProps {
-  /** Active game/lobby context (if any). */
-  game?: { id: string; name: string };
-  lobbyId?: string;
-  gameId?: string;
+  /** Active game/lobby context (if any). Lightweight identity tag. */
+  game?: { id: string; name: string } | undefined;
+  lobbyId?: string | undefined;
+  gameId?: string | undefined;
+  /**
+   * Game type discriminator. When set, SlotHost filters out plugins whose
+   * declared `gameType` doesn't match (universal plugins with no `gameType`
+   * always render). Used by `lobby:card` to dispatch to the right game's
+   * branded card.
+   */
+  gameType?: string | undefined;
+  /** Full lobby summary for `lobby:card`. */
+  lobby?: LobbySummaryView | undefined;
+  /** Full game summary for `lobby:card`. */
+  gameSummary?: GameSummaryView | undefined;
+  /**
+   * Click handler for card-style slots (`lobby:card`). Cards forward this
+   * to their root button so navigation lives in the shell.
+   */
+  onClick?: (() => void) | undefined;
   /**
    * Raw relay envelopes visible to the caller (lobby state `.relay`, or the
    * game's `relayMessages`). Slot plugins filter by `type` to pick their
    * traffic. Empty array when the host has no relay payload to forward.
    */
-  relayMessages?: RelayMessageView[];
+  relayMessages?: RelayMessageView[] | undefined;
   /**
    * Roster of agents (lobby participants or game players). Used by slots
    * that render `handle` alongside sender IDs.
    */
-  agents?: SlotAgent[];
+  agents?: SlotAgent[] | undefined;
 }
 
 export interface WebToolPlugin {
   id: string;
+  /**
+   * If set, SlotHost only renders this plugin when the slot's `gameType`
+   * prop matches. Universal plugins (chat) leave this undefined and always
+   * render.
+   */
+  gameType?: string;
   slots: Partial<Record<SlotName, React.FC<SlotProps>>>;
 }

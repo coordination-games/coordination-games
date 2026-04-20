@@ -3,92 +3,48 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchGames, type GameSummary } from '../api';
 import { API_BASE } from '../config.js';
+import { getRegisteredWebPlugins, SlotHost } from '../plugins';
+import type { GameSummaryView, LobbySummaryView } from '../plugins/types';
 
-interface Game {
+function FallbackCard({
+  id,
+  gameType,
+  onClick,
+}: {
   id: string;
-  gameType?: string;
-  turn: number;
-  maxTurns: number;
-  phase: 'in_progress' | 'finished';
-  winner?: string;
-  teamsA: number;
-  teamsB: number;
-  // OATHBREAKER fields
-  round?: number;
-  maxRounds?: number;
-  playerCount?: number;
-}
-
-interface Lobby {
-  lobbyId: string;
-  gameType?: string;
-  // Unified GamePhaseKind from the engine — 'lobby' (still accepting joins),
-  // 'in_progress' (game spawned), 'finished' (terminal — game done OR lobby
-  // errored; presence of `error` on the lobby state distinguishes).
-  phase: 'lobby' | 'in_progress' | 'finished';
-  teamSize?: number;
-  playerCount?: number;
-  createdAt?: string;
-  gameId?: string | null;
-}
-
-function phaseBadge(phase: string) {
-  switch (phase) {
-    case 'in_progress':
-      return (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
-          style={{
-            background: 'rgba(58, 90, 42, 0.1)',
-            color: 'var(--color-forest)',
-            border: '1px solid rgba(58, 90, 42, 0.2)',
-          }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full animate-pulse"
-            style={{ background: 'var(--color-forest-light)' }}
-          />
-          Live
+  gameType?: string | undefined;
+  onClick?: (() => void) | undefined;
+}) {
+  return (
+    // biome-ignore lint/a11y/useButtonType: matches sibling LobbiesPage button styling
+    <button
+      onClick={onClick}
+      className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
+      style={{
+        // Loud-but-not-broken: amber border so a missing plugin is visible
+        // during dev without crashing the page for users.
+        border: '1px dashed var(--color-amber)',
+      }}
+    >
+      <div className="mb-2 font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
+        {id}
+      </div>
+      <div className="text-sm" style={{ color: 'var(--color-ink-light)' }}>
+        Unknown game type:{' '}
+        <span className="font-mono" style={{ color: 'var(--color-amber)' }}>
+          {gameType ?? '(none)'}
         </span>
-      );
-    case 'finished':
-      return (
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
-          style={{
-            background: 'rgba(42, 31, 14, 0.06)',
-            color: 'var(--color-ink-faint)',
-            border: '1px solid rgba(42, 31, 14, 0.1)',
-          }}
-        >
-          Finished
-        </span>
-      );
-    case 'lobby':
-      return (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
-          style={{
-            background: 'rgba(184, 134, 11, 0.08)',
-            color: 'var(--color-amber)',
-            border: '1px solid rgba(184, 134, 11, 0.2)',
-          }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full animate-pulse"
-            style={{ background: 'var(--color-amber)' }}
-          />
-          Forming
-        </span>
-      );
-    default:
-      return null;
-  }
+      </div>
+      <div className="mt-1 text-xs" style={{ color: 'var(--color-ink-faint)', opacity: 0.7 }}>
+        No `lobby:card` plugin registered for this game.
+      </div>
+    </button>
+  );
 }
 
 export default function LobbiesPage() {
-  const [games, setGames] = useState<Game[]>([]);
-  const [lobbies, setLobbies] = useState<Lobby[]>([]);
+  const [games, setGames] = useState<GameSummaryView[]>([]);
+  const [lobbies, setLobbies] = useState<LobbySummaryView[]>([]);
   const [creating, setCreating] = useState(false);
   const [teamSize, setTeamSize] = useState(2);
   const [gameTab, setGameTab] = useState<'capture-the-lobster' | 'oathbreaker'>(
@@ -108,16 +64,12 @@ export default function LobbiesPage() {
             .catch(() => []),
         ]);
         if (!cancelled) {
-          const mapped = gamesData.map((g: GameSummary) => ({
+          const mapped: GameSummaryView[] = gamesData.map((g: GameSummary) => ({
             id: g.gameId,
             gameType: g.gameType,
             turn: g.turn ?? 0,
             maxTurns: g.maxTurns ?? 30,
-            phase: g.finished
-              ? ('finished' as const)
-              : g.phase === 'playing'
-                ? ('in_progress' as const)
-                : ('in_progress' as const),
+            phase: g.finished ? ('finished' as const) : ('in_progress' as const),
             winner: g.winner,
             teamsA: g.teams?.A?.length ?? 0,
             teamsB: g.teams?.B?.length ?? 0,
@@ -125,9 +77,8 @@ export default function LobbiesPage() {
             maxRounds: g.maxRounds,
             playerCount: g.playerCount,
           }));
-          // @ts-expect-error TS2345: Argument of type '{ id: string; gameType: string; turn: number; maxTurns: number — TODO(2.3-followup)
           setGames(mapped);
-          setLobbies((lobbiesData as Lobby[]).filter((l) => l.phase === 'lobby'));
+          setLobbies((lobbiesData as LobbySummaryView[]).filter((l) => l.phase === 'lobby'));
         }
       } catch {}
     }
@@ -303,16 +254,24 @@ export default function LobbiesPage() {
         >
           <SectionHeader title="Active Lobbies" count={filteredLobbies.length} />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredLobbies.map((lobby, i) => (
-              <motion.div
-                key={lobby.lobbyId}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05, duration: 0.4 }}
-              >
-                <LobbyCard lobby={lobby} onClick={() => navigate(`/lobby/${lobby.lobbyId}`)} />
-              </motion.div>
-            ))}
+            {filteredLobbies.map((lobby, i) => {
+              const gt = lobby.gameType ?? 'capture-the-lobster';
+              return (
+                <motion.div
+                  key={lobby.lobbyId}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05, duration: 0.4 }}
+                >
+                  <SlotHostOrFallback
+                    fallbackId={lobby.lobbyId}
+                    gameType={gt}
+                    lobby={lobby}
+                    onClick={() => navigate(`/lobby/${lobby.lobbyId}`)}
+                  />
+                </motion.div>
+              );
+            })}
           </div>
         </motion.section>
       )}
@@ -322,7 +281,6 @@ export default function LobbiesPage() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1, duration: 0.5 }}
       >
-        {/* @ts-expect-error TS2375: Type '{ title: string; count: number | undefined; }' is not assignable to type ' — TODO(2.3-followup) */}
         <SectionHeader
           title="Active Games"
           count={activeGames.length > 0 ? activeGames.length : undefined}
@@ -338,16 +296,24 @@ export default function LobbiesPage() {
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {activeGames.map((game, i) => (
-              <motion.div
-                key={game.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05, duration: 0.4 }}
-              >
-                <GameCard game={game} onClick={() => navigate(`/game/${game.id}`)} />
-              </motion.div>
-            ))}
+            {activeGames.map((game, i) => {
+              const gt = game.gameType ?? 'capture-the-lobster';
+              return (
+                <motion.div
+                  key={game.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05, duration: 0.4 }}
+                >
+                  <SlotHostOrFallback
+                    fallbackId={game.id}
+                    gameType={gt}
+                    gameSummary={game}
+                    onClick={() => navigate(`/game/${game.id}`)}
+                  />
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </motion.section>
@@ -360,16 +326,24 @@ export default function LobbiesPage() {
         >
           <SectionHeader title="Recent Games" count={finishedGames.length} />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {finishedGames.map((game, i) => (
-              <motion.div
-                key={game.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05, duration: 0.4 }}
-              >
-                <GameCard game={game} onClick={() => navigate(`/replay/${game.id}`)} />
-              </motion.div>
-            ))}
+            {finishedGames.map((game, i) => {
+              const gt = game.gameType ?? 'capture-the-lobster';
+              return (
+                <motion.div
+                  key={game.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05, duration: 0.4 }}
+                >
+                  <SlotHostOrFallback
+                    fallbackId={game.id}
+                    gameType={gt}
+                    gameSummary={game}
+                    onClick={() => navigate(`/replay/${game.id}`)}
+                  />
+                </motion.div>
+              );
+            })}
           </div>
         </motion.section>
       )}
@@ -377,7 +351,38 @@ export default function LobbiesPage() {
   );
 }
 
-function SectionHeader({ title, count }: { title: string; count?: number }) {
+/**
+ * Wraps `<SlotHost name="lobby:card">` with a fallback render path for game
+ * types that don't have a registered `lobby:card` plugin. Detection works
+ * by sniffing the registered plugin set: if no plugin claims this gameType,
+ * we render `FallbackCard` instead. Loud-but-not-broken (amber dashed
+ * border) makes a missing plugin obvious during dev without breaking users.
+ */
+function SlotHostOrFallback(props: {
+  fallbackId: string;
+  gameType: string;
+  lobby?: LobbySummaryView | undefined;
+  gameSummary?: GameSummaryView | undefined;
+  onClick: () => void;
+}) {
+  const hasPlugin = getRegisteredWebPlugins().some(
+    (p) => p.gameType === props.gameType && p.slots['lobby:card'],
+  );
+  if (!hasPlugin) {
+    return <FallbackCard id={props.fallbackId} gameType={props.gameType} onClick={props.onClick} />;
+  }
+  return (
+    <SlotHost
+      name="lobby:card"
+      gameType={props.gameType}
+      lobby={props.lobby}
+      gameSummary={props.gameSummary}
+      onClick={props.onClick}
+    />
+  );
+}
+
+function SectionHeader({ title, count }: { title: string; count?: number | undefined }) {
   return (
     <div className="mb-5 flex items-center gap-3">
       <h2
@@ -403,240 +408,5 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
         style={{ background: 'linear-gradient(to right, rgba(42, 31, 14, 0.15), transparent)' }}
       />
     </div>
-  );
-}
-
-function lobbyPhaseBadge(lobby: Lobby) {
-  const phase = lobby.phase;
-
-  switch (phase) {
-    case 'lobby':
-      return (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
-          style={{
-            background: 'rgba(184, 134, 11, 0.08)',
-            color: 'var(--color-amber)',
-            border: '1px solid rgba(184, 134, 11, 0.2)',
-          }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full animate-pulse"
-            style={{ background: 'var(--color-amber)' }}
-          />
-          Open
-        </span>
-      );
-    default:
-      return (
-        <span
-          className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-heading font-medium"
-          style={{ background: 'rgba(42, 31, 14, 0.06)', color: 'var(--color-ink-faint)' }}
-        >
-          {phase}
-        </span>
-      );
-  }
-}
-
-function LobbyCard({ lobby, onClick }: { lobby: Lobby; onClick: () => void }) {
-  const playerCount = lobby.playerCount ?? 0;
-  const gameType = lobby.gameType ?? 'capture-the-lobster';
-  const teamSize = lobby.teamSize;
-  const capacity =
-    teamSize != null ? (gameType === 'oathbreaker' ? teamSize : teamSize * 2) : undefined;
-
-  return (
-    // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
-    <button
-      onClick={onClick}
-      className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
-    >
-      <div className="mb-3 flex items-center justify-between">
-        <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          {lobby.lobbyId}
-        </span>
-        {lobbyPhaseBadge(lobby)}
-      </div>
-      <div className="mb-2 text-sm" style={{ color: 'var(--color-ink-light)' }}>
-        <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>
-          {playerCount}
-        </span>
-        {capacity != null ? <span>/{capacity}</span> : null} players
-        {teamSize != null && gameType !== 'oathbreaker' && (
-          <span className="ml-2 text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            · {teamSize}v{teamSize}
-          </span>
-        )}
-      </div>
-      <div className="flex items-center justify-end">
-        {gameType === 'oathbreaker' && (
-          <span
-            className="font-heading text-xs font-medium"
-            style={{ color: 'var(--color-blood)' }}
-          >
-            OATHBREAKER
-          </span>
-        )}
-      </div>
-    </button>
-  );
-}
-
-function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
-  // OATHBREAKER game card
-  if (game.gameType === 'oathbreaker') {
-    const round = game.round ?? game.turn ?? 0;
-    const maxRounds = game.maxRounds ?? game.maxTurns ?? 12;
-    const progress = maxRounds > 0 ? Math.round((round / maxRounds) * 100) : 0;
-    const isLive = game.phase === 'in_progress';
-    return (
-      // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
-      <button
-        onClick={onClick}
-        className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            {game.id}
-          </span>
-          {phaseBadge(isLive ? 'in_progress' : 'finished')}
-        </div>
-        <div className="mb-3">
-          <div
-            className="mb-1.5 flex justify-between text-xs font-mono"
-            style={{ color: 'var(--color-ink-faint)' }}
-          >
-            <span>
-              Round {round}/{maxRounds}
-            </span>
-            <span>{progress}%</span>
-          </div>
-          <div
-            className="h-1.5 w-full rounded-full"
-            style={{ background: 'rgba(42, 31, 14, 0.08)' }}
-          >
-            <motion.div
-              className="h-1.5 rounded-full"
-              style={{
-                width: `${progress}%`,
-                background: isLive
-                  ? 'linear-gradient(90deg, var(--color-blood), #c55)'
-                  : 'linear-gradient(90deg, var(--color-ink-faint), var(--color-wood-light))',
-              }}
-              initial={{ width: 0 }}
-              animate={{ width: `${progress}%` }}
-              transition={{ duration: 0.8, ease: 'easeOut' }}
-            />
-          </div>
-        </div>
-        <div className="flex items-center justify-between text-sm">
-          <span
-            className="font-heading text-xs font-medium"
-            style={{ color: 'var(--color-blood)' }}
-          >
-            OATHBREAKER
-          </span>
-          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            {game.playerCount ?? '?'} players
-          </span>
-        </div>
-      </button>
-    );
-  }
-
-  // CtL game card (original)
-  const progress = Math.round((game.turn / game.maxTurns) * 100);
-  const isLive = game.phase === 'in_progress';
-
-  return (
-    // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
-    <button
-      onClick={onClick}
-      className="group cursor-pointer w-full rounded-xl parchment-strong p-5 text-left transition-all duration-200 hover:shadow-md"
-    >
-      <div className="mb-3 flex items-center justify-between">
-        <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          {game.id}
-        </span>
-        {phaseBadge(game.phase)}
-      </div>
-      <div className="mb-3">
-        <div
-          className="mb-1.5 flex justify-between text-xs font-mono"
-          style={{ color: 'var(--color-ink-faint)' }}
-        >
-          <span>
-            Turn {game.turn}/{game.maxTurns}
-          </span>
-          <span>{progress}%</span>
-        </div>
-        <div className="h-1.5 w-full rounded-full" style={{ background: 'rgba(42, 31, 14, 0.08)' }}>
-          <motion.div
-            className="h-1.5 rounded-full"
-            style={{
-              width: `${progress}%`,
-              background: isLive
-                ? 'linear-gradient(90deg, var(--color-forest), var(--color-forest-light))'
-                : 'linear-gradient(90deg, var(--color-ink-faint), var(--color-wood-light))',
-            }}
-            initial={{ width: 0 }}
-            animate={{ width: `${progress}%` }}
-            transition={{ duration: 0.8, ease: 'easeOut' }}
-          />
-        </div>
-      </div>
-      <div className="flex items-center justify-between text-sm">
-        <div className="flex items-center gap-2">
-          <span
-            className="inline-block h-2.5 w-2.5 rounded-full"
-            style={{ background: '#3a6aaa', boxShadow: '0 0 4px rgba(58, 106, 170, 0.4)' }}
-          />
-          <span className="font-heading text-xs font-medium" style={{ color: '#3a6aaa' }}>
-            Team A
-          </span>
-          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            {game.teamsA}
-          </span>
-        </div>
-        <span
-          className="text-xs font-heading font-medium"
-          style={{ color: 'var(--color-ink-faint)' }}
-        >
-          vs
-        </span>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-            {game.teamsB}
-          </span>
-          <span
-            className="font-heading text-xs font-medium"
-            style={{ color: 'var(--color-blood)' }}
-          >
-            Team B
-          </span>
-          <span
-            className="inline-block h-2.5 w-2.5 rounded-full"
-            style={{
-              background: 'var(--color-blood)',
-              boxShadow: '0 0 4px rgba(139, 32, 32, 0.4)',
-            }}
-          />
-        </div>
-      </div>
-      {game.phase === 'finished' && game.winner && (
-        <div
-          className="mt-3 pt-3 text-center"
-          style={{ borderTop: '1px solid rgba(42, 31, 14, 0.1)' }}
-        >
-          <span
-            className="font-heading text-xs font-bold uppercase tracking-wider"
-            style={{ color: 'var(--color-amber)' }}
-          >
-            Winner: Team {game.winner}
-          </span>
-        </div>
-      )}
-    </button>
   );
 }

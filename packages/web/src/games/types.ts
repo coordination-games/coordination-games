@@ -15,10 +15,6 @@ export interface SpectatorViewProps {
   phase: 'in_progress' | 'finished';
   /** Kill feed entries. */
   killFeed?: { turn: number; text: string }[];
-  /** Currently selected team perspective (for fog of war). */
-  perspective?: 'all' | 'A' | 'B';
-  /** Callback to change perspective. */
-  onPerspectiveChange?: (perspective: 'all' | 'A' | 'B') => void;
   /** All replay snapshots (only set in replay mode). Each snapshot is self-contained. */
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   replaySnapshots?: any[];
@@ -52,12 +48,32 @@ export interface ReplayChrome {
   statusVariant: 'in_progress' | 'win' | 'draw';
 }
 
+/**
+ * Per-game branding metadata. Read by the shell (Layout, HomePage,
+ * JoinInstructions) so the chrome stays game-agnostic — no `lobster`
+ * literals in shared components.
+ */
+export interface GameBranding {
+  /** Short identifier shown in compact chrome (e.g. mobile header). */
+  shortName: string;
+  /** Full display name (e.g. HomePage tile heading, Layout header). */
+  longName: string;
+  /** Emoji or asset path used as the game's icon. */
+  icon: string;
+  /** Brand color for primary highlights. CSS color string. */
+  primaryColor: string;
+  /** One- or two-sentence summary used on HomePage tiles. */
+  intro: string;
+}
+
 /** A spectator plugin for a specific game type. */
 export interface SpectatorPlugin {
   /** Game type identifier (must match server's gameType). */
   gameType: string;
   /** Human-readable display name. */
   displayName: string;
+  /** Branding metadata consumed by shared shell components. */
+  branding: GameBranding;
   /** Main spectator view component. */
   SpectatorView: React.ComponentType<SpectatorViewProps>;
   /** Compact card for lobby/game lists. */

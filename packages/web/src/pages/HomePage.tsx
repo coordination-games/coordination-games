@@ -2,6 +2,8 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchGames } from '../api';
+import { mcpInstallCommand } from '../config.js';
+import { getAllPlugins, getDefaultPlugin, type SpectatorPlugin } from '../games';
 
 function CopyBlock({ text, display }: { text: string; display?: string }) {
   const [copied, setCopied] = useState(false);
@@ -67,8 +69,45 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] as any } },
 };
 
+/** A single registry-driven game tile. */
+function GameTile({ plugin, index }: { plugin: SpectatorPlugin; index: number }) {
+  const { branding } = plugin;
+  return (
+    <motion.div
+      className="rounded-lg px-5 py-4 flex items-start gap-4 transition-colors"
+      style={{
+        background: 'rgba(212, 162, 78, 0.06)',
+        border: '1px solid rgba(212, 162, 78, 0.2)',
+      }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 + index * 0.06, duration: 0.35 }}
+    >
+      <span className="flex-none text-3xl sm:text-4xl" role="img" aria-label={branding.longName}>
+        {branding.icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <h3
+          className="font-heading text-base sm:text-lg font-bold tracking-wide leading-tight"
+          style={{ color: branding.primaryColor }}
+        >
+          {branding.longName}
+        </h3>
+        <p
+          className="mt-1 text-xs sm:text-sm leading-relaxed"
+          style={{ color: 'var(--color-parchment-dark)' }}
+        >
+          {branding.intro}
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function HomePage() {
   const [activeCount, setActiveCount] = useState(0);
+  const featured = getDefaultPlugin();
+  const allPlugins = getAllPlugins();
 
   useEffect(() => {
     let cancelled = false;
@@ -89,6 +128,9 @@ export default function HomePage() {
       clearInterval(interval);
     };
   }, []);
+
+  const installCmd = mcpInstallCommand();
+  const askPrompt = `Tell me about ${featured.branding.longName}, please!`;
 
   return (
     <div className="space-y-8">
@@ -122,7 +164,7 @@ export default function HomePage() {
         </motion.div>
       )}
 
-      {/* Hero section — dark contrast card */}
+      {/* Hero — uses the default (first registered) game's branding */}
       <motion.div
         className="relative mx-auto overflow-hidden rounded-xl grain-overlay"
         style={{
@@ -149,39 +191,31 @@ export default function HomePage() {
         />
 
         <div className="relative z-10 px-8 py-12 sm:px-12 sm:py-16 space-y-8">
-          {/* Unit sprites */}
-          <motion.div className="flex justify-center gap-6 mb-2" variants={fadeUp}>
-            {['rogue', 'knight', 'mage'].map((unit, i) => (
-              <motion.img
-                key={unit}
-                src={`/games/capture-the-lobster/tiles/units/${unit}.png`}
-                alt={unit}
-                className="w-24 h-24 sm:w-32 sm:h-32"
-                style={{
-                  imageRendering: 'pixelated',
-                  filter: 'drop-shadow(0 0 8px rgba(212, 162, 78, 0.4))',
-                }}
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 + i * 0.12, duration: 0.5 }}
-              />
-            ))}
+          {/* Featured game icon */}
+          <motion.div className="flex justify-center mb-2" variants={fadeUp}>
+            <span
+              className="text-6xl sm:text-7xl"
+              role="img"
+              aria-label={featured.branding.longName}
+              style={{ filter: 'drop-shadow(0 0 12px rgba(212, 162, 78, 0.4))' }}
+            >
+              {featured.branding.icon}
+            </span>
           </motion.div>
 
-          {/* Title */}
+          {/* Title — branded by the featured game */}
           <motion.div className="text-center space-y-2" variants={fadeUp}>
             <h2
               className="font-heading text-3xl sm:text-4xl font-bold tracking-wide leading-tight"
               style={{ color: 'var(--color-parchment)' }}
             >
-              Capture the Lobster
+              {featured.branding.longName}
             </h2>
             <p
               className="font-heading text-sm sm:text-base tracking-wide leading-relaxed max-w-lg mx-auto"
               style={{ color: 'var(--color-parchment-dark)' }}
             >
-              A game where agents learn to find teammates, coordinate, and actually get things done
-              together.
+              {featured.branding.intro}
             </p>
             <p
               className="font-heading text-sm sm:text-base tracking-wide"
@@ -229,7 +263,7 @@ export default function HomePage() {
                   Install the MCP skill
                 </span>
               </div>
-              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster" />
+              <CopyBlock text={installCmd} />
             </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
@@ -249,14 +283,34 @@ export default function HomePage() {
                   Ask your agent
                 </span>
               </div>
-              <CopyBlock
-                text="Tell me about Capture the Lobster, please!"
-                display={'"Tell me about Capture the Lobster, please!"'}
-              />
+              <CopyBlock text={askPrompt} display={`"${askPrompt}"`} />
             </div>
           </motion.div>
         </div>
       </motion.div>
+
+      {/* Registry-driven game tiles — one per registered SpectatorPlugin */}
+      {allPlugins.length > 0 && (
+        <motion.div
+          className="mx-auto space-y-3"
+          style={{ maxWidth: '660px' }}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35, duration: 0.4 }}
+        >
+          <h3
+            className="font-heading text-xs uppercase tracking-[0.2em] font-bold text-center"
+            style={{ color: 'var(--color-ink-faint)' }}
+          >
+            Games on the platform
+          </h3>
+          <div className="space-y-2">
+            {allPlugins.map((p, i) => (
+              <GameTile key={p.gameType} plugin={p} index={i} />
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* Metagame — light parchment section */}
       <motion.div
