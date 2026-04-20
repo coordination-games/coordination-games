@@ -359,7 +359,7 @@ export default function HexGrid({
         const imgH = hexHeight;
 
         return (
-          // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
+          // biome-ignore lint/a11y/noStaticElementInteractions: SVG `<g>` is not an HTMLElement — hex cells have no role/button equivalent; keyboard input is handled by the adjacent action toolbar.
           <g
             key={key}
             onClick={() => handleClick(q, r)}
@@ -480,7 +480,7 @@ export default function HexGrid({
                   const unitSprite = `/games/capture-the-lobster/tiles/units/${u.unitClass}.png`;
                   const isTeamB = u.team === 'B';
                   return (
-                    // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
+                    // biome-ignore lint/a11y/noStaticElementInteractions: SVG `<g>` is not an HTMLElement — unit sprites have no role/button equivalent; keyboard input is handled by the adjacent action toolbar.
                     <g
                       key={u.id}
                       opacity={dim ? 0.3 : isDead ? 0.4 : 1}

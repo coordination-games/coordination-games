@@ -177,7 +177,7 @@ function KillFeed({ kills }: { kills: KillEvent[] }) {
         const killerColor = k.killerTeam === 'A' ? 'text-blue-400' : 'text-red-400';
         const victimColor = k.victimTeam === 'A' ? 'text-blue-400' : 'text-red-400';
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+          // biome-ignore lint/suspicious/noArrayIndexKey: append-only game-state list (kill feed / chat log) — entries never reorder or splice, so index is a stable key.
           <div key={i} className="text-xs flex items-center gap-1 text-gray-300">
             <span className="text-gray-500 w-6 text-right shrink-0">T{k.turn}</span>
             <span className={`font-bold ${killerColor}`}>{CLASS_ICONS[k.killerClass]}</span>
@@ -233,7 +233,7 @@ function ChatLog({
         const label = unitLabels?.[m.from];
         const displayName = label ? `${name} (${label})` : name;
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+          // biome-ignore lint/suspicious/noArrayIndexKey: append-only game-state list (kill feed / chat log) — entries never reorder or splice, so index is a stable key.
           <div key={i} className="text-xs">
             <span className={`font-semibold ${teamColor}`}>{displayName}:</span>{' '}
             <span className="text-gray-300">&ldquo;{m.message}&rdquo;</span>
@@ -795,7 +795,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
                         {chatToShow.map((m, i) => {
                           const name = gameState.handles?.[m.from] ?? m.from;
                           return (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+                            // biome-ignore lint/suspicious/noArrayIndexKey: append-only game-state list (kill feed / chat log) — entries never reorder or splice, so index is a stable key.
                             <div key={i} className="text-xs">
                               <span className={`font-semibold ${chatColor}`}>{name}:</span>{' '}
                               <span className="text-gray-300">{m.message}</span>

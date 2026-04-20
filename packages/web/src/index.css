@@ -1,4 +1,4 @@
-/* biome-ignore-all lint/suspicious/noUnknownAtRules: tailwind/postcss directives — TODO(2.3-followup) */
+/* biome-ignore-all lint/suspicious/noUnknownAtRules: Tailwind directives (@tailwind, @apply) — resolved by the Tailwind PostCSS plugin at build time; Biome doesn't know about them. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

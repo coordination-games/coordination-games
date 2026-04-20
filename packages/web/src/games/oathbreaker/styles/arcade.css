@@ -1,5 +1,5 @@
 /* OATHBREAKER Arcade Styles */
-/* biome-ignore-all lint/suspicious/noShorthandPropertyOverrides: keyframe animations override `background` shorthand intentionally — TODO(2.3-followup) */
+/* biome-ignore-all lint/suspicious/noShorthandPropertyOverrides: keyframe animations intentionally override `background` shorthand to animate gradients over a base color. */
 
 @import url("https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap");
 

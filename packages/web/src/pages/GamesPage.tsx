@@ -1116,7 +1116,7 @@ interface PhaseResult {
                   name: 'chat',
                   role: 'producer',
                   color: '#06b6d4',
-                  consumes: '&mdash;',
+                  consumes: '—',
                   provides: 'messaging',
                   desc: 'Formats relay messages into chat',
                 },
@@ -1183,11 +1183,7 @@ interface PhaseResult {
                     <div className="flex gap-4 text-[10px] font-mono">
                       <span>
                         <span style={{ color: '#475569' }}>consumes: </span>
-                        <span
-                          style={{ color: '#94a3b8' }}
-                          // biome-ignore lint/security/noDangerouslySetInnerHtml: pre-existing usage; review in cleanup followup — TODO(2.3-followup)
-                          dangerouslySetInnerHTML={{ __html: step.consumes }}
-                        />
+                        <span style={{ color: '#94a3b8' }}>{step.consumes}</span>
                       </span>
                       <span>
                         <span style={{ color: '#475569' }}>provides: </span>

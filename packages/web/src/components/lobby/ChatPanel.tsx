@@ -63,7 +63,7 @@ export default function ChatPanel({
           {messages.map((m, i) => {
             const agent = agents.find((a) => a.id === m.from);
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+              // biome-ignore lint/suspicious/noArrayIndexKey: append-only chat log — entries never reorder or splice, so index is a stable key.
               <div key={i} className="text-xs">
                 <span className="font-semibold" style={{ color: 'var(--color-amber)' }}>
                   {agent?.handle ?? m.from}:

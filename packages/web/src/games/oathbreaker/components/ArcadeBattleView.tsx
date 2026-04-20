@@ -571,7 +571,7 @@ export function ArcadeBattleView({
           const senderName = isP1 ? name1 : name2;
           const color = isP1 ? '#60a5fa' : '#f87171';
           return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+            // biome-ignore lint/suspicious/noArrayIndexKey: append-only battle-chat log — entries never reorder, so index is a stable key.
             <div key={i} style={{ marginBottom: 3, fontSize: 12, lineHeight: 1.4 }}>
               <span style={{ color, fontWeight: 'bold' }}>{senderName}:</span>{' '}
               <span style={{ color: '#d1d5db' }}>{msg.message}</span>
