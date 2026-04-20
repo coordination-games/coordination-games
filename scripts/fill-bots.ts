@@ -26,14 +26,14 @@
  *   MODEL       — claude model alias (default: haiku)
  */
 
-import {
-  api,
-  authenticate,
-  deriveCapacity,
-  loadPool,
-  POOL_PATH,
-  runClaudeAgent,
-} from './lib/bot-agent.js';
+import { api, authenticate, loadPool, POOL_PATH, runClaudeAgent } from './lib/bot-agent.js';
+
+// Mirrors the frontend's math in LobbiesPage.tsx. Per-game branching kept
+// here (the only caller) so scripts/lib/bot-agent.ts stays game-agnostic.
+// Future cleanup: add `capacity` to /api/lobbies so this lives server-side.
+function deriveCapacity(gameType: string, teamSize: number): number {
+  return gameType === 'oathbreaker' ? teamSize : teamSize * 2;
+}
 
 const SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 const MODEL = process.env.MODEL ?? 'haiku';

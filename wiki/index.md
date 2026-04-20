@@ -4,7 +4,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 
 ## Architecture
 
-- [Engine Philosophy](architecture/engine-philosophy.md) — action-based design, deadline alarm pattern, lobby unification rule
+- [Engine Philosophy](architecture/engine-philosophy.md) — action-based design, multiplexed alarm pattern, lobby unification rule
 - [Data Flow](architecture/data-flow.md) — game state vs relay data, client-side pipeline, spectator delay
 - [Plugin Pipeline](architecture/plugin-pipeline.md) — type-based topological sort, ToolPlugin interface, current + planned plugins
 - [MCP Not On Server](architecture/mcp-not-on-server.md) — why CLI is the MCP server, tool visibility rules
@@ -20,6 +20,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 - [Adding a Game](development/adding-a-game.md) — checklist, what you get for free, lobby config patterns
 - [Bot System](development/bot-system.md) — Haiku bots via Agent SDK, auth bypass, generic harness
 - [Hex Grid Rendering](development/hex-grid-rendering.md) — flat-top coords, Wesnoth assets, forest layering, map scaling
+- [Biome](development/biome.md) — workspace lint + format config, npm scripts, editor integration
 
 ## Plans & Specs
 

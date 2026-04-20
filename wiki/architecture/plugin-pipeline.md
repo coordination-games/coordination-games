@@ -37,10 +37,11 @@ trust-filter        consumes: messaging      provides: messaging
 
 ## Current Plugins
 
-| Plugin | ID | Type | MCP Tools |
+| Plugin | ID | Where | Notes |
 |---|---|---|---|
-| BasicChat | `basic-chat` | Tier 2 (relayed) | `chat` |
-| ELO | `elo` | Tier 3 (server) | none (CLI only) |
+| BasicChat | `basic-chat` | `packages/plugins/basic-chat/` (client + server halves) | Tier 2 relayed; provides `chat` tool |
+| ELO | `elo` | `packages/workers-server/src/plugins/elo/` | Tier 3 server-side; capability-injected via `ServerPluginRuntime` |
+| Settlement | `settlement` | `packages/workers-server/src/plugins/settlement/` | Tier 3 server-side; wraps the on-chain settlement state machine (Phase 5.3) |
 
 ## Trust Plugin Suite (Designed, Not Yet Built)
 
@@ -51,6 +52,10 @@ Five composable plugins for trust/reputation:
 4. `agent-tags-to-message-tags` — enricher, copies agent tags onto messages
 5. `trust-score-filter` — filter, drops messages from `suspicious` agents
 
-The trust graph calculation (PageRank over attestation edges) runs server-side. Clients request scores via REST. Existing EAS code in `relay.ts` needs migration into the plugin.
+The trust graph calculation (PageRank over attestation edges) runs server-side. Clients request scores via REST. Plan: `docs/plans/trust-plugins.md`.
 
-See: `packages/engine/src/plugin-loader.ts`, `packages/plugins/`
+## Server-Side Plugin Runtime
+
+Phase 4.3 added `ServerPluginRuntime` (`packages/workers-server/src/plugins/runtime.ts`) — the host that loads server-side halves of plugins (ELO, Settlement, basic-chat server piece) and injects `Capabilities` (relay client, settlement, persistence). See `packages/workers-server/src/plugins/capabilities.ts`.
+
+See: `packages/engine/src/plugin-loader.ts`, `packages/plugins/`, `packages/workers-server/src/plugins/`

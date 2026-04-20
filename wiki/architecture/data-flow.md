@@ -46,6 +46,6 @@ Pipeline ordering: topological sort by `consumes`/`provides` declarations. Cycle
 
 ## Spectator Delay
 
-Progress-based, not action-based. The `progressIncrement` flag in `ActionResult` marks meaningful game ticks (turn resolved, round completed). Spectators see N progress units behind, not N raw actions behind. This prevents leaking information about partial turn submissions.
+Progress-based, not action-based. Each game implements `getProgressCounter(state): number` (a deterministic monotonic counter — turns for CtL, rounds for OATHBREAKER). The engine snapshots whenever the counter advances, and spectators see N progress units behind, not N raw actions behind. This prevents leaking information about partial turn submissions.
 
-See: `ARCHITECTURE.md`, `docs/BUILDER_NOTES.md`
+See: `wiki/architecture/spectator-system.md`, `wiki/architecture/engine-philosophy.md`

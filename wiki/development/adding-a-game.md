@@ -21,7 +21,7 @@ From just implementing the interface: game registration, lobby management, fill-
 - **Game state** = things that affect outcome (board, units, scores, moves). Proven via Merkle tree.
 - **Relay data** = things that affect experience (chat, trust, vision sharing). Processed by client pipeline.
 - **`applyAction` must be deterministic.** Use seeded PRNGs (mulberry32), never `Math.random()` or `Date.now()`.
-- **`progressIncrement: true`** only on actions that advance the game clock (turn resolution, round completion). Not on individual player submissions.
+- **`getProgressCounter(state)`** returns a deterministic, monotonic non-decreasing counter that bumps when the game clock advances (turn resolution, round completion). Not on individual player submissions.
 
 ## Lobby Config
 

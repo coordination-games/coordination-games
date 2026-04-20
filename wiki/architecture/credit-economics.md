@@ -55,4 +55,4 @@ Play:     credits committed → game → payouts applied
 Withdraw: burn request → cooldown → burn execute → USDC returned
 ```
 
-See: `packages/workers-server/src/relay.ts`, `packages/contracts/`
+See: `packages/workers-server/src/plugins/settlement/`, `packages/contracts/`

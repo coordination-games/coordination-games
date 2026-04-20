@@ -228,82 +228,84 @@ function sleep(ms: number) {
 
 // ---------------------------------------------------------------------------
 // Claude agent — spawn `claude --print` with coga serve --stdio MCP backend.
-// Generic prompt: bots read get_guide and play with whatever tools are exposed.
+// Generic prompt: bots read get_guide and play with whatever tools the server
+// exposes. The harness has zero per-game knowledge — game rules, tool
+// catalogues, and termination criteria all come from the engine via MCP.
 // ---------------------------------------------------------------------------
 
 const MAX_RESUMES = 20;
 
 const INITIAL_PROMPT = (
   botName: string,
-  gameType: string,
-) => `You are ${botName}, an AI agent playing ${gameType} on the Coordination Games platform.
+) => `You are ${botName}, an AI agent on the Coordination Games platform.
 
-YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join_lobby — you are already in one. Call get_state first to see its ID, phase, other players, and available actions.
+YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join_lobby — you are already in one.
 
-You have ONE MCP server named "game". Its tool list is authoritative: each phase tool (team formation, class selection, gameplay) is its own named MCP tool with its own JSON schema. Discover them from the MCP surface and from state.currentPhase.tools. Core tools always present: get_state, get_guide, wait_for_update, chat.
+You have ONE MCP server named "game". Core tools are always present:
+  - get_guide          — authoritative rules, win conditions, and per-phase tool catalogue for this game. READ THIS FIRST.
+  - get_state          — your current lobby/game state, fog-of-war filtered. Includes \`phase\`, \`currentPhase.tools\` (the tool names callable right now), and game-specific fields described by get_guide.
+  - wait_for_update    — long-poll until the next event (turn change, chat, phase transition).
+  - chat               — speak. Args: message (string), scope ("team" | "all" | "<display-name>" for DMs). Coordinate when the guide says coordination matters; the guide tells you which scopes are valid.
+
+Every other action is its own named MCP tool with its own JSON schema, registered dynamically from the game's plugin. There is NO generic {type, payload} envelope — call each tool by its declared name with its declared args.
 
 How to play:
-1. Call get_state IMMEDIATELY — shows your current lobby, phase, teammates, and the list of tool names callable right now in state.currentPhase.tools.
-2. Call get_guide ONCE to learn rules + which tools apply in each phase.
-3. Loop until gameOver: true or lobby phase becomes "finished":
-   - Call the per-phase tool by name with its own args (do NOT pass a generic {type, payload}).
+1. Call get_guide IMMEDIATELY — it tells you the rules, the phases, which tools apply in each phase, and the win condition.
+2. Call get_state — confirms your lobby ID, current phase, teammates, and \`currentPhase.tools\`.
+3. Loop until the game is finished (state.phase === "finished" — that's the canonical signal returned by every game's getReplayChrome):
+   - Pick the right tool from \`state.currentPhase.tools\` for the current phase.
+   - Call it with the args its schema requires.
    - Call wait_for_update to block until something changes, then get_state again.
-4. Use chat during gameplay — solo play loses, coordinate with your teammate. chat args: message="hi", scope="team" (or "all", or a display name for DMs).
-5. Do NOT stop early, do NOT summarize, do NOT create a new lobby. Keep calling tools until the game finishes.
+4. Use chat during gameplay when the guide says coordination matters — solo play often loses.
+5. Do NOT stop early, do NOT summarize, do NOT create a new lobby. Keep calling tools until state.phase === "finished".
 
-Tool examples:
+Error handling — the dispatcher returns structured codes you can self-correct on:
+  - UNKNOWN_TOOL:      the tool name isn't in this session's registry. Re-read get_state.currentPhase.tools / get_guide.
+  - WRONG_PHASE:       the tool exists but belongs to a different phase. The error payload includes \`currentPhase\` and \`validToolsNow[]\` — switch to one of those.
+  - INVALID_ARGS:      args failed JSON-schema validation. Error lists the field issues — fix and retry.
+  - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. an out-of-range move). Fix the semantics and retry.`;
 
-capture-the-lobster (team-based hex game):
-  - Lobby team-formation phase: propose_team targetHandle=bob, then the other player accept_team teamId=team_14; leave_team to back out.
-  - Lobby class-selection phase: choose_class unitClass=rogue (or knight / mage).
-  - Gameplay phase: move path=N,NE (ordered hex directions, up to your class speed; empty path = stay).
+const RESUME_PROMPT = `The session is still in progress. Keep playing — call get_state, read state.currentPhase.tools, pick the right per-name tool, call it, then wait_for_update. Use chat when the guide says coordination matters. On WRONG_PHASE or UNKNOWN_TOOL, re-read get_state and self-correct. Repeat until state.phase === "finished". Do not summarize.`;
 
-oathbreaker (repeated pledging game):
-  - Gameplay pledging phase: propose_pledge amount=10 (both players must match to advance).
-  - Gameplay deciding phase: submit_decision decision=C (or D).
-
-Error handling — self-correct on structured errors:
-  - UNKNOWN_TOOL: the tool name isn't in this session's registry. Re-check get_state / get_guide.
-  - WRONG_PHASE: the tool exists but belongs to a different phase. The error includes the current phase and validToolsNow[] — switch to one of those.
-  - INVALID_ARGS: args failed schema validation. Error lists the field issues.
-  - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. move out of range). Fix the semantics and retry.`;
-
-const RESUME_PROMPT = `The session is still in progress. Keep playing — call get_state, read state.currentPhase.tools, pick the right per-name tool, call it, then wait_for_update. Use chat during gameplay. On WRONG_PHASE or UNKNOWN_TOOL, re-read get_state and self-correct. Repeat until gameOver: true. Do not summarize.`;
-
-const GAME_OVER_MARKERS = [
-  'gameover: true',
-  'game over',
-  'game complete',
-  'game completed',
-  'phase: "finished"',
-  "phase: 'finished'",
-  'game is over',
-  'game has ended',
-  'final results',
-  'final balance',
-  'tournament concluded',
-  'tournament has finished',
-  '"winner"',
-  'winner:',
-  'game finished',
-  'captured the flag',
+/**
+ * Game-over heuristic — game-agnostic.
+ *
+ * Phase 4.7 standardised `getReplayChrome(snapshot).isFinished` as the
+ * canonical "this game is over" signal across every plugin, and every
+ * implementation derives it from `snapshot.phase === 'finished'`. The bot
+ * harness can't import the plugin to call getReplayChrome (it's a thin
+ * Node script that only sees the agent's stdout), so we sniff the same
+ * canonical phase string out of the JSON the agent prints when it
+ * receives get_state / wait_for_update results.
+ *
+ * Quote-form variants cover JSON.stringify (`"phase":"finished"`) and the
+ * agent's pretty-printed paraphrase (`phase: "finished"` / `phase: 'finished'`).
+ * No per-game keywords (no "captured the flag", no "tournament concluded").
+ */
+const FINISHED_PHASE_PATTERNS: RegExp[] = [
+  /"phase"\s*:\s*"finished"/i,
+  /'phase'\s*:\s*'finished'/i,
+  /\bphase\s*:\s*["']finished["']/i,
 ];
 
 function looksFinished(output: string): boolean {
-  const lower = output.toLowerCase();
-  return GAME_OVER_MARKERS.some((m) => lower.includes(m));
+  return FINISHED_PHASE_PATTERNS.some((re) => re.test(output));
 }
 
 export interface RunAgentOptions {
   server: string;
   botName: string;
   privateKey: string;
-  gameType: string;
+  /**
+   * Retained for caller convenience (e.g. fill-bots logs the game type) but
+   * NOT consumed by the prompt — the bot learns the game from get_guide.
+   */
+  gameType?: string;
   model?: string; // default 'haiku'
 }
 
 export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
-  const { server, botName, privateKey, gameType, model = 'haiku' } = opts;
+  const { server, botName, privateKey, model = 'haiku' } = opts;
 
   const sessionId = randomUUID();
   const mcpConfig = JSON.stringify({
@@ -370,7 +372,7 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
     });
   }
 
-  let output = await runOnce(INITIAL_PROMPT(botName, gameType), false);
+  let output = await runOnce(INITIAL_PROMPT(botName), false);
   for (let i = 0; i < MAX_RESUMES; i++) {
     if (looksFinished(output)) {
       console.log(`[${botName}] Finished after ${i + 1} session(s)`);
@@ -380,13 +382,4 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
     output = await runOnce(RESUME_PROMPT, true);
   }
   console.log(`[${botName}] Hit resume cap (${MAX_RESUMES})`);
-}
-
-// ---------------------------------------------------------------------------
-// Capacity helper — mirrors the frontend's math in LobbiesPage.tsx.
-// Future cleanup: add `capacity` to /api/lobbies so this lives server-side.
-// ---------------------------------------------------------------------------
-
-export function deriveCapacity(gameType: string, teamSize: number): number {
-  return gameType === 'oathbreaker' ? teamSize : teamSize * 2;
 }

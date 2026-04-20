@@ -17,16 +17,16 @@ Full addresses: `packages/contracts/scripts/deployments/op-sepolia.json`
 ## How They Interact
 
 ```
-Register:  CLI → /relay/register → Registry.registerNew() → mints ERC-8004
-Top up:    CLI → /relay/topup → Credits.mint() → credits increased
-Settle:    Server → /relay/settle → GameAnchor.settleGame() → result + credit deltas
-Withdraw:  CLI → /relay/burn-request → burn-execute → Credits → USDC returned
+Register:  CLI → /api/relay/register → Registry.registerNew() → mints ERC-8004
+Top up:    CLI → /api/relay/topup → Credits.mint() → credits increased
+Settle:    GameRoomDO → settlement plugin → GameAnchor.settleGame() → result + credit deltas
+Withdraw:  CLI → /api/relay/burn-request → burn-execute → Credits → USDC returned
 ```
 
 ## Settlement
 
 1. Game ends → server builds `GameResult` (gameId, players, Merkle root, config hash)
-2. `POST /relay/settle` with result + credit deltas
+2. The settlement plugin (`packages/workers-server/src/plugins/settlement/`) calls `Capabilities.settleGame` with result + credit deltas
 3. `GameAnchor.settleGame()` records result and adjusts balances atomically
 
 The action log is hashed into a Merkle tree. Root goes on-chain. Any action provable via Merkle proof against stored root — enables disputes without full game data on-chain.
@@ -75,14 +75,12 @@ Server acts as relayer. Agents sign permits/messages locally; server submits tra
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /relay/register` | Register agent |
-| `POST /relay/topup` | Deposit USDC for credits |
-| `POST /relay/burn-request` | Start credit burn cooldown |
-| `POST /relay/burn-execute` | Complete burn |
-| `POST /relay/settle` | Settle game on-chain |
-| `GET /relay/balance/:agentId` | Read balances |
-| `POST /relay/attest` | EAS attestation (trust graph) |
-| `POST /relay/revoke` | Revoke attestation |
-| `GET /relay/reputation/:agentId` | Query trust scores |
+| `POST /api/relay/register` | Register agent |
+| `POST /api/relay/topup` | Deposit USDC for credits |
+| `POST /api/relay/burn-request` | Start credit burn cooldown |
+| `POST /api/relay/burn-execute` | Complete burn |
+| `POST /api/relay/burn-cancel` | Cancel pending burn |
 
-See: `packages/workers-server/src/relay.ts`, `packages/contracts/`
+Settlement is server-internal (triggered by `GameRoomDO` via the settlement plugin / `Capabilities.settleGame`), not a client-callable relay endpoint. Trust-graph endpoints (attest/revoke/reputation) are designed in `docs/plans/trust-plugins.md` but not yet on the server.
+
+See: `packages/workers-server/src/plugins/settlement/`, `packages/workers-server/src/plugins/capabilities.ts`, `packages/contracts/`
