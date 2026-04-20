@@ -1,6 +1,23 @@
 import { useCallback, useMemo } from 'react';
 import type { VisibleTile } from './types';
 
+/**
+ * A unit as it appears inside a `VisibleTile`. The public `VisibleTile` type
+ * currently exposes a single `unit?` field, but legacy/mid-flight spectator
+ * payloads may carry a `units?: TileUnit[]` array for multi-unit hexes. We
+ * narrow the structural shape here instead of reaching for `any`.
+ */
+interface TileUnit {
+  id?: string;
+  team: 'A' | 'B';
+  unitClass: 'rogue' | 'knight' | 'mage';
+  carryingFlag?: boolean;
+  alive?: boolean;
+  respawnTurn?: number;
+}
+
+type MaybeMultiUnitTile = VisibleTile & { units?: TileUnit[] };
+
 /** A unit rendered at absolute pixel coordinates (for animations) */
 export interface FloatingUnit {
   id: string;
@@ -143,8 +160,7 @@ export default function HexGrid({
     const indexMap = new Map<string, number>();
     const teamCounters: Record<string, number> = { A: 0, B: 0 };
     for (const t of tiles) {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const allUnits = (t as any).units ?? (t.unit ? [t.unit] : []);
+      const allUnits: TileUnit[] = (t as MaybeMultiUnitTile).units ?? (t.unit ? [t.unit] : []);
       for (const u of allUnits) {
         if (u.id && !indexMap.has(u.id)) {
           const team = u.team ?? 'A';
@@ -448,16 +464,13 @@ export default function HexGrid({
             {showUnit &&
               !isFog &&
               (() => {
-                // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-                const allUnits = ((tile as any)?.units ?? (unit ? [unit] : [])).filter(
-                  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-                  (u: any) => !hiddenUnitIds?.has(u.id),
-                );
+                const rawUnits: TileUnit[] =
+                  (tile as MaybeMultiUnitTile | undefined)?.units ?? (unit ? [unit] : []);
+                const allUnits = rawUnits.filter((u) => !(u.id && hiddenUnitIds?.has(u.id)));
                 if (allUnits.length === 0) return null;
 
                 const renderUnit = (
-                  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-                  u: any,
+                  u: TileUnit,
                   offsetX: number,
                   spriteSize: number,
                   fontSize: number,
@@ -550,13 +563,12 @@ export default function HexGrid({
                   );
                 };
 
-                if (allUnits.length === 1) {
+                if (allUnits.length === 1 && allUnits[0]) {
                   return renderUnit(allUnits[0], 0, unitSpriteSize, HEX_SIZE * 0.45);
                 }
 
                 // Multiple units — offset them
-                // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-                return allUnits.map((u: any, i: number) => {
+                return allUnits.map((u, i) => {
                   const offsetX = i === 0 ? -HEX_SIZE * 0.28 : HEX_SIZE * 0.28;
                   return renderUnit(u, offsetX, unitSpriteSize * 0.75, HEX_SIZE * 0.38);
                 });

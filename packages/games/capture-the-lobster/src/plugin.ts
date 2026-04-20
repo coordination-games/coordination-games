@@ -704,8 +704,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return status;
   },
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummary(state: CtlGameState): Record<string, any> {
+  getSummary(state: CtlGameState): Record<string, unknown> {
     return {
       turn: state.turn,
       maxTurns: state.config.turnLimit,
@@ -723,8 +722,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
    * this on every progress tick to update /api/games. Uses snapshot-only
    * fields so `winner`, `turn`, etc. never leak ahead of the delayed view.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
+  getSummaryFromSpectator(snapshot: unknown): Record<string, unknown> {
     const s = snapshot as SpectatorState;
     return {
       turn: s.turn,
@@ -813,8 +811,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   createConfig(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    options?: Record<string, any>,
+    options?: Record<string, unknown>,
   ): GameSetup<CtlConfig> {
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
@@ -869,8 +866,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       }));
     }
 
+    const teamSizeOpt = options?.teamSize;
+    const turnTimerOpt = options?.turnTimerSeconds;
     const teamSize =
-      options?.teamSize ??
+      (typeof teamSizeOpt === 'number' ? teamSizeOpt : undefined) ??
       Math.max(
         ctlPlayers.filter((p) => p.team === 'A').length,
         ctlPlayers.filter((p) => p.team === 'B').length,
@@ -883,7 +882,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       mapRadius: radius,
       teamSize,
       turnLimit,
-      turnTimerSeconds: options?.turnTimerSeconds ?? 30,
+      turnTimerSeconds: typeof turnTimerOpt === 'number' ? turnTimerOpt : 30,
       players: ctlPlayers,
     };
 

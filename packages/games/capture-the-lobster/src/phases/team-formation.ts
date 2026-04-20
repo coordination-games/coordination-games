@@ -110,8 +110,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   // init
   // -------------------------------------------------------------------------
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  init(players: AgentInfo[], _config: Record<string, any>): TeamFormationState {
+  init(players: AgentInfo[], _config: Record<string, unknown>): TeamFormationState {
     return {
       teams: [],
       unassigned: players.map((p) => p.id),
@@ -125,8 +124,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
   handleAction(
     state: TeamFormationState,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    action: { type: string; playerId: string; payload?: any },
+    action: { type: string; playerId: string; payload?: unknown },
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
     switch (action.type) {
@@ -291,11 +289,10 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   private handlePropose(
     state: TeamFormationState,
     playerId: string,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    payload: any,
+    payload: unknown,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const targetHandle = payload?.targetHandle;
+    const targetHandle = (payload as { targetHandle?: string } | undefined)?.targetHandle;
     if (!targetHandle) {
       return { state, error: { message: 'targetHandle is required', status: 400 } };
     }
@@ -365,11 +362,10 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   private handleAccept(
     state: TeamFormationState,
     playerId: string,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    payload: any,
+    payload: unknown,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const teamId = payload?.teamId;
+    const teamId = (payload as { teamId?: string } | undefined)?.teamId;
     if (!teamId) {
       return { state, error: { message: 'teamId is required', status: 400 } };
     }

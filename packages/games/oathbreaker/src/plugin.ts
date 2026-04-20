@@ -253,27 +253,23 @@ export const OathbreakerPlugin = {
   getPlayerStatus(state: OathState, playerId: string): string {
     let status = '\n## Your Status\n';
     status += `- **Phase:** ${state.phase}\n- **Round:** ${state.round}/${state.config?.maxRounds ?? '?'}\n`;
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const player = state.players?.find((p: any) => p.id === playerId);
+    const player = state.players?.find((p) => p.id === playerId);
     if (player) {
       status += `- **Balance:** ${player.balance}\n- **Oaths Kept:** ${player.oathsKept}\n- **Oaths Broken:** ${player.oathsBroken}\n`;
     }
     return status;
   },
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummary(state: OathState): Record<string, any> {
+  getSummary(state: OathState): Record<string, unknown> {
     return {
       round: state.round,
       maxRounds: state.config.maxRounds,
       phase: state.phase,
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      players: state.players.map((p: any) => p.id),
+      players: state.players.map((p) => p.id),
     };
   },
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
+  getSummaryFromSpectator(snapshot: unknown): Record<string, unknown> {
     const s = snapshot as SpectatorView;
     return {
       round: s.round,
@@ -447,16 +443,17 @@ export const OathbreakerPlugin = {
   createConfig(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    options?: Record<string, any>,
+    options?: Record<string, unknown>,
   ): GameSetup<OathConfig> {
+    const maxRoundsOpt = options?.maxRounds;
+    const maxRoundsOverride = typeof maxRoundsOpt === 'number' ? { maxRounds: maxRoundsOpt } : {};
     return {
       config: {
         ...DEFAULT_OATH_CONFIG,
         entryCost: OathbreakerPlugin.entryCost,
         playerIds: players.map((p) => p.id),
         seed,
-        ...(options?.maxRounds ? { maxRounds: options.maxRounds } : {}),
+        ...maxRoundsOverride,
       },
       // FFA: each player is their own team (per CoordinationGame.getTeamForPlayer).
       players: players.map((p) => ({ id: p.id, team: p.id })),

@@ -8,11 +8,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import type { CtlGameState } from '../game.js';
 import { CaptureTheLobsterPlugin } from '../plugin.js';
 
 // Minimal-shape factory — only the fields getReplayChrome / summary read.
-// biome-ignore lint/suspicious/noExplicitAny: synthetic snapshot for chrome contract
-function snap(overrides: Record<string, any>): any {
+// Returned as `unknown` so call sites narrow/cast at the plugin entry points.
+function snap(overrides: Record<string, unknown>): unknown {
   return {
     turn: 5,
     maxTurns: 30,
@@ -71,8 +72,10 @@ describe('CaptureTheLobsterPlugin.getSummaryFromSpectator ⊆ getSummary (data s
     // both ends because the plan asks for the *invariant* — any per-key
     // value mismatch is the bug we're catching, regardless of how the
     // state was produced.
-    // biome-ignore lint/suspicious/noExplicitAny: synthetic for shape comparison
-    const fakeState: any = {
+    // `getSummary` only reads a handful of fields; cast via unknown to bypass
+    // the full `CtlGameState` shape requirement (which includes many fields
+    // this contract test doesn't exercise).
+    const fakeState = {
       turn: 7,
       phase: 'finished',
       winner: 'A',
@@ -83,7 +86,7 @@ describe('CaptureTheLobsterPlugin.getSummaryFromSpectator ⊆ getSummary (data s
         { id: 'p3', team: 'B' },
         { id: 'p4', team: 'B' },
       ],
-    };
+    } as unknown as CtlGameState;
     const fakeSnapshot = snap({
       turn: 7,
       maxTurns: 30,
@@ -94,7 +97,7 @@ describe('CaptureTheLobsterPlugin.getSummaryFromSpectator ⊆ getSummary (data s
     const spectatorSummary = CaptureTheLobsterPlugin.getSummaryFromSpectator(fakeSnapshot);
     for (const [key, value] of Object.entries(spectatorSummary)) {
       expect(fullSummary).toHaveProperty(key);
-      expect(fullSummary[key]).toEqual(value);
+      expect(fullSummary?.[key]).toEqual(value);
     }
   });
 });

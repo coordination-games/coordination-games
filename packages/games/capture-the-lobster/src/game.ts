@@ -195,8 +195,7 @@ export function createGameState(
     config: resolvedConfig,
     mapTiles: [...map.tiles.entries()] as [string, string][],
     mapRadius: map.radius,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    mapBases: map.bases as any,
+    mapBases: map.bases,
     moveSubmissions: [],
     allKills: [],
   };

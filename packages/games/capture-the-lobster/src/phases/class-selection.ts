@@ -62,8 +62,7 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
   // Lifecycle
   // -------------------------------------------------------------------------
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  init(players: AgentInfo[], _config: Record<string, any>): ClassSelectionState {
+  init(players: AgentInfo[], _config: Record<string, unknown>): ClassSelectionState {
     return {
       classPicks: {},
       playerIds: players.map((p) => p.id),
@@ -72,8 +71,7 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
 
   handleAction(
     state: ClassSelectionState,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    action: { type: string; playerId: string; payload?: any },
+    action: { type: string; playerId: string; payload?: unknown },
     players: AgentInfo[],
   ): PhaseActionResult<ClassSelectionState> {
     if (action.type !== 'choose_class') {
@@ -84,7 +82,8 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
     }
 
     const { playerId, payload } = action;
-    const unitClass: string | undefined = payload?.unitClass;
+    const unitClass: string | undefined = (payload as { unitClass?: string } | undefined)
+      ?.unitClass;
 
     // Validate player is in this phase
     if (!state.playerIds.includes(playerId)) {

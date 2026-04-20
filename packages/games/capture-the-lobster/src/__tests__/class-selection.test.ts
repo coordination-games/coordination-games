@@ -129,8 +129,11 @@ describe('ClassSelectionPhase', () => {
       players,
     ).state;
 
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const view = phase.getView(state) as any;
+    const view = phase.getView(state) as {
+      validClasses: string[];
+      classPicks: Record<string, string>;
+      playerIds: string[];
+    };
 
     expect(view.validClasses).toEqual(VALID_CLASSES);
     expect(view.classPicks).toEqual({ alice: 'rogue' });
