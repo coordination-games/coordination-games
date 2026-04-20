@@ -24,8 +24,7 @@ describe('Type interfaces compile correctly', () => {
           inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
         },
       ],
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      handleData(_mode: string, _inputs: Map<string, any>) {
+      handleData(_mode: string, _inputs: Map<string, unknown>) {
         return new Map([['test-data', { value: 42 }]]);
       },
       handleCall(_tool: string, _args: unknown, _caller: AgentInfo) {
@@ -126,8 +125,7 @@ describe('Type interfaces compile correctly', () => {
 
   it('CoordinationGame with lobby config', () => {
     // Type-check that CoordinationGame accepts lobby, requiredPlugins, recommendedPlugins
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const game: Partial<CoordinationGame<any, any, any, any>> = {
+    const game: Partial<CoordinationGame<unknown, unknown, unknown, unknown>> = {
       gameType: 'test-game',
       version: '0.1.0',
       lobby: {

@@ -233,8 +233,7 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   getPlayerStatus?(state: TState, playerId: string): string;
 
   /** Summary for game listing (lobby browser). */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummary?(state: TState): Record<string, any>;
+  getSummary?(state: TState): Record<string, unknown>;
 
   /**
    * Summary derived from a *public* spectator-view snapshot instead of raw
@@ -247,8 +246,7 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    * subset of `getSummary(s)` are buggy by definition (the spectator view
    * is a privacy-filtered projection of state).
    */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummaryFromSpectator(snapshot: unknown): Record<string, any>;
+  getSummaryFromSpectator(snapshot: unknown): Record<string, unknown>;
 
   /**
    * Per-game "is this finished and who won?" chrome derived from a public
@@ -301,8 +299,7 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   createConfig?(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    options?: Record<string, any>,
+    options?: Record<string, unknown>,
   ): GameSetup<TConfig>;
 }
 
@@ -381,8 +378,7 @@ export interface FrameworkConfig {
   /** Port to listen on */
   port: number;
   /** Registered game plugins */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  games: Map<string, CoordinationGame<any, any, any, any>>;
+  games: Map<string, CoordinationGame<unknown, unknown, unknown, unknown>>;
   /** Spectator delay in turns */
   spectatorDelay?: number;
 }
@@ -446,15 +442,13 @@ export interface ToolPlugin {
    * envelopes by `type` and rejects anything unregistered. Optional only so
    * older plugins compile during migration; production plugins MUST declare.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: Zod 4 schema is generic; carrying the inferred T through ToolPlugin shape would cascade everywhere
-  readonly relayTypes?: Record<string, import('zod').ZodType<any>>;
+  readonly relayTypes?: Record<string, import('zod').ZodTypeAny>;
 
   /** Initialize plugin with game context */
   init?(ctx: PluginContext): void;
 
   /** Process data through the plugin pipeline */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
+  handleData(mode: string, inputs: Map<string, unknown>): Map<string, unknown>;
 
   /** Handle a direct tool call from an agent */
   handleCall?(tool: string, args: unknown, caller: AgentInfo): unknown;
@@ -498,8 +492,7 @@ export interface AgentInfo {
 export interface ToolDefinition {
   name: string;
   description: string;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  inputSchema: Record<string, any>;
+  inputSchema: Record<string, unknown>;
   /**
    * If true, this tool is also exposed as an MCP tool (not just CLI).
    * MCP tools are for mid-turn actions agents need in the flow.
@@ -514,8 +507,7 @@ export interface ToolDefinition {
 // ---------------------------------------------------------------------------
 
 /** A single phase in the lobby pipeline (request-driven). */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export interface LobbyPhase<TPhaseState = any> {
+export interface LobbyPhase<TPhaseState = unknown> {
   readonly id: string;
   readonly name: string;
 
@@ -533,8 +525,7 @@ export interface LobbyPhase<TPhaseState = any> {
   readonly acceptsJoins?: boolean;
 
   /** Create initial state for this phase. */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  init(players: AgentInfo[], config: Record<string, any>): TPhaseState;
+  init(players: AgentInfo[], config: Record<string, unknown>): TPhaseState;
 
   /**
    * Handle a player action during this phase.
@@ -545,8 +536,7 @@ export interface LobbyPhase<TPhaseState = any> {
    */
   handleAction(
     state: TPhaseState,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    action: { type: string; playerId: string; payload?: any },
+    action: { type: string; playerId: string; payload?: unknown },
     players: AgentInfo[],
   ): PhaseActionResult<TPhaseState>;
 
@@ -580,8 +570,7 @@ export interface LobbyPhase<TPhaseState = any> {
 }
 
 /** Result of handling an action within a phase. */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export interface PhaseActionResult<TPhaseState = any> {
+export interface PhaseActionResult<TPhaseState = unknown> {
   /** Updated phase state. */
   state: TPhaseState;
   /** If set, this phase is complete. Advance to next or start game. */
@@ -605,8 +594,7 @@ export interface PhaseResult {
    * E.g. TeamFormation: { teams: [{ id, members }] }
    * E.g. ClassSelection: { classPicks: { [playerId]: 'rogue' | 'knight' | 'mage' } }
    */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   /** Players removed during this phase. */
   removed?: AgentInfo[];
 }
@@ -647,6 +635,5 @@ export interface Message {
   /** Audience scope */
   scope: 'team' | 'all';
   /** Extensible tag bag — plugins enrich this */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
-  tags: Record<string, any>;
+  tags: Record<string, unknown>;
 }

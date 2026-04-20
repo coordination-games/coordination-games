@@ -27,17 +27,16 @@ interface FakeOpts {
   withSummaryFromSpectator?: boolean;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function fakeGame(opts: FakeOpts): CoordinationGame<any, any, any, any> {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic stub assembly
-  const base: any = {
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
+function fakeGame(opts: FakeOpts): AnyGame {
+  const base: Record<string, unknown> = {
     gameType: opts.gameType,
     version: '0.0.0-test',
     entryCost: 0,
     createInitialState: () => ({}),
     validateAction: () => false,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    applyAction: (state: any) => ({ state }),
+    applyAction: (state: unknown) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
@@ -50,8 +49,7 @@ function fakeGame(opts: FakeOpts): CoordinationGame<any, any, any, any> {
   if (opts.withSummaryFromSpectator) {
     base.getSummaryFromSpectator = () => ({});
   }
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  return base as CoordinationGame<any, any, any, any>;
+  return base as unknown as AnyGame;
 }
 
 describe('registerGame — Phase 4.7 required-method enforcement', () => {

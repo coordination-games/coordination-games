@@ -18,8 +18,7 @@ export class OpenQueuePhase implements LobbyPhase<OpenQueueState> {
 
   handleAction(
     state: OpenQueueState,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    _action: { type: string; playerId: string; payload?: any },
+    _action: { type: string; playerId: string; payload?: unknown },
     _players: AgentInfo[],
   ): PhaseActionResult<OpenQueueState> {
     return { state, error: { message: 'No actions available during open queue phase' } };

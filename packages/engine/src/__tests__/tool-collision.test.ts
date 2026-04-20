@@ -41,8 +41,7 @@ function fakePhase(id: string, tools: ToolDefinition[]): LobbyPhase {
     init(_players: AgentInfo[]) {
       return {};
     },
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    handleAction(state: any, _action, _players): PhaseActionResult {
+    handleAction(state, _action, _players): PhaseActionResult {
       return { state };
     },
     handleTimeout(_state, _players): PhaseResult | null {
@@ -58,12 +57,13 @@ function fakePhase(id: string, tools: ToolDefinition[]): LobbyPhase {
 // Fake CoordinationGame factory — only the fields `registerGame` reads.
 // ---------------------------------------------------------------------------
 
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
 function fakeGame(options: {
   gameType: string;
   gameTools?: ToolDefinition[];
   phases?: LobbyPhase[];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-}): CoordinationGame<any, any, any, any> {
+}): AnyGame {
   return {
     gameType: options.gameType,
     version: '0.0.0-test',
@@ -85,8 +85,7 @@ function fakeGame(options: {
     // Stubs — not exercised by registerGame's collision check.
     createInitialState: () => ({}),
     validateAction: () => false,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    applyAction: (state: any) => ({ state }),
+    applyAction: (state: unknown) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
@@ -95,8 +94,7 @@ function fakeGame(options: {
     // Phase 4.7 required methods.
     getSummaryFromSpectator: () => ({}),
     getReplayChrome: () => ({ isFinished: false, statusVariant: 'in_progress' as const }),
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } as unknown as CoordinationGame<any, any, any, any>;
+  } as unknown as AnyGame;
 }
 
 const chatTool = (): ToolDefinition => ({
@@ -201,12 +199,11 @@ describe('ToolCollisionError — server-side', () => {
       gameTools: [chatTool()],
       phases: [fakePhase('phase-x', [chatTool()])],
     });
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    let thrown: any;
+    let thrown: Error | undefined;
     try {
       registerGame(plugin);
     } catch (err) {
-      thrown = err;
+      thrown = err as Error;
     }
     expect(thrown?.message).toMatch(/Resolve by:/);
     expect(thrown?.message).toMatch(/renaming one of the conflicting tools/);

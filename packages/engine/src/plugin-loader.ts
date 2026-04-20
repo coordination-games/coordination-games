@@ -32,8 +32,7 @@ export class PluginPipeline {
    * Execute the pipeline. Each step receives accumulated data,
    * processes it, and adds its outputs.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  execute(initialData: Map<string, any>): Map<string, any> {
+  execute(initialData: Map<string, unknown>): Map<string, unknown> {
     const data = new Map(initialData);
 
     for (const step of this.steps) {
@@ -41,13 +40,11 @@ export class PluginPipeline {
       // Producers (no consumes) get all accumulated data so they can
       // read raw inputs like relay-messages. Consumers get only their
       // declared consumed capabilities.
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      let inputs: Map<string, any>;
+      let inputs: Map<string, unknown>;
       if (step.mode.consumes.length === 0) {
         inputs = new Map(data);
       } else {
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-        inputs = new Map<string, any>();
+        inputs = new Map<string, unknown>();
         for (const cap of step.mode.consumes) {
           if (data.has(cap)) {
             inputs.set(cap, data.get(cap));

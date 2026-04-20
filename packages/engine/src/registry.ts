@@ -11,8 +11,9 @@
 
 import type { CoordinationGame } from './types.js';
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-const games: Map<string, CoordinationGame<any, any, any, any>> = new Map();
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
+const games: Map<string, AnyGame> = new Map();
 
 /** Declarer of a tool within a game plugin. */
 interface ToolDeclarer {
@@ -25,10 +26,7 @@ interface ToolDeclarer {
  * Find tool-name collisions within a single game's declared surface.
  * Returns a map of colliding name → declarers. Empty map means no collisions.
  */
-function findToolCollisions(
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  plugin: CoordinationGame<any, any, any, any>,
-): Map<string, ToolDeclarer[]> {
+function findToolCollisions(plugin: AnyGame): Map<string, ToolDeclarer[]> {
   const byName = new Map<string, ToolDeclarer[]>();
 
   for (const tool of plugin.gameTools ?? []) {
@@ -88,15 +86,13 @@ export class ToolCollisionError extends Error {
  */
 const REQUIRED_GAME_METHODS = ['getReplayChrome', 'getSummaryFromSpectator'] as const;
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export function registerGame(plugin: CoordinationGame<any, any, any, any>): void {
+export function registerGame(plugin: AnyGame): void {
   if (games.has(plugin.gameType)) {
     throw new Error(`Game "${plugin.gameType}" already registered`);
   }
 
   for (const method of REQUIRED_GAME_METHODS) {
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic method check
-    if (typeof (plugin as any)[method] !== 'function') {
+    if (typeof (plugin as unknown as Record<string, unknown>)[method] !== 'function') {
       throw new Error(
         `Game "${plugin.gameType}" missing required method: ${method}. ` +
           `Every game plugin must implement ${REQUIRED_GAME_METHODS.join(' and ')} ` +
@@ -115,8 +111,7 @@ export function registerGame(plugin: CoordinationGame<any, any, any, any>): void
   games.set(plugin.gameType, plugin);
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export function getGame(gameType: string): CoordinationGame<any, any, any, any> | undefined {
+export function getGame(gameType: string): AnyGame | undefined {
   return games.get(gameType);
 }
 
@@ -124,7 +119,6 @@ export function getRegisteredGames(): string[] {
   return Array.from(games.keys());
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export function getAllGames(): Map<string, CoordinationGame<any, any, any, any>> {
+export function getAllGames(): Map<string, AnyGame> {
   return games;
 }
