@@ -25,7 +25,7 @@ export class ApiClient {
     return h;
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: returns raw server JSON; tightening to `unknown` would require narrowing casts at every one of ~30 CLI command call sites. Left as `any` behind the HTTP boundary until those consumers gain proper response types.
   async get(path: string): Promise<any> {
     const res = await fetch(`${this.serverUrl}${path}`, {
       headers: this.headers(),
@@ -37,7 +37,7 @@ export class ApiClient {
     return res.json();
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: returns raw server JSON; see `get()` above for the rationale.
   async post(path: string, body?: any): Promise<any> {
     // @ts-expect-error TS2769: No overload matches this call. — TODO(2.3-followup)
     const res = await fetch(`${this.serverUrl}${path}`, {

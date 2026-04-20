@@ -68,8 +68,7 @@ export async function signTypedData(
   wallet: ethers.Wallet,
   domain: ethers.TypedDataDomain,
   types: Record<string, ethers.TypedDataField[]>,
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  value: Record<string, any>,
+  value: Record<string, unknown>,
 ): Promise<SignatureResult> {
   const sig = await wallet.signTypedData(domain, types, value);
   return splitSignature(sig);
@@ -109,8 +108,7 @@ export async function signMove(
   wallet: ethers.Wallet,
   gameId: string,
   turnNumber: number,
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  moveData: Record<string, any>,
+  moveData: Record<string, unknown>,
   moveSchema: Record<string, ethers.TypedDataField[]>,
 ): Promise<SignatureResult> {
   const domain: ethers.TypedDataDomain = {

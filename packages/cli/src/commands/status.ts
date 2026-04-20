@@ -46,9 +46,9 @@ export function registerStatusCommand(program: Command) {
           process.stdout.write(`  Status:   Not registered\n`);
           process.stdout.write(`\n  Get started with: coordination check-name <your-name>\n`);
         }
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stdout.write(`  Server:   Unreachable (${err.message})\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stdout.write(`  Server:   Unreachable (${msg})\n`);
       }
 
       process.stdout.write(`\n`);

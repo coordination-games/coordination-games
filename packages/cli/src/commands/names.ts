@@ -34,9 +34,9 @@ export function registerNameCommands(program: Command) {
           }
           process.stdout.write(`\n`);
         }
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Error: ${msg}\n`);
         process.exit(1);
       }
     });
@@ -62,9 +62,9 @@ export function registerNameCommands(program: Command) {
           process.stdout.write(`\n  "${name}" is not available.\n\n`);
           return;
         }
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stderr.write(`  Error checking name: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Error checking name: ${msg}\n`);
         process.exit(1);
       }
 
@@ -119,9 +119,9 @@ export function registerNameCommands(program: Command) {
         process.stdout.write(`  Name:     ${result.name}\n`);
         process.stdout.write(`  Agent ID: ${result.agentId}\n`);
         process.stdout.write(`  Credits:  ${formatCreditsDisplay(result.credits)}\n\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stderr.write(`  Registration failed: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Registration failed: ${msg}\n`);
         process.exit(1);
       }
     });

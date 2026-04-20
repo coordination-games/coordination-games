@@ -36,9 +36,9 @@ export function registerWalletCommands(program: Command) {
         // raw 6-decimal units on-chain; format both as whole-unit displays.
         process.stdout.write(`  USDC:     ${formatCreditsDisplay(data.usdc)}\n`);
         process.stdout.write(`  Credits:  ${formatCreditsDisplay(data.credits)}\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stdout.write(`  Server unreachable: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stdout.write(`  Server unreachable: ${msg}\n`);
       }
 
       process.stdout.write(`\n`);
@@ -66,8 +66,7 @@ export function registerWalletCommands(program: Command) {
       'Request withdrawal of <amount> whole credits (two-step: request then execute after cooldown)',
     )
     .option('--execute', 'Execute a pending withdrawal (skip request step)')
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    .action(async (amount: string, opts: any) => {
+    .action(async (amount: string, opts: { execute?: boolean }) => {
       const wallet = loadKey();
       if (!wallet) {
         process.stdout.write(`\n  No identity found. Run 'coordination init' first.\n\n`);
@@ -111,9 +110,9 @@ export function registerWalletCommands(program: Command) {
             `\n  Run 'coordination withdraw ${amount} --execute' after cooldown.\n`,
           );
         }
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stderr.write(`  Withdrawal failed: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Withdrawal failed: ${msg}\n`);
         process.exit(1);
       }
       process.stdout.write(`\n`);
@@ -126,9 +125,9 @@ export function registerWalletCommands(program: Command) {
       try {
         exportKey(destPath);
         process.stdout.write(`\n  Key exported to: ${destPath}\n\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Error: ${msg}\n`);
         process.exit(1);
       }
     });
@@ -141,9 +140,9 @@ export function registerWalletCommands(program: Command) {
         const wallet = importKey(srcPath);
         process.stdout.write(`\n  Key imported!\n`);
         process.stdout.write(`  Address: ${wallet.address}\n\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Error: ${msg}\n`);
         process.exit(1);
       }
     });

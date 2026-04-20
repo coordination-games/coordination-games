@@ -22,10 +22,17 @@ function nextId(): number {
  * Parse an SSE response body to extract JSON-RPC messages.
  * Format: "event: message\ndata: {json}\n\n"
  */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function parseSseResponse(text: string): any[] {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const messages: any[] = [];
+interface JsonRpcMessage {
+  jsonrpc?: string;
+  id?: number | string | null;
+  method?: string;
+  result?: unknown;
+  error?: { code?: number; message?: string; data?: unknown };
+  params?: unknown;
+}
+
+function parseSseResponse(text: string): JsonRpcMessage[] {
+  const messages: JsonRpcMessage[] = [];
   const events = text.split('\n\n').filter((s) => s.trim());
 
   for (const event of events) {
@@ -52,8 +59,7 @@ function parseSseResponse(text: string): any[] {
  * Read a response body, handling both JSON and SSE content types.
  * Returns the parsed JSON-RPC response object.
  */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-async function readResponse(res: Response): Promise<any> {
+async function readResponse(res: Response): Promise<JsonRpcMessage> {
   const contentType = res.headers.get('content-type') || '';
   const text = await res.text();
 
@@ -61,17 +67,18 @@ async function readResponse(res: Response): Promise<any> {
     const messages = parseSseResponse(text);
     // Return the last message with a result or error (skip notifications)
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].result !== undefined || messages[i].error !== undefined) {
-        return messages[i];
+      const m = messages[i];
+      if (m && (m.result !== undefined || m.error !== undefined)) {
+        return m;
       }
     }
     // If no result/error messages, return the last one
-    return messages[messages.length - 1] || {};
+    return messages[messages.length - 1] ?? {};
   }
 
   // Plain JSON
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as JsonRpcMessage;
   } catch {
     throw new Error(`Invalid response: ${text.slice(0, 200)}`);
   }
@@ -134,8 +141,7 @@ export class McpClient {
   }
 
   /** Send a JSON-RPC notification (no response expected) */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  private async notify(method: string, params: any): Promise<void> {
+  private async notify(method: string, params: unknown): Promise<void> {
     const body = {
       jsonrpc: '2.0',
       method,
@@ -169,14 +175,17 @@ export class McpClient {
    * Automatically initializes session if needed.
    * If the session expired, re-initializes and retries once.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  async callTool(toolName: string, args: Record<string, any>): Promise<any> {
+  async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
     await this.ensureSession();
 
     const result = await this._callToolOnce(toolName, args);
 
     // Check if session expired (404 = session not found)
-    if (result.__sessionExpired) {
+    if (
+      result &&
+      typeof result === 'object' &&
+      (result as { __sessionExpired?: boolean }).__sessionExpired
+    ) {
       this.sessionId = null;
       await this.initialize();
       return this._callToolOnce(toolName, args);
@@ -185,8 +194,7 @@ export class McpClient {
     return result;
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  private async _callToolOnce(toolName: string, args: Record<string, any>): Promise<any> {
+  private async _callToolOnce(toolName: string, args: Record<string, unknown>): Promise<unknown> {
     const body = {
       jsonrpc: '2.0',
       id: nextId(),
@@ -228,11 +236,13 @@ export class McpClient {
     }
 
     // Extract text content from MCP result
-    const result = json.result;
+    const result = json.result as
+      | { content?: Array<{ type?: string; text?: string }> }
+      | null
+      | undefined;
     if (result?.content && Array.isArray(result.content)) {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const textContent = result.content.find((c: any) => c.type === 'text');
-      if (textContent) {
+      const textContent = result.content.find((c) => c.type === 'text');
+      if (textContent?.text !== undefined) {
         try {
           return JSON.parse(textContent.text);
         } catch {
@@ -248,10 +258,17 @@ export class McpClient {
    * Sign in to get an auth token. Saves token + agentId to session.
    */
   async signin(handle: string): Promise<{ token: string; agentId: string }> {
-    const result = await this.callTool('signin', { agentId: handle });
+    const result = (await this.callTool('signin', { agentId: handle })) as {
+      token?: string;
+      agentId?: string;
+      error?: string;
+    } | null;
 
-    if (result.error) {
+    if (result?.error) {
       throw new Error(result.error);
+    }
+    if (!result?.token || !result.agentId) {
+      throw new Error('signin response missing token/agentId');
     }
 
     // Persist session state

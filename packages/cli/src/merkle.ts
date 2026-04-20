@@ -21,8 +21,8 @@ export interface MoveData {
 export interface TurnData {
   turnNumber: number;
   moves: MoveData[];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  result?: any; // resolved state after this turn (optional, not included in Merkle leaf)
+  /** Resolved state after this turn — optional, per-game shape, not included in the Merkle leaf. */
+  result?: unknown;
 }
 
 export interface MerkleTree {

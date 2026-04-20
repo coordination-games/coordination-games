@@ -41,8 +41,7 @@ export function initPipeline(additionalPlugins: ToolPlugin[] = []): void {
  * Run the pipeline over relay messages.
  * Returns the pipeline output (capability type → processed data).
  */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export function runPipeline(relayMessages: unknown[]): Map<string, any> {
+export function runPipeline(relayMessages: unknown[]): Map<string, unknown> {
   if (!pipeline) {
     initPipeline();
   }
@@ -56,27 +55,21 @@ export function runPipeline(relayMessages: unknown[]): Map<string, any> {
  * Runs the pipeline over relay messages and combines with game state.
  */
 export function processState(serverResponse: {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  gameState?: any;
+  gameState?: unknown;
   relayMessages?: unknown[];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  [key: string]: any;
+  [key: string]: unknown;
 }): {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  gameState: any;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  messages: any[];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  pipelineOutput: Map<string, any>;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  raw: any;
+  gameState: unknown;
+  messages: unknown[];
+  pipelineOutput: Map<string, unknown>;
+  raw: unknown;
 } {
   const relayMessages = serverResponse.relayMessages ?? [];
   const pipelineOutput = runPipeline(relayMessages);
 
   return {
     gameState: serverResponse.gameState ?? serverResponse,
-    messages: pipelineOutput.get('messaging') ?? [],
+    messages: (pipelineOutput.get('messaging') as unknown[]) ?? [],
     pipelineOutput,
     raw: serverResponse,
   };

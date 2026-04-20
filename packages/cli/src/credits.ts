@@ -19,8 +19,12 @@ export function formatCreditsDisplay(raw: unknown): string {
   if (typeof raw === 'string' && raw === 'N/A') return 'N/A';
   let asBig: bigint;
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: BigInt accepts string | number | bigint at runtime
-    asBig = BigInt(raw as any);
+    // BigInt's static signature doesn't know about bigint passthrough;
+    // narrow to the set of types the runtime actually accepts.
+    if (typeof raw === 'bigint') asBig = raw;
+    else if (typeof raw === 'number' || typeof raw === 'string') asBig = BigInt(raw);
+    else if (typeof raw === 'boolean') asBig = BigInt(raw);
+    else return String(raw);
   } catch {
     return String(raw);
   }
