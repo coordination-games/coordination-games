@@ -117,43 +117,46 @@ function buildLobbyAtTeamFormation() {
   }
 
   // Seed a representative relay log: one public, one team-A, one team-B,
-  // and one DM-style envelope (scope 'dm' is unknown to the player filter
-  // so it falls into the "fully private" bucket — only the sender sees it).
+  // and one DM-style envelope (scope.kind 'dm' goes to sender + recipient).
   lobby._relay = [
     {
       index: 0,
       type: 'messaging',
       data: { msg: 'public hi' },
-      scope: 'all',
+      scope: { kind: 'all' },
       pluginId: 'chat',
       sender: 'p1',
+      turn: null,
       timestamp: 1,
     },
     {
       index: 1,
       type: 'messaging',
       data: { msg: 'team-A only' },
-      scope: 'team',
+      scope: { kind: 'team', teamId: t1 },
       pluginId: 'chat',
       sender: 'p1',
+      turn: null,
       timestamp: 2,
     },
     {
       index: 2,
       type: 'messaging',
       data: { msg: 'team-B only' },
-      scope: 'team',
+      scope: { kind: 'team', teamId: t2 },
       pluginId: 'chat',
       sender: 'p3',
+      turn: null,
       timestamp: 3,
     },
     {
       index: 3,
       type: 'messaging',
-      data: { msg: 'private to nobody' },
-      scope: 'dm',
+      data: { msg: 'private dm to p1 from p1' },
+      scope: { kind: 'dm', recipientHandle: 'alice' },
       pluginId: 'chat',
       sender: 'p1',
+      turn: null,
       timestamp: 4,
     },
   ];
@@ -166,16 +169,16 @@ function buildLobbyAtTeamFormation() {
 // ---------------------------------------------------------------------------
 
 describe('LobbyDO relay leak — spectator vs player filter', () => {
-  it('GET /state with NO X-Player-Id returns only scope:"all" envelopes', async () => {
+  it('GET /state with NO X-Player-Id returns only scope.kind:"all" envelopes', async () => {
     const lobby = buildLobbyAtTeamFormation();
     const resp: Response = await lobby.fetch(new Request('https://do/state', { method: 'GET' }));
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
     const body: any = await resp.json();
     expect(Array.isArray(body.relay)).toBe(true);
     expect(body.relay.length).toBe(1); // only the public envelope
     for (const m of body.relay) {
-      expect(m.scope).toBe('all');
+      expect(m.scope.kind).toBe('all');
     }
     // Observability: at least one non-'all' envelope was dropped.
     expect(lobby._spectatorFilterDrops).toBeGreaterThan(0);
@@ -190,16 +193,19 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
       }),
     );
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
     const body: any = await resp.json();
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const scopes = body.relay.map((m: any) => `${m.scope}:${m.sender}`);
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    const scopes = body.relay.map((m: any) => `${m.scope.kind}:${m.sender}`);
     // p1 must see: own public 'all' (sender p1), own team-A team msg (sender p1),
     // own DM (sender p1). Must NOT see: p3's team-B message.
     expect(scopes).toContain('all:p1');
     expect(scopes).toContain('team:p1');
     expect(scopes).toContain('dm:p1');
-    expect(scopes).not.toContain('team:p3');
+    // No team-scoped from p3 (team B sender) — that envelope is filtered out.
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    const teamFromP3 = body.relay.filter((m: any) => m.scope.kind === 'team' && m.sender === 'p3');
+    expect(teamFromP3).toEqual([]);
     // Spectator-drop counter is NOT incremented on the player path.
     expect(lobby._spectatorFilterDrops).toBe(0);
   });
@@ -212,14 +218,18 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
         headers: { 'X-Player-Id': 'p3' },
       }),
     );
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
     const body: any = await resp.json();
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const teamScopedFromP1 = body.relay.filter((m: any) => m.scope === 'team' && m.sender === 'p1');
+    const teamScopedFromP1 = body.relay.filter(
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+      (m: any) => m.scope.kind === 'team' && m.sender === 'p1',
+    );
     expect(teamScopedFromP1).toEqual([]);
     // But p3 sees their own team-B team message.
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const teamScopedFromP3 = body.relay.filter((m: any) => m.scope === 'team' && m.sender === 'p3');
+    const teamScopedFromP3 = body.relay.filter(
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+      (m: any) => m.scope.kind === 'team' && m.sender === 'p3',
+    );
     expect(teamScopedFromP3.length).toBe(1);
   });
 });

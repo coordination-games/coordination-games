@@ -10,6 +10,7 @@ import type {
   CoordinationGame,
   GameLobbyConfig,
   GameSetup,
+  RelayEnvelope,
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
@@ -141,8 +142,7 @@ export interface SpectatorState {
   visibleB: string[];
   visibleByUnit: Record<string, string[]>;
   handles: Record<string, string>;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  relayMessages?: any[];
+  relayMessages?: RelayEnvelope[];
   /** Post-move positions for units killed this turn (for replay animation) */
   deathPositions?: Record<string, { q: number; r: number }>;
 }
@@ -271,33 +271,23 @@ function buildCtlSpectatorView(
 
   // Extract chat from relay messages
   const relayMessages = context.relayMessages ?? [];
+  const isTeamMsgFromTeam = (m: RelayEnvelope, team: 'A' | 'B'): boolean =>
+    m.type === 'messaging' &&
+    m.scope.kind === 'team' &&
+    units.some((u) => u.id === m.sender && u.team === team);
   const chatA = relayMessages
-    .filter(
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      (m: any) =>
-        m.type === 'messaging' &&
-        m.scope === 'team' &&
-        units.some((u) => u.id === m.sender && u.team === 'A'),
-    )
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    .map((m: any) => ({
+    .filter((m) => isTeamMsgFromTeam(m, 'A'))
+    .map((m) => ({
       from: m.sender,
-      message: (m.data as { body?: string })?.body ?? '',
-      turn: m.turn,
+      message: (m.data as { body?: string } | null)?.body ?? '',
+      turn: m.turn ?? 0,
     }));
   const chatB = relayMessages
-    .filter(
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      (m: any) =>
-        m.type === 'messaging' &&
-        m.scope === 'team' &&
-        units.some((u) => u.id === m.sender && u.team === 'B'),
-    )
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    .map((m: any) => ({
+    .filter((m) => isTeamMsgFromTeam(m, 'B'))
+    .map((m) => ({
       from: m.sender,
-      message: (m.data as { body?: string })?.body ?? '',
-      turn: m.turn,
+      message: (m.data as { body?: string } | null)?.body ?? '',
+      turn: m.turn ?? 0,
     }));
 
   return {

@@ -109,7 +109,7 @@ describe('Type interfaces compile correctly', () => {
 
   it('Message type with extensible tags', () => {
     const msg: Message = {
-      from: 42,
+      from: '42',
       body: 'rush flag',
       turn: 3,
       scope: 'team',

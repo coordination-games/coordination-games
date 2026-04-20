@@ -14,6 +14,44 @@
 export type Address = string;
 
 // ---------------------------------------------------------------------------
+// Relay envelope — the canonical wire/storage shape for relay messages
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated audience scope for a relay envelope. Replaces the pre-4.1
+ * `string` scope where 'all'/'team' were sentinels and any other value was a
+ * recipient handle/playerId for DMs.
+ */
+export type RelayScope =
+  | { kind: 'all' }
+  | { kind: 'team'; teamId: string }
+  | { kind: 'dm'; recipientHandle: string };
+
+/**
+ * The canonical relay message envelope — single shape used by LobbyDO,
+ * GameRoomDO, plugins, and clients. `TBody` lets producers/consumers narrow
+ * the payload type per `type` (e.g. chat body, vision update, etc.).
+ */
+export interface RelayEnvelope<TBody = unknown> {
+  /** Monotonic per game/lobby. */
+  index: number;
+  /** Plugin-owned envelope type, e.g. 'chat:message'. */
+  type: string;
+  /** Plugin id that produced this envelope. */
+  pluginId: string;
+  /** playerId of the sender; 'system' for engine-emitted envelopes. */
+  sender: string;
+  /** Discriminated audience. */
+  scope: RelayScope;
+  /** Progress counter at send time. `null` in lobby (no turn yet). */
+  turn: number | null;
+  /** Wall-clock send time (ms epoch). */
+  timestamp: number;
+  /** Plugin-defined body. */
+  data: TBody;
+}
+
+// ---------------------------------------------------------------------------
 // Spectator context (passed to buildSpectatorView)
 // ---------------------------------------------------------------------------
 
@@ -22,8 +60,7 @@ export interface SpectatorContext {
   /** Maps agent IDs to display names. */
   handles: Record<string, string>;
   /** Relay messages up to the current progress point (for delayed spectator views). */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  relayMessages: any[];
+  relayMessages: RelayEnvelope[];
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +374,7 @@ export interface PluginContext {
 
 /** Minimal relay client interface for plugins. */
 export interface RelayClient {
-  send(data: { pluginId: string; type: string; data: unknown; scope?: string }): void;
+  send(data: { pluginId: string; type: string; data: unknown; scope?: RelayScope }): void;
   receive(pluginId: string): unknown[];
 }
 
@@ -441,7 +478,7 @@ export interface PhaseActionResult<TPhaseState = any> {
   /** If set, this phase is complete. Advance to next or start game. */
   completed?: PhaseResult;
   /** Relay messages to broadcast (chat, team updates, etc.). */
-  relay?: Array<{ type: string; data: unknown; scope: string; pluginId: string }>;
+  relay?: Array<{ type: string; data: unknown; scope: RelayScope; pluginId: string }>;
   /** If set, the action failed. LobbyDO returns this as an HTTP error response. */
   error?: { message: string; status?: number };
 }
@@ -492,15 +529,15 @@ export interface MatchmakingConfig {
 
 /** A chat message flowing through the plugin pipeline. */
 export interface Message {
-  /** Agent ID of sender */
-  from: number;
+  /** Sender — playerId string (mirrors RelayEnvelope.sender). */
+  from: string;
   /** Message text */
   body: string;
-  /** Turn number when sent */
-  turn: number;
+  /** Turn number when sent (null in lobby). */
+  turn: number | null;
   /** Audience scope */
   scope: 'team' | 'all';
   /** Extensible tag bag — plugins enrich this */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
   tags: Record<string, any>;
 }

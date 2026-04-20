@@ -11,19 +11,14 @@
  * The server just relays the typed data by scope.
  */
 
-import type { AgentInfo, Message, ToolPlugin } from '@coordination-games/engine';
+import type { AgentInfo, Message, RelayEnvelope, ToolPlugin } from '@coordination-games/engine';
 
-/** A relay message as received from the server. */
-export interface RelayMessage {
-  type: string;
-  data: unknown;
-  scope: 'team' | 'all' | string;
-  pluginId: string;
-  sender: string;
-  turn: number;
-  timestamp: number;
-  index: number;
-}
+/**
+ * A relay message as received from the server. Re-exported from the engine
+ * type so the basic-chat plugin and the rest of the codebase share the same
+ * canonical envelope shape.
+ */
+export type { RelayEnvelope as RelayMessage } from '@coordination-games/engine';
 
 /**
  * Format an outgoing chat message as relay data.
@@ -44,21 +39,25 @@ export function formatChatMessage(
 }
 
 /**
- * Extract Message objects from raw relay messages.
+ * Extract Message objects from raw relay envelopes.
  * This is the pipeline producer — it reads relay data of type "messaging"
  * and converts it into the canonical Message format for downstream plugins.
  */
-export function extractMessages(relayMessages: RelayMessage[]): Message[] {
+export function extractMessages(relayMessages: RelayEnvelope[]): Message[] {
   return relayMessages
     .filter((msg) => msg.type === 'messaging')
     .map((msg) => {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
       const data = msg.data as { body?: string; tags?: Record<string, any> };
+      // Map the discriminated scope to the simpler chat scope ('team' | 'all').
+      // DMs surface as 'all' for the pipeline-consumer view (recipient still
+      // sees the message, scope distinction lives in the envelope).
+      const chatScope: 'team' | 'all' = msg.scope.kind === 'team' ? 'team' : 'all';
       return {
-        from: parseInt(msg.sender, 10) || 0,
+        from: msg.sender,
         body: data.body ?? '',
         turn: msg.turn,
-        scope: msg.scope === 'team' || msg.scope === 'all' ? msg.scope : 'all',
+        scope: chatScope,
         tags: {
           ...data.tags,
           source: msg.pluginId,
@@ -104,10 +103,10 @@ export const BasicChatPlugin: ToolPlugin = {
     },
   ],
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
   handleData(_mode: string, inputs: Map<string, any>): Map<string, any> {
-    // Read raw relay messages from pipeline input
-    const relayMessages: RelayMessage[] = inputs.get('relay-messages') ?? [];
+    // Read raw relay envelopes from pipeline input
+    const relayMessages: RelayEnvelope[] = inputs.get('relay-messages') ?? [];
     const messages = extractMessages(relayMessages);
     return new Map([['messaging', messages]]);
   },

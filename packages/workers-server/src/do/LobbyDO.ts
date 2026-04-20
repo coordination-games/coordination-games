@@ -29,6 +29,8 @@ import type {
   LobbyPhase,
   PhaseActionResult,
   PhaseResult,
+  RelayEnvelope,
+  RelayScope,
 } from '@coordination-games/engine';
 import { getGame, validateChatScope } from '@coordination-games/engine';
 import type { Env } from '../env.js';
@@ -42,6 +44,21 @@ import '@coordination-games/game-oathbreaker';
 // ---------------------------------------------------------------------------
 
 const TAG_SPECTATOR = 'spectator';
+
+/**
+ * Translate the legacy wire-format `scope` string ('all' | 'team' | <handle>)
+ * coming in on a /tool POST into the canonical `RelayScope` discriminated
+ * union. `'team'` requires a sender team — falls back to `'all'` if the
+ * caller has no team in the current phase.
+ */
+function resolveWireScope(scope: string | undefined, senderTeam: string | null): RelayScope {
+  if (!scope || scope === 'all') return { kind: 'all' };
+  if (scope === 'team') {
+    if (senderTeam) return { kind: 'team', teamId: senderTeam };
+    return { kind: 'all' };
+  }
+  return { kind: 'dm', recipientHandle: scope };
+}
 
 // ---------------------------------------------------------------------------
 // Storage types
@@ -68,16 +85,6 @@ interface AgentEntry {
   joinedAt: number;
 }
 
-interface RelayMessage {
-  index: number;
-  type: string;
-  data: unknown;
-  scope: string;
-  pluginId: string;
-  sender: string;
-  timestamp: number;
-}
-
 // ---------------------------------------------------------------------------
 // LobbyDO
 // ---------------------------------------------------------------------------
@@ -86,9 +93,9 @@ export class LobbyDO extends DurableObject<Env> {
   private _loaded = false;
   private _meta: LobbyMeta | null = null;
   private _agents: AgentEntry[] = [];
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
   private _phaseState: any = null;
-  private _relay: RelayMessage[] = [];
+  private _relay: RelayEnvelope[] = [];
   // Counter for observability — number of non-'all' envelopes filtered out
   // of a spectator-bound payload since this DO instance was loaded.
   private _spectatorFilterDrops = 0;
@@ -373,17 +380,25 @@ export class LobbyDO extends DurableObject<Env> {
       }
     }
 
-    // Store relay message with team routing
-    const msg: RelayMessage = {
+    // Resolve the discriminated scope. Lobby callers send a string scope on
+    // the wire today: 'all' | 'team' | <recipientHandle>. The DM branch
+    // resolves the team from the current phase (if it knows one).
+    const phaseForScope = this.getCurrentPhase();
+    const senderTeam = phaseForScope?.getTeamForPlayer?.(this._phaseState, playerId) ?? null;
+    const resolvedScope = resolveWireScope(relay.scope, senderTeam);
+
+    // Store relay envelope
+    const env: RelayEnvelope = {
       index: this._relay.length,
       type: relay.type,
       data: relay.data,
-      scope: relay.scope ?? 'all',
+      scope: resolvedScope,
       pluginId: relay.pluginId,
       sender: playerId,
+      turn: null,
       timestamp: Date.now(),
     };
-    this._relay.push(msg);
+    this._relay.push(env);
 
     await this.saveState();
     this.broadcastUpdate();
@@ -427,7 +442,7 @@ export class LobbyDO extends DurableObject<Env> {
   private async processActionResult(result: PhaseActionResult): Promise<void> {
     this._phaseState = result.state;
 
-    // Buffer any relay messages from the phase
+    // Buffer any relay envelopes from the phase
     if (result.relay) {
       for (const r of result.relay) {
         this._relay.push({
@@ -437,6 +452,7 @@ export class LobbyDO extends DurableObject<Env> {
           scope: r.scope,
           pluginId: r.pluginId,
           sender: 'system',
+          turn: null,
           timestamp: Date.now(),
         });
       }
@@ -671,12 +687,12 @@ export class LobbyDO extends DurableObject<Env> {
     return state;
   }
 
-  /** Spectator filter — only public (`scope === 'all'`) envelopes survive. */
-  private filterRelayForSpectator(relay: RelayMessage[]): RelayMessage[] {
-    const out: RelayMessage[] = [];
+  /** Spectator filter — only public (`scope.kind === 'all'`) envelopes survive. */
+  private filterRelayForSpectator(relay: RelayEnvelope[]): RelayEnvelope[] {
+    const out: RelayEnvelope[] = [];
     let dropped = 0;
     for (const m of relay) {
-      if (m.scope === 'all') {
+      if (m.scope.kind === 'all') {
         out.push(m);
       } else {
         dropped++;
@@ -696,25 +712,30 @@ export class LobbyDO extends DurableObject<Env> {
 
   /** Player filter — `all` + own + same-team + DMs addressed to this player. */
   private filterRelayForPlayer(
-    relay: RelayMessage[],
+    relay: RelayEnvelope[],
     playerId: string,
     currentPhase?: LobbyPhase,
-  ): RelayMessage[] {
+  ): RelayEnvelope[] {
     return relay.filter((m) => this.isRelayVisible(m, playerId, currentPhase));
   }
 
-  private isRelayVisible(msg: RelayMessage, playerId: string, currentPhase?: LobbyPhase): boolean {
-    if (msg.scope === 'all') return true;
+  private isRelayVisible(msg: RelayEnvelope, playerId: string, currentPhase?: LobbyPhase): boolean {
+    if (msg.scope.kind === 'all') return true;
     if (msg.sender === playerId) return true;
 
-    if (msg.scope === 'team' && currentPhase?.getTeamForPlayer) {
-      const senderTeam = currentPhase.getTeamForPlayer(this._phaseState, msg.sender);
-      const playerTeam = currentPhase.getTeamForPlayer(this._phaseState, playerId);
-      return senderTeam != null && senderTeam === playerTeam;
+    if (msg.scope.kind === 'team') {
+      const team = msg.scope.teamId;
+      const playerTeam = currentPhase?.getTeamForPlayer?.(this._phaseState, playerId);
+      // If the phase doesn't model teams at all, fall back to broadcasting team
+      // messages — preserves prior behaviour.
+      if (!currentPhase?.getTeamForPlayer) return true;
+      return playerTeam != null && playerTeam === team;
     }
 
-    // If phase doesn't implement getTeamForPlayer, team-scoped falls back to all
-    if (msg.scope === 'team') return true;
+    if (msg.scope.kind === 'dm') {
+      const handle = this._agents.find((a) => a.id === playerId)?.handle;
+      return msg.scope.recipientHandle === playerId || msg.scope.recipientHandle === handle;
+    }
 
     return false;
   }
@@ -806,9 +827,9 @@ export class LobbyDO extends DurableObject<Env> {
       const [meta, agents, phaseState, relay] = await Promise.all([
         this.ctx.storage.get<LobbyMeta>('meta'),
         this.ctx.storage.get<AgentEntry[]>('agents'),
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
         this.ctx.storage.get<any>('phaseState'),
-        this.ctx.storage.get<RelayMessage[]>('relay'),
+        this.ctx.storage.get<RelayEnvelope[]>('relay'),
       ]);
 
       this._meta = meta ?? null;

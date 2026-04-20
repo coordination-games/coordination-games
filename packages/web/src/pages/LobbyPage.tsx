@@ -18,12 +18,16 @@ interface ChatMessage {
   timestamp: number;
 }
 
-// Relay messages from the typed relay (e.g. basic-chat plugin)
+// Relay messages from the typed relay (e.g. basic-chat plugin).
+// Server-side scope is the discriminated `RelayScope` union after Phase 4.1.
+// Frontend reads only sender/type/data/timestamp; scope kind is opaque here
+// and full typing lands in Phase 4.4 / 7.1.
+type RelayScopeKind = 'all' | 'team' | 'dm';
 interface RelayMessage {
   type: string;
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   data: any;
-  scope: string;
+  scope: { kind: RelayScopeKind; teamId?: string; recipientHandle?: string };
   pluginId: string;
   sender: string;
   timestamp: number;
