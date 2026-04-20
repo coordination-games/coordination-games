@@ -13,7 +13,7 @@
  * hidden until round-end batch resolution reveals everything at once.
  */
 
-import type { ActionResult, GameDeadline } from '@coordination-games/engine';
+import { type ActionResult, type GameDeadline, mustGet } from '@coordination-games/engine';
 import type {
   OathAction,
   OathConfig,
@@ -354,17 +354,15 @@ function resolveRound(state: OathState): OathState {
 
   for (const pairing of state.pairings) {
     if (pairing.phase !== 'decided') continue;
+    if (pairing.agreedPledge === null || pairing.decision1 === null || pairing.decision2 === null) {
+      throw new Error('invariant: decided pairing missing pledge/decisions');
+    }
 
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const p1 = playerMap.get(pairing.player1)!;
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const p2 = playerMap.get(pairing.player2)!;
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const pledge = pairing.agreedPledge!;
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const m1 = pairing.decision1!;
-    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
-    const m2 = pairing.decision2!;
+    const p1 = mustGet(playerMap, pairing.player1, 'pairing.player1');
+    const p2 = mustGet(playerMap, pairing.player2, 'pairing.player2');
+    const pledge = pairing.agreedPledge;
+    const m1 = pairing.decision1;
+    const m2 = pairing.decision2;
 
     let delta1 = 0;
     let delta2 = 0;

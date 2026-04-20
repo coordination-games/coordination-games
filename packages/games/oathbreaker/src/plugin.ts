@@ -308,11 +308,11 @@ export const OathbreakerPlugin = {
       if (p.dollarValue > topValue) topValue = p.dollarValue;
     }
     const leaders = s.players.filter((p) => p.dollarValue === topValue);
-    if (leaders.length !== 1) {
+    const winner = leaders.length === 1 ? leaders[0] : undefined;
+    if (!winner) {
       return { isFinished: true, statusVariant: 'draw' };
     }
-    // biome-ignore lint/style/noNonNullAssertion: leaders.length === 1 checked above
-    return { isFinished: true, winnerLabel: leaders[0]!.id, statusVariant: 'win' };
+    return { isFinished: true, winnerLabel: winner.id, statusVariant: 'win' };
   },
 
   getPlayersNeedingAction(state: OathState): string[] {
@@ -487,9 +487,8 @@ export function rankPlayersForSettlement(
   joinOrder: readonly string[],
 ): OathPlayerRanking[] {
   const joinIndex = new Map<string, number>();
-  for (let i = 0; i < joinOrder.length; i++) {
-    // biome-ignore lint/style/noNonNullAssertion: index is in [0, length)
-    joinIndex.set(joinOrder[i]!, i);
+  for (const [i, id] of joinOrder.entries()) {
+    joinIndex.set(id, i);
   }
   const indexOf = (id: string): number => joinIndex.get(id) ?? Number.POSITIVE_INFINITY;
 
@@ -520,7 +519,8 @@ export function distributePot(
   ranked: OathPlayerRanking[],
 ): Map<string, CreditAmount> {
   const shares = new Map<string, CreditAmount>();
-  if (ranked.length === 0) return shares;
+  const top = ranked[0];
+  if (!top) return shares;
 
   const totalSupply = ranked.reduce((s, p) => s + p.finalBalance, 0);
 
@@ -530,8 +530,7 @@ export function distributePot(
   if (totalSupply <= 0) {
     for (const p of ranked) shares.set(p.id, 0n);
     if (potTotal !== 0n) {
-      // biome-ignore lint/style/noNonNullAssertion: ranked.length > 0 checked above
-      shares.set(ranked[0]!.id, potTotal);
+      shares.set(top.id, potTotal);
     }
     return shares;
   }
@@ -550,10 +549,8 @@ export function distributePot(
     // but `potTotal` here is always ≥ 0 and `finalBalance` is ≥ 0, so
     // `distributed ≤ potTotal` always holds → `remainder ≥ 0`. Defensive:
     // we still allocate any non-zero remainder to the highest-rank player.
-    // biome-ignore lint/style/noNonNullAssertion: ranked.length > 0 checked above
-    const winnerId = ranked[0]!.id;
-    // biome-ignore lint/style/noNonNullAssertion: winner was just inserted
-    shares.set(winnerId, shares.get(winnerId)! + remainder);
+    const prior = shares.get(top.id) ?? 0n;
+    shares.set(top.id, prior + remainder);
   }
   return shares;
 }
