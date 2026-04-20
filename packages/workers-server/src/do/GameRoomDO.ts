@@ -60,7 +60,12 @@ interface GameMeta {
   gameType: string;
   playerIds: string[];
   handleMap: Record<string, string>; // playerId → display handle
-  teamMap: Record<string, string>; // playerId → 'A' | 'B' | 'FFA'
+  /**
+   * playerId → team identifier. For team games this is the team id (e.g.
+   * CtL's 'A' / 'B'). For free-for-all games it's the playerId itself
+   * (no `'FFA'` sentinel; per `CoordinationGame.getTeamForPlayer`).
+   */
+  teamMap: Record<string, string>;
   createdAt: string;
   finished: boolean;
   /**
@@ -88,8 +93,9 @@ interface DeadlineEntry {
 /**
  * Translate the legacy wire-format `scope` string ('all' | 'team' | <handle>)
  * coming in on a /tool POST into the canonical `RelayScope` discriminated
- * union. `'team'` resolves to the sender's team via `teamMap`; falls back to
- * `'all'` if the sender has no team (e.g. FFA games).
+ * union. `'team'` resolves to the sender's team via `teamMap`. For FFA games
+ * the team id IS the playerId, so a 'team' scope from an FFA player produces
+ * a single-recipient team scope (effectively a self-DM, which is correct).
  */
 function resolveWireScope(
   scope: string | undefined,
@@ -99,7 +105,7 @@ function resolveWireScope(
   if (!scope || scope === 'all') return { kind: 'all' };
   if (scope === 'team') {
     const t = teamMap[sender];
-    if (t && t !== 'FFA') return { kind: 'team', teamId: t };
+    if (t) return { kind: 'team', teamId: t };
     return { kind: 'all' };
   }
   return { kind: 'dm', recipientHandle: scope };
@@ -125,16 +131,20 @@ export class GameRoomDO extends DurableObject<Env> {
   private _lastSpectatorIdx: number | null = null;
 
   /**
-   * Lazy accessor for the canonical relay client. Resolves team membership
-   * from `_meta.teamMap` (FFA → no team → team-scoped envelopes hidden) and
-   * display handle from `_meta.handleMap`.
+   * Lazy accessor for the canonical relay client. Team membership comes from
+   * the game plugin's `getTeamForPlayer(state, playerId)` so FFA games (where
+   * each player is their own team) and team games share one code path. The
+   * cached `_meta.teamMap` is the authoritative fallback when state isn't
+   * loaded yet — values come from `createConfig`'s `players[].team`.
    */
   private getRelayClient(): DOStorageRelayClient {
     if (!this._relayClient) {
       this._relayClient = new DOStorageRelayClient(this.ctx.storage, {
         getTeamForPlayer: (playerId) => {
-          const t = this._meta?.teamMap[playerId];
-          return t && t !== 'FFA' ? t : null;
+          if (this._plugin && this._state !== null) {
+            return this._plugin.getTeamForPlayer(this._state, playerId);
+          }
+          return this._meta?.teamMap[playerId] ?? null;
         },
         getHandleForPlayer: (playerId) => {
           return this._meta?.handleMap[playerId] ?? null;
@@ -661,14 +671,20 @@ export class GameRoomDO extends DurableObject<Env> {
       return { success: false, error: 'Invalid action' };
     }
 
-    const result = this._plugin.applyAction(this._state, playerId, action);
     const prevState = this._state;
+    // Read the prev-state progress counter BEFORE applyAction; the new state
+    // is what we compare against to know whether to snapshot.
+    const prevProgress = this._plugin.getProgressCounter(prevState);
+    const result = this._plugin.applyAction(prevState, playerId, action);
     this._state = result.state;
     this._actionLog.push({ playerId, action });
 
-    // Deadline management
+    // Deadline management — discriminated union per Phase 4.6.
+    //   omitted        -> leave alarm unchanged
+    //   { kind:'none' } -> cancel
+    //   { kind:'absolute', at } -> set absolute alarm
     if (result.deadline !== undefined) {
-      if (result.deadline === null) {
+      if (result.deadline.kind === 'none') {
         // @ts-expect-error TS2339: Property '_deadlineMs' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
         this._deadlineMs = null;
         await this.ctx.storage.delete('deadline');
@@ -676,7 +692,7 @@ export class GameRoomDO extends DurableObject<Env> {
           await this.ctx.storage.deleteAlarm();
         } catch {}
       } else {
-        const deadlineMs = Date.now() + result.deadline.seconds * 1000;
+        const deadlineMs = result.deadline.at;
         // @ts-expect-error TS2339: Property '_deadlineMs' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
         this._deadlineMs = deadlineMs;
         await this.ctx.storage.put('deadline', { action: result.deadline.action, deadlineMs });
@@ -684,7 +700,13 @@ export class GameRoomDO extends DurableObject<Env> {
       }
     }
 
-    if (result.progressIncrement) {
+    // Progress tick: derived from the game's own counter rather than a
+    // boolean flag on ActionResult (Phase 4.6). Snapshot whenever the
+    // counter advances (defensive >= guard so any rewind would be a no-op).
+    const newProgress = this._plugin.getProgressCounter(this._state);
+    const progressAdvanced = newProgress > prevProgress;
+
+    if (progressAdvanced) {
       this._progress.counter++;
       this._progress.snapshots.push(this._actionLog.length - 1);
 
@@ -711,7 +733,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.storage.put('actionLog', this._actionLog),
       this.ctx.storage.put('progress', this._progress),
     ];
-    if (result.progressIncrement) {
+    if (progressAdvanced) {
       const idx = this._spectatorSnapshots.length - 1;
       storagePuts.push(
         this.ctx.storage.put(`snapshot:${idx}`, this._spectatorSnapshots[idx]),

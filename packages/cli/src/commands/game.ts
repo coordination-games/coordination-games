@@ -229,7 +229,7 @@ export function registerGameCommands(program: Command) {
 
         process.stdout.write(`\n  Active Lobbies:\n`);
         for (const lobby of lobbies) {
-          const phase = lobby.phase ?? 'forming';
+          const phase = lobby.phase ?? 'lobby';
           process.stdout.write(
             `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`,
           );

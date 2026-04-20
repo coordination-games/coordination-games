@@ -13,7 +13,7 @@
  * hidden until round-end batch resolution reveals everything at once.
  */
 
-import type { ActionResult } from '@coordination-games/engine';
+import type { ActionResult, GameDeadline } from '@coordination-games/engine';
 import type {
   OathAction,
   OathConfig,
@@ -172,10 +172,7 @@ export function applyAction(
     const started = startRound(state);
     return {
       state: started,
-      deadline: {
-        seconds: state.config.turnTimerSeconds,
-        action: { type: 'round_timeout' },
-      },
+      deadline: roundTimeoutDeadline(state.config.turnTimerSeconds),
     };
   }
 
@@ -262,8 +259,7 @@ function advanceOrFinish(resolvedState: OathState): ActionResult<OathState, Oath
   if (resolvedState.round >= resolvedState.config.maxRounds) {
     return {
       state: { ...resolvedState, phase: 'finished' },
-      deadline: null,
-      progressIncrement: true,
+      deadline: { kind: 'none' },
     };
   }
 
@@ -271,11 +267,16 @@ function advanceOrFinish(resolvedState: OathState): ActionResult<OathState, Oath
   const nextRound = startRound(resolvedState);
   return {
     state: nextRound,
-    deadline: {
-      seconds: resolvedState.config.turnTimerSeconds,
-      action: { type: 'round_timeout' },
-    },
-    progressIncrement: true,
+    deadline: roundTimeoutDeadline(resolvedState.config.turnTimerSeconds),
+  };
+}
+
+/** Build an absolute round-timeout deadline `seconds` from now. */
+function roundTimeoutDeadline(seconds: number): GameDeadline<OathAction> {
+  return {
+    kind: 'absolute',
+    at: Date.now() + seconds * 1000,
+    action: { type: 'round_timeout' },
   };
 }
 

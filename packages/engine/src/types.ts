@@ -68,15 +68,37 @@ export interface SpectatorContext {
 // ---------------------------------------------------------------------------
 
 /**
+ * Discriminated phase kind every game exposes via `getCurrentPhaseKind`.
+ *   - 'lobby'       : pre-game (CtL pre_game, OATH waiting)
+ *   - 'in_progress' : game is being played (CtL in_progress, OATH playing)
+ *   - 'finished'    : game has ended; outcome is final
+ */
+export type GamePhaseKind = 'lobby' | 'in_progress' | 'finished';
+
+/**
+ * Discriminated deadline directive returned by `applyAction`.
+ *   - { kind: 'none' }                   -> cancel any current timer
+ *   - { kind: 'absolute'; at: number }   -> set timer to fire at this absolute
+ *                                            ms-epoch deadline. Use absolute
+ *                                            time so deadline math is the
+ *                                            game's responsibility, not the
+ *                                            engine's.
+ * Omitting `deadline` from the result leaves any current timer unchanged.
+ */
+export type GameDeadline<TAction> =
+  | { kind: 'none' }
+  | { kind: 'absolute'; at: number; action: TAction };
+
+/**
  * Action result returned by applyAction.
- * deadline: { seconds, action } -> set timer, fire action on expiry
- * deadline: null -> cancel current timer
- * deadline: undefined (omitted) -> leave timer unchanged
+ * `deadline` omitted → leave any current timer unchanged.
+ * Progress is *not* signalled here — the engine derives it by comparing
+ * `getProgressCounter(prevState)` vs `getProgressCounter(newState)` and
+ * snapshots whenever it advances.
  */
 export interface ActionResult<TState, TAction> {
   state: TState;
-  deadline?: { seconds: number; action: TAction } | null;
-  progressIncrement?: boolean; // true = this action advanced the game clock (turn/round resolved)
+  deadline?: GameDeadline<TAction>;
 }
 
 /**
@@ -119,6 +141,39 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
 
   /** Is the game over? */
   isOver(state: TState): boolean;
+
+  /**
+   * Discriminated phase of the current state. The engine reads this for
+   * lifecycle decisions (lobby vs game vs finished); it does not look at
+   * game-specific phase strings. Maps to D1 `lobbies.phase` and is the
+   * only phase enum the engine cares about.
+   */
+  getCurrentPhaseKind(state: TState): GamePhaseKind;
+
+  /**
+   * Resolve the team identifier for a player at this point in the game.
+   *
+   * Used by relay routing for `scope: 'team'` envelopes and by the engine's
+   * spectator/visibility filters. Free-for-all games (or non-team phases of
+   * team games) MUST return the playerId itself, so team-scoped logic
+   * naturally devolves to per-player. Never return a sentinel like 'FFA'.
+   */
+  getTeamForPlayer(state: TState, playerId: string): string;
+
+  /**
+   * Monotonic non-decreasing counter for "progress units" (turns for CtL,
+   * rounds for OATHBREAKER). The engine compares before/after applying an
+   * action to decide whether to write a new spectator snapshot — replacing
+   * the pre-4.6 `progressIncrement: boolean` flag on `ActionResult`. Must
+   * be deterministic.
+   */
+  getProgressCounter(state: TState): number;
+
+  /**
+   * Human-readable name for one progress unit ('turn', 'round', etc.).
+   * Used by spectator UI / docs; not load-bearing for the engine itself.
+   */
+  readonly progressUnit: string;
 
   /**
    * Final outcome. Only valid when isOver() is true.
@@ -239,7 +294,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
 export interface GameSetup<TConfig> {
   /** The game config to pass to createInitialState. */
   config: TConfig;
-  /** Player-to-team mapping for relay routing. Use 'FFA' for free-for-all games. */
+  /**
+   * Player-to-team mapping for relay routing. For free-for-all games (no
+   * teams), each player's `team` MUST be their own `id` — never the legacy
+   * `'FFA'` sentinel. Team-scoped routing then degenerates to per-player
+   * when teams are absent. See `CoordinationGame.getTeamForPlayer`.
+   */
   players: { id: string; team: string }[];
 }
 

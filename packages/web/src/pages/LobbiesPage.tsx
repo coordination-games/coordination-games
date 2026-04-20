@@ -9,7 +9,7 @@ interface Game {
   gameType?: string;
   turn: number;
   maxTurns: number;
-  phase: 'in_progress' | 'finished' | 'starting' | 'playing';
+  phase: 'in_progress' | 'finished';
   winner?: string;
   teamsA: number;
   teamsB: number;
@@ -22,7 +22,10 @@ interface Game {
 interface Lobby {
   lobbyId: string;
   gameType?: string;
-  phase: 'running' | 'starting' | 'game' | 'failed';
+  // Unified GamePhaseKind from the engine — 'lobby' (still accepting joins),
+  // 'in_progress' (game spawned), 'finished' (terminal — game done OR lobby
+  // errored; presence of `error` on the lobby state distinguishes).
+  phase: 'lobby' | 'in_progress' | 'finished';
   teamSize?: number;
   playerCount?: number;
   createdAt?: string;
@@ -61,7 +64,7 @@ function phaseBadge(phase: string) {
           Finished
         </span>
       );
-    case 'starting':
+    case 'lobby':
       return (
         <span
           className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
@@ -75,7 +78,7 @@ function phaseBadge(phase: string) {
             className="h-1.5 w-1.5 rounded-full animate-pulse"
             style={{ background: 'var(--color-amber)' }}
           />
-          Starting
+          Forming
         </span>
       );
     default:
@@ -124,9 +127,7 @@ export default function LobbiesPage() {
           }));
           // @ts-expect-error TS2345: Argument of type '{ id: string; gameType: string; turn: number; maxTurns: number — TODO(2.3-followup)
           setGames(mapped);
-          setLobbies(
-            (lobbiesData as Lobby[]).filter((l) => l.phase !== 'game' && l.phase !== 'failed'),
-          );
+          setLobbies((lobbiesData as Lobby[]).filter((l) => l.phase === 'lobby'));
         }
       } catch {}
     }
@@ -409,7 +410,7 @@ function lobbyPhaseBadge(lobby: Lobby) {
   const phase = lobby.phase;
 
   switch (phase) {
-    case 'running':
+    case 'lobby':
       return (
         <span
           className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
@@ -424,23 +425,6 @@ function lobbyPhaseBadge(lobby: Lobby) {
             style={{ background: 'var(--color-amber)' }}
           />
           Open
-        </span>
-      );
-    case 'starting':
-      return (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
-          style={{
-            background: 'rgba(58, 90, 42, 0.08)',
-            color: 'var(--color-forest)',
-            border: '1px solid rgba(58, 90, 42, 0.2)',
-          }}
-        >
-          <span
-            className="h-1.5 w-1.5 rounded-full animate-pulse"
-            style={{ background: 'var(--color-forest-light)' }}
-          />
-          Starting...
         </span>
       );
     default:
@@ -505,7 +489,7 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
     const round = game.round ?? game.turn ?? 0;
     const maxRounds = game.maxRounds ?? game.maxTurns ?? 12;
     const progress = maxRounds > 0 ? Math.round((round / maxRounds) * 100) : 0;
-    const isLive = game.phase === 'playing' || game.phase === 'in_progress';
+    const isLive = game.phase === 'in_progress';
     return (
       // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
       <button
@@ -516,7 +500,7 @@ function GameCard({ game, onClick }: { game: Game; onClick: () => void }) {
           <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
             {game.id}
           </span>
-          {phaseBadge(isLive ? 'in_progress' : game.phase === 'finished' ? 'finished' : 'starting')}
+          {phaseBadge(isLive ? 'in_progress' : 'finished')}
         </div>
         <div className="mb-3">
           <div

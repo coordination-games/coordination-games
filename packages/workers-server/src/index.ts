@@ -480,7 +480,9 @@ async function handleListLobbies(env: Env): Promise<Response> {
       'COUNT(ps.player_id) as player_count ' +
       'FROM lobbies l ' +
       'LEFT JOIN player_sessions ps ON ps.lobby_id = l.id ' +
-      "WHERE l.phase NOT IN ('failed', 'game') " +
+      // Only show lobbies still accepting players (post-Phase-4.6 unified
+      // GamePhaseKind: 'lobby' | 'in_progress' | 'finished').
+      "WHERE l.phase = 'lobby' " +
       'GROUP BY l.id ' +
       'ORDER BY l.created_at DESC LIMIT 50',
   ).all<{
@@ -522,7 +524,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     await env.DB.prepare(
       'INSERT INTO lobbies (id, game_type, team_size, phase, created_at) VALUES (?, ?, ?, ?, ?)',
     )
-      .bind(lobbyId, gameType, teamSize, 'running', new Date().toISOString())
+      .bind(lobbyId, gameType, teamSize, 'lobby', new Date().toISOString())
       .run();
   } catch (_err) {
     return Response.json({ error: 'Failed to create lobby record' }, { status: 500 });
@@ -679,7 +681,7 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
     ).bind(gameId, gameType, now),
     env.DB.prepare(
       `INSERT OR REPLACE INTO lobbies (id, game_type, team_size, phase, created_at, game_id)
-       VALUES (?, ?, ?, 'game', ?, ?)`,
+       VALUES (?, ?, ?, 'in_progress', ?, ?)`,
     ).bind(syntheticLobbyId, gameType, (playerIds as string[]).length, now, gameId),
     ...(playerIds as string[]).map((pid) =>
       env.DB.prepare(

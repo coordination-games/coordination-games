@@ -73,7 +73,7 @@ export async function fetchReplay(id: string): Promise<ReplayData> {
 export interface LobbySummary {
   lobbyId: string;
   gameType: string;
-  phase: 'running' | 'starting' | 'game' | 'failed';
+  phase: 'lobby' | 'in_progress' | 'finished';
   currentPhase?: {
     id: string;
     name: string;

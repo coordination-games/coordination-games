@@ -46,7 +46,7 @@ interface LobbyState {
     tools: any[]; // available tools in this phase
   } | null;
   relay: RelayMessage[];
-  phase: 'running' | 'starting' | 'game' | 'failed';
+  phase: 'lobby' | 'in_progress' | 'finished';
   deadlineMs: number | null;
   gameId: string | null;
   error: string | null;
@@ -111,41 +111,38 @@ function ClassSelectionPanel({ view, agents }: { view: any; agents: LobbyAgent[]
 // ---------------------------------------------------------------------------
 
 function phaseBadge(phase: string, currentPhaseId?: string) {
+  // Phase strings here are the unified `GamePhaseKind`
+  // ('lobby' | 'in_progress' | 'finished'). 'finished' covers both
+  // game-over and lobby-error — the page-level layout uses `state.error`
+  // to distinguish those when rendering.
   const styles: Record<string, { bg: string; color: string; border: string }> = {
-    running: {
+    lobby: {
       bg: 'rgba(184, 134, 11, 0.08)',
       color: 'var(--color-amber)',
       border: 'rgba(184, 134, 11, 0.2)',
     },
-    starting: {
+    in_progress: {
       bg: 'rgba(58, 90, 42, 0.08)',
       color: 'var(--color-forest)',
       border: 'rgba(58, 90, 42, 0.2)',
     },
-    game: {
-      bg: 'rgba(58, 90, 42, 0.08)',
-      color: 'var(--color-forest)',
-      border: 'rgba(58, 90, 42, 0.2)',
-    },
-    failed: {
+    finished: {
       bg: 'rgba(139, 32, 32, 0.08)',
       color: 'var(--color-blood)',
       border: 'rgba(139, 32, 32, 0.2)',
     },
   };
-  // For 'running', show the current phase name if available
   const phaseLabels: Record<string, string> = {
     'team-formation': 'Team Formation',
     'class-selection': 'Class Selection',
     'open-queue': 'Waiting for Players',
   };
   const labels: Record<string, string> = {
-    running: (currentPhaseId && phaseLabels[currentPhaseId]) || 'In Progress',
-    starting: 'Starting...',
-    game: 'Game Started',
-    failed: 'Failed',
+    lobby: (currentPhaseId && phaseLabels[currentPhaseId]) || 'In Progress',
+    in_progress: 'Game Started',
+    finished: 'Finished',
   };
-  const s = styles[phase] ?? styles.running;
+  const s = styles[phase] ?? styles.lobby;
 
   return (
     <span
@@ -227,7 +224,7 @@ export default function LobbyPage() {
 
   // Compute client-side timer from server deadlineMs
   useEffect(() => {
-    if (noTimeout || !state || state.phase !== 'running' || !state.deadlineMs) {
+    if (noTimeout || !state || state.phase !== 'lobby' || !state.deadlineMs) {
       setLobbyTimer(null);
       return;
     }
@@ -247,7 +244,7 @@ export default function LobbyPage() {
       const t = setTimeout(() => navigate(`/game/${gameStarted}`), 1500);
       return () => clearTimeout(t);
     }
-    if (state?.phase === 'game' && state.gameId) {
+    if (state?.phase === 'in_progress' && state.gameId) {
       const t = setTimeout(() => navigate(`/game/${state.gameId}`), 1500);
       return () => clearTimeout(t);
     }
@@ -314,7 +311,7 @@ export default function LobbyPage() {
   const isTeamPhase = phaseId === 'team-formation';
   const isClassSelection = phaseId === 'class-selection';
   const _isOpenQueue = phaseId === 'open-queue';
-  const showTimer = state.phase === 'running' && state.deadlineMs != null;
+  const showTimer = state.phase === 'lobby' && state.deadlineMs != null;
 
   // Team formation view: { teams: [{id, members, invites}], unassigned, teamSize, numTeams }
   const teams: Array<{ id: string; members: string[]; invites: string[] }> = isTeamPhase
@@ -377,10 +374,10 @@ export default function LobbyPage() {
       )}
 
       {/* Running phase: Join instructions */}
-      {state.phase === 'running' && <JoinInstructions lobbyId={state.lobbyId} />}
+      {state.phase === 'lobby' && <JoinInstructions lobbyId={state.lobbyId} />}
 
       {/* Game redirect */}
-      {state.phase === 'game' && state.gameId && (
+      {state.phase === 'in_progress' && state.gameId && (
         <div
           className="rounded-lg p-4 text-center"
           style={{
@@ -402,8 +399,8 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Error */}
-      {state.phase === 'failed' && state.error && (
+      {/* Error — finished phase with an error string is the lobby-died case. */}
+      {state.phase === 'finished' && state.error && (
         <div
           className="rounded-lg p-4 text-center"
           style={{
@@ -422,8 +419,8 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Agents & Teams — shown during running phase */}
-      {state.phase === 'running' && (
+      {/* Agents & Teams — shown during the lobby phase */}
+      {state.phase === 'lobby' && (
         <div className={teams.length > 0 ? 'grid gap-6 md:grid-cols-2' : ''}>
           <PlayerList agents={state.agents} />
           {teams.length > 0 && (

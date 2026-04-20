@@ -8,7 +8,9 @@
 import type {
   ActionResult,
   CoordinationGame,
+  GameDeadline,
   GameLobbyConfig,
+  GamePhaseKind,
   GameSetup,
   RelayEnvelope,
   SpectatorContext,
@@ -88,6 +90,15 @@ export type CtlAction =
   | { type: 'game_start' }
   | { type: 'move'; path: Direction[] }
   | { type: 'turn_timeout' };
+
+/** Build an absolute turn-timeout deadline `seconds` from now. */
+function turnTimeoutDeadline(seconds: number): GameDeadline<CtlAction> {
+  return {
+    kind: 'absolute',
+    at: Date.now() + seconds * 1000,
+    action: { type: 'turn_timeout' },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Spectator view types (consumed by the frontend)
@@ -547,10 +558,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       const started: CtlGameState = { ...state, phase: 'in_progress' as const };
       return {
         state: started,
-        deadline: {
-          seconds: state.config.turnTimerSeconds ?? 30,
-          action: { type: 'turn_timeout' },
-        },
+        deadline: turnTimeoutDeadline(state.config.turnTimerSeconds ?? 30),
       };
     }
 
@@ -568,15 +576,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       // Resolve
       const { state: resolved } = resolveTurn(current);
       if (isGameOver(resolved)) {
-        return { state: resolved, deadline: null, progressIncrement: true };
+        return { state: resolved, deadline: { kind: 'none' } };
       }
       return {
         state: resolved,
-        deadline: {
-          seconds: resolved.config.turnTimerSeconds ?? 30,
-          action: { type: 'turn_timeout' },
-        },
-        progressIncrement: true,
+        deadline: turnTimeoutDeadline(resolved.config.turnTimerSeconds ?? 30),
       };
     }
 
@@ -591,15 +595,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       if (allMovesSubmitted(current)) {
         const { state: resolved } = resolveTurn(current);
         if (isGameOver(resolved)) {
-          return { state: resolved, deadline: null, progressIncrement: true };
+          return { state: resolved, deadline: { kind: 'none' } };
         }
         return {
           state: resolved,
-          deadline: {
-            seconds: resolved.config.turnTimerSeconds ?? 30,
-            action: { type: 'turn_timeout' },
-          },
-          progressIncrement: true,
+          deadline: turnTimeoutDeadline(resolved.config.turnTimerSeconds ?? 30),
         };
       }
 
@@ -630,6 +630,29 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   isOver(state: CtlGameState): boolean {
     return isGameOver(state);
   },
+
+  getCurrentPhaseKind(state: CtlGameState): GamePhaseKind {
+    if (state.phase === 'finished') return 'finished';
+    if (state.phase === 'in_progress') return 'in_progress';
+    return 'lobby';
+  },
+
+  /**
+   * In CtL every unit is on team A or B. Players are GameUnit ids, so resolve
+   * via the unit list. If the player isn't on the board (lobby/pre_game), we
+   * have nothing better than the playerId itself — relay routing then
+   * degenerates to per-player, which matches the FFA convention.
+   */
+  getTeamForPlayer(state: CtlGameState, playerId: string): string {
+    const unit = state.units.find((u) => u.id === playerId);
+    return unit?.team ?? playerId;
+  },
+
+  getProgressCounter(state: CtlGameState): number {
+    return state.turn;
+  },
+
+  progressUnit: 'turn',
 
   getOutcome(state: CtlGameState): CtlOutcome {
     const playerStats = new Map<

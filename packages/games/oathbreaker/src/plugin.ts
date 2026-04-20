@@ -5,7 +5,12 @@
  * See FRAMEWORK_SPEC.md for the full spec.
  */
 
-import type { GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
+import type {
+  GamePhaseKind,
+  GameSetup,
+  SpectatorContext,
+  ToolDefinition,
+} from '@coordination-games/engine';
 import { OpenQueuePhase, registerGame } from '@coordination-games/engine';
 import {
   applyAction,
@@ -231,6 +236,7 @@ export const OathbreakerPlugin = {
 
   entryCost: 1,
   spectatorDelay: 0,
+  progressUnit: 'round',
 
   chatScopes: ['all', 'dm'] as const,
 
@@ -325,6 +331,26 @@ export const OathbreakerPlugin = {
     return state.phase === 'finished';
   },
 
+  getCurrentPhaseKind(state: OathState): GamePhaseKind {
+    if (state.phase === 'finished') return 'finished';
+    if (state.phase === 'playing') return 'in_progress';
+    return 'lobby';
+  },
+
+  /**
+   * OATHBREAKER is free-for-all — every player IS their own team. Returning
+   * the playerId means team-scoped chat would only ever reach the sender,
+   * which is correct for an FFA game (chat plugin should reject 'team' scope
+   * via `chatScopes`, but this is the safety net).
+   */
+  getTeamForPlayer(_state: OathState, playerId: string): string {
+    return playerId;
+  },
+
+  getProgressCounter(state: OathState): number {
+    return state.round;
+  },
+
   getOutcome(state: OathState): OathOutcome {
     const { players, totalPrinted, totalBurned } = state;
 
@@ -392,7 +418,8 @@ export const OathbreakerPlugin = {
         seed,
         ...(options?.maxRounds ? { maxRounds: options.maxRounds } : {}),
       },
-      players: players.map((p) => ({ id: p.id, team: 'FFA' })),
+      // FFA: each player is their own team (per CoordinationGame.getTeamForPlayer).
+      players: players.map((p) => ({ id: p.id, team: p.id })),
     };
   },
 };

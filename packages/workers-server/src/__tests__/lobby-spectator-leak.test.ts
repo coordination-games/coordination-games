@@ -108,7 +108,7 @@ function buildLobbyAtTeamFormation() {
     gameType: 'capture-the-lobster',
     currentPhaseIndex: 0,
     accumulatedMetadata: {},
-    phase: 'running',
+    phase: 'lobby',
     deadlineMs: null,
     gameId: null,
     error: null,

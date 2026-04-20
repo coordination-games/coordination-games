@@ -26,6 +26,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type {
   AgentInfo,
+  GamePhaseKind,
   LobbyPhase,
   PhaseActionResult,
   PhaseResult,
@@ -74,7 +75,14 @@ interface LobbyMeta {
   currentPhaseIndex: number;
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   accumulatedMetadata: Record<string, any>;
-  phase: 'running' | 'starting' | 'game' | 'failed';
+  /**
+   * Unified `GamePhaseKind` per Phase 4.6:
+   *   - 'lobby'       : pre-game lobby (was 'running' / 'starting')
+   *   - 'in_progress' : game has been spawned (was 'game')
+   *   - 'finished'    : terminal — either game over or lobby errored
+   *                     (`error != null` distinguishes the two; was 'failed')
+   */
+  phase: GamePhaseKind;
   deadlineMs: number | null;
   gameId: string | null;
   error: string | null;
@@ -158,7 +166,7 @@ export class LobbyDO extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     await this.ensureLoaded();
-    if (!this._meta || this._meta.phase !== 'running') return;
+    if (!this._meta || this._meta.phase !== 'lobby') return;
 
     const phase = this.getCurrentPhase();
     if (!phase) {
@@ -245,7 +253,7 @@ export class LobbyDO extends DurableObject<Env> {
       gameType,
       currentPhaseIndex: 0,
       accumulatedMetadata: {},
-      phase: 'running',
+      phase: 'lobby',
       deadlineMs,
       gameId: null,
       error: null,
@@ -278,7 +286,7 @@ export class LobbyDO extends DurableObject<Env> {
 
   private async handleJoin(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'running') {
+    if (this._meta.phase !== 'lobby') {
       return Response.json(
         { error: `Cannot join lobby in phase: ${this._meta.phase}` },
         { status: 409 },
@@ -332,7 +340,7 @@ export class LobbyDO extends DurableObject<Env> {
 
   private async handleAction(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    if (this._meta.phase !== 'running') {
+    if (this._meta.phase !== 'lobby') {
       return Response.json(
         { error: `Cannot perform actions in phase: ${this._meta.phase}` },
         { status: 409 },
@@ -426,7 +434,7 @@ export class LobbyDO extends DurableObject<Env> {
 
   private async handleDisband(): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
-    this._meta.phase = 'failed';
+    this._meta.phase = 'finished';
     this._meta.error = 'Disbanded';
     try {
       await this.ctx.storage.deleteAlarm();
@@ -555,7 +563,10 @@ export class LobbyDO extends DurableObject<Env> {
   private async doCreateGame(): Promise<void> {
     if (!this._meta) return;
 
-    this._meta.phase = 'starting';
+    // Brief transient between 'lobby' and 'in_progress'. The unified
+    // GamePhaseKind has no separate 'starting' value; we keep phase at
+    // 'lobby' here and rely on the existing handleAction/handleJoin guard
+    // chain — once `gameId` is set below the phase flips to 'in_progress'.
     try {
       await this.ctx.storage.deleteAlarm();
     } catch {}
@@ -638,7 +649,7 @@ export class LobbyDO extends DurableObject<Env> {
 
       // 4. Finalize lobby metadata (writes lobbies.game_id → routing flips)
       this._meta.gameId = gameId;
-      this._meta.phase = 'game';
+      this._meta.phase = 'in_progress';
       await this.saveState();
       await this.updateLobbyPhaseInD1();
       await this.broadcastUpdate();
@@ -736,7 +747,7 @@ export class LobbyDO extends DurableObject<Env> {
 
   private async failLobby(error: string): Promise<void> {
     if (!this._meta) return;
-    this._meta.phase = 'failed';
+    this._meta.phase = 'finished';
     this._meta.error = error;
     try {
       await this.ctx.storage.deleteAlarm();
