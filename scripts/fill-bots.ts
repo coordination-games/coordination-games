@@ -57,8 +57,7 @@ async function main() {
 
   // 2. Fetch lobby state to figure out seats + gameType
   const lobbies = await api(SERVER, '/api/lobbies');
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const lobby = lobbies.find((l: any) => l.lobbyId === lobbyId);
+  const lobby = lobbies.find((l: { lobbyId: string }) => l.lobbyId === lobbyId);
   if (!lobby) {
     console.error(
       `Lobby ${lobbyId} not found. Is it still open? (not in phase='failed' or 'game')`,
@@ -76,11 +75,9 @@ async function main() {
   // 3. Find which pool bots are already in this lobby (so we can re-spawn
   //    agents for them if a prior run died mid-spawn), and which still need
   //    to join. `picked` = new joiners, `reused` = already-seated pool bots.
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const lobbyState: any = await api(SERVER, `/api/lobbies/${lobbyId}/state`).catch(() => null);
+  const lobbyState = await api(SERVER, `/api/lobbies/${lobbyId}/state`).catch(() => null);
   const alreadyIn = new Set<string>(
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    (lobbyState?.agents ?? []).map((a: any) => String(a.handle).toLowerCase()),
+    (lobbyState?.agents ?? []).map((a: { handle: string }) => a.handle.toLowerCase()),
   );
 
   const reused = pool.filter((b) => alreadyIn.has(b.name.toLowerCase()));
@@ -107,9 +104,9 @@ async function main() {
         });
         console.log(`    ${bot.name} joined (${playerId.slice(0, 8)}...)`);
         live.push({ name: bot.name, privateKey: bot.privateKey });
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        console.error(`    ${bot.name} FAILED to join: ${err.message}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`    ${bot.name} FAILED to join: ${msg}`);
       }
     }
   }

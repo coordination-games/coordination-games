@@ -69,8 +69,7 @@ export function extractMessages(relayMessages: RelayEnvelope[]): Message[] {
   return relayMessages
     .filter((msg) => msg.type === CHAT_RELAY_TYPE)
     .map((msg) => {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
-      const data = msg.data as { body?: string; tags?: Record<string, any> };
+      const data = msg.data as { body?: string; tags?: Record<string, unknown> };
       // Map the discriminated scope to the simpler chat scope ('team' | 'all').
       // DMs surface as 'all' for the pipeline-consumer view (recipient still
       // sees the message, scope distinction lives in the envelope).
@@ -149,12 +148,11 @@ export const BasicChatPlugin: ToolPlugin = {
     },
   ],
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
-  handleData(_mode: string, inputs: Map<string, any>): Map<string, any> {
+  handleData(_mode: string, inputs: Map<string, unknown>): Map<string, unknown> {
     // Read raw relay envelopes from pipeline input
-    const relayMessages: RelayEnvelope[] = inputs.get('relay-messages') ?? [];
+    const relayMessages = (inputs.get('relay-messages') ?? []) as RelayEnvelope[];
     const messages = extractMessages(relayMessages);
-    return new Map([['messaging', messages]]);
+    return new Map<string, unknown>([['messaging', messages]]);
   },
 
   handleCall(tool: string, args: unknown, _caller: AgentInfo): unknown {

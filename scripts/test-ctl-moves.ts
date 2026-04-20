@@ -13,7 +13,7 @@ const BOT_COUNT = TEAM_SIZE * 2;
 async function api(
   path: string,
   opts: { method?: string; body?: unknown; token?: string } = {},
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: dev smoke-test wrapper; callers walk parsed JSON with loose property access and narrowing at every site would duplicate the server's D1/DO response shapes here.
 ): Promise<any> {
   const res = await fetch(`${SERVER}${path}`, {
     method: opts.method ?? 'GET',
@@ -24,7 +24,7 @@ async function api(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: see function return type.
   let json: any;
   try {
     json = JSON.parse(text);
@@ -102,8 +102,9 @@ async function main() {
       // Get phase view to find team ID
       const state = await api('/api/player/state', { token: team[0].token });
       const phaseTeams = state.currentPhase?.view?.teams ?? [];
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const proposerTeam = phaseTeams.find((t: any) => t.members.includes(team[0].playerId));
+      const proposerTeam = phaseTeams.find((t: { members: string[] }) =>
+        t.members.includes(team[0].playerId),
+      );
       const teamId = proposerTeam?.id;
       console.log(`  ${team[0].name} → ${team[i].name} (team ${teamId?.slice(0, 8)})`);
 
@@ -166,8 +167,7 @@ async function main() {
     const gameOver = state.gameOver ?? false;
 
     if (turn !== lastTurn) {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const aliveUnits = state.units?.filter((u: any) => u.alive)?.length ?? '?';
+      const aliveUnits = state.units?.filter((u: { alive: boolean }) => u.alive)?.length ?? '?';
       const totalUnits = state.units?.length ?? '?';
       console.log(`--- Turn ${turn} (gameOver=${gameOver}, alive=${aliveUnits}/${totalUnits}) ---`);
       lastTurn = turn;
@@ -179,8 +179,7 @@ async function main() {
         // Get detailed state
         for (const bot of bots) {
           const s = await api('/api/player/state', { token: bot.token });
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-          const unit = s.units?.find((_u: any) => true);
+          const unit = s.units?.find(() => true);
           console.log(
             `  ${bot.name}: alive=${unit?.alive ?? '?'} pos=(${unit?.position?.q},${unit?.position?.r}) moveSubmissions=${JSON.stringify(s.moveSubmissions?.length ?? '?')}`,
           );
@@ -207,9 +206,9 @@ async function main() {
         if (!moveResult.ok) {
           console.log(`  ${bot.name} move REJECTED: ${JSON.stringify(moveResult.error)}`);
         }
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        console.log(`  ${bot.name} move ERROR: ${err.message?.slice(0, 100)}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.log(`  ${bot.name} move ERROR: ${msg.slice(0, 100)}`);
       }
     }
 

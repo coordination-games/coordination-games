@@ -44,8 +44,11 @@ async function main() {
   const receipt = await tx.wait();
 
   // Extract schema UID from the Registered event
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const registeredEvent = receipt?.logs?.find((log: any) => {
+  interface LogLike {
+    topics: ReadonlyArray<string>;
+    data: string;
+  }
+  const registeredEvent = (receipt?.logs as LogLike[] | undefined)?.find((log) => {
     try {
       const parsed = registry.interface.parseLog({
         topics: log.topics as string[],

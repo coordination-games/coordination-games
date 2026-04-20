@@ -41,7 +41,7 @@ const apiOk = (path: string, opts: { method?: string; body?: unknown; token?: st
 async function apiRaw(
   path: string,
   opts: { method?: string; body?: unknown; token?: string } = {},
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: dev smoke-test wrapper; callers walk parsed JSON with loose property access and narrowing at every site would duplicate the server's D1/DO response shapes here.
 ): Promise<{ status: number; body: any }> {
   const res = await fetch(`${SERVER}${path}`, {
     method: opts.method ?? 'GET',
@@ -52,7 +52,7 @@ async function apiRaw(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: see api() return type.
   let json: any;
   try {
     json = JSON.parse(text);
@@ -124,8 +124,9 @@ async function setupGame(): Promise<{ bots: Bot[]; lobbyId: string; gameId: stri
       });
       const state = await apiOk('/api/player/state', { token: team[0].token });
       const phaseTeams = state.currentPhase?.view?.teams ?? [];
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      const proposerTeam = phaseTeams.find((t: any) => t.members.includes(team[0].playerId));
+      const proposerTeam = phaseTeams.find((t: { members: string[] }) =>
+        t.members.includes(team[0].playerId),
+      );
       await apiOk('/api/player/tool', {
         method: 'POST',
         token: team[i].token,
@@ -238,12 +239,10 @@ async function runScenarios(): Promise<void> {
   check('T1.type=state_update', t1?.type === 'state_update', `got type=${t1?.type}`);
   const pubTurn = t1?.turn ?? -1;
   check('T1.delay>=2', pubTurn <= lastTurn - 2, `publicTurn=${pubTurn}, internal=${lastTurn}`);
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const chatAHasMsg = (t1?.chatA ?? []).some((m: any) =>
+  const chatAHasMsg = (t1?.chatA ?? []).some((m: { message?: string }) =>
     (m.message ?? '').includes('hello from A'),
   );
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const chatBHasMsg = (t1?.chatB ?? []).some((m: any) =>
+  const chatBHasMsg = (t1?.chatB ?? []).some((m: { message?: string }) =>
     (m.message ?? '').includes('hello from B'),
   );
   check('T1.chatA present in delayed snapshot', chatAHasMsg);
@@ -254,8 +253,7 @@ async function runScenarios(): Promise<void> {
   const t3 = await apiOk(`/api/games/${gameId}/replay`);
   check('T3.type=replay', t3?.type === 'replay', `got type=${t3?.type}`);
   check('T3.no relay field', !('relay' in (t3 ?? {})), 'relay field must be removed');
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const snapshots: any[] = t3?.snapshots ?? [];
+  const snapshots: unknown[] = t3?.snapshots ?? [];
   check(
     'T3.snapshots count <= internal+1',
     snapshots.length <= lastTurn + 1,
@@ -272,14 +270,16 @@ async function runScenarios(): Promise<void> {
   const marker = `t4-${Date.now()}`;
   await sendTeamChat(teamB[0], marker);
   const t4Before = await apiOk(`/api/games/${gameId}/spectator`);
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const leakedEarly = (t4Before?.chatB ?? []).some((m: any) => (m.message ?? '').includes(marker));
+  const leakedEarly = (t4Before?.chatB ?? []).some((m: { message?: string }) =>
+    (m.message ?? '').includes(marker),
+  );
   check('T4.marker not in spectator chatB within delay window', !leakedEarly);
   // Advance 3 turns to age the message out of the delay window
   for (let i = 0; i < 3; i++) await advanceTurn(bots);
   const t4After = await apiOk(`/api/games/${gameId}/spectator`);
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const revealed = (t4After?.chatB ?? []).some((m: any) => (m.message ?? '').includes(marker));
+  const revealed = (t4After?.chatB ?? []).some((m: { message?: string }) =>
+    (m.message ?? '').includes(marker),
+  );
   check('T4.marker revealed in spectator chatB after delay', revealed);
 
   // T5 — state?playerId=<victim> must not return victim's private state
@@ -298,13 +298,13 @@ async function runScenarios(): Promise<void> {
   } else {
     check('T5.status 200', r5.status === 200, `status=${r5.status}`);
     // attacker is team B; check that units list includes attacker
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    const hasAttacker = (r5.body?.units ?? []).some((u: any) => u.id === attacker.playerId);
+    const hasAttacker = (r5.body?.units ?? []).some(
+      (u: { id: string }) => u.id === attacker.playerId,
+    );
     check(
       'T5.returned state belongs to caller, not victim',
       hasAttacker,
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      `units=${JSON.stringify((r5.body?.units ?? []).map((u: any) => u.id))}`,
+      `units=${JSON.stringify((r5.body?.units ?? []).map((u: { id: string }) => u.id))}`,
     );
   }
   // Attempt with a completely unrelated wallet (not in game)
@@ -322,8 +322,7 @@ async function runScenarios(): Promise<void> {
   // T6 — /api/games summary uses public snapshot
   console.log('\n== T6: /api/games summary progressCounter is delayed');
   const t6 = await apiOk('/api/games');
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  const row = (t6 as any[]).find((g) => g.gameId === gameId);
+  const row = (t6 as Array<{ gameId: string }>).find((g) => g.gameId === gameId);
   check('T6.row present', !!row);
   if (row) {
     check(
@@ -342,16 +341,16 @@ async function runScenarios(): Promise<void> {
   await sleep(200);
   const t7State = await apiOk('/api/player/state', { token: teamA[1].token });
   const t7Seen = (t7State.relayMessages ?? []).some(
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    (m: any) => (m.data?.body ?? '').includes(markerA) || (m.data?.message ?? '').includes(markerA),
+    (m: { data?: { body?: string; message?: string } }) =>
+      (m.data?.body ?? '').includes(markerA) || (m.data?.message ?? '').includes(markerA),
   );
   check('T7.team-A ally sees markerA', t7Seen);
 
   // T8 — opposing-team isolation: team B must not see marker-A
   const t8State = await apiOk('/api/player/state', { token: teamB[0].token });
   const t8Seen = (t8State.relayMessages ?? []).some(
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    (m: any) => (m.data?.body ?? '').includes(markerA) || (m.data?.message ?? '').includes(markerA),
+    (m: { data?: { body?: string; message?: string } }) =>
+      (m.data?.body ?? '').includes(markerA) || (m.data?.message ?? '').includes(markerA),
   );
   check('T8.team-B does NOT see markerA', !t8Seen);
 
@@ -368,9 +367,9 @@ async function main() {
   console.log(`smoke-spectator-delay against ${SERVER}`);
   try {
     await runScenarios();
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
-    console.error('\nFatal during scenarios:', err.stack ?? err.message);
+  } catch (err) {
+    const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error('\nFatal during scenarios:', detail);
     process.exit(2);
   }
 

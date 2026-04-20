@@ -108,9 +108,9 @@ async function main() {
       });
       used.add(name);
       failures = 0;
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      console.error(`  ${name} FAILED: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`  ${name} FAILED: ${msg}`);
       used.add(name); // don't retry same name
       failures++;
     }

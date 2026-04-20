@@ -36,9 +36,8 @@ export async function loadPool(): Promise<PoolBot[]> {
   try {
     const raw = await fs.readFile(POOL_PATH, 'utf8');
     return JSON.parse(raw) as PoolBot[];
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
-    if (err.code === 'ENOENT') return [];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
     throw err;
   }
 }
@@ -56,7 +55,7 @@ export async function api(
   server: string,
   path: string,
   opts: { method?: string; body?: unknown; token?: string } = {},
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: dev-script HTTP wrapper. Bot scripts traverse parsed JSON with loose property access (state.units?.filter, result.agentId, etc.); narrowing to `unknown` would require explicit casts at every call site across ~40 spots.
 ): Promise<any> {
   const res = await fetch(`${server}${path}`, {
     method: opts.method ?? 'GET',
@@ -67,7 +66,7 @@ export async function api(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: see function return type — same justification.
   let json: any;
   try {
     json = JSON.parse(text);
@@ -104,16 +103,14 @@ export async function authenticate(
 // ---------------------------------------------------------------------------
 
 export async function faucetBot(server: string, address: string): Promise<boolean> {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  let lastErr: any;
+  let lastErr: unknown;
   for (let attempt = 0; attempt < 5; attempt++) {
     if (attempt > 0) await sleep(2000 * attempt); // 2s, 4s, 6s, 8s
     try {
       await api(server, `/api/relay/faucet/${address}`);
       return true;
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      const msg = String(err?.message ?? err);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       // 503 = mock mode, no on-chain faucet. That's fine.
       if (/503/.test(msg)) return false;
       // Transient RPC issues — rate limit, timeout — retry.
@@ -124,7 +121,8 @@ export async function faucetBot(server: string, address: string): Promise<boolea
       throw err;
     }
   }
-  throw new Error(`faucet failed after retries: ${lastErr?.message ?? lastErr}`);
+  const lastMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  throw new Error(`faucet failed after retries: ${lastMsg}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,17 +182,15 @@ export async function registerBotOnChain(
     s: split.s,
   };
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  let lastErr: any;
+  let lastErr: unknown;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) await sleep(3000);
     try {
       const result = await api(server, '/api/relay/register', { method: 'POST', body });
       return { registered: true, agentId: result.agentId };
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
+    } catch (err) {
       lastErr = err;
-      const msg = String(err?.message ?? err);
+      const msg = err instanceof Error ? err.message : String(err);
       // Balance not yet credited — faucet tx still pending. Retry.
       //   0xe450d38c = ERC20InsufficientBalance (OZ v5 custom error)
       //   "transfer amount exceeds balance" (OZ v4 string)
@@ -218,7 +214,7 @@ export async function registerBotOnChain(
       `Most likely the faucet tx never mined, so the registry's transferFrom ` +
       `(REGISTRATION_FEE + INITIAL_CREDITS_USDC = 5 USDC) keeps reverting with ` +
       `ERC20InsufficientBalance (0xe450d38c). Check the faucet tx on the ` +
-      `target RPC. Last error: ${lastErr?.message ?? lastErr}`,
+      `target RPC. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
   );
 }
 

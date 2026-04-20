@@ -9,9 +9,9 @@ async function main() {
     console.log(`  [PASS] ${label}`);
     passed++;
   }
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  function fail(label: string, err: any) {
-    console.log(`  [FAIL] ${label}: ${err?.message ?? err}`);
+  function fail(label: string, err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.log(`  [FAIL] ${label}: ${msg}`);
     failed++;
   }
   function assert(cond: boolean, label: string, detail?: string) {
@@ -234,8 +234,7 @@ async function main() {
       stored.movesRoot === ethers.id('moves-hash'),
       '(m) Game result stored with correct movesRoot',
     );
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
+  } catch (err) {
     fail('Unexpected error during E2E flow', err);
     console.error(err);
   }

@@ -19,9 +19,9 @@ async function main() {
         body: { lobbyId: LOBBY_ID },
       });
       console.log(`  ${b.name} re-joined`);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      console.warn(`  ${b.name} re-join failed: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`  ${b.name} re-join failed: ${msg}`);
     }
   }
   console.log();

@@ -52,9 +52,9 @@ for (let i = 0; i < 35; i++) {
         result = CaptureTheLobsterPlugin.applyAction(state, unit.id, moveAction);
         state = result.state;
       }
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      console.error(`CRASH on move for ${unit.id} at turn ${state.turn}:`, err.message);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`CRASH on move for ${unit.id} at turn ${state.turn}:`, msg);
       process.exit(1);
     }
   }
@@ -63,10 +63,11 @@ for (let i = 0; i < 35; i++) {
   try {
     result = CaptureTheLobsterPlugin.applyAction(state, null, { type: 'turn_timeout' });
     state = result.state;
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  } catch (err: any) {
-    console.error(`CRASH on timeout at turn ${state.turn}:`, err.message);
-    console.error(err.stack);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error(`CRASH on timeout at turn ${state.turn}:`, msg);
+    if (stack) console.error(stack);
     console.log(
       'Units:',
       JSON.stringify(
