@@ -32,11 +32,12 @@
 import { ethers } from 'ethers';
 import { api, authenticate, runClaudeAgent } from './lib/bot-agent.js';
 
-const SERVER    = process.env.GAME_SERVER ?? 'http://localhost:8787';
-const GAME_TYPE = process.env.GAME_TYPE   ?? 'oathbreaker';
-const TEAM_SIZE = parseInt(process.env.TEAM_SIZE ?? '2');
+const SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
+const GAME_TYPE = process.env.GAME_TYPE ?? 'oathbreaker';
+const TEAM_SIZE = parseInt(process.env.TEAM_SIZE ?? '2', 10);
 const BOT_COUNT = parseInt(
   process.env.BOT_COUNT ?? (GAME_TYPE === 'oathbreaker' ? '4' : String(TEAM_SIZE * 2)),
+  10,
 );
 const MODEL = process.env.MODEL ?? 'haiku';
 
@@ -49,7 +50,7 @@ async function main() {
 
   for (let i = 0; i < BOT_COUNT; i++) {
     const wallet = ethers.Wallet.createRandom();
-    const name   = `bot${i + 1}-${wallet.address.slice(2, 8)}`;
+    const name = `bot${i + 1}-${wallet.address.slice(2, 8)}`;
     const { token, playerId } = await authenticate(SERVER, wallet.privateKey, name);
     bots.push({ name, token, playerId, privateKey: wallet.privateKey });
     console.log(`  ${name} authenticated (${playerId.slice(0, 8)}...)`);
@@ -57,11 +58,14 @@ async function main() {
 
   // 2. Create lobby
   console.log(`\nCreating ${GAME_TYPE} lobby...`);
-  const lobbyBody = GAME_TYPE === 'oathbreaker'
-    ? { gameType: GAME_TYPE, teamSize: BOT_COUNT }
-    : { gameType: GAME_TYPE, teamSize: TEAM_SIZE };
+  const lobbyBody =
+    GAME_TYPE === 'oathbreaker'
+      ? { gameType: GAME_TYPE, teamSize: BOT_COUNT }
+      : { gameType: GAME_TYPE, teamSize: TEAM_SIZE };
   const lobby = await api(SERVER, '/api/lobbies/create', {
-    method: 'POST', body: lobbyBody, token: bots[0].token,
+    method: 'POST',
+    body: lobbyBody,
+    token: bots[0].token,
   });
   console.log(`  Lobby: ${lobby.lobbyId}`);
 
@@ -69,26 +73,31 @@ async function main() {
   console.log('Joining lobby...');
   for (const bot of bots) {
     const res = await api(SERVER, '/api/player/lobby/join', {
-      method: 'POST', token: bot.token,
-      body:   { lobbyId: lobby.lobbyId },
+      method: 'POST',
+      token: bot.token,
+      body: { lobbyId: lobby.lobbyId },
     });
     console.log(`  ${bot.name} joined (phase: ${res.phase})`);
   }
 
   // 4. Hand off to Claude agents — they drive lobby phases + game via MCP tools
   console.log('\nAll bots playing...\n');
-  await Promise.all(bots.map(b => runClaudeAgent({
-    server:     SERVER,
-    botName:    b.name,
-    privateKey: b.privateKey,
-    gameType:   GAME_TYPE,
-    model:      MODEL,
-  })));
+  await Promise.all(
+    bots.map((b) =>
+      runClaudeAgent({
+        server: SERVER,
+        botName: b.name,
+        privateKey: b.privateKey,
+        gameType: GAME_TYPE,
+        model: MODEL,
+      }),
+    ),
+  );
 
   console.log('\nDone.\n');
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal:', err);
   process.exit(1);
 });

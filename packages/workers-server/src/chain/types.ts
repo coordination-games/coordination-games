@@ -1,9 +1,9 @@
 /** Data returned when looking up an agent by wallet address. */
 export interface AgentInfo {
   address: string;
-  agentId: string;       // On-chain uint256 as string, or D1 UUID in mock mode
+  agentId: string; // On-chain uint256 as string, or D1 UUID in mock mode
   name: string;
-  credits: string;       // Credit balance as string (bigint-safe)
+  credits: string; // Credit balance as string (bigint-safe)
   registered: boolean;
 }
 
@@ -50,6 +50,7 @@ export interface GameSettlement {
   gameId: string;
   gameType: string;
   playerIds: string[];
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   outcome: any;
   movesRoot: string;
   configHash: string;

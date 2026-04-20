@@ -1,17 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  CtlGameState,
-  createGameState,
-  submitMove,
-  resolveTurn,
   allMovesSubmitted,
+  type CtlGameState,
+  createGameState,
   getStateForAgent,
   isGameOver,
-  validateMoveForPlayer,
+  resolveTurn,
+  submitMove,
 } from '../game.js';
-import { GameMap, TileType } from '../map.js';
-import { Hex, hexToString, hexEquals } from '../hex.js';
-import { UnitClass } from '../movement.js';
+import { type Hex, hexEquals, hexToString } from '../hex.js';
+import type { GameMap, TileType } from '../map.js';
+import type { UnitClass } from '../movement.js';
 
 /**
  * Build a small deterministic hex map (radius 3) for testing.
@@ -21,11 +20,7 @@ function makeTestMap(): GameMap {
   const tiles = new Map<string, TileType>();
 
   for (let q = -radius; q <= radius; q++) {
-    for (
-      let r = Math.max(-radius, -q - radius);
-      r <= Math.min(radius, -q + radius);
-      r++
-    ) {
+    for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) {
       tiles.set(hexToString({ q, r }), 'ground');
     }
   }
@@ -101,12 +96,16 @@ describe('Game (pure functions)', () => {
       const state = createGameState(map, players);
 
       expect(state.units).toHaveLength(4);
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const a0 = state.units.find((u) => u.id === 'a0')!;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const a1 = state.units.find((u) => u.id === 'a1')!;
       expect(hexEquals(a0.position, map.bases.A[0].spawns[0])).toBe(true);
       expect(hexEquals(a1.position, map.bases.A[0].spawns[1])).toBe(true);
 
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const b0 = state.units.find((u) => u.id === 'b0')!;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const b1 = state.units.find((u) => u.id === 'b1')!;
       expect(hexEquals(b0.position, map.bases.B[0].spawns[0])).toBe(true);
       expect(hexEquals(b1.position, map.bases.B[0].spawns[1])).toBe(true);
@@ -151,9 +150,7 @@ describe('Game (pure functions)', () => {
 
     it('rejects move from dead unit', () => {
       let state = createInProgressState(map, makePlayers(1));
-      const units = state.units.map(u =>
-        u.id === 'a0' ? { ...u, alive: false } : u,
-      );
+      const units = state.units.map((u) => (u.id === 'a0' ? { ...u, alive: false } : u));
       state = { ...state, units };
       const result = submitMove(state, 'a0', ['N']);
       expect(result.success).toBe(false);
@@ -175,6 +172,7 @@ describe('Game (pure functions)', () => {
       state = submitMove(state, 'a0', ['N']).state;
       const { state: newState, record } = resolveTurn(state);
 
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const a0 = newState.units.find((u) => u.id === 'a0')!;
       expect(hexEquals(a0.position, { q: 0, r: 1 })).toBe(true);
       expect(record.unitPositionsBefore.get('a0')).toEqual({ q: 0, r: 2 });
@@ -185,6 +183,7 @@ describe('Game (pure functions)', () => {
       const state = createInProgressState(map, makePlayers(1));
       const { state: newState } = resolveTurn(state);
 
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const a0 = newState.units.find((u) => u.id === 'a0')!;
       expect(hexEquals(a0.position, map.bases.A[0].spawns[0])).toBe(true);
     });
@@ -199,7 +198,7 @@ describe('Game (pure functions)', () => {
       // Place them adjacent: rogue at (0,0), mage at (0,1)
       state = {
         ...state,
-        units: state.units.map(u => {
+        units: state.units.map((u) => {
           if (u.id === 'rogue_a') return { ...u, position: { q: 0, r: 0 } };
           if (u.id === 'mage_b') return { ...u, position: { q: 0, r: 1 } };
           return u;
@@ -209,7 +208,9 @@ describe('Game (pure functions)', () => {
       const { record } = resolveTurn(state);
 
       expect(record.kills.length).toBeGreaterThanOrEqual(1);
-      expect(record.kills.some((k) => k.killerId === 'rogue_a' && k.victimId === 'mage_b')).toBe(true);
+      expect(record.kills.some((k) => k.killerId === 'rogue_a' && k.victimId === 'mage_b')).toBe(
+        true,
+      );
     });
 
     it('dead unit respawns at base after death penalty (2 turns)', () => {
@@ -221,7 +222,7 @@ describe('Game (pure functions)', () => {
 
       state = {
         ...state,
-        units: state.units.map(u => {
+        units: state.units.map((u) => {
           if (u.id === 'rogue_a') return { ...u, position: { q: 0, r: 0 } };
           if (u.id === 'mage_b') return { ...u, position: { q: 0, r: 1 } };
           return u;
@@ -230,6 +231,7 @@ describe('Game (pure functions)', () => {
 
       // Turn 0: mage dies, respawnTurn = 2
       state = resolveTurn(state).state;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       let mage = state.units.find((u) => u.id === 'mage_b')!;
       expect(mage.alive).toBe(false);
       expect(mage.respawnTurn).toBe(2);
@@ -238,11 +240,13 @@ describe('Game (pure functions)', () => {
 
       // Turn 1: still dead
       state = resolveTurn(state).state;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       mage = state.units.find((u) => u.id === 'mage_b')!;
       expect(mage.alive).toBe(false);
 
       // Turn 2: respawns
       state = resolveTurn(state).state;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       mage = state.units.find((u) => u.id === 'mage_b')!;
       expect(mage.alive).toBe(true);
       expect(hexEquals(mage.position, map.bases.B[0].spawns[0])).toBe(true);
@@ -258,7 +262,7 @@ describe('Game (pure functions)', () => {
       // Place team A rogue next to team B flag, team B far away
       state = {
         ...state,
-        units: state.units.map(u => {
+        units: state.units.map((u) => {
           if (u.id === 'fast') return { ...u, position: { q: 0, r: -2 } };
           if (u.id === 'far') return { ...u, position: { q: -1, r: 3 } };
           return u;
@@ -272,6 +276,7 @@ describe('Game (pure functions)', () => {
       expect(record.flagEvents.some((e) => e.includes('picked up'))).toBe(true);
       expect(newState.flags.B[0].carried).toBe(true);
       expect(newState.flags.B[0].carrierId).toBe('fast');
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
       const unit = newState.units.find((u) => u.id === 'fast')!;
       expect(unit.carryingFlag).toBe(true);
     });
@@ -286,14 +291,19 @@ describe('Game (pure functions)', () => {
       // Give unit the flag and put it one step from home base
       state = {
         ...state,
-        units: state.units.map(u => {
+        units: state.units.map((u) => {
           if (u.id === 'cap') return { ...u, position: { q: 0, r: 2 }, carryingFlag: true };
           if (u.id === 'def') return { ...u, position: { q: -3, r: 0 } };
           return u;
         }),
         flags: {
           ...state.flags,
-          B: state.flags.B.map(f => ({ ...f, carried: true, carrierId: 'cap', position: { q: 0, r: 2 } })),
+          B: state.flags.B.map((f) => ({
+            ...f,
+            carried: true,
+            carrierId: 'cap',
+            position: { q: 0, r: 2 },
+          })),
         },
       };
 
@@ -315,14 +325,19 @@ describe('Game (pure functions)', () => {
 
       state = {
         ...state,
-        units: state.units.map(u => {
+        units: state.units.map((u) => {
           if (u.id === 'carrier') return { ...u, position: { q: 0, r: 0 }, carryingFlag: true };
           if (u.id === 'killer') return { ...u, position: { q: 0, r: 1 } };
           return u;
         }),
         flags: {
           ...state.flags,
-          B: state.flags.B.map(f => ({ ...f, carried: true, carrierId: 'carrier', position: { q: 0, r: 0 } })),
+          B: state.flags.B.map((f) => ({
+            ...f,
+            carried: true,
+            carrierId: 'carrier',
+            position: { q: 0, r: 0 },
+          })),
         },
       };
 
@@ -385,7 +400,7 @@ describe('Game (pure functions)', () => {
 
       state = {
         ...state,
-        units: state.units.map(u => {
+        units: state.units.map((u) => {
           if (u.id === 'a0') return { ...u, position: { q: 0, r: 0 } };
           if (u.id === 'a1') return { ...u, position: { q: 0, r: 1 } };
           if (u.id === 'b0') return { ...u, position: { q: 1, r: 0 } };
@@ -399,13 +414,11 @@ describe('Game (pure functions)', () => {
         (t) => t.unit && t.unit.team === 'A' && t.unit.id === 'a1',
       );
       expect(allyTile).toBeDefined();
-      expect(allyTile!.unit!.id).toBe('a1');
+      expect(allyTile?.unit?.id).toBe('a1');
 
-      const enemyTile = agentState.visibleTiles.find(
-        (t) => t.unit && t.unit.team === 'B',
-      );
+      const enemyTile = agentState.visibleTiles.find((t) => t.unit && t.unit.team === 'B');
       expect(enemyTile).toBeDefined();
-      expect(enemyTile!.unit!.id).toBeUndefined();
+      expect(enemyTile?.unit?.id).toBeUndefined();
     });
 
     it('reports correct unit status', () => {
@@ -422,12 +435,10 @@ describe('Game (pure functions)', () => {
       let state = createInProgressState(map, makePlayers(1));
       state = {
         ...state,
-        units: state.units.map(u =>
-          u.id === 'a0' ? { ...u, carryingFlag: true } : u,
-        ),
+        units: state.units.map((u) => (u.id === 'a0' ? { ...u, carryingFlag: true } : u)),
         flags: {
           ...state.flags,
-          B: state.flags.B.map(f => ({ ...f, carried: true, carrierId: 'a0' })),
+          B: state.flags.B.map((f) => ({ ...f, carried: true, carrierId: 'a0' })),
         },
       };
 
@@ -462,9 +473,7 @@ describe('Game (pure functions)', () => {
       let state = createInProgressState(map, makePlayers(1));
       state = {
         ...state,
-        units: state.units.map(u =>
-          u.id === 'b0' ? { ...u, alive: false } : u,
-        ),
+        units: state.units.map((u) => (u.id === 'b0' ? { ...u, alive: false } : u)),
       };
 
       state = submitMove(state, 'a0', ['N']).state;

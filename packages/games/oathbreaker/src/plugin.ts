@@ -5,28 +5,25 @@
  * See FRAMEWORK_SPEC.md for the full spec.
  */
 
+import type { GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
+import { OpenQueuePhase, registerGame } from '@coordination-games/engine';
+import {
+  applyAction,
+  createInitialState,
+  dollarPerPoint,
+  dollarValue,
+  getAgentView,
+  getSpectatorView,
+  type SpectatorView,
+  validateAction,
+} from './game.js';
 import {
   DEFAULT_OATH_CONFIG,
   type OathConfig,
-  type OathState,
-  type OathAction,
   type OathOutcome,
   type OathPlayerRanking,
+  type OathState,
 } from './types.js';
-
-import type { CoordinationGame, GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
-import { registerGame, OpenQueuePhase } from '@coordination-games/engine';
-
-import {
-  createInitialState,
-  validateAction,
-  applyAction,
-  getAgentView,
-  getSpectatorView,
-  dollarPerPoint,
-  dollarValue,
-  type SpectatorView,
-} from './game.js';
 
 // ---------------------------------------------------------------------------
 // Game rules (shown to agents via get_guide())
@@ -192,7 +189,8 @@ export const OATHBREAKER_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze(
 const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'propose_pledge',
-    description: 'Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game\'s `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.',
+    description:
+      "Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game's `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.",
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -200,7 +198,8 @@ const GAME_TOOLS: ToolDefinition[] = [
         amount: {
           type: 'number',
           minimum: 5,
-          description: 'Pledge amount in points. Must be >= minPledge (5) and <= 50% of the lower balance in the pairing.',
+          description:
+            'Pledge amount in points. Must be >= minPledge (5) and <= 50% of the lower balance in the pairing.',
         },
       },
       required: ['amount'],
@@ -209,7 +208,8 @@ const GAME_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'submit_decision',
-    description: 'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
+    description:
+      'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -240,6 +240,7 @@ export const OathbreakerPlugin = {
   getPlayerStatus(state: OathState, playerId: string): string {
     let status = '\n## Your Status\n';
     status += `- **Phase:** ${state.phase}\n- **Round:** ${state.round}/${state.config?.maxRounds ?? '?'}\n`;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const player = state.players?.find((p: any) => p.id === playerId);
     if (player) {
       status += `- **Balance:** ${player.balance}\n- **Oaths Kept:** ${player.oathsKept}\n- **Oaths Broken:** ${player.oathsBroken}\n`;
@@ -247,22 +248,25 @@ export const OathbreakerPlugin = {
     return status;
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   getSummary(state: OathState): Record<string, any> {
     return {
       round: state.round,
       maxRounds: state.config.maxRounds,
       phase: state.phase,
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       players: state.players.map((p: any) => p.id),
     };
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
     const s = snapshot as SpectatorView;
     return {
       round: s.round,
       maxRounds: s.maxRounds,
       phase: s.phase,
-      players: s.players.map(p => p.id),
+      players: s.players.map((p) => p.id),
     };
   },
 
@@ -284,9 +288,7 @@ export const OathbreakerPlugin = {
 
   lobby: {
     queueType: 'open' as const,
-    phases: [
-      new OpenQueuePhase(4),
-    ],
+    phases: [new OpenQueuePhase(4)],
     matchmaking: {
       minPlayers: 4,
       maxPlayers: 20,
@@ -312,7 +314,11 @@ export const OathbreakerPlugin = {
     return getAgentView(state, playerId) ?? getSpectatorView(state);
   },
 
-  buildSpectatorView(state: OathState, _prevState: OathState | null, _context: SpectatorContext): unknown {
+  buildSpectatorView(
+    state: OathState,
+    _prevState: OathState | null,
+    _context: SpectatorContext,
+  ): unknown {
     return getSpectatorView(state);
   },
 
@@ -348,7 +354,11 @@ export const OathbreakerPlugin = {
     };
   },
 
-  computePayouts(outcome: OathOutcome, playerIds: string[], entryCost: number): Map<string, number> {
+  computePayouts(
+    outcome: OathOutcome,
+    playerIds: string[],
+    entryCost: number,
+  ): Map<string, number> {
     const payouts = new Map<string, number>();
     for (const id of playerIds) {
       const ranking = outcome.rankings.find((r) => r.id === id);
@@ -360,21 +370,21 @@ export const OathbreakerPlugin = {
   createConfig(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     options?: Record<string, any>,
   ): GameSetup<OathConfig> {
     return {
       config: {
         ...DEFAULT_OATH_CONFIG,
         entryCost: OathbreakerPlugin.entryCost,
-        playerIds: players.map(p => p.id),
+        playerIds: players.map((p) => p.id),
         seed,
         ...(options?.maxRounds ? { maxRounds: options.maxRounds } : {}),
       },
-      players: players.map(p => ({ id: p.id, team: 'FFA' })),
+      players: players.map((p) => ({ id: p.id, team: 'FFA' })),
     };
   },
 };
 
 // Self-register with the engine's game registry
 registerGame(OathbreakerPlugin);
-

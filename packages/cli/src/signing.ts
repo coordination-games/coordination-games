@@ -1,4 +1,4 @@
-import { ethers } from "ethers";
+import { ethers } from 'ethers';
 
 // Optimism chain ID
 const OPTIMISM_CHAIN_ID = 10;
@@ -30,22 +30,22 @@ export async function signPermit(
   value: bigint,
   deadline: number,
   chainId: number = OPTIMISM_CHAIN_ID,
-  nonce: number = 0
+  nonce: number = 0,
 ): Promise<SignatureResult> {
   const domain: ethers.TypedDataDomain = {
-    name: "USD Coin",
-    version: "2",
+    name: 'USD Coin',
+    version: '2',
     chainId,
     verifyingContract: tokenAddress,
   };
 
   const types = {
     Permit: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-      { name: "value", type: "uint256" },
-      { name: "nonce", type: "uint256" },
-      { name: "deadline", type: "uint256" },
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
     ],
   };
 
@@ -68,7 +68,8 @@ export async function signTypedData(
   wallet: ethers.Wallet,
   domain: ethers.TypedDataDomain,
   types: Record<string, ethers.TypedDataField[]>,
-  value: Record<string, any>
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  value: Record<string, any>,
 ): Promise<SignatureResult> {
   const sig = await wallet.signTypedData(domain, types, value);
   return splitSignature(sig);
@@ -80,18 +81,18 @@ export async function signTypedData(
 export async function signAuthChallenge(
   wallet: ethers.Wallet,
   nonce: string,
-  serverUrl: string
+  serverUrl: string,
 ): Promise<SignatureResult> {
   const domain: ethers.TypedDataDomain = {
-    name: "Coordination Games",
-    version: "1",
+    name: 'Coordination Games',
+    version: '1',
     chainId: OPTIMISM_CHAIN_ID,
   };
 
   const types = {
     AuthChallenge: [
-      { name: "nonce", type: "string" },
-      { name: "serverUrl", type: "string" },
+      { name: 'nonce', type: 'string' },
+      { name: 'serverUrl', type: 'string' },
     ],
   };
 
@@ -108,12 +109,13 @@ export async function signMove(
   wallet: ethers.Wallet,
   gameId: string,
   turnNumber: number,
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   moveData: Record<string, any>,
-  moveSchema: Record<string, ethers.TypedDataField[]>
+  moveSchema: Record<string, ethers.TypedDataField[]>,
 ): Promise<SignatureResult> {
   const domain: ethers.TypedDataDomain = {
-    name: "Coordination Games",
-    version: "1",
+    name: 'Coordination Games',
+    version: '1',
     chainId: OPTIMISM_CHAIN_ID,
     // No verifyingContract — off-chain game moves
   };

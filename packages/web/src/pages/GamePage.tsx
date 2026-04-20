@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getSpectatorPlugin } from '../games/registry';
 import { API_BASE, getWsUrl } from '../config.js';
+import { getSpectatorPlugin } from '../games/registry';
 
 // ---------------------------------------------------------------------------
 // Helpers — extract platform data (handles, chat) from server payloads
@@ -13,10 +13,12 @@ interface ChatMessage {
   timestamp: number;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function extractHandles(data: any): Record<string, string> {
   return data?.handles ?? {};
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function extractChat(data: any): ChatMessage[] {
   const relay = data?.relayMessages;
   if (!Array.isArray(relay)) return [];
@@ -51,8 +53,8 @@ export default function GamePage() {
     if (!id) return;
 
     fetch(`${API_BASE}/games/${id}`)
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => r.json())
+      .then((data) => {
         setGameType(data.gameType ?? 'capture-the-lobster');
         const h = extractHandles(data);
         if (Object.keys(h).length) setHandles(h);
@@ -81,7 +83,10 @@ export default function GamePage() {
       } catch {}
     };
 
-    return () => { ws.close(); wsRef.current = null; };
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
   }, [id]);
 
   if (loading || !gameType) {

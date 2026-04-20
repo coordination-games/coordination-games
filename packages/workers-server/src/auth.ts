@@ -1,16 +1,16 @@
-import { verifyMessage, createPublicClient, http, keccak256, toBytes } from 'viem';
+import { createPublicClient, http, keccak256, toBytes, verifyMessage } from 'viem';
 import { optimismSepolia } from 'viem/chains';
-import type { Env } from './env.js';
-import { resolvePlayer, PlayerHandleTakenError } from './db/player.js';
 import { createRelay } from './chain/index.js';
+import { PlayerHandleTakenError, resolvePlayer } from './db/player.js';
+import type { Env } from './env.js';
 
-const CHALLENGE_TTL_MS = 5 * 60 * 1000;    // 5 minutes
-const SESSION_TTL_MS   = 24 * 60 * 60 * 1000; // 24 hours
+const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function hexRandom(bytes: number): string {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
-  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -24,8 +24,10 @@ export async function handleAuthChallenge(_request: Request, env: Env): Promise<
 
   // wallet_address is NOT NULL in schema but unknown at challenge time — store placeholder
   await env.DB.prepare(
-    'INSERT INTO auth_nonces (nonce, wallet_address, expires_at) VALUES (?, ?, ?)'
-  ).bind(nonce, '', expiresAt).run();
+    'INSERT INTO auth_nonces (nonce, wallet_address, expires_at) VALUES (?, ?, ?)',
+  )
+    .bind(nonce, '', expiresAt)
+    .run();
 
   return Response.json({ nonce, message, expiresAt });
 }
@@ -37,12 +39,17 @@ export async function handleAuthChallenge(_request: Request, env: Env): Promise<
 export async function handleAuthVerify(request: Request, env: Env): Promise<Response> {
   let body: Record<string, unknown>;
   try {
-    body = await request.json() as Record<string, unknown>;
+    body = (await request.json()) as Record<string, unknown>;
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { nonce: rawNonce, signature: rawSig, address: rawAddr, name: rawName } = body ?? {} as Record<string, unknown>;
+  const {
+    nonce: rawNonce,
+    signature: rawSig,
+    address: rawAddr,
+    name: rawName,
+  } = body ?? ({} as Record<string, unknown>);
   if (!rawNonce || !rawSig || !rawAddr || !rawName) {
     return Response.json(
       { error: 'nonce, signature, address, and name are all required' },
@@ -55,9 +62,9 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
   const name = rawName as string;
 
   // Look up and consume nonce (one-time use)
-  const nonceRow = await env.DB.prepare(
-    'SELECT nonce, expires_at FROM auth_nonces WHERE nonce = ?'
-  ).bind(nonce).first<{ nonce: string; expires_at: string }>();
+  const nonceRow = await env.DB.prepare('SELECT nonce, expires_at FROM auth_nonces WHERE nonce = ?')
+    .bind(nonce)
+    .first<{ nonce: string; expires_at: string }>();
 
   if (!nonceRow) {
     return Response.json({ error: 'Invalid or expired challenge nonce' }, { status: 401 });
@@ -78,8 +85,12 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
       message,
       signature: signature as `0x${string}`,
     });
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   } catch (err: any) {
-    return Response.json({ error: 'Signature verification failed: ' + err.message }, { status: 401 });
+    return Response.json(
+      { error: `Signature verification failed: ${err.message}` },
+      { status: 401 },
+    );
   }
 
   if (!isValid) {
@@ -97,38 +108,47 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
         transport: http(env.RPC_URL),
       });
 
-      const registryAbi = [{
-        name: 'nameToAgent',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'nameKey', type: 'bytes32' }],
-        outputs: [{ name: '', type: 'uint256' }],
-      }] as const;
+      const registryAbi = [
+        {
+          name: 'nameToAgent',
+          type: 'function',
+          stateMutability: 'view',
+          inputs: [{ name: 'nameKey', type: 'bytes32' }],
+          outputs: [{ name: '', type: 'uint256' }],
+        },
+      ] as const;
       const nameKey = keccak256(toBytes(name.toLowerCase()));
       const agentId = await client.readContract({
         address: env.REGISTRY_ADDRESS as `0x${string}`,
         abi: registryAbi,
         functionName: 'nameToAgent',
         args: [nameKey],
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } as any);
 
       if (agentId === 0n) {
-        return Response.json({ error: `Name "${name}" is not registered on-chain` }, { status: 401 });
+        return Response.json(
+          { error: `Name "${name}" is not registered on-chain` },
+          { status: 401 },
+        );
       }
 
-      const erc8004Abi = [{
-        name: 'ownerOf',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'tokenId', type: 'uint256' }],
-        outputs: [{ name: '', type: 'address' }],
-      }] as const;
-      const owner = await client.readContract({
+      const erc8004Abi = [
+        {
+          name: 'ownerOf',
+          type: 'function',
+          stateMutability: 'view',
+          inputs: [{ name: 'tokenId', type: 'uint256' }],
+          outputs: [{ name: '', type: 'address' }],
+        },
+      ] as const;
+      const owner = (await client.readContract({
         address: env.ERC8004_ADDRESS as `0x${string}`,
         abi: erc8004Abi,
         functionName: 'ownerOf',
         args: [agentId],
-      } as any) as `0x${string}`;
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      } as any)) as `0x${string}`;
 
       if (owner.toLowerCase() !== address.toLowerCase()) {
         return Response.json(
@@ -138,9 +158,13 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
       }
 
       console.log(`[auth] On-chain verified: "${name}" owned by ${address}`);
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     } catch (err: any) {
       console.error('[auth] On-chain verification failed:', err.message);
-      return Response.json({ error: 'On-chain verification failed: ' + err.message }, { status: 500 });
+      return Response.json(
+        { error: `On-chain verification failed: ${err.message}` },
+        { status: 500 },
+      );
     }
   }
 
@@ -166,10 +190,14 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
   await env.DB.prepare(
-    'INSERT OR REPLACE INTO auth_sessions (token, player_id, name, expires_at) VALUES (?, ?, ?, ?)'
-  ).bind(token, playerId, trimmed, expiresAt).run();
+    'INSERT OR REPLACE INTO auth_sessions (token, player_id, name, expires_at) VALUES (?, ?, ?, ?)',
+  )
+    .bind(token, playerId, trimmed, expiresAt)
+    .run();
 
-  console.log(`[auth] Verified "${trimmed}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`);
+  console.log(
+    `[auth] Verified "${trimmed}" wallet=${address.toLowerCase()} playerId=${playerId} reconnected=${reconnected}`,
+  );
 
   return Response.json({ token, agentId: playerId, name: trimmed, expiresAt, reconnected });
 }
@@ -184,8 +212,10 @@ export async function validateBearerToken(request: Request, env: Env): Promise<s
   const token = authHeader.slice(7);
 
   const row = await env.DB.prepare(
-    'SELECT player_id, expires_at FROM auth_sessions WHERE token = ?'
-  ).bind(token).first<{ player_id: string; expires_at: string }>();
+    'SELECT player_id, expires_at FROM auth_sessions WHERE token = ?',
+  )
+    .bind(token)
+    .first<{ player_id: string; expires_at: string }>();
 
   if (!row) return null;
 

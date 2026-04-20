@@ -1,10 +1,10 @@
-import type { SpectatorPlugin } from './types';
 import { CaptureTheLobsterSpectator } from './capture-the-lobster';
 import { OathbreakerSpectator } from './oathbreaker';
+import type { SpectatorPlugin } from './types';
 
 const SPECTATOR_PLUGINS: Record<string, SpectatorPlugin> = {
   'capture-the-lobster': CaptureTheLobsterSpectator,
-  'oathbreaker': OathbreakerSpectator,
+  oathbreaker: OathbreakerSpectator,
 };
 
 export function getSpectatorPlugin(gameType: string): SpectatorPlugin | undefined {

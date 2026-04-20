@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { VisibleTile, KillEvent } from '../../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { KillEvent, VisibleTile } from '../../types';
 
 const SQRT3 = Math.sqrt(3);
 const HEX_SIZE = 28;
@@ -118,11 +118,11 @@ interface PendingKill {
 function easeOutBack(t: number): number {
   const c1 = 1.70158;
   const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
 }
 
 function easeOutCubic(t: number): number {
-  return 1 - Math.pow(1 - t, 3);
+  return 1 - (1 - t) ** 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ export function useHexAnimations(
     const prevUnits = prevTiles ? extractUnits(prevTiles) : new Map();
     const currUnits = extractUnits(currentTiles);
     const posKey = Array.from(currUnits.values())
-      .map(u => `${u.id}:${u.q},${u.r}:${u.alive}`)
+      .map((u) => `${u.id}:${u.q},${u.r}:${u.alive}`)
       .join('|');
     const newKey = `${prevTurn}-${currTurn}-${posKey}`;
 
@@ -200,7 +200,7 @@ export function useHexAnimations(
     for (const kill of kills) {
       const victim = currUnits.get(kill.victimId);
       const prevVictim = prevUnits.get(kill.victimId);
-      if (victim && prevVictim && prevVictim.alive && !victim.alive) {
+      if (victim && prevVictim?.alive && !victim.alive) {
         dyingIds.add(kill.victimId);
       }
     }
@@ -232,9 +232,15 @@ export function useHexAnimations(
       const [toX, toY] = axialToPixel(toQ, toR);
 
       movers.push({
-        id, team: curr.team, unitClass: curr.unitClass,
-        carryingFlag: prev.carryingFlag, alive: true, // alive during movement
-        fromX, fromY, toX, toY,
+        id,
+        team: curr.team,
+        unitClass: curr.unitClass,
+        carryingFlag: prev.carryingFlag,
+        alive: true, // alive during movement
+        fromX,
+        fromY,
+        toX,
+        toY,
         startDelay: staggerIdx * MOVE_STAGGER,
       });
       staggerIdx++;
@@ -252,13 +258,16 @@ export function useHexAnimations(
         const deathPos = deathPositions?.[kill.victimId] ?? { q: prevVictim.q, r: prevVictim.r };
         const [deathX, deathY] = axialToPixel(deathPos.q, deathPos.r);
         const [respawnX, respawnY] = axialToPixel(victim.q, victim.r);
-        const [kx, ky] = killer
-          ? axialToPixel(killer.q, killer.r)
-          : [deathX, deathY];
+        const [kx, ky] = killer ? axialToPixel(killer.q, killer.r) : [deathX, deathY];
         pendingKills.push({
-          victimId: kill.victimId, killerId: kill.killerId,
-          deathX, deathY, respawnX, respawnY,
-          killerX: kx, killerY: ky,
+          victimId: kill.victimId,
+          killerId: kill.killerId,
+          deathX,
+          deathY,
+          respawnX,
+          respawnY,
+          killerX: kx,
+          killerY: ky,
         });
       }
     }
@@ -271,17 +280,17 @@ export function useHexAnimations(
     // Timeline:
     // vision-fade-out → pause → movement (all units incl dying) → combat (poof at death spot) → float-to-respawn → vision-fade-in
     const moveStart = VISION_FADE_OUT + VISION_PAUSE;
-    const moveEndTime = movers.length > 0
-      ? moveStart + (movers.length - 1) * MOVE_STAGGER + MOVE_DURATION
-      : moveStart;
+    const moveEndTime =
+      movers.length > 0
+        ? moveStart + (movers.length - 1) * MOVE_STAGGER + MOVE_DURATION
+        : moveStart;
     const combatStartTime = moveEndTime + COMBAT_DELAY;
-    const combatEndTime = pendingKills.length > 0
-      ? combatStartTime + (pendingKills.length - 1) * KILL_STAGGER + KILL_DURATION
-      : combatStartTime;
+    const combatEndTime =
+      pendingKills.length > 0
+        ? combatStartTime + (pendingKills.length - 1) * KILL_STAGGER + KILL_DURATION
+        : combatStartTime;
     const floatStartTime = combatEndTime + 100;
-    const floatEndTime = pendingKills.length > 0
-      ? floatStartTime + FLOAT_DURATION
-      : floatStartTime;
+    const floatEndTime = pendingKills.length > 0 ? floatStartTime + FLOAT_DURATION : floatStartTime;
     const visionFadeInStart = floatEndTime + 50;
     const totalTime = visionFadeInStart + VISION_FADE_IN;
 
@@ -303,7 +312,7 @@ export function useHexAnimations(
       // Vision opacity
       let visionOpacity: number;
       if (elapsed < VISION_FADE_OUT) {
-        visionOpacity = 1 - (elapsed / VISION_FADE_OUT);
+        visionOpacity = 1 - elapsed / VISION_FADE_OUT;
       } else if (elapsed < visionFadeInStart) {
         visionOpacity = 0;
       } else {
@@ -316,25 +325,36 @@ export function useHexAnimations(
         const unitElapsed = elapsed - moveStart - m.startDelay;
         if (unitElapsed < 0) {
           floating.push({
-            id: m.id, team: m.team, unitClass: m.unitClass,
-            carryingFlag: m.carryingFlag, alive: m.alive,
-            x: m.fromX, y: m.fromY,
+            id: m.id,
+            team: m.team,
+            unitClass: m.unitClass,
+            carryingFlag: m.carryingFlag,
+            alive: m.alive,
+            x: m.fromX,
+            y: m.fromY,
           });
         } else if (unitElapsed >= MOVE_DURATION) {
           // Dying units: stay floating at death position until kill anim starts
           if (dyingIdsRef.current.has(m.id) && elapsed < combatStartTime) {
             floating.push({
-              id: m.id, team: m.team, unitClass: m.unitClass,
-              carryingFlag: m.carryingFlag, alive: true,
-              x: m.toX, y: m.toY,
+              id: m.id,
+              team: m.team,
+              unitClass: m.unitClass,
+              carryingFlag: m.carryingFlag,
+              alive: true,
+              x: m.toX,
+              y: m.toY,
             });
           }
           // Surviving units: tile rendering takes over
         } else {
           const t = easeOutBack(unitElapsed / MOVE_DURATION);
           floating.push({
-            id: m.id, team: m.team, unitClass: m.unitClass,
-            carryingFlag: m.carryingFlag, alive: m.alive,
+            id: m.id,
+            team: m.team,
+            unitClass: m.unitClass,
+            carryingFlag: m.carryingFlag,
+            alive: m.alive,
             x: m.fromX + (m.toX - m.fromX) * t,
             y: m.fromY + (m.toY - m.fromY) * t,
           });
@@ -351,16 +371,32 @@ export function useHexAnimations(
         const progress = killElapsed >= KILL_DURATION ? 1 : killElapsed / KILL_DURATION;
 
         const floatElapsed = elapsed - floatStartTime;
-        const floatProgress = floatElapsed < 0 ? 0
-          : floatElapsed >= FLOAT_DURATION ? 1
-          : easeOutCubic(floatElapsed / FLOAT_DURATION);
+        const floatProgress =
+          floatElapsed < 0
+            ? 0
+            : floatElapsed >= FLOAT_DURATION
+              ? 1
+              : easeOutCubic(floatElapsed / FLOAT_DURATION);
 
         effects.push({
-          victimId: k.victimId, killerId: k.killerId,
-          x: k.deathX, y: k.deathY,
-          respawnX: k.respawnX, respawnY: k.respawnY,
-          killerX: k.killerX, killerY: k.killerY,
-          progress, floatProgress,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          victimId: k.victimId,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          killerId: k.killerId,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          x: k.deathX,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          y: k.deathY,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          respawnX: k.respawnX,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          respawnY: k.respawnY,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          killerX: k.killerX,
+          // @ts-expect-error TS18048: 'k' is possibly 'undefined'. — TODO(2.3-followup)
+          killerY: k.killerY,
+          progress,
+          floatProgress,
         });
       }
 
@@ -373,14 +409,17 @@ export function useHexAnimations(
       // Also hide dying units that finished moving but kill hasn't started yet
       // (they're in floating above, but also need to be hidden from tile rendering)
 
-      const currentlyDying = elapsed >= combatStartTime && elapsed < totalTime
-        ? dyingIdsRef.current
-        : new Set<string>();
+      const currentlyDying =
+        elapsed >= combatStartTime && elapsed < totalTime ? dyingIdsRef.current : new Set<string>();
 
-      const phase: AnimPhase = elapsed < VISION_FADE_OUT ? 'vision-out'
-        : elapsed < moveEndTime ? 'moving'
-        : elapsed < floatEndTime ? 'combat'
-        : 'done';
+      const phase: AnimPhase =
+        elapsed < VISION_FADE_OUT
+          ? 'vision-out'
+          : elapsed < moveEndTime
+            ? 'moving'
+            : elapsed < floatEndTime
+              ? 'combat'
+              : 'done';
 
       setState({
         phase,

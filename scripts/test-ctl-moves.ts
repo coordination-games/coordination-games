@@ -13,6 +13,7 @@ const BOT_COUNT = TEAM_SIZE * 2;
 async function api(
   path: string,
   opts: { method?: string; body?: unknown; token?: string } = {},
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 ): Promise<any> {
   const res = await fetch(`${SERVER}${path}`, {
     method: opts.method ?? 'GET',
@@ -23,9 +24,15 @@ async function api(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   let json: any;
-  try { json = JSON.parse(text); } catch { json = { _raw: text }; }
-  if (!res.ok) throw new Error(`${opts.method ?? 'GET'} ${path} → ${res.status}: ${JSON.stringify(json)}`);
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { _raw: text };
+  }
+  if (!res.ok)
+    throw new Error(`${opts.method ?? 'GET'} ${path} → ${res.status}: ${JSON.stringify(json)}`);
   return json;
 }
 
@@ -42,7 +49,9 @@ async function authenticate(
   return { token: result.token, playerId: result.agentId };
 }
 
-function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 const CLASSES = ['rogue', 'knight'] as const;
 
@@ -63,14 +72,17 @@ async function main() {
   // 2. Create lobby and join
   console.log('\nCreating lobby...');
   const lobby = await api('/api/lobbies/create', {
-    method: 'POST', token: bots[0].token,
+    method: 'POST',
+    token: bots[0].token,
     body: { gameType: 'capture-the-lobster', teamSize: TEAM_SIZE },
   });
   console.log(`  Lobby: ${lobby.lobbyId}`);
 
   for (const bot of bots) {
     const res = await api('/api/player/lobby/join', {
-      method: 'POST', token: bot.token, body: { lobbyId: lobby.lobbyId },
+      method: 'POST',
+      token: bot.token,
+      body: { lobbyId: lobby.lobbyId },
     });
     console.log(`  ${bot.name} joined (phase: ${res.phase})`);
   }
@@ -82,20 +94,23 @@ async function main() {
     for (let i = 1; i < team.length; i++) {
       // Propose
       await api('/api/player/tool', {
-        method: 'POST', token: team[0].token,
+        method: 'POST',
+        token: team[0].token,
         body: { toolName: 'propose_team', args: { targetHandle: team[i].name } },
       });
 
       // Get phase view to find team ID
       const state = await api('/api/player/state', { token: team[0].token });
       const phaseTeams = state.currentPhase?.view?.teams ?? [];
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       const proposerTeam = phaseTeams.find((t: any) => t.members.includes(team[0].playerId));
       const teamId = proposerTeam?.id;
       console.log(`  ${team[0].name} → ${team[i].name} (team ${teamId?.slice(0, 8)})`);
 
       // Accept
       await api('/api/player/tool', {
-        method: 'POST', token: team[i].token,
+        method: 'POST',
+        token: team[i].token,
         body: { toolName: 'accept_team', args: { teamId } },
       });
       console.log(`  ${team[i].name} accepted`);
@@ -115,7 +130,8 @@ async function main() {
   for (let i = 0; i < bots.length; i++) {
     const unitClass = CLASSES[i % TEAM_SIZE];
     await api('/api/player/tool', {
-      method: 'POST', token: bots[i].token,
+      method: 'POST',
+      token: bots[i].token,
       body: { toolName: 'choose_class', args: { unitClass } },
     });
     console.log(`  ${bots[i].name} → ${unitClass}`);
@@ -126,10 +142,17 @@ async function main() {
   let gameStarted = false;
   for (let i = 0; i < 60; i++) {
     const state = await api('/api/player/state', { token: bots[0].token }).catch(() => null);
-    if (state?.turn !== undefined) { console.log('  Game started!'); gameStarted = true; break; }
+    if (state?.turn !== undefined) {
+      console.log('  Game started!');
+      gameStarted = true;
+      break;
+    }
     await sleep(500);
   }
-  if (!gameStarted) { console.log('  TIMEOUT waiting for game start'); return; }
+  if (!gameStarted) {
+    console.log('  TIMEOUT waiting for game start');
+    return;
+  }
 
   // 7. Play turns — all bots submit STAY (empty path) every turn
   console.log('\nPlaying turns (all STAY)...\n');
@@ -143,6 +166,7 @@ async function main() {
     const gameOver = state.gameOver ?? false;
 
     if (turn !== lastTurn) {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       const aliveUnits = state.units?.filter((u: any) => u.alive)?.length ?? '?';
       const totalUnits = state.units?.length ?? '?';
       console.log(`--- Turn ${turn} (gameOver=${gameOver}, alive=${aliveUnits}/${totalUnits}) ---`);
@@ -155,8 +179,11 @@ async function main() {
         // Get detailed state
         for (const bot of bots) {
           const s = await api('/api/player/state', { token: bot.token });
-          const unit = s.units?.find((u: any) => true);
-          console.log(`  ${bot.name}: alive=${unit?.alive ?? '?'} pos=(${unit?.position?.q},${unit?.position?.r}) moveSubmissions=${JSON.stringify(s.moveSubmissions?.length ?? '?')}`);
+          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          const unit = s.units?.find((_u: any) => true);
+          console.log(
+            `  ${bot.name}: alive=${unit?.alive ?? '?'} pos=(${unit?.position?.q},${unit?.position?.r}) moveSubmissions=${JSON.stringify(s.moveSubmissions?.length ?? '?')}`,
+          );
         }
         break;
       }
@@ -173,12 +200,14 @@ async function main() {
     for (const bot of bots) {
       try {
         const moveResult = await api('/api/player/tool', {
-          method: 'POST', token: bot.token,
+          method: 'POST',
+          token: bot.token,
           body: { toolName: 'move', args: { path: [] } },
         });
         if (!moveResult.ok) {
           console.log(`  ${bot.name} move REJECTED: ${JSON.stringify(moveResult.error)}`);
         }
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         console.log(`  ${bot.name} move ERROR: ${err.message?.slice(0, 100)}`);
       }
@@ -190,4 +219,7 @@ async function main() {
   console.log('\nDone.');
 }
 
-main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+main().catch((err) => {
+  console.error('Fatal:', err);
+  process.exit(1);
+});

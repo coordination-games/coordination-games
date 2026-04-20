@@ -1,11 +1,11 @@
-import { ethers } from "ethers";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { ethers } from 'ethers';
 
-const COORD_DIR = path.join(os.homedir(), ".coordination");
-const KEYS_DIR = path.join(COORD_DIR, "keys");
-const DEFAULT_KEY_PATH = path.join(KEYS_DIR, "default.json");
+const COORD_DIR = path.join(os.homedir(), '.coordination');
+const KEYS_DIR = path.join(COORD_DIR, 'keys');
+const DEFAULT_KEY_PATH = path.join(KEYS_DIR, 'default.json');
 
 export interface KeyFile {
   privateKey: string;
@@ -30,7 +30,7 @@ export function loadKey(): ethers.Wallet | null {
   if (!fs.existsSync(DEFAULT_KEY_PATH)) {
     return null;
   }
-  const data = JSON.parse(fs.readFileSync(DEFAULT_KEY_PATH, "utf-8")) as KeyFile;
+  const data = JSON.parse(fs.readFileSync(DEFAULT_KEY_PATH, 'utf-8')) as KeyFile;
   return new ethers.Wallet(data.privateKey);
 }
 
@@ -73,7 +73,8 @@ export function checkPermissions(): { ok: boolean; warning?: string } {
     if (mode & 0o077) {
       return {
         ok: false,
-        warning: `WARNING: Key file ${DEFAULT_KEY_PATH} has permissions ${mode.toString(8)}. ` +
+        warning:
+          `WARNING: Key file ${DEFAULT_KEY_PATH} has permissions ${mode.toString(8)}. ` +
           `It should be 0600. Run: chmod 600 ${DEFAULT_KEY_PATH}`,
       };
     }
@@ -104,12 +105,12 @@ export function importKey(srcPath: string): ethers.Wallet {
     throw new Error(`Key file not found: ${resolved}`);
   }
 
-  const data = JSON.parse(fs.readFileSync(resolved, "utf-8")) as KeyFile;
+  const data = JSON.parse(fs.readFileSync(resolved, 'utf-8')) as KeyFile;
   const wallet = new ethers.Wallet(data.privateKey);
 
   // Validate the key data
   if (wallet.address.toLowerCase() !== data.address.toLowerCase()) {
-    throw new Error("Key file address does not match derived address");
+    throw new Error('Key file address does not match derived address');
   }
 
   saveKey(wallet);

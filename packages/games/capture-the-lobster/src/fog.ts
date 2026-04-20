@@ -1,7 +1,7 @@
-import { Hex, hexToString, stringToHex } from './hex.js';
-import { UnitClass } from './movement.js';
-import { getVisibleHexes } from './los.js';
 import { CLASS_VISION } from './combat.js';
+import { type Hex, hexToString, stringToHex } from './hex.js';
+import { getVisibleHexes } from './los.js';
+import type { UnitClass } from './movement.js';
 
 export interface FogUnit {
   id: string;
@@ -55,8 +55,12 @@ export function buildVisibleState(
   walls: Set<string>,
   tiles: Map<string, string>, // "q,r" -> tile type
   flags: {
-    A: { position: Hex; carried: boolean; carrierId?: string }[] | { position: Hex; carried: boolean; carrierId?: string };
-    B: { position: Hex; carried: boolean; carrierId?: string }[] | { position: Hex; carried: boolean; carrierId?: string };
+    A:
+      | { position: Hex; carried: boolean; carrierId?: string }[]
+      | { position: Hex; carried: boolean; carrierId?: string };
+    B:
+      | { position: Hex; carried: boolean; carrierId?: string }[]
+      | { position: Hex; carried: boolean; carrierId?: string };
   },
 ): VisibleTile[] {
   const visibleKeys = getUnitVision(viewer, walls, new Set(tiles.keys()));
@@ -110,13 +114,18 @@ export function buildVisibleState(
     const unitsHere = unitsByHex.get(key);
     if (unitsHere && unitsHere.length > 0) {
       const u = unitsHere[0];
+      // @ts-expect-error TS18048: 'u' is possibly 'undefined'. — TODO(2.3-followup)
       const isAlly = u.team === viewer.team;
 
-      const isCarrying = allFlags.some(f => f.carrierId === u.id && f.carried);
+      // @ts-expect-error TS18048: 'u' is possibly 'undefined'. — TODO(2.3-followup)
+      const isCarrying = allFlags.some((f) => f.carrierId === u.id && f.carried);
 
       tile.unit = {
+        // @ts-expect-error TS18048: 'u' is possibly 'undefined'. — TODO(2.3-followup)
         ...(isAlly ? { id: u.id } : {}),
+        // @ts-expect-error TS18048: 'u' is possibly 'undefined'. — TODO(2.3-followup)
         team: u.team,
+        // @ts-expect-error TS18048: 'u' is possibly 'undefined'. — TODO(2.3-followup)
         unitClass: u.unitClass,
         ...(isCarrying ? { carryingFlag: true } : {}),
       };

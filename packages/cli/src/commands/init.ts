@@ -1,13 +1,13 @@
-import { Command } from "commander";
-import { loadKey, generateKey, saveKey, checkPermissions } from "../keys.js";
-import { loadConfig, saveConfig, DEFAULT_SERVER_URL } from "../config.js";
+import type { Command } from 'commander';
+import { DEFAULT_SERVER_URL, saveConfig } from '../config.js';
+import { checkPermissions, generateKey, loadKey, saveKey } from '../keys.js';
 
 export function registerInitCommand(program: Command) {
   program
-    .command("init")
-    .description("Initialize coordination identity — generate key and save config")
-    .option("--key-mode <mode>", "Key management mode: local or waap", "local")
-    .option("--server <url>", "Server URL", DEFAULT_SERVER_URL)
+    .command('init')
+    .description('Initialize coordination identity — generate key and save config')
+    .option('--key-mode <mode>', 'Key management mode: local or waap', 'local')
+    .option('--server <url>', 'Server URL', DEFAULT_SERVER_URL)
     .action(async (opts) => {
       const existing = loadKey();
 
@@ -18,11 +18,13 @@ export function registerInitCommand(program: Command) {
         if (perms.warning) {
           process.stderr.write(`  ${perms.warning}\n`);
         }
-        process.stdout.write(`\n  To generate a new key, delete ~/.coordination/keys/default.json and run init again.\n\n`);
+        process.stdout.write(
+          `\n  To generate a new key, delete ~/.coordination/keys/default.json and run init again.\n\n`,
+        );
         return;
       }
 
-      if (opts.keyMode === "waap") {
+      if (opts.keyMode === 'waap') {
         process.stdout.write(`\n  WAAP mode is not yet supported. Use --key-mode local.\n\n`);
         return;
       }
@@ -32,7 +34,7 @@ export function registerInitCommand(program: Command) {
 
       const config = {
         serverUrl: opts.server,
-        keyMode: opts.keyMode as "local" | "waap",
+        keyMode: opts.keyMode as 'local' | 'waap',
       };
       saveConfig(config);
 

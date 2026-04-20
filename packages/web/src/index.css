@@ -1,3 +1,4 @@
+/* biome-ignore-all lint/suspicious/noUnknownAtRules: tailwind/postcss directives — TODO(2.3-followup) */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -25,7 +26,7 @@
   html {
     background: var(--color-parchment);
     color: var(--color-ink);
-    font-family: 'Crimson Text', Georgia, serif;
+    font-family: "Crimson Text", Georgia, serif;
   }
 
   body {
@@ -35,60 +36,62 @@
 
 /* Fantasy heading font */
 .font-heading {
-  font-family: 'Cinzel', 'Times New Roman', serif;
+  font-family: "Cinzel", "Times New Roman", serif;
 }
 
 .font-body {
-  font-family: 'Crimson Text', Georgia, serif;
+  font-family: "Crimson Text", Georgia, serif;
 }
 
 .font-mono {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
 }
 
 /* Parchment card — subtle */
 .parchment {
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(245, 236, 215, 0.4) 100%
-  );
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(245, 236, 215, 0.4) 100%);
   border: 1px solid rgba(42, 31, 14, 0.1);
   box-shadow: 0 1px 3px rgba(42, 31, 14, 0.06);
 }
 
 /* Parchment card — stronger */
 .parchment-strong {
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.7) 0%,
-    rgba(245, 236, 215, 0.5) 100%
-  );
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(245, 236, 215, 0.5) 100%);
   border: 1px solid rgba(42, 31, 14, 0.15);
   box-shadow: 0 2px 8px rgba(42, 31, 14, 0.08);
 }
 
 /* Dark card for contrast sections */
 .dark-card {
-  background: linear-gradient(
-    135deg,
-    var(--color-wood-dark) 0%,
-    #1a120b 100%
-  );
+  background: linear-gradient(135deg, var(--color-wood-dark) 0%, #1a120b 100%);
   border: 1px solid rgba(212, 162, 78, 0.2);
   color: var(--color-parchment);
 }
 
 /* Warm amber glow */
 @keyframes torch-glow {
-  0%, 100% { opacity: 0.3; transform: scale(1); }
-  33% { opacity: 0.5; transform: scale(1.03); }
-  66% { opacity: 0.4; transform: scale(0.98); }
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  33% {
+    opacity: 0.5;
+    transform: scale(1.03);
+  }
+  66% {
+    opacity: 0.4;
+    transform: scale(0.98);
+  }
 }
 
 @keyframes grid-drift {
-  0% { transform: translate(0, 0); }
-  100% { transform: translate(30px, 17.32px); }
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(30px, 17.32px);
+  }
 }
 
 .torch-glow {
@@ -109,7 +112,7 @@
 
 /* Noise/grain texture overlay */
 .grain-overlay::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   opacity: 0.03;
@@ -119,8 +122,15 @@
 
 /* Keep the old hero-glow for compat */
 @keyframes hero-glow {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(1.05); }
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
 }
 
 .hero-glow {

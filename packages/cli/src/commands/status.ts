@@ -1,12 +1,12 @@
-import { Command } from "commander";
-import { loadKey, checkPermissions } from "../keys.js";
-import { loadConfig, loadSession, saveSession } from "../config.js";
-import { ApiClient } from "../api-client.js";
+import type { Command } from 'commander';
+import { ApiClient } from '../api-client.js';
+import { loadConfig, loadSession, saveSession } from '../config.js';
+import { checkPermissions, loadKey } from '../keys.js';
 
 export function registerStatusCommand(program: Command) {
   program
-    .command("status")
-    .description("Show address, registration status, agent ID, name, and credit balance")
+    .command('status')
+    .description('Show address, registration status, agent ID, name, and credit balance')
     .action(async () => {
       const wallet = loadKey();
       if (!wallet) {
@@ -45,6 +45,7 @@ export function registerStatusCommand(program: Command) {
           process.stdout.write(`  Status:   Not registered\n`);
           process.stdout.write(`\n  Get started with: coordination check-name <your-name>\n`);
         }
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stdout.write(`  Server:   Unreachable (${err.message})\n`);
       }

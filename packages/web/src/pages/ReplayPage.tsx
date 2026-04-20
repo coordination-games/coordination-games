@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { fetchReplay } from '../api';
 import type { ReplayData } from '../api';
-import { getSpectatorPlugin } from '../games/registry';
-import { SpectatorPendingPlaceholder } from '../components/SpectatorPendingPlaceholder';
+import { fetchReplay } from '../api';
 import { ScrubberSlider } from '../components/ScrubberSlider';
+import { SpectatorPendingPlaceholder } from '../components/SpectatorPendingPlaceholder';
+import { getSpectatorPlugin } from '../games/registry';
 
 // ---------------------------------------------------------------------------
 // ReplayPage — generic replay shell for any game type
@@ -41,7 +41,7 @@ export default function ReplayPage() {
   const snapshots = replay?.snapshots ?? [];
   const totalTurns = snapshots.length;
   const turnState = snapshots[currentTurn] ?? null;
-  const prevTurnState = currentTurn > 0 ? snapshots[currentTurn - 1] ?? null : null;
+  const prevTurnState = currentTurn > 0 ? (snapshots[currentTurn - 1] ?? null) : null;
 
   // Resolve the spectator plugin for this game type
   const plugin = replay ? getSpectatorPlugin(replay.gameType) : null;
@@ -70,7 +70,7 @@ export default function ReplayPage() {
         playTimeoutRef.current = null;
       }
     };
-  }, [isPlaying, totalTurns, currentTurn, playInterval]);
+  }, [isPlaying, totalTurns, playInterval]);
 
   // Navigation — scrubbing disables animation
   const goPrev = useCallback(() => {
@@ -141,9 +141,7 @@ export default function ReplayPage() {
   if (!replay || totalTurns === 0) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
-        <div className="text-red-400 text-lg">
-          No replay data available for this game.
-        </div>
+        <div className="text-red-400 text-lg">No replay data available for this game.</div>
       </div>
     );
   }
@@ -235,8 +233,7 @@ function ScrubberBar({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-400">
-            {gameType} Replay{' '}
-            <span className="font-mono text-emerald-400">{gameId}</span>
+            {gameType} Replay <span className="font-mono text-emerald-400">{gameId}</span>
           </span>
           <span className="text-sm font-semibold text-gray-200">
             Turn {currentTurn}/{totalTurns - 1}
@@ -257,6 +254,7 @@ function ScrubberBar({
 
       {/* Scrubber row */}
       <div className="flex items-center gap-3">
+        {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
         <button
           onClick={onTogglePlay}
           className={`px-3 py-1 text-sm rounded font-semibold transition-colors ${
@@ -268,7 +266,6 @@ function ScrubberBar({
         >
           {isPlaying ? 'Pause' : 'Play'}
         </button>
-
         <ScrubberSlider
           currentTurn={currentTurn}
           totalTurns={totalTurns}

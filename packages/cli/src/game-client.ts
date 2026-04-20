@@ -10,9 +10,9 @@
  * The server dispatches by declarer (game / lobby phase / plugin relay).
  */
 
-import { ethers } from "ethers";
-import { ApiClient } from "./api-client.js";
-import { processState } from "./pipeline.js";
+import { ethers } from 'ethers';
+import { ApiClient } from './api-client.js';
+import { processState } from './pipeline.js';
 
 export interface GameClientOptions {
   /** Pre-existing auth token (skips challenge-response). */
@@ -109,6 +109,7 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /** Get the dynamic game guide/playbook. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async getGuide(game?: string): Promise<any> {
     await this.ensureAuth();
     const query = game ? `?game=${encodeURIComponent(game)}` : '';
@@ -116,6 +117,7 @@ export class GameClient {
   }
 
   /** Get current game/lobby state (fog-filtered, with pipeline processing). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async getState(): Promise<any> {
     await this.ensureAuth();
     const raw = await this.api.get('/api/player/state');
@@ -123,6 +125,7 @@ export class GameClient {
   }
 
   /** Long-poll for next event (turn change, chat, phase change). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async waitForUpdate(): Promise<any> {
     await this.ensureAuth();
     const raw = await this.api.get('/api/player/wait');
@@ -145,6 +148,7 @@ export class GameClient {
    * the caller sees the JSON body in err.message — callers that need the
    * structured shape should use `callToolRaw` below.
    */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async callTool(toolName: string, args: Record<string, any> = {}): Promise<any> {
     await this.ensureAuth();
     const raw = await this.api.post('/api/player/tool', { toolName, args });
@@ -157,20 +161,28 @@ export class GameClient {
    * self-correct (e.g. MCP tool handlers returning structured errors to the
    * agent).
    */
-  async callToolRaw(toolName: string, args: Record<string, any> = {}): Promise<
+  async callToolRaw(
+    toolName: string,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    args: Record<string, any> = {},
+  ): Promise<
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     | { ok: true; data: any }
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     | { ok: false; error: { code: string; message: string; [k: string]: any } }
   > {
     await this.ensureAuth();
     try {
       const raw = await this.api.post('/api/player/tool', { toolName, args });
       return { ok: true, data: this.processResponse(raw) };
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     } catch (err: any) {
       // ApiClient throws `API error <status>: <body>` — try to parse the body.
       const msg = String(err?.message ?? err);
       const match = msg.match(/^API error \d+: (.*)$/s);
       if (match) {
         try {
+          // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
           const body = JSON.parse(match[1]);
           if (body && typeof body === 'object' && body.error) {
             return { ok: false, error: body.error };
@@ -192,9 +204,13 @@ export class GameClient {
    * - `PLUGIN_ERROR`    — plugin.handleCall threw
    * - `RELAY_UNREACHABLE` — relay endpoint returned 5xx
    */
-  async callPluginRelay(
-    relay: { type: string; pluginId: string; data?: unknown; scope?: string },
-  ): Promise<any> {
+  async callPluginRelay(relay: {
+    type: string;
+    pluginId: string;
+    data?: unknown;
+    scope?: string;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  }): Promise<any> {
     await this.ensureAuth();
     try {
       const raw = await this.api.post('/api/player/tool', {
@@ -202,10 +218,12 @@ export class GameClient {
         args: { relay },
       });
       return this.processResponse(raw);
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     } catch (err: any) {
       const msg = String(err?.message ?? err);
       // 5xx = relay unreachable; parse status from "API error <status>: ..."
       const statusMatch = msg.match(/^API error (\d+):/);
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
       const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
       if (status >= 500 && status < 600) {
         const structured = {
@@ -225,18 +243,21 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /** List available lobbies. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async listLobbies(): Promise<any> {
     await this.ensureAuth();
     return this.api.get('/api/lobbies');
   }
 
   /** Join an existing lobby or OATHBREAKER waiting room. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async joinLobby(lobbyId: string): Promise<any> {
     await this.ensureAuth();
     return this.api.post('/api/player/lobby/join', { lobbyId });
   }
 
   /** Create a new lobby (auto-joins the creator). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async createLobby(gameType?: string, size?: number): Promise<any> {
     await this.ensureAuth();
     if (gameType === 'oathbreaker') {
@@ -253,16 +274,18 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /** Get ELO leaderboard. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async getLeaderboard(limit?: number, offset?: number): Promise<any> {
     await this.ensureAuth();
     const params = new URLSearchParams();
     if (limit != null) params.set('limit', String(limit));
     if (offset != null) params.set('offset', String(offset));
     const qs = params.toString();
-    return this.api.get(`/api/player/leaderboard${qs ? '?' + qs : ''}`);
+    return this.api.get(`/api/player/leaderboard${qs ? `?${qs}` : ''}`);
   }
 
   /** Get your own stats. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async getMyStats(): Promise<any> {
     await this.ensureAuth();
     return this.api.get('/api/player/stats');
@@ -277,6 +300,7 @@ export class GameClient {
    * If the response contains relayMessages, processes them and merges
    * pipeline output back into the response.
    */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   private processResponse(raw: any): any {
     if (!raw || typeof raw !== 'object') return raw;
     const hasRelay = Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0;

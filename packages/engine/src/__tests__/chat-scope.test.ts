@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { validateChatScope, classifyScope } from '../chat-scope.js';
+import { describe, expect, it } from 'vitest';
+import { classifyScope, validateChatScope } from '../chat-scope.js';
 
 describe('classifyScope', () => {
   it('returns "all" for "all", undefined, and empty string', () => {

@@ -7,10 +7,10 @@
  */
 
 import type {
+  AgentInfo,
   LobbyPhase,
   PhaseActionResult,
   PhaseResult,
-  AgentInfo,
   ToolDefinition,
 } from '@coordination-games/engine';
 
@@ -20,14 +20,14 @@ import type {
 
 export interface TeamFormationTeam {
   id: string;
-  members: string[];   // player IDs
-  invites: string[];   // pending invite player IDs
+  members: string[]; // player IDs
+  invites: string[]; // pending invite player IDs
 }
 
 export interface TeamFormationState {
   teams: TeamFormationTeam[];
-  unassigned: string[];  // player IDs not on any team
-  teamCounter: number;   // monotonic counter for team IDs
+  unassigned: string[]; // player IDs not on any team
+  teamCounter: number; // monotonic counter for team IDs
 }
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,8 @@ interface TeamFormationConfig {
 const TOOLS: ToolDefinition[] = [
   {
     name: 'propose_team',
-    description: 'Propose teaming up with another player. Creates a new team or adds them to your existing team. The target receives an invite they must accept.',
+    description:
+      'Propose teaming up with another player. Creates a new team or adds them to your existing team. The target receives an invite they must accept.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,10 +109,11 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   // init
   // -------------------------------------------------------------------------
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   init(players: AgentInfo[], _config: Record<string, any>): TeamFormationState {
     return {
       teams: [],
-      unassigned: players.map(p => p.id),
+      unassigned: players.map((p) => p.id),
       teamCounter: 0,
     };
   }
@@ -122,6 +124,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
   handleAction(
     state: TeamFormationState,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     action: { type: string; playerId: string; payload?: any },
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
@@ -144,11 +147,13 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   handleJoin(
     state: TeamFormationState,
     player: AgentInfo,
-    allPlayers: AgentInfo[],
+    _allPlayers: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
     // Don't add if already tracked
-    if (state.unassigned.includes(player.id) ||
-        state.teams.some(t => t.members.includes(player.id))) {
+    if (
+      state.unassigned.includes(player.id) ||
+      state.teams.some((t) => t.members.includes(player.id))
+    ) {
       return { state };
     }
 
@@ -165,39 +170,45 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
   handleTimeout(state: TeamFormationState, players: AgentInfo[]): PhaseResult | null {
     // Work on a mutable copy
-    const teams: TeamFormationTeam[] = state.teams.map(t => ({
+    const teams: TeamFormationTeam[] = state.teams.map((t) => ({
       id: t.id,
       members: [...t.members],
-      invites: [],  // clear invites on timeout
+      invites: [], // clear invites on timeout
     }));
     const assigned = new Set<string>();
     for (const t of teams) {
       for (const m of t.members) assigned.add(m);
     }
-    const freeAgents = players.map(p => p.id).filter(id => !assigned.has(id));
+    const freeAgents = players.map((p) => p.id).filter((id) => !assigned.has(id));
     let freeIdx = 0;
     let teamCounter = state.teamCounter;
 
     // Fill incomplete teams with free agents
     for (const team of teams) {
       while (team.members.length < this.teamSize && freeIdx < freeAgents.length) {
+        // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
         team.members.push(freeAgents[freeIdx++]);
       }
     }
 
     // Merge incomplete teams together (largest first)
     const incomplete = teams
-      .filter(t => t.members.length < this.teamSize)
+      .filter((t) => t.members.length < this.teamSize)
       .sort((a, b) => b.members.length - a.members.length);
 
     for (let i = 0; i < incomplete.length; i++) {
       const target = incomplete[i];
+      // @ts-expect-error TS18048: 'target' is possibly 'undefined'. — TODO(2.3-followup)
       if (target.members.length >= this.teamSize) continue;
       for (let j = i + 1; j < incomplete.length; j++) {
         const source = incomplete[j];
+        // @ts-expect-error TS18048: 'source' is possibly 'undefined'. — TODO(2.3-followup)
         if (source.members.length === 0) continue;
+        // @ts-expect-error TS18048: 'target' is possibly 'undefined'. — TODO(2.3-followup)
         if (target.members.length + source.members.length <= this.teamSize) {
+          // @ts-expect-error TS18048: 'target' is possibly 'undefined'. — TODO(2.3-followup)
           target.members.push(...source.members);
+          // @ts-expect-error TS18048: 'source' is possibly 'undefined'. — TODO(2.3-followup)
           source.members = [];
         }
       }
@@ -212,7 +223,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     }
 
     // Collect full teams (filter out empty shells from merging)
-    const fullTeams = teams.filter(t => t.members.length === this.teamSize);
+    const fullTeams = teams.filter((t) => t.members.length === this.teamSize);
 
     if (fullTeams.length < this.numTeams) {
       return null; // Can't form enough teams — lobby fails
@@ -225,21 +236,22 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
       for (const m of t.members) selectedPlayerIds.add(m);
     }
 
-    const groups: AgentInfo[][] = selectedTeams.map(t =>
-      t.members.map(id => {
-        const p = players.find(pp => pp.id === id);
+    const groups: AgentInfo[][] = selectedTeams.map((t) =>
+      t.members.map((id) => {
+        const p = players.find((pp) => pp.id === id);
         return p ?? { id, handle: id };
       }),
     );
 
     const removed = players
-      .filter(p => !selectedPlayerIds.has(p.id))
-      .map(p => ({ id: p.id, handle: p.handle }));
+      .filter((p) => !selectedPlayerIds.has(p.id))
+      .map((p) => ({ id: p.id, handle: p.handle }));
 
+    // @ts-expect-error TS2375: Type '{ groups: AgentInfo[][]; metadata: { teams: { id: string; members: string[ — TODO(2.3-followup)
     return {
       groups,
       metadata: {
-        teams: selectedTeams.map(t => ({ id: t.id, members: [...t.members] })),
+        teams: selectedTeams.map((t) => ({ id: t.id, members: [...t.members] })),
       },
       removed: removed.length > 0 ? removed : undefined,
     };
@@ -249,9 +261,9 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   // getView
   // -------------------------------------------------------------------------
 
-  getView(state: TeamFormationState, playerId?: string): unknown {
+  getView(state: TeamFormationState, _playerId?: string): unknown {
     return {
-      teams: state.teams.map(t => ({
+      teams: state.teams.map((t) => ({
         id: t.id,
         members: [...t.members],
         invites: [...t.invites],
@@ -267,7 +279,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   // -------------------------------------------------------------------------
 
   getTeamForPlayer(state: TeamFormationState, playerId: string): string | null {
-    const team = state.teams.find(t => t.members.includes(playerId));
+    const team = state.teams.find((t) => t.members.includes(playerId));
     return team?.id ?? null;
   }
 
@@ -278,6 +290,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   private handlePropose(
     state: TeamFormationState,
     playerId: string,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     payload: any,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
@@ -287,9 +300,12 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     }
 
     // Resolve target by handle
-    const target = players.find(p => p.handle === targetHandle);
+    const target = players.find((p) => p.handle === targetHandle);
     if (!target) {
-      return { state, error: { message: `Player "${targetHandle}" not found in lobby`, status: 404 } };
+      return {
+        state,
+        error: { message: `Player "${targetHandle}" not found in lobby`, status: 404 },
+      };
     }
     const targetId = target.id;
 
@@ -298,22 +314,29 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
       return { state, error: { message: 'Cannot propose a team with yourself', status: 400 } };
     }
 
-    const fromTeam = state.teams.find(t => t.members.includes(playerId));
-    const toTeam = state.teams.find(t => t.members.includes(targetId));
+    const fromTeam = state.teams.find((t) => t.members.includes(playerId));
+    const toTeam = state.teams.find((t) => t.members.includes(targetId));
 
     // Both on teams already
     if (fromTeam && toTeam) {
       if (fromTeam.id === toTeam.id) {
         return { state, error: { message: 'Already on the same team', status: 409 } };
       }
-      return { state, error: { message: 'Both players are already on teams. Use leave_team first.', status: 409 } };
+      return {
+        state,
+        error: { message: 'Both players are already on teams. Use leave_team first.', status: 409 },
+      };
     }
 
-    let newState = { ...state, teams: state.teams.map(t => ({ ...t, members: [...t.members], invites: [...t.invites] })) };
+    const newState = {
+      ...state,
+      teams: state.teams.map((t) => ({ ...t, members: [...t.members], invites: [...t.invites] })),
+    };
 
     if (toTeam && !fromTeam) {
       // Target is on a team, proposer is solo — invite proposer to target's team
-      const team = newState.teams.find(t => t.id === toTeam.id)!;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
+      const team = newState.teams.find((t) => t.id === toTeam.id)!;
       if (team.members.length >= this.teamSize) {
         return { state, error: { message: 'Team is full', status: 409 } };
       }
@@ -323,7 +346,8 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
     if (fromTeam && !toTeam) {
       // Proposer is on a team, target is solo — invite target
-      const team = newState.teams.find(t => t.id === fromTeam.id)!;
+      // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
+      const team = newState.teams.find((t) => t.id === fromTeam.id)!;
       if (team.members.length >= this.teamSize) {
         return { state, error: { message: 'Team is full', status: 409 } };
       }
@@ -334,7 +358,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     // Neither on a team — create new team with proposer as member, target as invite
     const teamId = `team_${++newState.teamCounter}`;
     newState.teams.push({ id: teamId, members: [playerId], invites: [targetId] });
-    newState.unassigned = newState.unassigned.filter(id => id !== playerId);
+    newState.unassigned = newState.unassigned.filter((id) => id !== playerId);
 
     return this.maybeComplete(newState, players);
   }
@@ -342,6 +366,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   private handleAccept(
     state: TeamFormationState,
     playerId: string,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     payload: any,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
@@ -350,9 +375,12 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
       return { state, error: { message: 'teamId is required', status: 400 } };
     }
 
-    let newState = { ...state, teams: state.teams.map(t => ({ ...t, members: [...t.members], invites: [...t.invites] })) };
+    const newState = {
+      ...state,
+      teams: state.teams.map((t) => ({ ...t, members: [...t.members], invites: [...t.invites] })),
+    };
 
-    const team = newState.teams.find(t => t.id === teamId);
+    const team = newState.teams.find((t) => t.id === teamId);
     if (!team) {
       return { state, error: { message: 'Team not found', status: 404 } };
     }
@@ -366,18 +394,18 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     }
 
     // Leave any existing team first
-    const currentTeam = newState.teams.find(t => t.members.includes(playerId));
+    const currentTeam = newState.teams.find((t) => t.members.includes(playerId));
     if (currentTeam) {
-      currentTeam.members = currentTeam.members.filter(id => id !== playerId);
+      currentTeam.members = currentTeam.members.filter((id) => id !== playerId);
       if (currentTeam.members.length === 0) {
-        newState.teams = newState.teams.filter(t => t.id !== currentTeam.id);
+        newState.teams = newState.teams.filter((t) => t.id !== currentTeam.id);
       }
     }
 
     // Accept the invite
-    team.invites = team.invites.filter(id => id !== playerId);
+    team.invites = team.invites.filter((id) => id !== playerId);
     team.members.push(playerId);
-    newState.unassigned = newState.unassigned.filter(id => id !== playerId);
+    newState.unassigned = newState.unassigned.filter((id) => id !== playerId);
 
     return this.maybeComplete(newState, players);
   }
@@ -385,20 +413,24 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   private handleLeave(
     state: TeamFormationState,
     playerId: string,
-    players: AgentInfo[],
+    _players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const team = state.teams.find(t => t.members.includes(playerId));
+    const team = state.teams.find((t) => t.members.includes(playerId));
     if (!team) {
       return { state, error: { message: 'Not on a team', status: 400 } };
     }
 
-    let newState = { ...state, teams: state.teams.map(t => ({ ...t, members: [...t.members], invites: [...t.invites] })) };
+    const newState = {
+      ...state,
+      teams: state.teams.map((t) => ({ ...t, members: [...t.members], invites: [...t.invites] })),
+    };
 
-    const targetTeam = newState.teams.find(t => t.id === team.id)!;
-    targetTeam.members = targetTeam.members.filter(id => id !== playerId);
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
+    const targetTeam = newState.teams.find((t) => t.id === team.id)!;
+    targetTeam.members = targetTeam.members.filter((id) => id !== playerId);
 
     if (targetTeam.members.length === 0) {
-      newState.teams = newState.teams.filter(t => t.id !== targetTeam.id);
+      newState.teams = newState.teams.filter((t) => t.id !== targetTeam.id);
     }
 
     // Add back to unassigned
@@ -417,7 +449,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     state: TeamFormationState,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const fullTeams = state.teams.filter(t => t.members.length >= this.teamSize);
+    const fullTeams = state.teams.filter((t) => t.members.length >= this.teamSize);
 
     if (fullTeams.length >= this.numTeams) {
       const selectedTeams = fullTeams.slice(0, this.numTeams);
@@ -426,23 +458,24 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
         for (const m of t.members) selectedPlayerIds.add(m);
       }
 
-      const groups: AgentInfo[][] = selectedTeams.map(t =>
-        t.members.map(id => {
-          const p = players.find(pp => pp.id === id);
+      const groups: AgentInfo[][] = selectedTeams.map((t) =>
+        t.members.map((id) => {
+          const p = players.find((pp) => pp.id === id);
           return p ?? { id, handle: id };
         }),
       );
 
       const removed = players
-        .filter(p => !selectedPlayerIds.has(p.id))
-        .map(p => ({ id: p.id, handle: p.handle }));
+        .filter((p) => !selectedPlayerIds.has(p.id))
+        .map((p) => ({ id: p.id, handle: p.handle }));
 
       return {
         state,
+        // @ts-expect-error TS2375: Type '{ groups: AgentInfo[][]; metadata: { teams: { id: string; members: string[ — TODO(2.3-followup)
         completed: {
           groups,
           metadata: {
-            teams: selectedTeams.map(t => ({ id: t.id, members: [...t.members] })),
+            teams: selectedTeams.map((t) => ({ id: t.id, members: [...t.members] })),
           },
           removed: removed.length > 0 ? removed : undefined,
         },

@@ -12,28 +12,24 @@
  *   EAS:            0x4200000000000000000000000000000000000021
  */
 
-import { ethers } from "hardhat";
+import { ethers } from 'hardhat';
 
 // EAS SchemaRegistry on Optimism (and OP Sepolia)
-const SCHEMA_REGISTRY_ADDRESS = "0x4200000000000000000000000000000000000020";
+const SCHEMA_REGISTRY_ADDRESS = '0x4200000000000000000000000000000000000020';
 
 // Minimal ABI for SchemaRegistry.register()
 const SCHEMA_REGISTRY_ABI = [
-  "function register(string calldata schema, address resolver, bool revocable) external returns (bytes32)",
-  "event Registered(bytes32 indexed uid, address indexed registerer, tuple(bytes32 uid, address resolver, bool revocable, string schema) schema)",
+  'function register(string calldata schema, address resolver, bool revocable) external returns (bytes32)',
+  'event Registered(bytes32 indexed uid, address indexed registerer, tuple(bytes32 uid, address resolver, bool revocable, string schema) schema)',
 ];
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log("Registering schema with account:", deployer.address);
+  console.log('Registering schema with account:', deployer.address);
 
-  const registry = new ethers.Contract(
-    SCHEMA_REGISTRY_ADDRESS,
-    SCHEMA_REGISTRY_ABI,
-    deployer
-  );
+  const registry = new ethers.Contract(SCHEMA_REGISTRY_ADDRESS, SCHEMA_REGISTRY_ABI, deployer);
 
-  const schema = "uint256 confidence, string context";
+  const schema = 'uint256 confidence, string context';
   const resolver = ethers.ZeroAddress; // No resolver — open attestation
   const revocable = true;
 
@@ -43,15 +39,19 @@ async function main() {
 
   const tx = await registry.register(schema, resolver, revocable);
   console.log(`\nTx hash: ${tx.hash}`);
-  console.log("Waiting for confirmation...");
+  console.log('Waiting for confirmation...');
 
   const receipt = await tx.wait();
 
   // Extract schema UID from the Registered event
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const registeredEvent = receipt?.logs?.find((log: any) => {
     try {
-      const parsed = registry.interface.parseLog({ topics: log.topics as string[], data: log.data });
-      return parsed?.name === "Registered";
+      const parsed = registry.interface.parseLog({
+        topics: log.topics as string[],
+        data: log.data,
+      });
+      return parsed?.name === 'Registered';
     } catch {
       return false;
     }
@@ -69,15 +69,15 @@ async function main() {
     // Fallback: compute the UID deterministically
     // EAS schema UID = keccak256(abi.encodePacked(schema, resolver, revocable))
     const encoded = ethers.solidityPacked(
-      ["string", "address", "bool"],
-      [schema, resolver, revocable]
+      ['string', 'address', 'bool'],
+      [schema, resolver, revocable],
     );
     const uid = ethers.keccak256(encoded);
     console.log(`\nSchema UID (computed): ${uid}`);
-    console.log("(Could not extract from event — verify on easscan.org)");
+    console.log('(Could not extract from event — verify on easscan.org)');
   }
 
-  console.log("\nDone.");
+  console.log('\nDone.');
 }
 
 main().catch((err) => {

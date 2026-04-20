@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { OathbreakerPlugin } from '../plugin.js';
 import type { OathOutcome } from '../types.js';
 
@@ -40,11 +40,7 @@ describe('Oathbreaker computePayouts', () => {
 
   it('scales with larger entryCost', () => {
     // 4 players × $10 = $40 pool. Winner takes it all.
-    const p = OathbreakerPlugin.computePayouts(
-      outcome({ p1: 40, p2: 0, p3: 0, p4: 0 }),
-      ids,
-      10,
-    );
+    const p = OathbreakerPlugin.computePayouts(outcome({ p1: 40, p2: 0, p3: 0, p4: 0 }), ids, 10);
     expect(p.get('p1')).toBe(30);
     expect(p.get('p2')).toBe(-10);
     expect(p.get('p3')).toBe(-10);

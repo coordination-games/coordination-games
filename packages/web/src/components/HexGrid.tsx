@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { VisibleTile } from '../types';
 
 /** A unit rendered at absolute pixel coordinates (for animations) */
@@ -84,13 +84,16 @@ const CLASS_LETTERS: Record<string, string> = {
   mage: 'M',
 };
 
-
-
 /** Simple seeded hash from q,r to pick a grass variant consistently */
 function grassVariant(q: number, r: number): string {
   // Simple hash: mix q and r to get a stable pseudo-random value
   const hash = Math.abs(((q * 73856093) ^ (r * 19349663)) | 0) % 3;
-  const variants = ['/tiles/terrain/green.png', '/tiles/terrain/green2.png', '/tiles/terrain/green3.png'];
+  const variants = [
+    '/tiles/terrain/green.png',
+    '/tiles/terrain/green2.png',
+    '/tiles/terrain/green3.png',
+  ];
+  // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
   return variants[hash];
 }
 
@@ -113,6 +116,7 @@ export default function HexGrid({
   hiddenUnitIds,
   killEffects,
   visionOpacity = 1,
+  // biome-ignore lint/correctness/noUnusedFunctionParameters: unused param; cleanup followup — TODO(2.3-followup)
   dyingUnitIds,
 }: HexGridProps) {
   // Build a lookup of tile data by key
@@ -140,6 +144,7 @@ export default function HexGrid({
     const indexMap = new Map<string, number>();
     const teamCounters: Record<string, number> = { A: 0, B: 0 };
     for (const t of tiles) {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       const allUnits = (t as any).units ?? (t.unit ? [t.unit] : []);
       for (const u of allUnits) {
         if (u.id && !indexMap.has(u.id)) {
@@ -157,15 +162,23 @@ export default function HexGrid({
   const seenB = visibleB ?? new Set<string>();
 
   // Edge-to-neighbor mapping for flat-top hex
-  const EDGE_NEIGHBORS: [number, number][] = useMemo(() => [
-    [+1, 0], [0, +1], [-1, +1], [-1, 0], [0, -1], [+1, -1],
-  ], []);
+  const EDGE_NEIGHBORS: [number, number][] = useMemo(
+    () => [
+      [+1, 0],
+      [0, +1],
+      [-1, +1],
+      [-1, 0],
+      [0, -1],
+      [+1, -1],
+    ],
+    [],
+  );
 
   // Pre-compute all vision boundary edges as path data
   // Rendered as single <path> elements to avoid anti-aliasing artifacts
   const visionBoundaryPaths = useMemo(() => {
-    let pathA = '';    // Team A only edges
-    let pathB = '';    // Team B only edges
+    let pathA = ''; // Team A only edges
+    let pathB = ''; // Team B only edges
     let pathBoth = ''; // Shared edges (both teams)
 
     // Check every hex in both visibility sets
@@ -173,11 +186,13 @@ export default function HexGrid({
 
     for (const key of allSeen) {
       const [q, r] = key.split(',').map(Number);
+      // @ts-expect-error TS2345: Argument of type 'number | undefined' is not assignable to parameter of type 'nu — TODO(2.3-followup)
       const [cx, cy] = axialToPixel(q, r, HEX_SIZE);
       const inA = seenA.has(key);
       const inB = seenB.has(key);
 
       for (let i = 0; i < 6; i++) {
+        // @ts-expect-error TS2488: Type '[number, number] | undefined' must have a '[Symbol.iterator]()' method tha — TODO(2.3-followup)
         const [dq, dr] = EDGE_NEIGHBORS[i];
         const neighborKey = hexKey(q + dq, r + dr);
 
@@ -262,12 +277,9 @@ export default function HexGrid({
           return '/tiles/terrain/keep.png';
         }
         return '/tiles/terrain/castle.png';
-      case 'ground':
       default: {
         // Use dirt for ground tiles near bases
-        const nearBase = basePositions.some(
-          (b) => hexDistance(q, r, b.q, b.r) <= 2
-        );
+        const nearBase = basePositions.some((b) => hexDistance(q, r, b.q, b.r) <= 2);
         if (nearBase) return '/tiles/terrain/dirt.png';
         return grassVariant(q, r);
       }
@@ -287,10 +299,8 @@ export default function HexGrid({
   const unitSpriteSize = HEX_SIZE * 1.5;
 
   return (
-    <svg
-      viewBox={viewBox}
-      style={{ width: '100%', height: '100%' }}
-    >
+    // biome-ignore lint/a11y/noSvgWithoutTitle: pre-existing decorative svg; cleanup followup — TODO(2.3-followup)
+    <svg viewBox={viewBox} style={{ width: '100%', height: '100%' }}>
       <defs>
         {/* Clip path for hex shape — used to clip terrain images */}
         <clipPath id="hex-clip">
@@ -310,10 +320,13 @@ export default function HexGrid({
         const vertices = hexVertices(cx, cy, HEX_SIZE);
 
         // Determine visibility — per-unit override takes priority
-        const teamVisible = visibleOverride ? visibleOverride.has(key)
-          : selectedTeam === 'all' ? true
-          : selectedTeam === 'A' ? visibleA?.has(key) ?? true
-          : visibleB?.has(key) ?? true;
+        const teamVisible = visibleOverride
+          ? visibleOverride.has(key)
+          : selectedTeam === 'all'
+            ? true
+            : selectedTeam === 'A'
+              ? (visibleA?.has(key) ?? true)
+              : (visibleB?.has(key) ?? true);
 
         // Determine visibility state
         const isHidden = !teamVisible;
@@ -332,17 +345,14 @@ export default function HexGrid({
         const imgH = hexHeight;
 
         return (
+          // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
           <g
             key={key}
             onClick={() => handleClick(q, r)}
             style={{ cursor: onHexClick ? 'pointer' : 'default' }}
           >
             {/* Black background for hex (visible through transparency) */}
-            <polygon
-              points={vertices}
-              fill="#0a0a0a"
-              stroke="none"
-            />
+            <polygon points={vertices} fill="#0a0a0a" stroke="none" />
 
             {/* Terrain tile image — clipped to hex shape */}
             {(isVisible || isFogged || isForest) && (
@@ -399,13 +409,7 @@ export default function HexGrid({
                 strokeWidth={1}
               />
             )}
-            {isFogged && (
-              <polygon
-                points={vertices}
-                fill="#0a0a0a"
-                opacity={0.6}
-              />
-            )}
+            {isFogged && <polygon points={vertices} fill="#0a0a0a" opacity={0.6} />}
 
             {/* Vision brightening — white overlay on hexes within any unit's vision */}
             {isVisible && (seenA.has(key) || seenB.has(key)) && (
@@ -443,162 +447,190 @@ export default function HexGrid({
             )}
 
             {/* Unit rendering — support multiple units on one hex */}
-            {showUnit && !isFog && (() => {
-              const allUnits = ((tile as any)?.units ?? (unit ? [unit] : []))
-                .filter((u: any) => !hiddenUnitIds?.has(u.id));
-              if (allUnits.length === 0) return null;
-
-              const renderUnit = (u: any, offsetX: number, spriteSize: number, fontSize: number) => {
-                const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
-                const isDead = u.alive === false;
-                const unitSprite = `/tiles/units/${u.unitClass}.png`;
-                const isTeamB = u.team === 'B';
-                return (
-                  <g
-                    key={u.id}
-                    opacity={dim ? 0.3 : isDead ? 0.4 : 1}
-                    style={{ cursor: onUnitClick ? 'pointer' : 'default' }}
-                    onClick={(e) => { if (onUnitClick) { e.stopPropagation(); onUnitClick(u.id, u.team); } }}
-                  >
-                    {/* Team color circle behind unit */}
-                    <circle
-                      cx={cx + offsetX}
-                      cy={cy}
-                      r={spriteSize * 0.38}
-                      fill={isDead ? '#666' : u.team === 'A' ? '#3b82f6' : '#ef4444'}
-                      opacity={0.35}
-                    />
-                    {/* Unit sprite */}
-                    <image
-                      href={unitSprite}
-                      x={cx + offsetX - spriteSize / 2}
-                      y={cy - spriteSize / 2}
-                      width={spriteSize}
-                      height={spriteSize}
-                      style={{
-                        pointerEvents: 'none',
-                        filter: isDead
-                          ? 'grayscale(1) opacity(0.6)'
-                          : isTeamB ? 'hue-rotate(160deg) saturate(1.3)' : 'none',
-                      }}
-                    />
-                    {/* Skull overlay for dead units */}
-                    {isDead && (
-                      <text
-                        x={cx + offsetX}
-                        y={cy - spriteSize * 0.05}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fontSize={spriteSize * 0.55}
-                        style={{ pointerEvents: 'none' }}
-                      >☠️</text>
-                    )}
-                    {/* Unit label */}
-                    <text
-                      x={cx + offsetX}
-                      y={u.carryingFlag ? cy + spriteSize * 0.42 : cy + spriteSize * 0.35}
-                      textAnchor="middle"
-                      dominantBaseline="central"
-                      fontSize={fontSize}
-                      fontWeight="bold"
-                      fill={isDead ? '#888' : u.team === 'A' ? '#93c5fd' : '#fca5a5'}
-                      stroke="#000"
-                      strokeWidth={2.5}
-                      paintOrder="stroke"
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
-                    </text>
-                    {/* Carrying flag indicator */}
-                    {u.carryingFlag && (
-                      <text
-                        x={cx + offsetX}
-                        y={cy - spriteSize * 0.35}
-                        textAnchor="middle"
-                        dominantBaseline="central"
-                        fontSize={HEX_SIZE * 0.4}
-                        style={{ pointerEvents: 'none' }}
-                      >🦞</text>
-                    )}
-                  </g>
+            {showUnit &&
+              !isFog &&
+              (() => {
+                // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+                const allUnits = ((tile as any)?.units ?? (unit ? [unit] : [])).filter(
+                  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+                  (u: any) => !hiddenUnitIds?.has(u.id),
                 );
-              };
+                if (allUnits.length === 0) return null;
 
-              if (allUnits.length === 1) {
-                return renderUnit(allUnits[0], 0, unitSpriteSize, HEX_SIZE * 0.45);
-              }
+                const renderUnit = (
+                  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+                  u: any,
+                  offsetX: number,
+                  spriteSize: number,
+                  fontSize: number,
+                ) => {
+                  const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
+                  const isDead = u.alive === false;
+                  const unitSprite = `/tiles/units/${u.unitClass}.png`;
+                  const isTeamB = u.team === 'B';
+                  return (
+                    // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
+                    <g
+                      key={u.id}
+                      opacity={dim ? 0.3 : isDead ? 0.4 : 1}
+                      style={{ cursor: onUnitClick ? 'pointer' : 'default' }}
+                      onClick={(e) => {
+                        if (onUnitClick) {
+                          e.stopPropagation();
+                          onUnitClick(u.id, u.team);
+                        }
+                      }}
+                    >
+                      {/* Team color circle behind unit */}
+                      <circle
+                        cx={cx + offsetX}
+                        cy={cy}
+                        r={spriteSize * 0.38}
+                        fill={isDead ? '#666' : u.team === 'A' ? '#3b82f6' : '#ef4444'}
+                        opacity={0.35}
+                      />
+                      {/* Unit sprite */}
+                      <image
+                        href={unitSprite}
+                        x={cx + offsetX - spriteSize / 2}
+                        y={cy - spriteSize / 2}
+                        width={spriteSize}
+                        height={spriteSize}
+                        style={{
+                          pointerEvents: 'none',
+                          filter: isDead
+                            ? 'grayscale(1) opacity(0.6)'
+                            : isTeamB
+                              ? 'hue-rotate(160deg) saturate(1.3)'
+                              : 'none',
+                        }}
+                      />
+                      {/* Skull overlay for dead units */}
+                      {isDead && (
+                        <text
+                          x={cx + offsetX}
+                          y={cy - spriteSize * 0.05}
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          fontSize={spriteSize * 0.55}
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          ☠️
+                        </text>
+                      )}
+                      {/* Unit label */}
+                      <text
+                        x={cx + offsetX}
+                        y={u.carryingFlag ? cy + spriteSize * 0.42 : cy + spriteSize * 0.35}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fontSize={fontSize}
+                        fontWeight="bold"
+                        fill={isDead ? '#888' : u.team === 'A' ? '#93c5fd' : '#fca5a5'}
+                        stroke="#000"
+                        strokeWidth={2.5}
+                        paintOrder="stroke"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        {CLASS_LETTERS[u.unitClass]}
+                        {unitTeamIndex.get(u.id) ?? ''}
+                      </text>
+                      {/* Carrying flag indicator */}
+                      {u.carryingFlag && (
+                        <text
+                          x={cx + offsetX}
+                          y={cy - spriteSize * 0.35}
+                          textAnchor="middle"
+                          dominantBaseline="central"
+                          fontSize={HEX_SIZE * 0.4}
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          🦞
+                        </text>
+                      )}
+                    </g>
+                  );
+                };
 
-              // Multiple units — offset them
-              return allUnits.map((u: any, i: number) => {
-                const offsetX = i === 0 ? -HEX_SIZE * 0.28 : HEX_SIZE * 0.28;
-                return renderUnit(u, offsetX, unitSpriteSize * 0.75, HEX_SIZE * 0.38);
-              });
-            })()}
+                if (allUnits.length === 1) {
+                  return renderUnit(allUnits[0], 0, unitSpriteSize, HEX_SIZE * 0.45);
+                }
+
+                // Multiple units — offset them
+                // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+                return allUnits.map((u: any, i: number) => {
+                  const offsetX = i === 0 ? -HEX_SIZE * 0.28 : HEX_SIZE * 0.28;
+                  return renderUnit(u, offsetX, unitSpriteSize * 0.75, HEX_SIZE * 0.38);
+                });
+              })()}
           </g>
         );
       })}
       {/* Vision boundary paths — rendered on top of everything as single paths */}
-      <g opacity={visionOpacity} style={{ pointerEvents: 'none', transition: 'opacity 0.05s linear' }}>
-      {(selectedTeam === 'all' || selectedTeam === 'A') && visionBoundaryPaths.pathA && (
-        <path
-          d={visionBoundaryPaths.pathA}
-          fill="none"
-          stroke="#3b82f6"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )}
-      {(selectedTeam === 'all' || selectedTeam === 'B') && visionBoundaryPaths.pathB && (
-        <path
-          d={visionBoundaryPaths.pathB}
-          fill="none"
-          stroke="#ef4444"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )}
-      {selectedTeam === 'all' && visionBoundaryPaths.pathBoth && (
-        <>
+      <g
+        opacity={visionOpacity}
+        style={{ pointerEvents: 'none', transition: 'opacity 0.05s linear' }}
+      >
+        {(selectedTeam === 'all' || selectedTeam === 'A') && visionBoundaryPaths.pathA && (
+          <path
+            d={visionBoundaryPaths.pathA}
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+        {(selectedTeam === 'all' || selectedTeam === 'B') && visionBoundaryPaths.pathB && (
+          <path
+            d={visionBoundaryPaths.pathB}
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth={2.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+        {selectedTeam === 'all' && visionBoundaryPaths.pathBoth && (
+          <>
+            <path
+              d={visionBoundaryPaths.pathBoth}
+              fill="none"
+              stroke="#3b82f6"
+              strokeWidth={2.5}
+              strokeDasharray="6 6"
+              strokeDashoffset={0}
+              strokeLinecap="round"
+            />
+            <path
+              d={visionBoundaryPaths.pathBoth}
+              fill="none"
+              stroke="#ef4444"
+              strokeWidth={2.5}
+              strokeDasharray="6 6"
+              strokeDashoffset={6}
+              strokeLinecap="round"
+            />
+          </>
+        )}
+        {selectedTeam === 'A' && visionBoundaryPaths.pathBoth && (
           <path
             d={visionBoundaryPaths.pathBoth}
             fill="none"
             stroke="#3b82f6"
             strokeWidth={2.5}
-            strokeDasharray="6 6"
-            strokeDashoffset={0}
             strokeLinecap="round"
           />
+        )}
+        {selectedTeam === 'B' && visionBoundaryPaths.pathBoth && (
           <path
             d={visionBoundaryPaths.pathBoth}
             fill="none"
             stroke="#ef4444"
             strokeWidth={2.5}
-            strokeDasharray="6 6"
-            strokeDashoffset={6}
             strokeLinecap="round"
           />
-        </>
-      )}
-      {selectedTeam === 'A' && visionBoundaryPaths.pathBoth && (
-        <path
-          d={visionBoundaryPaths.pathBoth}
-          fill="none"
-          stroke="#3b82f6"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-        />
-      )}
-      {selectedTeam === 'B' && visionBoundaryPaths.pathBoth && (
-        <path
-          d={visionBoundaryPaths.pathBoth}
-          fill="none"
-          stroke="#ef4444"
-          strokeWidth={2.5}
-          strokeLinecap="round"
-        />
-      )}
+        )}
       </g>
 
       {/* Floating units layer — animated units at sub-tile pixel positions */}
@@ -638,7 +670,8 @@ export default function HexGrid({
               strokeWidth={2.5}
               paintOrder="stroke"
             >
-              {CLASS_LETTERS[u.unitClass]}{unitTeamIndex.get(u.id) ?? ''}
+              {CLASS_LETTERS[u.unitClass]}
+              {unitTeamIndex.get(u.id) ?? ''}
             </text>
             {u.carryingFlag && (
               <text
@@ -647,7 +680,9 @@ export default function HexGrid({
                 textAnchor="middle"
                 dominantBaseline="central"
                 fontSize={HEX_SIZE * 0.4}
-              >🦞</text>
+              >
+                🦞
+              </text>
             )}
           </g>
         );
@@ -662,20 +697,20 @@ export default function HexGrid({
         const poofRadius = 8 + k.progress * 30;
         const poofOpacity = Math.max(0, 1 - k.progress * 1.5);
         const skullY = k.y - k.progress * 25;
-        const skullOpacity = k.progress < 0.3 ? k.progress / 0.3
-          : k.progress > 0.7 ? (1 - k.progress) / 0.3
-          : 1;
+        const skullOpacity =
+          k.progress < 0.3 ? k.progress / 0.3 : k.progress > 0.7 ? (1 - k.progress) / 0.3 : 1;
         const sparkCount = 6;
 
         // Phase 2: Ghost float from death spot to respawn spot
         const showFloat = k.progress >= 0.8 && k.floatProgress < 1;
         const floatX = k.x + (k.respawnX - k.x) * k.floatProgress;
         const floatY = k.y + (k.respawnY - k.y) * k.floatProgress;
-        const floatOpacity = k.floatProgress < 0.1
-          ? k.floatProgress / 0.1
-          : k.floatProgress > 0.8
-            ? (1 - k.floatProgress) / 0.2
-            : 0.5;
+        const floatOpacity =
+          k.floatProgress < 0.1
+            ? k.floatProgress / 0.1
+            : k.floatProgress > 0.8
+              ? (1 - k.floatProgress) / 0.2
+              : 0.5;
 
         return (
           <g key={`kill-${k.victimId}`} style={{ pointerEvents: 'none' }}>
@@ -684,13 +719,20 @@ export default function HexGrid({
               <>
                 {/* Expanding poof circle */}
                 <circle
-                  cx={k.x} cy={k.y} r={poofRadius}
-                  fill="none" stroke="#fbbf24" strokeWidth={2}
+                  cx={k.x}
+                  cy={k.y}
+                  r={poofRadius}
+                  fill="none"
+                  stroke="#fbbf24"
+                  strokeWidth={2}
                   opacity={poofOpacity}
                 />
                 <circle
-                  cx={k.x} cy={k.y} r={poofRadius * 0.6}
-                  fill="#fbbf24" opacity={poofOpacity * 0.3}
+                  cx={k.x}
+                  cy={k.y}
+                  r={poofRadius * 0.6}
+                  fill="#fbbf24"
+                  opacity={poofOpacity * 0.3}
                 />
 
                 {/* Spark particles */}
@@ -701,17 +743,19 @@ export default function HexGrid({
                   const sy = k.y + Math.sin(angle) * dist;
                   const sparkOpacity = Math.max(0, 1 - k.progress * 2);
                   return (
-                    <circle key={i} cx={sx} cy={sy} r={1.5}
-                      fill="#fcd34d" opacity={sparkOpacity}
-                    />
+                    // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+                    <circle key={i} cx={sx} cy={sy} r={1.5} fill="#fcd34d" opacity={sparkOpacity} />
                   );
                 })}
 
                 {/* Skull float-up at death spot */}
                 <text
-                  x={k.x} y={skullY}
-                  textAnchor="middle" dominantBaseline="central"
-                  fontSize={HEX_SIZE * 0.6} opacity={skullOpacity}
+                  x={k.x}
+                  y={skullY}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={HEX_SIZE * 0.6}
+                  opacity={skullOpacity}
                 >
                   ☠️
                 </text>
@@ -721,9 +765,12 @@ export default function HexGrid({
             {/* Phase 2: Ghost skull floats from death to respawn */}
             {showFloat && (
               <text
-                x={floatX} y={floatY}
-                textAnchor="middle" dominantBaseline="central"
-                fontSize={HEX_SIZE * 0.5} opacity={floatOpacity}
+                x={floatX}
+                y={floatY}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={HEX_SIZE * 0.5}
+                opacity={floatOpacity}
               >
                 ☠️
               </text>

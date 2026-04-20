@@ -22,25 +22,28 @@
  * to this file. New tools MUST come with a drift fixture.
  */
 
-import { describe, it, expect } from 'vitest';
-import Ajv from 'ajv';
-
-import { CaptureTheLobsterPlugin, CTL_SYSTEM_ACTION_TYPES } from '@coordination-games/game-ctl';
-import { OathbreakerPlugin, OATHBREAKER_SYSTEM_ACTION_TYPES } from '@coordination-games/game-oathbreaker';
-import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type {
+  AgentInfo,
   CoordinationGame,
+  LobbyPhase,
   ToolDefinition,
   ToolPlugin,
-  LobbyPhase,
-  AgentInfo,
 } from '@coordination-games/engine';
+import { CaptureTheLobsterPlugin, CTL_SYSTEM_ACTION_TYPES } from '@coordination-games/game-ctl';
+import {
+  OATHBREAKER_SYSTEM_ACTION_TYPES,
+  OathbreakerPlugin,
+} from '@coordination-games/game-oathbreaker';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import Ajv from 'ajv';
+import { describe, expect, it } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // AJV — strict instance. `additionalProperties: false` on tool schemas gives
 // us the "undeclared shape rejected" invariant for free.
 // ---------------------------------------------------------------------------
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 const AjvCtor: typeof Ajv = (Ajv as any).default ?? Ajv;
 const ajv = new AjvCtor({ allErrors: true, strict: false });
 
@@ -48,16 +51,14 @@ const ajv = new AjvCtor({ allErrors: true, strict: false });
 // Registered games + plugins under test
 // ---------------------------------------------------------------------------
 
-const GAMES: CoordinationGame<any, any, any, any>[] = [
-  CaptureTheLobsterPlugin,
-  OathbreakerPlugin,
-];
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+const GAMES: CoordinationGame<any, any, any, any>[] = [CaptureTheLobsterPlugin, OathbreakerPlugin];
 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
 const SYSTEM_ACTIONS: Record<string, readonly string[]> = {
   'capture-the-lobster': CTL_SYSTEM_ACTION_TYPES,
-  'oathbreaker': OATHBREAKER_SYSTEM_ACTION_TYPES,
+  oathbreaker: OATHBREAKER_SYSTEM_ACTION_TYPES,
 };
 
 // ---------------------------------------------------------------------------
@@ -74,28 +75,34 @@ const CTL_PLAYERS: { id: string; handle: string }[] = [
 ];
 
 /** Build a CtL in-progress state with 4 players split 2v2, rogues on both teams. */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function buildCtlInProgressState(): { state: any; playerId: string } {
-  const setup = CaptureTheLobsterPlugin.createConfig!(
-    CTL_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+  const setup = CaptureTheLobsterPlugin.createConfig?.(
+    CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
     { teamSize: 2 },
   );
+  // @ts-expect-error TS18048: 'setup' is possibly 'undefined'. — TODO(2.3-followup)
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   let state: any = CaptureTheLobsterPlugin.createInitialState(setup.config);
   // Force into in_progress for the move validator to accept.
   state = { ...state, phase: 'in_progress' };
   // Pick an alive unit owner.
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const firstUnit = state.units.find((u: any) => u.alive);
   if (!firstUnit) throw new Error('drift fixture: no alive unit in fresh CtL state');
   return { state, playerId: firstUnit.id };
 }
 
 /** Build a CtL pre_game state (for system-action-isolation tests). */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function buildCtlPreGameState(): any {
-  const setup = CaptureTheLobsterPlugin.createConfig!(
-    CTL_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+  const setup = CaptureTheLobsterPlugin.createConfig?.(
+    CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
     { teamSize: 2 },
   );
+  // @ts-expect-error TS18048: 'setup' is possibly 'undefined'. — TODO(2.3-followup)
   return CaptureTheLobsterPlugin.createInitialState(setup.config);
 }
 
@@ -107,9 +114,10 @@ const OATH_PLAYERS: { id: string; handle: string }[] = [
 ];
 
 /** Build an OATH state with the round already started and pairings in 'pledging'. */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function buildOathPledgingState(): { state: any; playerId: string } {
-  const setup = OathbreakerPlugin.createConfig!(
-    OATH_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+  const setup = OathbreakerPlugin.createConfig?.(
+    OATH_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
   const initial = OathbreakerPlugin.createInitialState(setup.config);
@@ -121,6 +129,7 @@ function buildOathPledgingState(): { state: any; playerId: string } {
 }
 
 /** Build an OATH state with a pairing in 'deciding' (both proposals matched). */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function buildOathDecidingState(): { state: any; playerId: string } {
   const pledging = buildOathPledgingState();
   const pairing = pledging.state.pairings[0];
@@ -135,16 +144,20 @@ function buildOathDecidingState(): { state: any; playerId: string } {
     amount: pledgeAmount,
   });
   const updatedPairing = after2.state.pairings[0];
+  // @ts-expect-error TS18048: 'updatedPairing' is possibly 'undefined'. — TODO(2.3-followup)
   if (updatedPairing.phase !== 'deciding') {
+    // @ts-expect-error TS18048: 'updatedPairing' is possibly 'undefined'. — TODO(2.3-followup)
     throw new Error(`drift fixture: oath pairing should be deciding, got ${updatedPairing.phase}`);
   }
+  // @ts-expect-error TS18048: 'updatedPairing' is possibly 'undefined'. — TODO(2.3-followup)
   return { state: after2.state, playerId: updatedPairing.player1 };
 }
 
 /** Build an OATH 'waiting' state (for system-action-isolation tests). */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function buildOathWaitingState(): any {
-  const setup = OathbreakerPlugin.createConfig!(
-    OATH_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+  const setup = OathbreakerPlugin.createConfig?.(
+    OATH_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
   return OathbreakerPlugin.createInitialState(setup.config);
@@ -154,10 +167,10 @@ function buildOathWaitingState(): any {
 // Lobby-phase state helpers (CtL only — OATH lobby phase has no tools)
 // ---------------------------------------------------------------------------
 
-const CTL_AGENTS: AgentInfo[] = CTL_PLAYERS.map(p => ({ id: p.id, handle: p.handle }));
+const CTL_AGENTS: AgentInfo[] = CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle }));
 
 function findCtlPhase(id: string): LobbyPhase {
-  const phase = CaptureTheLobsterPlugin.lobby?.phases.find(p => p.id === id);
+  const phase = CaptureTheLobsterPlugin.lobby?.phases.find((p) => p.id === id);
   if (!phase) throw new Error(`drift fixture: CtL phase "${id}" not found`);
   return phase;
 }
@@ -172,21 +185,27 @@ function findCtlPhase(id: string): LobbyPhase {
 
 type GameToolFixture = {
   /** Valid sample args (must match the tool's inputSchema). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   validSample: Record<string, any>;
   /** Build a state where the valid sample is semantically accepted. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   buildState: () => { state: any; playerId: string };
   /** The CoordinationGame owning this tool (for validateAction). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   game: CoordinationGame<any, any, any, any>;
 };
 
 type LobbyToolFixture = {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   validSample: Record<string, any>;
   /** Build phase state + the player that can invoke this tool. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   buildState: () => { state: any; playerId: string; players: AgentInfo[] };
   phase: LobbyPhase;
 };
 
 type PluginToolFixture = {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   validSample: Record<string, any>;
   plugin: ToolPlugin;
 };
@@ -321,8 +340,9 @@ interface DiscoveredTool {
   key: string; // matches DRIFT_FIXTURES key
   name: string;
   tool: ToolDefinition;
-  source:
+  source: // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     | { kind: 'game'; game: CoordinationGame<any, any, any, any> }
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     | { kind: 'lobby'; game: CoordinationGame<any, any, any, any>; phase: LobbyPhase }
     | { kind: 'plugin'; plugin: ToolPlugin };
 }
@@ -370,19 +390,19 @@ const DISCOVERED = discoverTools();
 
 describe('Tool drift — fixture coverage', () => {
   it('every discovered tool has a DRIFT_FIXTURES entry', () => {
-    const missing = DISCOVERED.filter(d => !DRIFT_FIXTURES[d.key]).map(d => d.key);
+    const missing = DISCOVERED.filter((d) => !DRIFT_FIXTURES[d.key]).map((d) => d.key);
     if (missing.length > 0) {
       throw new Error(
         `\nDRIFT_FIXTURES is missing entries for:\n  - ${missing.join('\n  - ')}\n\n` +
-        `Every tool in gameTools ∪ LobbyPhase.tools ∪ plugin.tools MUST have a ` +
-        `drift fixture. Add entries in packages/workers-server/src/__tests__/tool-drift.test.ts\n`,
+          `Every tool in gameTools ∪ LobbyPhase.tools ∪ plugin.tools MUST have a ` +
+          `drift fixture. Add entries in packages/workers-server/src/__tests__/tool-drift.test.ts\n`,
       );
     }
   });
 
   it('every DRIFT_FIXTURES key matches a discovered tool (no dead entries)', () => {
-    const discoveredKeys = new Set(DISCOVERED.map(d => d.key));
-    const dead = Object.keys(DRIFT_FIXTURES).filter(k => !discoveredKeys.has(k));
+    const discoveredKeys = new Set(DISCOVERED.map((d) => d.key));
+    const dead = Object.keys(DRIFT_FIXTURES).filter((k) => !discoveredKeys.has(k));
     expect(dead, `Dead DRIFT_FIXTURES entries (no matching tool): ${dead.join(', ')}`).toEqual([]);
   });
 
@@ -416,6 +436,7 @@ describe('Invariant 1 — declared shape is accepted', () => {
       it(`${d.key}: validateAction accepts the sample (no shape-mismatch rejection)`, () => {
         const { state, playerId } = f.buildState();
         const action = { type: d.name, ...f.validSample };
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
         const accepted = f.game.validateAction(state, playerId, action as any);
         // The validator should return true (accepted). A false here would
         // indicate shape drift — the declaration says valid, the validator
@@ -453,7 +474,7 @@ describe('Invariant 1 — declared shape is accepted', () => {
             'invalid_args',
             'missing property',
           ];
-          const hit = shapeMismatchMarkers.find(m => msg.includes(m));
+          const hit = shapeMismatchMarkers.find((m) => msg.includes(m));
           expect(
             hit,
             `${d.key}: phase.handleAction returned a shape-mismatch-looking error ` +
@@ -480,6 +501,7 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
 
     const validate = ajv.compile(d.tool.inputSchema);
     const sample = entry.fixture.validSample;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const props = (d.tool.inputSchema.properties ?? {}) as Record<string, any>;
     const required: string[] = Array.isArray(d.tool.inputSchema.required)
       ? (d.tool.inputSchema.required as string[])
@@ -489,11 +511,12 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
     if (required.length > 0) {
       it(`${d.key}: AJV rejects missing required field "${required[0]}"`, () => {
         const broken = { ...sample };
+        // @ts-expect-error TS2538: Type 'undefined' cannot be used as an index type. — TODO(2.3-followup)
         delete broken[required[0]];
         const ok = validate(broken);
         expect(ok).toBe(false);
-        const keywords = new Set((validate.errors ?? []).map(e => e.keyword));
-        const hit = [...keywords].some(k => REJECTION_KEYWORDS.has(k));
+        const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
+        const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
         expect(
           hit,
           `Expected AJV rejection keyword in {${[...REJECTION_KEYWORDS].join(',')}}, ` +
@@ -513,8 +536,8 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
           ok,
           `${d.key}: schema has additionalProperties:false but AJV accepted an extra field.`,
         ).toBe(false);
-        const keywords = new Set((validate.errors ?? []).map(e => e.keyword));
-        const hit = [...keywords].some(k => REJECTION_KEYWORDS.has(k));
+        const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
+        const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
         expect(hit).toBe(true);
       } else {
         // Drift-prevention warning: tool schemas SHOULD set additionalProperties:false
@@ -542,8 +565,8 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
     });
 
     // -- wrong type on a typed property --
-    const typedProp = Object.entries(props).find(([_, v]) =>
-      v && typeof v === 'object' && typeof v.type === 'string',
+    const typedProp = Object.entries(props).find(
+      ([_, v]) => v && typeof v === 'object' && typeof v.type === 'string',
     );
     if (typedProp) {
       const [propName, propSchema] = typedProp;
@@ -556,8 +579,8 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
           `${d.key}: AJV accepted "${propName}": ${JSON.stringify(wrongValue)} ` +
             `when the schema declares type: "${propSchema.type}"`,
         ).toBe(false);
-        const keywords = new Set((validate.errors ?? []).map(e => e.keyword));
-        const hit = [...keywords].some(k => REJECTION_KEYWORDS.has(k));
+        const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
+        const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
         expect(hit).toBe(true);
       });
     }
@@ -565,15 +588,22 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
 });
 
 /** Produce a value that is deliberately the wrong type for a given JSON Schema type. */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function wrongTypeFor(type: string): any {
   switch (type) {
-    case 'string': return 42;
+    case 'string':
+      return 42;
     case 'number':
-    case 'integer': return 'not-a-number';
-    case 'boolean': return 'not-a-boolean';
-    case 'array': return { nope: true };
-    case 'object': return 'not-an-object';
-    default: return Symbol('unknown');
+    case 'integer':
+      return 'not-a-number';
+    case 'boolean':
+      return 'not-a-boolean';
+    case 'array':
+      return { nope: true };
+    case 'object':
+      return 'not-an-object';
+    default:
+      return Symbol('unknown');
   }
 }
 
@@ -589,9 +619,10 @@ describe('Invariant 3 — system-action isolation', () => {
       it(`${game.gameType}:${type}: validateAction rejects non-null playerId`, () => {
         // Build a state where the system action *would* be valid with null
         // playerId — so the ONLY way it rejects below is the null-gate.
-        const state = game.gameType === 'capture-the-lobster'
-          ? buildCtlPreGameState() // pre_game → game_start valid with null
-          : buildOathWaitingState(); // waiting → game_start valid with null
+        const state =
+          game.gameType === 'capture-the-lobster'
+            ? buildCtlPreGameState() // pre_game → game_start valid with null
+            : buildOathWaitingState(); // waiting → game_start valid with null
         // For 'turn_timeout' / 'round_timeout' we need the in-progress/playing
         // phase. Swap to a state where each system action could plausibly fire.
         const stateForType = (() => {
@@ -608,6 +639,7 @@ describe('Invariant 3 — system-action isolation', () => {
         // Try with a handful of non-null playerIds — every one must reject.
         const nonNullIds = ['p1', 'op1', 'nonexistent', 'attacker'];
         for (const pid of nonNullIds) {
+          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
           const accepted = game.validateAction(stateForType, pid, { type } as any);
           expect(
             accepted,
@@ -630,6 +662,7 @@ describe('Invariant 3 — system-action isolation', () => {
     it(`${d.key}: validateAction rejects playerId=null`, () => {
       const { state } = f.buildState();
       const action = { type: d.name, ...f.validSample };
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       const accepted = f.game.validateAction(state, null, action as any);
       expect(
         accepted,
@@ -644,7 +677,7 @@ describe('Invariant 3 — system-action isolation', () => {
   it('no action type appears in both SYSTEM_ACTION_TYPES and gameTools', () => {
     for (const game of GAMES) {
       const systemTypes = new Set(SYSTEM_ACTIONS[game.gameType] ?? []);
-      const toolNames = (game.gameTools ?? []).map(t => t.name);
+      const toolNames = (game.gameTools ?? []).map((t) => t.name);
       for (const name of toolNames) {
         expect(
           systemTypes.has(name),

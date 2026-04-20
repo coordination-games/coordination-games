@@ -28,6 +28,7 @@ function hashString(data: string): string {
 /** Hash two child hashes together (sorted for order independence). */
 function hashPair(a: string, b: string): string {
   const sorted = [a, b].sort();
+  // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
   return hashString(sorted[0] + sorted[1]);
 }
 
@@ -36,10 +37,10 @@ function hashPair(a: string, b: string): string {
 // ---------------------------------------------------------------------------
 
 export interface MerkleLeafData {
-  actionIndex: number;       // sequential action number
-  playerId: string | null;   // null for system actions
-  actionData: string;        // JSON.stringify of the action
-  stateHash?: string;        // hash of resulting state (optional)
+  actionIndex: number; // sequential action number
+  playerId: string | null; // null for system actions
+  actionData: string; // JSON.stringify of the action
+  stateHash?: string; // hash of resulting state (optional)
 }
 
 /** Encode a single action into a Merkle leaf hash. */
@@ -59,8 +60,8 @@ export function encodeLeaf(data: MerkleLeafData): string {
 
 export interface MerkleProof {
   leaf: string;
-  proof: string[];    // Sibling hashes from leaf to root
-  index: number;      // Leaf index in the tree
+  proof: string[]; // Sibling hashes from leaf to root
+  index: number; // Leaf index in the tree
 }
 
 export interface MerkleTree {
@@ -85,6 +86,7 @@ export function buildMerkleTree(leaves: string[]): MerkleTree {
   // Ensure even number of leaves by duplicating the last one if odd
   const paddedLeaves = [...leaves];
   if (paddedLeaves.length % 2 !== 0) {
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
     paddedLeaves.push(paddedLeaves[paddedLeaves.length - 1]);
   }
 
@@ -96,6 +98,7 @@ export function buildMerkleTree(leaves: string[]): MerkleTree {
     for (let i = 0; i < currentLayer.length; i += 2) {
       const left = currentLayer[i];
       const right = currentLayer[i + 1] ?? left;
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
       nextLayer.push(hashPair(left, right));
     }
     layers.push(nextLayer);
@@ -103,6 +106,7 @@ export function buildMerkleTree(leaves: string[]): MerkleTree {
   }
 
   return {
+    // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
     root: currentLayer[0],
     leaves: paddedLeaves,
     layers,
@@ -124,7 +128,9 @@ export function generateProof(tree: MerkleTree, leafIndex: number): MerkleProof 
     const layer = tree.layers[layerIdx];
     const siblingIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
 
+    // @ts-expect-error TS18048: 'layer' is possibly 'undefined'. — TODO(2.3-followup)
     if (siblingIdx < layer.length) {
+      // @ts-expect-error TS18048,TS2345: 'layer' is possibly 'undefined'. — TODO(2.3-followup)
       proof.push(layer[siblingIdx]);
     }
 
@@ -132,6 +138,7 @@ export function generateProof(tree: MerkleTree, leafIndex: number): MerkleProof 
   }
 
   return {
+    // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
     leaf: tree.leaves[leafIndex],
     proof,
     index: leafIndex,
@@ -157,9 +164,7 @@ export function verifyProof(root: string, proof: MerkleProof): boolean {
  * Build a Merkle tree from an action log.
  * Each action becomes a leaf in sequential order.
  */
-export function buildActionMerkleTree(
-  actions: MerkleLeafData[],
-): MerkleTree {
+export function buildActionMerkleTree(actions: MerkleLeafData[]): MerkleTree {
   const leaves: string[] = actions.map((action) => encodeLeaf(action));
   return buildMerkleTree(leaves);
 }

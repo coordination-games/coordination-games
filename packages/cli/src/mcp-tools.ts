@@ -17,28 +17,36 @@
  * No auth tools are exposed to agents.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import type { GameClient } from "./game-client.js";
-import type {
-  ToolPlugin,
-  ToolDefinition,
-  CoordinationGame,
-} from "@coordination-games/engine";
+import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import type { GameClient } from './game-client.js';
 
 export interface RegisterToolsOptions {
   /** Active plugins — their mcpExpose tools get registered as MCP tools. */
   plugins?: ToolPlugin[];
   /** Registered games — declared surface used for dynamic MCP tool registration. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   games?: CoordinationGame<any, any, any, any>[];
 }
 
 /** Static top-level CLI commands. Must not collide with any dynamic tool. */
 export const STATIC_CLI_COMMANDS: readonly string[] = Object.freeze([
-  'init', 'status', 'wallet', 'name', 'names',
-  'serve', 'verify',
-  'lobbies', 'create-lobby', 'join', 'state', 'wait', 'guide',
-  'tools', 'tool',
+  'init',
+  'status',
+  'wallet',
+  'name',
+  'names',
+  'serve',
+  'verify',
+  'lobbies',
+  'create-lobby',
+  'join',
+  'state',
+  'wait',
+  'guide',
+  'tools',
+  'tool',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -80,6 +88,7 @@ interface SurfaceEntry {
 }
 
 function buildFullSurface(
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   games: CoordinationGame<any, any, any, any>[],
   plugins: ToolPlugin[],
 ): SurfaceEntry[] {
@@ -152,10 +161,12 @@ function checkSurfaceCollisions(entries: SurfaceEntry[]): void {
  *
  * Unknown shapes fall back to z.any() with the description attached.
  */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function jsonPropToZod(prop: any): z.ZodTypeAny {
   if (!prop || typeof prop !== 'object') return z.any();
 
-  const desc: string | undefined = typeof prop.description === 'string' ? prop.description : undefined;
+  const desc: string | undefined =
+    typeof prop.description === 'string' ? prop.description : undefined;
   const attach = (s: z.ZodTypeAny) => (desc ? s.describe(desc) : s);
 
   if (Array.isArray(prop.oneOf) || Array.isArray(prop.anyOf)) {
@@ -197,6 +208,7 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
 
   if (type === 'object') {
     const shape: Record<string, z.ZodTypeAny> = {};
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const props = (prop.properties ?? {}) as Record<string, any>;
     const required = new Set<string>(Array.isArray(prop.required) ? prop.required : []);
     for (const [k, v] of Object.entries(props)) {
@@ -214,8 +226,12 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
  * Build the per-property zod shape map that `McpServer.tool()` expects from a
  * top-level `inputSchema` object (which is always `{type:'object', properties, required}`).
  */
-function toolInputShape(inputSchema: Record<string, any> | undefined): Record<string, z.ZodTypeAny> {
+function toolInputShape(
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  inputSchema: Record<string, any> | undefined,
+): Record<string, z.ZodTypeAny> {
   if (!inputSchema || typeof inputSchema !== 'object') return {};
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const props = (inputSchema.properties ?? {}) as Record<string, any>;
   const required = new Set<string>(Array.isArray(inputSchema.required) ? inputSchema.required : []);
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -256,11 +272,20 @@ export function registerGameTools(
   server.tool(
     'get_guide',
     'Get the game rules, your current status, and available tools. Pass game name to get a specific guide.',
-    { game: z.string().optional().describe('Game name (e.g. "capture-the-lobster", "oathbreaker"). Auto-detects if omitted.') },
+    {
+      game: z
+        .string()
+        .optional()
+        .describe(
+          'Game name (e.g. "capture-the-lobster", "oathbreaker"). Auto-detects if omitted.',
+        ),
+    },
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     async (args: any) => {
       try {
         const result = await client.getGuide(args.game);
         return jsonResult(result);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         return jsonError(err);
       }
@@ -275,6 +300,7 @@ export function registerGameTools(
       try {
         const result = await client.getState();
         return jsonResult(result);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         return jsonError(err);
       }
@@ -289,25 +315,22 @@ export function registerGameTools(
       try {
         const result = await client.waitForUpdate();
         return jsonResult(result);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         return jsonError(err);
       }
     },
   );
 
-  server.tool(
-    'list_lobbies',
-    'List available game lobbies',
-    {},
-    async () => {
-      try {
-        const result = await client.listLobbies();
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
+  server.tool('list_lobbies', 'List available game lobbies', {}, async () => {
+    try {
+      const result = await client.listLobbies();
+      return jsonResult(result);
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    } catch (err: any) {
+      return jsonError(err);
+    }
+  });
 
   server.tool(
     'join_lobby',
@@ -317,6 +340,7 @@ export function registerGameTools(
       try {
         const result = await client.joinLobby(lobbyId);
         return jsonResult(result);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         return jsonError(err);
       }
@@ -327,16 +351,32 @@ export function registerGameTools(
     'create_lobby',
     'Create a new lobby (you are auto-joined)',
     {
-      gameType: z.string().optional().describe('Game type (e.g. "capture-the-lobster", "oathbreaker"). Defaults to capture-the-lobster.'),
-      teamSize: z.number().min(2).max(6).optional().describe('Players per team for CtL (2-6, default 2)'),
-      playerCount: z.number().min(4).max(20).optional().describe('Number of players for OATHBREAKER (4-20, default 4)'),
+      gameType: z
+        .string()
+        .optional()
+        .describe(
+          'Game type (e.g. "capture-the-lobster", "oathbreaker"). Defaults to capture-the-lobster.',
+        ),
+      teamSize: z
+        .number()
+        .min(2)
+        .max(6)
+        .optional()
+        .describe('Players per team for CtL (2-6, default 2)'),
+      playerCount: z
+        .number()
+        .min(4)
+        .max(20)
+        .optional()
+        .describe('Number of players for OATHBREAKER (4-20, default 4)'),
     },
     async ({ gameType, teamSize, playerCount }) => {
       try {
         const game = gameType || 'capture-the-lobster';
-        const size = game === 'oathbreaker' ? (playerCount || 4) : (teamSize || 2);
+        const size = game === 'oathbreaker' ? playerCount || 4 : teamSize || 2;
         const result = await client.createLobby(game, size);
         return jsonResult(result);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         return jsonError(err);
       }
@@ -354,25 +394,22 @@ export function registerGameTools(
       try {
         const result = await client.getLeaderboard(limit, offset);
         return jsonResult(result);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         return jsonError(err);
       }
     },
   );
 
-  server.tool(
-    'get_my_stats',
-    'View your own ELO rating, rank, and game history',
-    {},
-    async () => {
-      try {
-        const result = await client.getMyStats();
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
+  server.tool('get_my_stats', 'View your own ELO rating, rank, and game history', {}, async () => {
+    try {
+      const result = await client.getMyStats();
+      return jsonResult(result);
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    } catch (err: any) {
+      return jsonError(err);
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // Dynamic per-name tools from the declared surface
@@ -389,57 +426,53 @@ export function registerGameTools(
 
     if (entry.kind === 'plugin' && entry.plugin) {
       const plugin = entry.plugin;
-      server.tool(
-        toolName,
-        tool.description,
-        shape,
-        async (args: any) => {
-          // Plugin tools are client-side: run handleCall locally, then post
-          // any returned relay envelope to the unified endpoint.
-          let out: any;
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      server.tool(toolName, tool.description, shape, async (args: any) => {
+        // Plugin tools are client-side: run handleCall locally, then post
+        // any returned relay envelope to the unified endpoint.
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        let out: any;
+        try {
+          out = plugin.handleCall?.(toolName, args, {
+            id: 'self',
+            handle: 'self',
+          });
+          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        } catch (err: any) {
+          return jsonError({
+            error: {
+              code: 'PLUGIN_ERROR',
+              message: `Plugin "${plugin.id}" handleCall threw: ${err?.message ?? String(err)}`,
+            },
+          });
+        }
+        if (out && typeof out === 'object' && 'error' in out) {
+          return jsonError(out);
+        }
+        if (out && typeof out === 'object' && out.relay) {
           try {
-            out = plugin.handleCall?.(toolName, args, {
-              id: 'self',
-              handle: 'self',
-            });
+            const result = await client.callPluginRelay(out.relay);
+            return jsonResult(result);
+            // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
           } catch (err: any) {
-            return jsonError({
-              error: {
-                code: 'PLUGIN_ERROR',
-                message: `Plugin "${plugin.id}" handleCall threw: ${err?.message ?? String(err)}`,
-              },
-            });
+            // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
+            if (err?.structured) return jsonError(err.structured);
+            return jsonError(err);
           }
-          if (out && typeof out === 'object' && 'error' in out) {
-            return jsonError(out);
-          }
-          if (out && typeof out === 'object' && out.relay) {
-            try {
-              const result = await client.callPluginRelay(out.relay);
-              return jsonResult(result);
-            } catch (err: any) {
-              // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
-              if (err?.structured) return jsonError(err.structured);
-              return jsonError(err);
-            }
-          }
-          // Plugin returned a plain value (no relay post needed).
-          return jsonResult(out);
-        },
-      );
+        }
+        // Plugin returned a plain value (no relay post needed).
+        return jsonResult(out);
+      });
     } else {
       // Game / lobby-phase tool: dispatch through the unified endpoint.
-      server.tool(
-        toolName,
-        tool.description,
-        shape,
-        async (args: any) => {
-          const result: any = await client.callToolRaw(toolName, args ?? {});
-          if (result.ok) return jsonResult(result.data);
-          // Structured error — surface it so the agent can self-correct.
-          return jsonError({ error: result.error });
-        },
-      );
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      server.tool(toolName, tool.description, shape, async (args: any) => {
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        const result: any = await client.callToolRaw(toolName, args ?? {});
+        if (result.ok) return jsonResult(result.data);
+        // Structured error — surface it so the agent can self-correct.
+        return jsonError({ error: result.error });
+      });
     }
   }
 }
@@ -454,9 +487,11 @@ function jsonResult(data: unknown) {
   };
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function jsonError(err: any) {
   // Accept either a thrown Error (from ApiClient) or a structured
   // `{error: {code, message, ...}}` payload from the dispatcher.
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   let payload: any;
   if (err && typeof err === 'object' && 'error' in err) {
     payload = err;

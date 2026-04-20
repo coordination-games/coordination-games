@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { ClassSelectionPhase } from '../phases/class-selection.js';
 import type { AgentInfo } from '@coordination-games/engine';
+import { describe, expect, it } from 'vitest';
+import { ClassSelectionPhase } from '../phases/class-selection.js';
 
 function makePlayers(...names: string[]): AgentInfo[] {
   return names.map((n) => ({ id: n.toLowerCase(), handle: n }));
@@ -36,7 +36,7 @@ describe('ClassSelectionPhase', () => {
     );
 
     expect(result.error).toBeUndefined();
-    expect(result.state.classPicks['alice']).toBe('mage');
+    expect(result.state.classPicks.alice).toBe('mage');
   });
 
   it('invalid class returns error', () => {
@@ -51,7 +51,7 @@ describe('ClassSelectionPhase', () => {
     );
 
     expect(result.error).toBeDefined();
-    expect(result.error!.message).toContain('Invalid class');
+    expect(result.error?.message).toContain('Invalid class');
   });
 
   it('completes when all players have picked', () => {
@@ -72,9 +72,9 @@ describe('ClassSelectionPhase', () => {
     );
 
     expect(result.completed).toBeDefined();
-    expect(result.completed!.groups).toHaveLength(1);
-    expect(result.completed!.groups[0]).toHaveLength(2);
-    expect(result.completed!.metadata.classPicks).toEqual({
+    expect(result.completed?.groups).toHaveLength(1);
+    expect(result.completed?.groups[0]).toHaveLength(2);
+    expect(result.completed?.metadata.classPicks).toEqual({
       alice: 'rogue',
       bob: 'knight',
     });
@@ -88,13 +88,13 @@ describe('ClassSelectionPhase', () => {
     const result = phase.handleTimeout(state, players);
 
     expect(result).not.toBeNull();
-    expect(result!.metadata.classPicks).toEqual({
+    expect(result?.metadata.classPicks).toEqual({
       alice: 'rogue',
       bob: 'knight',
       carol: 'mage',
     });
-    expect(result!.groups).toHaveLength(1);
-    expect(result!.groups[0]).toHaveLength(3);
+    expect(result?.groups).toHaveLength(1);
+    expect(result?.groups[0]).toHaveLength(3);
   });
 
   it('handleTimeout preserves existing picks and fills the rest', () => {
@@ -112,10 +112,10 @@ describe('ClassSelectionPhase', () => {
     const result = phase.handleTimeout(state, players);
 
     expect(result).not.toBeNull();
-    expect(result!.metadata.classPicks['alice']).toBe('mage');
+    expect(result?.metadata.classPicks.alice).toBe('mage');
     // Bob and Carol get auto-assigned
-    expect(result!.metadata.classPicks['bob']).toBe('rogue');
-    expect(result!.metadata.classPicks['carol']).toBe('knight');
+    expect(result?.metadata.classPicks.bob).toBe('rogue');
+    expect(result?.metadata.classPicks.carol).toBe('knight');
   });
 
   it('getView shows picks and valid classes', () => {
@@ -129,6 +129,7 @@ describe('ClassSelectionPhase', () => {
       players,
     ).state;
 
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const view = phase.getView(state) as any;
 
     expect(view.validClasses).toEqual(VALID_CLASSES);
@@ -148,6 +149,6 @@ describe('ClassSelectionPhase', () => {
     );
 
     expect(result.error).toBeDefined();
-    expect(result.error!.message).toContain('Unknown action type');
+    expect(result.error?.message).toContain('Unknown action type');
   });
 });

@@ -1,18 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type {
-  CoordinationGame,
-  ToolPlugin,
-  PluginMode,
-  PluginContext,
   AgentInfo,
-  ToolDefinition,
-  LobbyPhase,
-  PhaseActionResult,
-  PhaseResult,
+  CoordinationGame,
   GameLobbyConfig,
-  MatchmakingConfig,
+  LobbyPhase,
   Message,
-  RelayClient,
+  PluginContext,
+  PluginMode,
+  ToolPlugin,
 } from '../types.js';
 
 describe('Type interfaces compile correctly', () => {
@@ -22,15 +17,18 @@ describe('Type interfaces compile correctly', () => {
       version: '0.1.0',
       modes: [{ name: 'default', consumes: [], provides: ['test-data'] }],
       purity: 'pure',
-      tools: [{
-        name: 'test_tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
-      }],
-      handleData(mode: string, inputs: Map<string, any>) {
+      tools: [
+        {
+          name: 'test_tool',
+          description: 'A test tool',
+          inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
+        },
+      ],
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      handleData(_mode: string, _inputs: Map<string, any>) {
         return new Map([['test-data', { value: 42 }]]);
       },
-      handleCall(tool: string, args: unknown, caller: AgentInfo) {
+      handleCall(_tool: string, _args: unknown, _caller: AgentInfo) {
         return { ok: true };
       },
     };
@@ -47,9 +45,10 @@ describe('Type interfaces compile correctly', () => {
       purity: 'stateful',
       init(ctx: PluginContext) {
         // access ctx fields
+        // biome-ignore lint/correctness/noUnusedVariables: unused; remove in cleanup followup — TODO(2.3-followup)
         const { gameType, gameId, turnCursor, relay, playerId } = ctx;
       },
-      handleData(mode, inputs) {
+      handleData(_mode, _inputs) {
         return new Map();
       },
     };
@@ -61,16 +60,19 @@ describe('Type interfaces compile correctly', () => {
       id: 'test-phase',
       name: 'Test Phase',
       timeout: 30,
-      init(players: AgentInfo[]) {
+      init(_players: AgentInfo[]) {
         return { ready: false };
       },
-      handleAction(state, action, players) {
-        return { state: { ready: true }, completed: { groups: [players], metadata: { completed: true } } };
+      handleAction(_state, _action, players) {
+        return {
+          state: { ready: true },
+          completed: { groups: [players], metadata: { completed: true } },
+        };
       },
-      handleJoin(state, player, allPlayers) {
+      handleJoin(state, _player, _allPlayers) {
         return { state };
       },
-      handleTimeout(state, players) {
+      handleTimeout(_state, players) {
         return { groups: [players], metadata: {} };
       },
       getView(state) {
@@ -119,6 +121,7 @@ describe('Type interfaces compile correctly', () => {
 
   it('CoordinationGame with lobby config', () => {
     // Type-check that CoordinationGame accepts lobby, requiredPlugins, recommendedPlugins
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const game: Partial<CoordinationGame<any, any, any, any>> = {
       gameType: 'test-game',
       version: '0.1.0',
@@ -144,7 +147,11 @@ describe('Type interfaces compile correctly', () => {
     const producer: PluginMode = { name: 'produce', consumes: [], provides: ['messaging'] };
     const mapper: PluginMode = { name: 'map', consumes: ['messaging'], provides: ['agents'] };
     const enricher: PluginMode = { name: 'enrich', consumes: ['agents'], provides: ['agent-tags'] };
-    const filter: PluginMode = { name: 'filter', consumes: ['messaging', 'agent-tags'], provides: ['messaging'] };
+    const filter: PluginMode = {
+      name: 'filter',
+      consumes: ['messaging', 'agent-tags'],
+      provides: ['messaging'],
+    };
 
     expect(producer.consumes).toHaveLength(0);
     expect(mapper.consumes).toContain('messaging');

@@ -10,7 +10,7 @@
  * `handleCreate` handler in `GameRoomDO.ts` (~L205).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { resolveGameId } from '../do/resolve-gameid.js';
 
 describe('resolveGameId — settlement gameId binding', () => {

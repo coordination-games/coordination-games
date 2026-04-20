@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createEloPlugin, EloTracker } from '../index.js';
 import type { AgentInfo } from '@coordination-games/engine';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createEloPlugin, EloTracker } from '../index.js';
 
 describe('EloPlugin', () => {
   let plugin: ReturnType<typeof createEloPlugin>;
@@ -17,8 +17,8 @@ describe('EloPlugin', () => {
     expect(plugin.id).toBe('elo');
     expect(plugin.purity).toBe('stateful');
     expect(plugin.tools).toHaveLength(2);
-    expect(plugin.tools![0].name).toBe('get_leaderboard');
-    expect(plugin.tools![1].name).toBe('get_my_stats');
+    expect(plugin.tools?.[0].name).toBe('get_leaderboard');
+    expect(plugin.tools?.[1].name).toBe('get_my_stats');
   });
 
   it('get_leaderboard returns players', () => {
@@ -31,7 +31,8 @@ describe('EloPlugin', () => {
     ]);
 
     const caller: AgentInfo = { id: p1.id, handle: 'alice' };
-    const result = plugin.handleCall!('get_leaderboard', { limit: 10 }, caller) as any;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    const result = plugin.handleCall?.('get_leaderboard', { limit: 10 }, caller) as any;
     expect(result.leaderboard).toHaveLength(2);
     expect(result.leaderboard[0].elo).toBeGreaterThan(result.leaderboard[1].elo);
   });
@@ -46,7 +47,8 @@ describe('EloPlugin', () => {
     ]);
 
     const caller: AgentInfo = { id: p1.id, handle: 'alice' };
-    const result = plugin.handleCall!('get_my_stats', {}, caller) as any;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    const result = plugin.handleCall?.('get_my_stats', {}, caller) as any;
     expect(result.player.handle).toBe('alice');
     expect(result.player.elo).toBeGreaterThan(1200);
     expect(result.recentMatches).toHaveLength(1);
@@ -54,7 +56,8 @@ describe('EloPlugin', () => {
 
   it('get_my_stats returns error for unknown player', () => {
     const caller: AgentInfo = { id: 'unknown', handle: 'nobody' };
-    const result = plugin.handleCall!('get_my_stats', {}, caller) as any;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    const result = plugin.handleCall?.('get_my_stats', {}, caller) as any;
     expect(result.error).toBe('Player not found');
   });
 
@@ -66,7 +69,8 @@ describe('EloPlugin', () => {
 
   it('rejects unknown tool', () => {
     const caller: AgentInfo = { id: '1', handle: 'test' };
-    const result = plugin.handleCall!('unknown', {}, caller) as any;
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    const result = plugin.handleCall?.('unknown', {}, caller) as any;
     expect(result.error).toContain('Unknown tool');
   });
 });
@@ -107,7 +111,9 @@ describe('EloTracker', () => {
       { id: p2.id, team: 'B', unitClass: 'knight' },
     ]);
 
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const alice = tracker.getPlayer(p1.id)!;
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const bob = tracker.getPlayer(p2.id)!;
     expect(alice.elo).toBeGreaterThan(1200);
     expect(bob.elo).toBeLessThan(1200);

@@ -1,6 +1,7 @@
 /** Props passed to a game's spectator view component. */
 export interface SpectatorViewProps {
   /** Raw game state from the server (game-specific shape). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   gameState: any;
   /** Chat messages from the relay. */
   chatMessages: { from: string; message: string; timestamp: number }[];
@@ -19,17 +20,19 @@ export interface SpectatorViewProps {
   /** Callback to change perspective. */
   onPerspectiveChange?: (perspective: 'all' | 'A' | 'B') => void;
   /** All replay snapshots (only set in replay mode). Each snapshot is self-contained. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   replaySnapshots?: any[];
   /** Previous snapshot for diffing (movement, kills, state changes). Null on first snapshot. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   prevGameState?: any;
   /** Whether to animate the transition from prevGameState to gameState. False during scrubbing. */
   animate?: boolean;
 }
 
-
 /** Props for a compact game card shown in lobby/game lists. */
 export interface GameCardProps {
   gameId: string;
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   gameState: any;
   handles: Record<string, string>;
   gameType: string;

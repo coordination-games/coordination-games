@@ -166,10 +166,10 @@ export interface OathPairingResult {
 }
 
 export type OathPairingOutcomeType =
-  | 'cooperation'   // both kept oath
-  | 'betrayal_1'    // player1 broke oath
-  | 'betrayal_2'    // player2 broke oath
-  | 'standoff';     // both broke oath
+  | 'cooperation' // both kept oath
+  | 'betrayal_1' // player1 broke oath
+  | 'betrayal_2' // player2 broke oath
+  | 'standoff'; // both broke oath
 
 // ---------------------------------------------------------------------------
 // Game state

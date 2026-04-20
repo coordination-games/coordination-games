@@ -6,35 +6,34 @@
  */
 
 import type {
-  CoordinationGame,
   ActionResult,
+  CoordinationGame,
   GameLobbyConfig,
   GameSetup,
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
 import { registerGame } from '@coordination-games/engine';
-
+import { getUnitVision } from './fog.js';
 import {
-  CtlGameState,
-  GameUnit,
-  FlagState,
-  GamePhase,
-  createGameState,
-  validateMoveForPlayer,
-  submitMove as gameSubmitMove,
-  resolveTurn,
-  isGameOver,
   allMovesSubmitted,
+  type CtlGameState,
+  createGameState,
+  type FlagState,
+  type GamePhase,
+  type GameUnit,
+  submitMove as gameSubmitMove,
   getStateForAgent,
   getTurnLimitForRadius,
+  isGameOver,
+  resolveTurn,
+  validateMoveForPlayer,
 } from './game.js';
-import { generateMap, getMapRadiusForTeamSize, MapConfig, TileType } from './map.js';
-import { Hex, Direction } from './hex.js';
-import { UnitClass } from './movement.js';
-import { getUnitVision } from './fog.js';
-import { TeamFormationPhase } from './phases/team-formation.js';
+import type { Direction, Hex } from './hex.js';
+import { generateMap, getMapRadiusForTeamSize, type MapConfig, type TileType } from './map.js';
+import type { UnitClass } from './movement.js';
 import { ClassSelectionPhase } from './phases/class-selection.js';
+import { TeamFormationPhase } from './phases/team-formation.js';
 
 // ---------------------------------------------------------------------------
 // CtL-specific types
@@ -67,13 +66,16 @@ export interface CtlOutcome {
   winner: 'A' | 'B' | null;
   score: { A: number; B: number };
   turnCount: number;
-  playerStats: Map<string, {
-    team: 'A' | 'B';
-    kills: number;
-    deaths: number;
-    flagCarries: number;
-    flagCaptures: number;
-  }>;
+  playerStats: Map<
+    string,
+    {
+      team: 'A' | 'B';
+      kills: number;
+      deaths: number;
+      flagCarries: number;
+      flagCaptures: number;
+    }
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +141,7 @@ export interface SpectatorState {
   visibleB: string[];
   visibleByUnit: Record<string, string[]>;
   handles: Record<string, string>;
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   relayMessages?: any[];
   /** Post-move positions for units killed this turn (for replay animation) */
   deathPositions?: Record<string, { q: number; r: number }>;
@@ -150,10 +153,14 @@ export interface SpectatorState {
 
 function buildCtlSpectatorView(
   state: CtlGameState,
-  prevState: CtlGameState | null,
+  _prevState: CtlGameState | null,
   context: SpectatorContext,
 ): SpectatorState {
-  const map = { tiles: new Map<string, string>(state.mapTiles), radius: state.mapRadius, bases: state.mapBases };
+  const map = {
+    tiles: new Map<string, string>(state.mapTiles),
+    radius: state.mapRadius,
+    bases: state.mapBases,
+  };
   const { units, flags, turn, phase, config, score } = state;
 
   // Build full tile array (no fog -- spectators see everything)
@@ -183,15 +190,23 @@ function buildCtlSpectatorView(
     const unitsHere = unitsByHex.get(key);
     if (unitsHere && unitsHere.length > 0) {
       const primary = unitsHere[0];
+      // @ts-expect-error TS2375: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; carryingFlag: true |  — TODO(2.3-followup)
       tile.unit = {
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         id: primary.id,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         team: primary.team,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         unitClass: primary.unitClass,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         carryingFlag: primary.carryingFlag || undefined,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         alive: primary.alive,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         respawnTurn: primary.respawnTurn,
       };
       if (unitsHere.length > 1) {
+        // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; carryingFlag: true |  — TODO(2.3-followup)
         tile.units = unitsHere.map((u) => ({
           id: u.id,
           team: u.team,
@@ -212,7 +227,7 @@ function buildCtlSpectatorView(
   }
 
   // All kills up to this point (cumulative — snapshot is self-contained)
-  const kills = (state.allKills ?? []).map(k => ({
+  const kills = (state.allKills ?? []).map((k) => ({
     killerId: k.killerId,
     victimId: k.victimId,
     reason: k.reason,
@@ -257,17 +272,40 @@ function buildCtlSpectatorView(
   // Extract chat from relay messages
   const relayMessages = context.relayMessages ?? [];
   const chatA = relayMessages
-    .filter((m: any) => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'A'))
-    .map((m: any) => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn }));
+    .filter(
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      (m: any) =>
+        m.type === 'messaging' &&
+        m.scope === 'team' &&
+        units.some((u) => u.id === m.sender && u.team === 'A'),
+    )
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    .map((m: any) => ({
+      from: m.sender,
+      message: (m.data as { body?: string })?.body ?? '',
+      turn: m.turn,
+    }));
   const chatB = relayMessages
-    .filter((m: any) => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'B'))
-    .map((m: any) => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn }));
+    .filter(
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      (m: any) =>
+        m.type === 'messaging' &&
+        m.scope === 'team' &&
+        units.some((u) => u.id === m.sender && u.team === 'B'),
+    )
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    .map((m: any) => ({
+      from: m.sender,
+      message: (m.data as { body?: string })?.body ?? '',
+      turn: m.turn,
+    }));
 
   return {
     turn,
     maxTurns: config.turnLimit,
     phase,
     tiles,
+    // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; position: { q: number — TODO(2.3-followup)
     units: units.map((u) => ({
       id: u.id,
       team: u.team,
@@ -437,7 +475,8 @@ export const CTL_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
 const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'move',
-    description: 'Submit your unit\'s move for the current turn. `path` is an ordered list of hex directions (N, NE, SE, S, SW, NW) up to your class\'s speed. Pass an empty path to stay put. All moves resolve simultaneously when every alive unit has submitted (or the turn timer expires).',
+    description:
+      "Submit your unit's move for the current turn. `path` is an ordered list of hex directions (N, NE, SE, S, SW, NW) up to your class's speed. Pass an empty path to stay put. All moves resolve simultaneously when every alive unit has submitted (or the turn timer expires).",
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -446,7 +485,8 @@ const GAME_TOOLS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string', enum: ['N', 'NE', 'SE', 'S', 'SW', 'NW'] },
           minItems: 0,
-          description: 'Ordered hex directions. Length capped by your class speed (rogue 3, knight 2, mage 1). Empty array means stay put this turn.',
+          description:
+            'Ordered hex directions. Length capped by your class speed (rogue 3, knight 2, mage 1). Empty array means stay put this turn.',
         },
       },
       required: ['path'],
@@ -469,6 +509,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   version: '0.2.0',
 
   createInitialState(config: CtlConfig): CtlGameState {
+    // @ts-expect-error TS2375: Type '{ seed: string; radius: number | undefined; wallDensity: number | undefine — TODO(2.3-followup)
     const mapConfig: MapConfig = {
       seed: config.mapSeed,
       radius: config.mapRadius,
@@ -483,6 +524,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
         team: p.team,
         unitClass: p.unitClass,
       })),
+      // @ts-expect-error TS2379: Argument of type '{ teamSize: number; turnLimit: number | undefined; turnTimerSe — TODO(2.3-followup)
       {
         teamSize: config.teamSize,
         turnLimit: config.turnLimit,
@@ -505,13 +547,20 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return false;
   },
 
-  applyAction(state: CtlGameState, playerId: string | null, action: CtlAction): ActionResult<CtlGameState, CtlAction> {
+  applyAction(
+    state: CtlGameState,
+    playerId: string | null,
+    action: CtlAction,
+  ): ActionResult<CtlGameState, CtlAction> {
     // game_start: set phase to in_progress, return deadline for first turn
     if (action.type === 'game_start') {
       const started: CtlGameState = { ...state, phase: 'in_progress' as const };
       return {
         state: started,
-        deadline: { seconds: state.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+        deadline: {
+          seconds: state.config.turnTimerSeconds ?? 30,
+          action: { type: 'turn_timeout' },
+        },
       };
     }
 
@@ -533,7 +582,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       }
       return {
         state: resolved,
-        deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+        deadline: {
+          seconds: resolved.config.turnTimerSeconds ?? 30,
+          action: { type: 'turn_timeout' },
+        },
         progressIncrement: true,
       };
     }
@@ -543,7 +595,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       const result = gameSubmitMove(state, playerId, action.path);
       if (!result.success) return { state }; // invalid move, no state change
 
-      let current = result.state;
+      const current = result.state;
 
       // Check if all alive units have submitted
       if (allMovesSubmitted(current)) {
@@ -553,7 +605,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
         }
         return {
           state: resolved,
-          deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
+          deadline: {
+            seconds: resolved.config.turnTimerSeconds ?? 30,
+            action: { type: 'turn_timeout' },
+          },
           progressIncrement: true,
         };
       }
@@ -574,7 +629,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return getStateForAgent(state, playerId, submitted);
   },
 
-  buildSpectatorView(state: CtlGameState, prevState: CtlGameState | null, context: SpectatorContext): SpectatorState {
+  buildSpectatorView(
+    state: CtlGameState,
+    prevState: CtlGameState | null,
+    context: SpectatorContext,
+  ): SpectatorState {
     return buildCtlSpectatorView(state, prevState, context);
   },
 
@@ -583,13 +642,16 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   },
 
   getOutcome(state: CtlGameState): CtlOutcome {
-    const playerStats = new Map<string, {
-      team: 'A' | 'B';
-      kills: number;
-      deaths: number;
-      flagCarries: number;
-      flagCaptures: number;
-    }>();
+    const playerStats = new Map<
+      string,
+      {
+        team: 'A' | 'B';
+        kills: number;
+        deaths: number;
+        flagCarries: number;
+        flagCaptures: number;
+      }
+    >();
 
     for (const unit of state.units) {
       playerStats.set(unit.id, {
@@ -625,6 +687,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return status;
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   getSummary(state: CtlGameState): Record<string, any> {
     return {
       turn: state.turn,
@@ -643,6 +706,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
    * this on every progress tick to update /api/games. Uses snapshot-only
    * fields so `winner`, `turn`, etc. never leak ahead of the delayed view.
    */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
     const s = snapshot as SpectatorState;
     return {
@@ -651,8 +715,8 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       phase: s.phase,
       winner: s.winner,
       teams: {
-        A: s.units.filter(u => u.team === 'A').map(u => u.id),
-        B: s.units.filter(u => u.team === 'B').map(u => u.id),
+        A: s.units.filter((u) => u.team === 'A').map((u) => u.id),
+        B: s.units.filter((u) => u.team === 'B').map((u) => u.id),
       },
     };
   },
@@ -664,9 +728,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   getPlayersNeedingAction(state: CtlGameState): string[] {
     if (state.phase !== 'in_progress') return [];
     const submitted = new Set(new Map(state.moveSubmissions).keys());
-    return state.units
-      .filter(u => u.alive && !submitted.has(u.id))
-      .map(u => u.id);
+    return state.units.filter((u) => u.alive && !submitted.has(u.id)).map((u) => u.id);
   },
 
   entryCost: 10,
@@ -701,7 +763,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
 
     for (const id of playerIds) {
       const stats = outcome.playerStats.get(id);
-      if (!stats) { payouts.set(id, 0); continue; }
+      if (!stats) {
+        payouts.set(id, 0);
+        continue;
+      }
       payouts.set(id, stats.team === outcome.winner ? entryCost : -entryCost);
     }
 
@@ -711,6 +776,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   createConfig(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     options?: Record<string, any>,
   ): GameSetup<CtlConfig> {
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
@@ -721,11 +787,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     const teams = options?.teams as Array<{ id: string; members: string[] }> | undefined;
     const classPicks = options?.classPicks as Record<string, string> | undefined;
 
-    const enrichedPlayers = players.map(p => {
+    const enrichedPlayers = players.map((p) => {
       let team = p.team;
       let role = p.role;
       if (!team && teams) {
-        const found = teams.find(t => t.members.includes(p.id));
+        const found = teams.find((t) => t.members.includes(p.id));
         if (found) team = found.id;
       }
       if (!role && classPicks) {
@@ -734,22 +800,26 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       return { ...p, team, role };
     });
 
-    const hasTeams = enrichedPlayers.some(p => p.team);
+    const hasTeams = enrichedPlayers.some((p) => p.team);
     let ctlPlayers: CtlPlayerConfig[];
 
     if (hasTeams) {
       // Map lobby team IDs (e.g. 'team_1', 'team_2') to CtL teams ('A', 'B')
-      const uniqueTeamIds = [...new Set(enrichedPlayers.map(p => p.team).filter(Boolean))];
+      const uniqueTeamIds = [...new Set(enrichedPlayers.map((p) => p.team).filter(Boolean))];
       const teamIdMap: Record<string, 'A' | 'B'> = {};
-      uniqueTeamIds.forEach((id, i) => { teamIdMap[id!] = i === 0 ? 'A' : 'B'; });
+      uniqueTeamIds.forEach((id, i) => {
+        // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
+        teamIdMap[id!] = i === 0 ? 'A' : 'B';
+      });
 
-      ctlPlayers = enrichedPlayers.map(p => ({
+      ctlPlayers = enrichedPlayers.map((p) => ({
         id: p.id,
         team: (p.team ? teamIdMap[p.team] : 'A') as 'A' | 'B',
         unitClass: (p.role as UnitClass) ?? classes[0],
       }));
     } else {
       // Auto-assign: alternate A/B, cycle through classes
+      // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass | undefined; }[]' is n — TODO(2.3-followup)
       ctlPlayers = enrichedPlayers.map((p, i) => ({
         id: p.id,
         team: (i % 2 === 0 ? 'A' : 'B') as 'A' | 'B',
@@ -757,10 +827,12 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       }));
     }
 
-    const teamSize = options?.teamSize ?? Math.max(
-      ctlPlayers.filter(p => p.team === 'A').length,
-      ctlPlayers.filter(p => p.team === 'B').length,
-    );
+    const teamSize =
+      options?.teamSize ??
+      Math.max(
+        ctlPlayers.filter((p) => p.team === 'A').length,
+        ctlPlayers.filter((p) => p.team === 'B').length,
+      );
     const radius = getMapRadiusForTeamSize(teamSize);
     const turnLimit = getTurnLimitForRadius(radius);
 
@@ -775,7 +847,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
 
     return {
       config,
-      players: ctlPlayers.map(p => ({ id: p.id, team: p.team })),
+      players: ctlPlayers.map((p) => ({ id: p.id, team: p.team })),
     };
   },
 };

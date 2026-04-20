@@ -11,9 +11,9 @@
  *   3. Combine game state + pipeline output for the agent
  */
 
-import { PluginLoader, PluginPipeline } from '@coordination-games/engine';
-import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type { ToolPlugin } from '@coordination-games/engine';
+import { PluginLoader, type PluginPipeline } from '@coordination-games/engine';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 
 // Default plugins — always available
 const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];
@@ -41,16 +41,14 @@ export function initPipeline(additionalPlugins: ToolPlugin[] = []): void {
  * Run the pipeline over relay messages.
  * Returns the pipeline output (capability type → processed data).
  */
-export function runPipeline(
-  relayMessages: unknown[],
-): Map<string, any> {
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+export function runPipeline(relayMessages: unknown[]): Map<string, any> {
   if (!pipeline) {
     initPipeline();
   }
 
-  return pipeline!.execute(
-    new Map([['relay-messages', relayMessages]]),
-  );
+  // @ts-expect-error TS2322: Type 'Map<string, any> | undefined' is not assignable to type 'Map<string, any>' — TODO(2.3-followup)
+  return pipeline?.execute(new Map([['relay-messages', relayMessages]]));
 }
 
 /**
@@ -58,13 +56,19 @@ export function runPipeline(
  * Runs the pipeline over relay messages and combines with game state.
  */
 export function processState(serverResponse: {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   gameState?: any;
   relayMessages?: unknown[];
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   [key: string]: any;
 }): {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   gameState: any;
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   messages: any[];
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   pipelineOutput: Map<string, any>;
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   raw: any;
 } {
   const relayMessages = serverResponse.relayMessages ?? [];

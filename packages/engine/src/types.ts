@@ -22,6 +22,7 @@ export interface SpectatorContext {
   /** Maps agent IDs to display names. */
   handles: Record<string, string>;
   /** Relay messages up to the current progress point (for delayed spectator views). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   relayMessages: any[];
 }
 
@@ -38,7 +39,7 @@ export interface SpectatorContext {
 export interface ActionResult<TState, TAction> {
   state: TState;
   deadline?: { seconds: number; action: TAction } | null;
-  progressIncrement?: boolean;  // true = this action advanced the game clock (turn/round resolved)
+  progressIncrement?: boolean; // true = this action advanced the game clock (turn/round resolved)
 }
 
 /**
@@ -70,7 +71,11 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   validateAction(state: TState, playerId: string | null, action: TAction): boolean;
 
   /** THE CORE — apply action, return new state + optional deadline. Must be deterministic. */
-  applyAction(state: TState, playerId: string | null, action: TAction): ActionResult<TState, TAction>;
+  applyAction(
+    state: TState,
+    playerId: string | null,
+    action: TAction,
+  ): ActionResult<TState, TAction>;
 
   /** What should this player see? null = spectator view. Game controls all visibility. */
   getVisibleState(state: TState, playerId: string | null): unknown;
@@ -117,6 +122,7 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   getPlayerStatus?(state: TState, playerId: string): string;
 
   /** Summary for game listing (lobby browser). */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   getSummary?(state: TState): Record<string, any>;
 
   /**
@@ -132,6 +138,7 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    * MUST implement this. Games whose `getSummary` reads only fields that
    * are named identically on their SpectatorView can omit it.
    */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   getSummaryFromSpectator?(snapshot: unknown): Record<string, any>;
 
   /** IDs of players that need to submit an action in the current state. */
@@ -163,6 +170,7 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   createConfig?(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     options?: Record<string, any>,
   ): GameSetup<TConfig>;
 }
@@ -187,10 +195,10 @@ export interface GameSetup<TConfig> {
 export interface GameResult {
   gameId: string;
   gameType: string;
-  players: string[];    // Player IDs (agentIds)
-  outcome: unknown;     // Game-specific outcome data
-  movesRoot: string;    // Merkle root of all actions
-  configHash: string;   // Hash of the game config
+  players: string[]; // Player IDs (agentIds)
+  outcome: unknown; // Game-specific outcome data
+  movesRoot: string; // Merkle root of all actions
+  configHash: string; // Hash of the game config
   turnCount: number;
   timestamp: number;
 }
@@ -237,6 +245,7 @@ export interface FrameworkConfig {
   /** Port to listen on */
   port: number;
   /** Registered game plugins */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   games: Map<string, CoordinationGame<any, any, any, any>>;
   /** Spectator delay in turns */
   spectatorDelay?: number;
@@ -268,9 +277,9 @@ export interface SessionToken {
 export interface PlayerBalance {
   playerId: string;
   onChainBalance: number;
-  committed: number;       // Locked in active games
-  pendingBurns: number;    // Awaiting burn execution
-  available: number;       // onChainBalance - committed - pendingBurns
+  committed: number; // Locked in active games
+  pendingBurns: number; // Awaiting burn execution
+  available: number; // onChainBalance - committed - pendingBurns
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +307,7 @@ export interface ToolPlugin {
   init?(ctx: PluginContext): void;
 
   /** Process data through the plugin pipeline */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
 
   /** Handle a direct tool call from an agent */
@@ -342,6 +352,7 @@ export interface AgentInfo {
 export interface ToolDefinition {
   name: string;
   description: string;
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   inputSchema: Record<string, any>;
   /**
    * If true, this tool is also exposed as an MCP tool (not just CLI).
@@ -357,6 +368,7 @@ export interface ToolDefinition {
 // ---------------------------------------------------------------------------
 
 /** A single phase in the lobby pipeline (request-driven). */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export interface LobbyPhase<TPhaseState = any> {
   readonly id: string;
   readonly name: string;
@@ -375,6 +387,7 @@ export interface LobbyPhase<TPhaseState = any> {
   readonly acceptsJoins?: boolean;
 
   /** Create initial state for this phase. */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   init(players: AgentInfo[], config: Record<string, any>): TPhaseState;
 
   /**
@@ -386,6 +399,7 @@ export interface LobbyPhase<TPhaseState = any> {
    */
   handleAction(
     state: TPhaseState,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     action: { type: string; playerId: string; payload?: any },
     players: AgentInfo[],
   ): PhaseActionResult<TPhaseState>;
@@ -420,6 +434,7 @@ export interface LobbyPhase<TPhaseState = any> {
 }
 
 /** Result of handling an action within a phase. */
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export interface PhaseActionResult<TPhaseState = any> {
   /** Updated phase state. */
   state: TPhaseState;
@@ -444,6 +459,7 @@ export interface PhaseResult {
    * E.g. TeamFormation: { teams: [{ id, members }] }
    * E.g. ClassSelection: { classPicks: { [playerId]: 'rogue' | 'knight' | 'mage' } }
    */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   metadata: Record<string, any>;
   /** Players removed during this phase. */
   removed?: AgentInfo[];
@@ -485,5 +501,6 @@ export interface Message {
   /** Audience scope */
   scope: 'team' | 'all';
   /** Extensible tag bag — plugins enrich this */
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   tags: Record<string, any>;
 }

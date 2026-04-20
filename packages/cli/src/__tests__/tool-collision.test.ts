@@ -16,17 +16,9 @@
  * call, so the stub never needs real MCP behaviour.
  */
 
-import { describe, it, expect } from 'vitest';
-import {
-  ClientToolCollisionError,
-  registerGameTools,
-  STATIC_CLI_COMMANDS,
-} from '../mcp-tools.js';
-import type {
-  CoordinationGame,
-  ToolDefinition,
-  ToolPlugin,
-} from '@coordination-games/engine';
+import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
+import { describe, expect, it } from 'vitest';
+import { ClientToolCollisionError, registerGameTools, STATIC_CLI_COMMANDS } from '../mcp-tools.js';
 
 // ---------------------------------------------------------------------------
 // Stub McpServer — `registerGameTools` calls `server.tool(name, desc, shape, fn)`.
@@ -36,6 +28,7 @@ import type {
 function makeStubServer() {
   const registered: string[] = [];
   return {
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     tool: (name: string, _desc: string, _shape: any, _fn: any) => {
       registered.push(name);
     },
@@ -47,6 +40,7 @@ function makeStubServer() {
 // the static tool handlers, which run only when a tool is INVOKED. The
 // collision check and registration never call them. Cast as any to avoid
 // dragging the real class into tests.
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 const stubClient: any = {};
 
 // ---------------------------------------------------------------------------
@@ -65,6 +59,7 @@ function tool(name: string, extra: Partial<ToolDefinition> = {}): ToolDefinition
 function fakeGame(
   gameType: string,
   opts: { gameTools?: ToolDefinition[]; phaseTools?: Record<string, ToolDefinition[]> } = {},
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 ): CoordinationGame<any, any, any, any> {
   return {
     gameType,
@@ -81,23 +76,30 @@ function fakeGame(
             timeout: null,
             acceptsJoins: true,
             init: () => ({}),
+            // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
             handleAction: (state: any) => ({ state }),
             handleTimeout: () => null,
             getView: () => ({}),
           })),
           matchmaking: {
-            minPlayers: 2, maxPlayers: 4, teamSize: 1, numTeams: 2, queueTimeoutMs: 60000,
+            minPlayers: 2,
+            maxPlayers: 4,
+            teamSize: 1,
+            numTeams: 2,
+            queueTimeoutMs: 60000,
           },
         }
       : undefined,
     createInitialState: () => ({}),
     validateAction: () => false,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     applyAction: (state: any) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   } as unknown as CoordinationGame<any, any, any, any>;
 }
 
@@ -119,13 +121,12 @@ function fakePlugin(id: string, tools: ToolDefinition[]): ToolPlugin {
 
 describe('ClientToolCollisionError — client-side surface', () => {
   it('ToolPlugin named "state" collides with a static CLI command', () => {
-    const plugin = fakePlugin('@cg/plugin-stateful', [
-      tool('state', { mcpExpose: true }),
-    ]);
+    const plugin = fakePlugin('@cg/plugin-stateful', [tool('state', { mcpExpose: true })]);
     const server = makeStubServer();
 
     let thrown: unknown;
     try {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       registerGameTools(server as any, stubClient, { plugins: [plugin] });
     } catch (err) {
       thrown = err;
@@ -139,16 +140,16 @@ describe('ClientToolCollisionError — client-side surface', () => {
   });
 
   it('ToolPlugin tool name colliding with a gameTool throws', () => {
-    const plugin = fakePlugin('@cg/plugin-chatter', [
-      tool('chat', { mcpExpose: true }),
-    ]);
+    const plugin = fakePlugin('@cg/plugin-chatter', [tool('chat', { mcpExpose: true })]);
     const game = fakeGame('fake-game-with-chat', {
       gameTools: [tool('chat')],
     });
     const server = makeStubServer();
 
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     let thrown: any;
     try {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       registerGameTools(server as any, stubClient, { plugins: [plugin], games: [game] });
     } catch (err) {
       thrown = err;
@@ -170,6 +171,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
     const server = makeStubServer();
 
     expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       registerGameTools(server as any, stubClient, { games: [game], plugins: [plugin] }),
     ).not.toThrow();
     // Both dynamic tools end up registered on the server, plus the fixed
@@ -181,14 +183,11 @@ describe('ClientToolCollisionError — client-side surface', () => {
   it('plugin tool with mcpExpose:false is ignored by the collision check', () => {
     // mcpExpose:false means the plugin tool is NOT surfaced as an MCP tool,
     // so it's NOT part of the client-side collision scope.
-    const plugin = fakePlugin('hidden-plugin', [
-      tool('state', { mcpExpose: false }),
-    ]);
+    const plugin = fakePlugin('hidden-plugin', [tool('state', { mcpExpose: false })]);
     const server = makeStubServer();
 
-    expect(() =>
-      registerGameTools(server as any, stubClient, { plugins: [plugin] }),
-    ).not.toThrow();
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    expect(() => registerGameTools(server as any, stubClient, { plugins: [plugin] })).not.toThrow();
   });
 
   it('collision between two lobby phases throws with both LobbyPhase declarers', () => {
@@ -200,8 +199,10 @@ describe('ClientToolCollisionError — client-side surface', () => {
     });
     const server = makeStubServer();
 
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     let thrown: any;
     try {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       registerGameTools(server as any, stubClient, { games: [game] });
     } catch (err) {
       thrown = err;
@@ -223,10 +224,14 @@ describe('ClientToolCollisionError — client-side surface', () => {
 
   it('re-exported ClientToolCollisionError message ends with resolution suggestions', () => {
     const plugin = fakePlugin('colliding', [tool('state', { mcpExpose: true })]);
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     let thrown: any;
     try {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       registerGameTools(makeStubServer() as any, stubClient, { plugins: [plugin] });
-    } catch (err) { thrown = err; }
+    } catch (err) {
+      thrown = err;
+    }
     expect(thrown?.message).toMatch(/Resolve by:/);
     expect(thrown?.message).toMatch(/renaming one of the conflicting tools/);
   });

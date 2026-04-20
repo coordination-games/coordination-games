@@ -1,18 +1,21 @@
-import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
-import { loadConfig, loadSession, saveSession } from "../config.js";
-import { GameClient } from "../game-client.js";
-import { ApiClient } from "../api-client.js";
-import { loadKey } from "../keys.js";
-import { BasicChatPlugin } from "@coordination-games/plugin-chat";
-import type { ToolDefinition } from "@coordination-games/engine";
+import fs from 'node:fs';
+import path from 'node:path';
+import type { ToolDefinition } from '@coordination-games/engine';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import type { Command } from 'commander';
+import { ApiClient } from '../api-client.js';
+import { loadConfig, loadSession, saveSession } from '../config.js';
+import { GameClient } from '../game-client.js';
+import { loadKey } from '../keys.js';
 
 /**
  * Resolve the player's registered name. Checks session cache first,
  * then fetches from the relay status endpoint and caches for next time.
  */
-async function resolveName(wallet: { address: string; privateKey: string }, serverUrl: string): Promise<string> {
+async function resolveName(
+  wallet: { address: string; privateKey: string },
+  serverUrl: string,
+): Promise<string> {
   const session = loadSession();
   if (session.handle) return session.handle;
 
@@ -37,15 +40,14 @@ async function createClient(): Promise<GameClient> {
   const config = loadConfig();
   const wallet = loadKey();
   if (!wallet) {
-    process.stderr.write(
-      `\n  No wallet found. Run 'coga init' to create one.\n\n`
-    );
+    process.stderr.write(`\n  No wallet found. Run 'coga init' to create one.\n\n`);
     process.exit(1);
   }
 
   const session = loadSession();
   const name = await resolveName(wallet, config.serverUrl);
 
+  // @ts-expect-error TS2379: Argument of type '{ privateKey: string; token: string | undefined; name: string; — TODO(2.3-followup)
   return new GameClient(config.serverUrl, {
     privateKey: wallet.privateKey,
     token: session.token,
@@ -78,6 +80,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 
   // Server-authoritative phase tools
   try {
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const state: any = await client.getState();
     const phaseTools = state?.currentPhase?.tools;
     if (Array.isArray(phaseTools)) {
@@ -104,6 +107,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 // k=v arg parsing driven by the tool's JSON inputSchema
 // ---------------------------------------------------------------------------
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function coerceByType(raw: string, propSchema: any): any {
   const type = propSchema?.type;
   if (type === 'array') {
@@ -126,9 +130,13 @@ function coerceByType(raw: string, propSchema: any): any {
 
 function parseKvArgs(
   kvs: string[],
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   inputSchema: Record<string, any> | undefined,
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 ): Record<string, any> {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const args: Record<string, any> = {};
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const props = (inputSchema?.properties ?? {}) as Record<string, any>;
 
   for (const kv of kvs) {
@@ -160,10 +168,12 @@ function parseKvArgs(
   return args;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function requiredFieldsError(tool: ToolDefinition, args: Record<string, any>): string | null {
   const required: string[] = (tool.inputSchema?.required as string[]) ?? [];
   const missing = required.filter((f) => !(f in args));
   if (missing.length === 0) return null;
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const props = (tool.inputSchema?.properties ?? {}) as Record<string, any>;
   const lines = missing.map((f) => {
     const desc = props[f]?.description ? ` — ${props[f].description}` : '';
@@ -177,6 +187,7 @@ function printToolHelp(tool: ToolDefinition): void {
   process.stdout.write(`\n  ${tool.name}\n`);
   process.stdout.write(`    ${tool.description}\n`);
   const schema = tool.inputSchema ?? {};
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const props = (schema.properties ?? {}) as Record<string, any>;
   const required = new Set<string>((schema.required as string[]) ?? []);
   const names = Object.keys(props);
@@ -203,8 +214,8 @@ function printToolHelp(tool: ToolDefinition): void {
 export function registerGameCommands(program: Command) {
   // ==================== lobbies ====================
   program
-    .command("lobbies")
-    .description("List available game lobbies")
+    .command('lobbies')
+    .description('List available game lobbies')
     .action(async () => {
       const client = await createClient();
 
@@ -218,15 +229,16 @@ export function registerGameCommands(program: Command) {
 
         process.stdout.write(`\n  Active Lobbies:\n`);
         for (const lobby of lobbies) {
-          const phase = lobby.phase ?? "forming";
+          const phase = lobby.phase ?? 'forming';
           process.stdout.write(
-            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`
+            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`,
           );
           if (lobby.gameId) {
             process.stdout.write(`    -> Game started: ${lobby.gameId}\n`);
           }
         }
         process.stdout.write(`\n`);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -235,10 +247,14 @@ export function registerGameCommands(program: Command) {
 
   // ==================== create-lobby ====================
   program
-    .command("create-lobby")
-    .description("Create a new game lobby")
-    .option("-s, --size <n>", "Team size (2-6) for CtL, player count (4-20) for OATHBREAKER", "2")
-    .option("-g, --game <name>", "Game type: capture-the-lobster or oathbreaker", "capture-the-lobster")
+    .command('create-lobby')
+    .description('Create a new game lobby')
+    .option('-s, --size <n>', 'Team size (2-6) for CtL, player count (4-20) for OATHBREAKER', '2')
+    .option(
+      '-g, --game <name>',
+      'Game type: capture-the-lobster or oathbreaker',
+      'capture-the-lobster',
+    )
     .action(async (opts) => {
       const client = await createClient();
       const gameType = opts.game;
@@ -267,6 +283,7 @@ export function registerGameCommands(program: Command) {
           session.currentLobbyId = lobbyId;
           saveSession(session);
         }
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -275,8 +292,8 @@ export function registerGameCommands(program: Command) {
 
   // ==================== join ====================
   program
-    .command("join <lobbyId>")
-    .description("Join a game lobby")
+    .command('join <lobbyId>')
+    .description('Join a game lobby')
     .action(async (lobbyId: string) => {
       const client = await createClient();
 
@@ -297,6 +314,7 @@ export function registerGameCommands(program: Command) {
         const session = loadSession();
         session.currentLobbyId = lobbyId;
         saveSession(session);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -305,8 +323,8 @@ export function registerGameCommands(program: Command) {
 
   // ==================== guide ====================
   program
-    .command("guide [game]")
-    .description("Dynamic playbook — game rules, your plugins, available actions")
+    .command('guide [game]')
+    .description('Dynamic playbook — game rules, your plugins, available actions')
     .action(async (game?: string) => {
       const client = await createClient();
 
@@ -318,8 +336,9 @@ export function registerGameCommands(program: Command) {
           process.exit(1);
         }
 
-        process.stdout.write(typeof result === "string" ? result : JSON.stringify(result, null, 2));
-        process.stdout.write("\n");
+        process.stdout.write(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+        process.stdout.write('\n');
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -328,8 +347,8 @@ export function registerGameCommands(program: Command) {
 
   // ==================== state ====================
   program
-    .command("state")
-    .description("Get current game/lobby state (processed through your plugin pipeline)")
+    .command('state')
+    .description('Get current game/lobby state (processed through your plugin pipeline)')
     .action(async () => {
       const client = await createClient();
 
@@ -348,7 +367,8 @@ export function registerGameCommands(program: Command) {
           saveSession(session);
         }
 
-        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -357,13 +377,13 @@ export function registerGameCommands(program: Command) {
 
   // ==================== wait ====================
   program
-    .command("wait")
-    .description("Wait for the next game update (long-poll)")
+    .command('wait')
+    .description('Wait for the next game update (long-poll)')
     .action(async () => {
       const client = await createClient();
 
       try {
-        process.stdout.write("  Waiting for update...\n");
+        process.stdout.write('  Waiting for update...\n');
         const result = await client.waitForUpdate();
 
         if (result.error) {
@@ -378,7 +398,8 @@ export function registerGameCommands(program: Command) {
           saveSession(session);
         }
 
-        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -387,14 +408,16 @@ export function registerGameCommands(program: Command) {
 
   // ==================== tools ====================
   program
-    .command("tools")
-    .description("List tools you can call right now (current phase + local plugin tools)")
+    .command('tools')
+    .description('List tools you can call right now (current phase + local plugin tools)')
     .action(async () => {
       const client = await createClient();
       try {
         const registry = await buildCliToolRegistry(client);
         if (registry.length === 0) {
-          process.stdout.write(`\n  No tools currently callable. Join or create a lobby first.\n\n`);
+          process.stdout.write(
+            `\n  No tools currently callable. Join or create a lobby first.\n\n`,
+          );
           return;
         }
         process.stdout.write(`\n  Available tools:\n`);
@@ -404,6 +427,7 @@ export function registerGameCommands(program: Command) {
         }
         process.stdout.write(`\n  Call with: coga tool <name> k=v [...]\n`);
         process.stdout.write(`  Help for one: coga tool <name> --help\n\n`);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -412,116 +436,135 @@ export function registerGameCommands(program: Command) {
 
   // ==================== tool ====================
   const toolCmd = program
-    .command("tool <name> [args...]")
+    .command('tool <name> [args...]')
     .description(
-      "Invoke a tool by name (game phase tool, lobby phase tool, or plugin tool). " +
-      "Args: k=v, k=v1,v2 (array), k=@file.json (load JSON). " +
-      "Or --json '{...}' for raw passthrough. Use `coga tool <name> --schema` for schema."
+      'Invoke a tool by name (game phase tool, lobby phase tool, or plugin tool). ' +
+        'Args: k=v, k=v1,v2 (array), k=@file.json (load JSON). ' +
+        "Or --json '{...}' for raw passthrough. Use `coga tool <name> --schema` for schema.",
     );
   // Disable the auto-generated --help on this subcommand so we can reserve
   // --schema for printing the tool's inputSchema. Top-level `coga --help` and
   // `coga help tool` still work.
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   (toolCmd as any).helpOption(false);
-  toolCmd.option("--json <payload>", "Pass raw JSON args (bypasses k=v parsing)");
-  toolCmd.option("--schema", "Print the tool's input schema and exit");
+  toolCmd.option('--json <payload>', 'Pass raw JSON args (bypasses k=v parsing)');
+  toolCmd.option('--schema', "Print the tool's input schema and exit");
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   toolCmd.action(async (name: string, rawArgs: string[], opts: any) => {
-      const client = await createClient();
-      let registry: DiscoveredTool[];
-      try {
-        registry = await buildCliToolRegistry(client);
-      } catch (err: any) {
-        process.stderr.write(`  Error building tool registry: ${err.message}\n`);
-        process.exit(1);
-        return;
-      }
+    const client = await createClient();
+    let registry: DiscoveredTool[];
+    try {
+      registry = await buildCliToolRegistry(client);
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    } catch (err: any) {
+      process.stderr.write(`  Error building tool registry: ${err.message}\n`);
+      process.exit(1);
+      return;
+    }
 
-      const found = registry.find((d) => d.tool.name === name);
+    const found = registry.find((d) => d.tool.name === name);
 
-      // --schema
-      if (opts?.schema) {
-        if (!found) {
-          process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
-          process.stderr.write(`  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`);
-          process.exit(1);
-          return;
-        }
-        printToolHelp(found.tool);
-        return;
-      }
-
+    // --schema
+    if (opts?.schema) {
       if (!found) {
         process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
-        process.stderr.write(`  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`);
+        process.stderr.write(
+          `  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`,
+        );
         process.exit(1);
         return;
       }
+      printToolHelp(found.tool);
+      return;
+    }
 
-      // Build args
-      let args: Record<string, any>;
-      if (opts?.json) {
-        try {
-          args = JSON.parse(opts.json);
-        } catch (err: any) {
-          process.stderr.write(`  Error: invalid --json payload: ${err.message}\n`);
-          process.exit(1);
-          return;
-        }
-      } else {
-        try {
-          args = parseKvArgs(rawArgs ?? [], found.tool.inputSchema);
-        } catch (err: any) {
-          process.stderr.write(`  Error: ${err.message}\n`);
-          process.exit(1);
-          return;
-        }
-      }
+    if (!found) {
+      process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
+      process.stderr.write(
+        `  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`,
+      );
+      process.exit(1);
+      return;
+    }
 
-      const missingErr = requiredFieldsError(found.tool, args);
-      if (missingErr) {
-        process.stderr.write(`  ${missingErr}\n`);
-        process.stderr.write(`  Try: coga tool ${name} --schema\n`);
-        process.exit(1);
-        return;
-      }
-
-      // Dispatch
+    // Build args
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    let args: Record<string, any>;
+    if (opts?.json) {
       try {
-        if (found.source === 'plugin' && found.pluginId === BasicChatPlugin.id) {
-          // Local client-side plugin: run handleCall to get the relay envelope.
-          let out: any;
-          try {
-            out = BasicChatPlugin.handleCall?.(name, args, { id: 'self', handle: 'self' });
-          } catch (err: any) {
-            const payload = { error: { code: 'PLUGIN_ERROR', message: `Plugin "${found.pluginId}" handleCall threw: ${err?.message ?? err}` } };
-            process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
-            process.exit(1);
-            return;
-          }
-          if (out?.error) {
-            process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-            process.exit(1);
-            return;
-          }
-          if (out?.relay) {
-            const result = await client.callPluginRelay(out.relay);
-            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-            return;
-          }
-          process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-          return;
-        }
-
-        // Phase tool (game or lobby) → unified endpoint
-        const result: any = await client.callToolRaw(name, args);
-        if (result.ok) {
-          process.stdout.write(JSON.stringify(result.data, null, 2) + '\n');
-        } else {
-          process.stderr.write(JSON.stringify({ error: result.error }, null, 2) + '\n');
-          process.exit(1);
-        }
+        args = JSON.parse(opts.json);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      } catch (err: any) {
+        process.stderr.write(`  Error: invalid --json payload: ${err.message}\n`);
+        process.exit(1);
+        return;
+      }
+    } else {
+      try {
+        args = parseKvArgs(rawArgs ?? [], found.tool.inputSchema);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
+        return;
       }
-    });
+    }
+
+    const missingErr = requiredFieldsError(found.tool, args);
+    if (missingErr) {
+      process.stderr.write(`  ${missingErr}\n`);
+      process.stderr.write(`  Try: coga tool ${name} --schema\n`);
+      process.exit(1);
+      return;
+    }
+
+    // Dispatch
+    try {
+      if (found.source === 'plugin' && found.pluginId === BasicChatPlugin.id) {
+        // Local client-side plugin: run handleCall to get the relay envelope.
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        let out: any;
+        try {
+          out = BasicChatPlugin.handleCall?.(name, args, { id: 'self', handle: 'self' });
+          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        } catch (err: any) {
+          const payload = {
+            error: {
+              code: 'PLUGIN_ERROR',
+              message: `Plugin "${found.pluginId}" handleCall threw: ${err?.message ?? err}`,
+            },
+          };
+          process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+          process.exit(1);
+          return;
+        }
+        if (out?.error) {
+          process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+          process.exit(1);
+          return;
+        }
+        if (out?.relay) {
+          const result = await client.callPluginRelay(out.relay);
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+          return;
+        }
+        process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+        return;
+      }
+
+      // Phase tool (game or lobby) → unified endpoint
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      const result: any = await client.callToolRaw(name, args);
+      if (result.ok) {
+        process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+      } else {
+        process.stderr.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+        process.exit(1);
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    } catch (err: any) {
+      process.stderr.write(`  Error: ${err.message}\n`);
+      process.exit(1);
+    }
+  });
 }

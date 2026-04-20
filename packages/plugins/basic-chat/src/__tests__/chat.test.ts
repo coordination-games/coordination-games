@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   BasicChatPlugin,
-  formatChatMessage,
   extractMessages,
+  formatChatMessage,
   type RelayMessage,
 } from '../index.js';
 
@@ -120,9 +120,7 @@ describe('BasicChatPlugin', () => {
   });
 
   it('ignores non-messaging relay types', () => {
-    const relayMessages = [
-      makeRelayMessage({ type: 'wiki-post', data: { title: 'test' } }),
-    ];
+    const relayMessages = [makeRelayMessage({ type: 'wiki-post', data: { title: 'test' } })];
     const inputs = new Map([['relay-messages', relayMessages]]);
     const outputs = BasicChatPlugin.handleData('messaging', inputs);
     expect(outputs.get('messaging')).toEqual([]);

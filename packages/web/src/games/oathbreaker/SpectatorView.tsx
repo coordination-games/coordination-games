@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, getWsUrl } from '../../config.js';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
@@ -54,6 +54,7 @@ interface OathSpectatorState {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function mapServerState(raw: any): OathSpectatorState | null {
   if (!raw) return null;
   const data = raw.data ?? raw;
@@ -73,7 +74,15 @@ function mapServerState(raw: any): OathSpectatorState | null {
 // ---------------------------------------------------------------------------
 
 export function OathbreakerSpectatorView(props: SpectatorViewProps) {
-  const { gameId, handles, chatMessages, gameState: rawGameState, replaySnapshots, prevGameState: rawPrevGameState, animate } = props;
+  const {
+    gameId,
+    handles,
+    chatMessages,
+    gameState: rawGameState,
+    replaySnapshots,
+    prevGameState: rawPrevGameState,
+    animate,
+  } = props;
   const isReplay = replaySnapshots != null;
 
   const [liveState, setLiveState] = useState<OathSpectatorState | null>(null);
@@ -104,8 +113,8 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     if (isReplay || !gameId) return;
 
     fetch(`${API_BASE}/games/${gameId}`)
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => r.json())
+      .then((data) => {
         // Symmetric guard; spectator_pending never fires for delay=0.
         if (data?.type === 'spectator_pending') return;
         const mapped = mapServerState(data);
@@ -117,7 +126,10 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    ws.onopen = () => { setConnected(true); setError(null); };
+    ws.onopen = () => {
+      setConnected(true);
+      setError(null);
+    };
     ws.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data);
@@ -131,7 +143,10 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     ws.onerror = () => setError('WebSocket error');
     ws.onclose = () => setConnected(false);
 
-    return () => { ws.close(); wsRef.current = null; };
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
   }, [gameId, isReplay]);
 
   // ---------------------------------------------------------------------------
@@ -155,24 +170,48 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   // Character assignments — seeded, deterministic
   const characters = useMemo(() => {
     if (!state) return {};
-    const playerIds = state.players.map(p => p.id).sort();
+    const playerIds = state.players.map((p) => p.id).sort();
     return assignCharacters(playerIds, gameId ?? 'default');
-  }, [state?.players.length, gameId]);
+    // @ts-expect-error TS18047: 'state' is possibly 'null'. — TODO(2.3-followup)
+  }, [state?.players.length, gameId, state.players.map, state]);
 
   if (!state) {
     return (
-      <div className="arcade-screen" style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%',
-      }}>
+      <div
+        className="arcade-screen"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+        }}
+      >
         <div style={{ textAlign: 'center' }}>
-          <div className="pixel-text" style={{ fontSize: 14, color: '#e9d852', letterSpacing: 4, marginBottom: 16 }}>
+          <div
+            className="pixel-text"
+            style={{ fontSize: 14, color: '#e9d852', letterSpacing: 4, marginBottom: 16 }}
+          >
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="&#35475;&#32004;&#30772;&#12426;" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />
-          <div className="pixel-text" style={{ fontSize: 9, color: '#d1d5db', marginBottom: 8, letterSpacing: 3 }}>Seiyaku-yaburi</div>
+          <img
+            src="/assets/oathbreaker/kanji-title-pixel.png"
+            alt="&#35475;&#32004;&#30772;&#12426;"
+            style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }}
+          />
+          <div
+            className="pixel-text"
+            style={{ fontSize: 9, color: '#d1d5db', marginBottom: 8, letterSpacing: 3 }}
+          >
+            Seiyaku-yaburi
+          </div>
           <p className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb' }}>
-            {error ? error : isReplay ? 'LOADING REPLAY...' : connected ? 'WAITING FOR GAME DATA...' : 'CONNECTING...'}
+            {error
+              ? error
+              : isReplay
+                ? 'LOADING REPLAY...'
+                : connected
+                  ? 'WAITING FOR GAME DATA...'
+                  : 'CONNECTING...'}
           </p>
         </div>
       </div>
@@ -181,21 +220,22 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
 
   // Resolve followed player to their current pairing
   const rawPairing = followedPlayerId
-    ? state.pairings.find(
-        p => p.player1 === followedPlayerId || p.player2 === followedPlayerId
-      ) ?? null
+    ? (state.pairings.find(
+        (p) => p.player1 === followedPlayerId || p.player2 === followedPlayerId,
+      ) ?? null)
     : null;
-  const livePairing = rawPairing && rawPairing.player2 === followedPlayerId
-    ? {
-        ...rawPairing,
-        player1: rawPairing.player2,
-        player2: rawPairing.player1,
-        proposal1: rawPairing.proposal2,
-        proposal2: rawPairing.proposal1,
-        player1HasDecided: rawPairing.player2HasDecided,
-        player2HasDecided: rawPairing.player1HasDecided,
-      }
-    : rawPairing;
+  const livePairing =
+    rawPairing && rawPairing.player2 === followedPlayerId
+      ? {
+          ...rawPairing,
+          player1: rawPairing.player2,
+          player2: rawPairing.player1,
+          proposal1: rawPairing.proposal2,
+          proposal2: rawPairing.proposal1,
+          player1HasDecided: rawPairing.player2HasDecided,
+          player2HasDecided: rawPairing.player1HasDecided,
+        }
+      : rawPairing;
 
   // Battle view
   if (livePairing) {

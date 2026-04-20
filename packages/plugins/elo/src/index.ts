@@ -5,8 +5,8 @@
  * to update player ratings.
  */
 
-import type { ToolPlugin, AgentInfo } from '@coordination-games/engine';
-import { EloTracker, type Player } from './tracker.js';
+import type { AgentInfo, ToolPlugin } from '@coordination-games/engine';
+import { EloTracker } from './tracker.js';
 
 export { EloTracker, type Player } from './tracker.js';
 
@@ -37,13 +37,15 @@ export function createEloPlugin(dbPath?: string): ToolPlugin & { tracker: EloTra
       },
     ],
 
-    handleData(mode: string, inputs: Map<string, any>): Map<string, any> {
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    handleData(_mode: string, _inputs: Map<string, any>): Map<string, any> {
       const leaderboard = tracker.getLeaderboard(10);
       return new Map([['leaderboard', leaderboard]]);
     },
 
     handleCall(tool: string, args: unknown, caller: AgentInfo): unknown {
       if (tool === 'get_leaderboard') {
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
         const { limit = 20 } = (args as any) ?? {};
         return { leaderboard: tracker.getLeaderboard(limit) };
       }

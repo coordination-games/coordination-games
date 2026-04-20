@@ -12,16 +12,40 @@ export default function TimerBar({
   return (
     <div className="rounded-lg parchment-strong p-3 flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <span className="font-heading text-2xl font-bold tabular-nums" style={{ color: noTimeout ? 'var(--color-ink-faint)' : (timeRemaining !== null && timeRemaining < 30 ? 'var(--color-blood)' : 'var(--color-amber)') }}>
-          {noTimeout ? '--:--' : timeRemaining !== null ? `${Math.floor(timeRemaining / 60)}:${String(timeRemaining % 60).padStart(2, '0')}` : '--:--'}
+        <span
+          className="font-heading text-2xl font-bold tabular-nums"
+          style={{
+            color: noTimeout
+              ? 'var(--color-ink-faint)'
+              : timeRemaining !== null && timeRemaining < 30
+                ? 'var(--color-blood)'
+                : 'var(--color-amber)',
+          }}
+        >
+          {noTimeout
+            ? '--:--'
+            : timeRemaining !== null
+              ? `${Math.floor(timeRemaining / 60)}:${String(timeRemaining % 60).padStart(2, '0')}`
+              : '--:--'}
         </span>
         <span className="text-xs" style={{ color: 'var(--color-ink-faint)' }}>
-          {noTimeout ? 'No time limit' : phase === 'class-selection' ? 'to pick classes' : 'until lobby closes'}
+          {noTimeout
+            ? 'No time limit'
+            : phase === 'class-selection'
+              ? 'to pick classes'
+              : 'until lobby closes'}
         </span>
       </div>
-      <button onClick={onCloseLobby}
+      {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
+      <button
+        onClick={onCloseLobby}
         className="cursor-pointer font-heading rounded px-3 py-1 text-xs font-medium transition-all active:scale-95"
-        style={{ background: 'transparent', color: 'var(--color-blood)', border: '1px solid rgba(139, 32, 32, 0.2)' }}>
+        style={{
+          background: 'transparent',
+          color: 'var(--color-blood)',
+          border: '1px solid rgba(139, 32, 32, 0.2)',
+        }}
+      >
         Close Lobby
       </button>
     </div>

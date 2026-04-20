@@ -10,18 +10,18 @@
  * config so it survives across runs.
  */
 
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ethers } from 'ethers';
-import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
-import { promises as fs } from 'fs';
-import os from 'os';
-import path from 'path';
 
 // ---------------------------------------------------------------------------
 // Pool persistence
 // ---------------------------------------------------------------------------
 
-export const POOL_DIR  = path.join(os.homedir(), '.coordination');
+export const POOL_DIR = path.join(os.homedir(), '.coordination');
 export const POOL_PATH = path.join(POOL_DIR, 'bot-pool.json');
 
 export interface PoolBot {
@@ -36,6 +36,7 @@ export async function loadPool(): Promise<PoolBot[]> {
   try {
     const raw = await fs.readFile(POOL_PATH, 'utf8');
     return JSON.parse(raw) as PoolBot[];
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   } catch (err: any) {
     if (err.code === 'ENOENT') return [];
     throw err;
@@ -44,7 +45,7 @@ export async function loadPool(): Promise<PoolBot[]> {
 
 export async function savePool(bots: PoolBot[]): Promise<void> {
   await fs.mkdir(POOL_DIR, { recursive: true });
-  await fs.writeFile(POOL_PATH, JSON.stringify(bots, null, 2) + '\n', { mode: 0o600 });
+  await fs.writeFile(POOL_PATH, `${JSON.stringify(bots, null, 2)}\n`, { mode: 0o600 });
 }
 
 // ---------------------------------------------------------------------------
@@ -55,9 +56,10 @@ export async function api(
   server: string,
   path: string,
   opts: { method?: string; body?: unknown; token?: string } = {},
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 ): Promise<any> {
   const res = await fetch(`${server}${path}`, {
-    method:  opts.method ?? 'GET',
+    method: opts.method ?? 'GET',
     headers: {
       'Content-Type': 'application/json',
       ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
@@ -65,8 +67,13 @@ export async function api(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const text = await res.text();
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   let json: any;
-  try { json = JSON.parse(text); } catch { json = { _raw: text }; }
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { _raw: text };
+  }
   if (!res.ok) {
     throw new Error(`${opts.method ?? 'GET'} ${path} → ${res.status}: ${JSON.stringify(json)}`);
   }
@@ -97,12 +104,14 @@ export async function authenticate(
 // ---------------------------------------------------------------------------
 
 export async function faucetBot(server: string, address: string): Promise<boolean> {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   let lastErr: any;
   for (let attempt = 0; attempt < 5; attempt++) {
     if (attempt > 0) await sleep(2000 * attempt); // 2s, 4s, 6s, 8s
     try {
       await api(server, `/api/relay/faucet/${address}`);
       return true;
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     } catch (err: any) {
       const msg = String(err?.message ?? err);
       // 503 = mock mode, no on-chain faucet. That's fine.
@@ -141,25 +150,25 @@ export async function registerBotOnChain(
   // validate it against its DOMAIN_SEPARATOR). Spender is irrelevant in mock.
   const wallet = new ethers.Wallet(privateKey);
   const domain = {
-    name:   'USD Coin',
+    name: 'USD Coin',
     version: '2',
     chainId: 10,
     verifyingContract: '0x0000000000000000000000000000000000000001',
   };
   const types = {
     Permit: [
-      { name: 'owner',    type: 'address' },
-      { name: 'spender',  type: 'address' },
-      { name: 'value',    type: 'uint256' },
-      { name: 'nonce',    type: 'uint256' },
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'nonce', type: 'uint256' },
       { name: 'deadline', type: 'uint256' },
     ],
   };
   const sig = await wallet.signTypedData(domain, types, {
-    owner:    address,
-    spender:  '0x0000000000000000000000000000000000000001',
-    value:    5_000_000n,
-    nonce:    0,
+    owner: address,
+    spender: '0x0000000000000000000000000000000000000001',
+    value: 5_000_000n,
+    nonce: 0,
     deadline,
   });
   const split = ethers.Signature.from(sig);
@@ -175,12 +184,14 @@ export async function registerBotOnChain(
     s: split.s,
   };
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   let lastErr: any;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) await sleep(3000);
     try {
       const result = await api(server, '/api/relay/register', { method: 'POST', body });
       return { registered: true, agentId: result.agentId };
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     } catch (err: any) {
       lastErr = err;
       const msg = String(err?.message ?? err);
@@ -188,8 +199,11 @@ export async function registerBotOnChain(
       //   0xe450d38c = ERC20InsufficientBalance (OZ v5 custom error)
       //   "transfer amount exceeds balance" (OZ v4 string)
       if (
-        /transfer amount exceeds balance|insufficient balance|0xe450d38c|execution reverted/i.test(msg)
-      ) continue;
+        /transfer amount exceeds balance|insufficient balance|0xe450d38c|execution reverted/i.test(
+          msg,
+        )
+      )
+        continue;
       // Transient RPC issues — rate limit, timeout — retry.
       if (/rate limit|exceeds defined limit|504|502|timeout|network/i.test(msg)) continue;
       // Already registered (from a previous run)
@@ -201,15 +215,15 @@ export async function registerBotOnChain(
   }
   throw new Error(
     `register failed after 8 attempts (24s total, 3s backoff). ` +
-    `Most likely the faucet tx never mined, so the registry's transferFrom ` +
-    `(REGISTRATION_FEE + INITIAL_CREDITS_USDC = 5 USDC) keeps reverting with ` +
-    `ERC20InsufficientBalance (0xe450d38c). Check the faucet tx on the ` +
-    `target RPC. Last error: ${lastErr?.message ?? lastErr}`,
+      `Most likely the faucet tx never mined, so the registry's transferFrom ` +
+      `(REGISTRATION_FEE + INITIAL_CREDITS_USDC = 5 USDC) keeps reverting with ` +
+      `ERC20InsufficientBalance (0xe450d38c). Check the faucet tx on the ` +
+      `target RPC. Last error: ${lastErr?.message ?? lastErr}`,
   );
 }
 
 function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +233,10 @@ function sleep(ms: number) {
 
 const MAX_RESUMES = 20;
 
-const INITIAL_PROMPT = (botName: string, gameType: string) => `You are ${botName}, an AI agent playing ${gameType} on the Coordination Games platform.
+const INITIAL_PROMPT = (
+  botName: string,
+  gameType: string,
+) => `You are ${botName}, an AI agent playing ${gameType} on the Coordination Games platform.
 
 YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join_lobby — you are already in one. Call get_state first to see its ID, phase, other players, and available actions.
 
@@ -254,24 +271,35 @@ Error handling — self-correct on structured errors:
 const RESUME_PROMPT = `The session is still in progress. Keep playing — call get_state, read state.currentPhase.tools, pick the right per-name tool, call it, then wait_for_update. Use chat during gameplay. On WRONG_PHASE or UNKNOWN_TOOL, re-read get_state and self-correct. Repeat until gameOver: true. Do not summarize.`;
 
 const GAME_OVER_MARKERS = [
-  'gameover: true', 'game over', 'game complete', 'game completed',
-  'phase: "finished"', "phase: 'finished'",
-  'game is over', 'game has ended', 'final results', 'final balance',
-  'tournament concluded', 'tournament has finished',
-  '"winner"', 'winner:', 'game finished', 'captured the flag',
+  'gameover: true',
+  'game over',
+  'game complete',
+  'game completed',
+  'phase: "finished"',
+  "phase: 'finished'",
+  'game is over',
+  'game has ended',
+  'final results',
+  'final balance',
+  'tournament concluded',
+  'tournament has finished',
+  '"winner"',
+  'winner:',
+  'game finished',
+  'captured the flag',
 ];
 
 function looksFinished(output: string): boolean {
   const lower = output.toLowerCase();
-  return GAME_OVER_MARKERS.some(m => lower.includes(m));
+  return GAME_OVER_MARKERS.some((m) => lower.includes(m));
 }
 
 export interface RunAgentOptions {
-  server:     string;
-  botName:    string;
+  server: string;
+  botName: string;
   privateKey: string;
-  gameType:   string;
-  model?:     string;  // default 'haiku'
+  gameType: string;
+  model?: string; // default 'haiku'
 }
 
 export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
@@ -283,10 +311,16 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
       game: {
         command: 'npx',
         args: [
-          'coga', 'serve', '--stdio', '--bot-mode',
-          '--key',        privateKey,
-          '--name',       botName,
-          '--server-url', server,
+          'coga',
+          'serve',
+          '--stdio',
+          '--bot-mode',
+          '--key',
+          privateKey,
+          '--name',
+          botName,
+          '--server-url',
+          server,
         ],
       },
     },
@@ -298,28 +332,38 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
         '--print',
         '--dangerously-skip-permissions',
         '--strict-mcp-config',
-        '--mcp-config', mcpConfig,
-        '--model',      model,
-        '--max-turns',  '50',
+        '--mcp-config',
+        mcpConfig,
+        '--model',
+        model,
+        '--max-turns',
+        '50',
       ];
       if (isResume) args.push('--resume', sessionId);
-      else          args.push('--session-id', sessionId);
+      else args.push('--session-id', sessionId);
       args.push(prompt);
 
-      const proc = spawn(process.env.CLAUDE_BIN ?? 'claude', args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
+      const proc = spawn(process.env.CLAUDE_BIN ?? 'claude', args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
 
       let output = '';
       proc.stdout?.on('data', (d: Buffer) => {
         const text = d.toString();
         output += text;
-        text.split('\n').filter(Boolean).forEach(line =>
-          console.log(`[${botName}] ${line.slice(0, 140)}`),
-        );
+        text
+          .split('\n')
+          .filter(Boolean)
+          // biome-ignore lint/suspicious/useIterableCallbackReturn: callback intentional; cleanup followup — TODO(2.3-followup)
+          .forEach((line) => console.log(`[${botName}] ${line.slice(0, 140)}`));
       });
       proc.stderr?.on('data', (d: Buffer) => {
-        d.toString().split('\n').filter(Boolean).forEach(line =>
-          process.stderr.write(`[${botName}!] ${line.slice(0, 140)}\n`),
-        );
+        d.toString()
+          .split('\n')
+          .filter(Boolean)
+          // biome-ignore lint/suspicious/useIterableCallbackReturn: callback intentional; cleanup followup — TODO(2.3-followup)
+          .forEach((line) => process.stderr.write(`[${botName}!] ${line.slice(0, 140)}\n`));
       });
       proc.on('close', () => resolve(output));
       proc.on('error', reject);

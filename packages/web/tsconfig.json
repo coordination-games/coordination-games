@@ -7,7 +7,5 @@
     "types": ["vite/client"]
   },
   "include": ["src"],
-  "references": [
-    { "path": "../games/capture-the-lobster" }
-  ]
+  "references": [{ "path": "../games/capture-the-lobster" }]
 }

@@ -6,11 +6,17 @@
  * and passes it to these functions each turn.
  */
 
-import { Hex, Direction, hexEquals, hexToString } from './hex.js';
-import { UnitClass, CLASS_SPEED, MoveUnit, MoveSubmission, validatePath, resolveMovements } from './movement.js';
-import { GameMap, TileType, getMapRadiusForTeamSize } from './map.js';
-import { VisibleTile, FogUnit, buildVisibleState } from './fog.js';
-import { CombatUnit, resolveCombat } from './combat.js';
+import { type CombatUnit, resolveCombat } from './combat.js';
+import { buildVisibleState, type FogUnit, type VisibleTile } from './fog.js';
+import { type Direction, type Hex, hexEquals, hexToString } from './hex.js';
+import type { GameMap } from './map.js';
+import {
+  type MoveSubmission,
+  type MoveUnit,
+  resolveMovements,
+  type UnitClass,
+  validatePath,
+} from './movement.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,7 +105,7 @@ export interface CtlGameState {
 
 /** Compute turn limit based on map radius */
 export function getTurnLimitForRadius(radius: number): number {
-  return 20 + (radius * 2);
+  return 20 + radius * 2;
 }
 
 const DEFAULT_CONFIG: Required<GameConfig> = {
@@ -112,7 +118,10 @@ const DEFAULT_CONFIG: Required<GameConfig> = {
 // Helper: compute wall/valid tile sets from map data
 // ---------------------------------------------------------------------------
 
-function computeTileSets(mapTiles: [string, string][]): { wallSet: Set<string>; validTiles: Set<string> } {
+function computeTileSets(mapTiles: [string, string][]): {
+  wallSet: Set<string>;
+  validTiles: Set<string>;
+} {
   const wallSet = new Set<string>();
   const validTiles = new Set<string>();
   for (const [key, type] of mapTiles) {
@@ -142,9 +151,10 @@ export function createGameState(
   // Place units at spawn positions
   const spawnIndexA = { current: 0 };
   const spawnIndexB = { current: 0 };
-  const allSpawnsA = map.bases.A.flatMap(b => b.spawns);
-  const allSpawnsB = map.bases.B.flatMap(b => b.spawns);
+  const allSpawnsA = map.bases.A.flatMap((b) => b.spawns);
+  const allSpawnsB = map.bases.B.flatMap((b) => b.spawns);
 
+  // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; position: { q?: numbe — TODO(2.3-followup)
   const units: GameUnit[] = players.map((p) => {
     const spawns = p.team === 'A' ? allSpawnsA : allSpawnsB;
     const spawnIdx = p.team === 'A' ? spawnIndexA : spawnIndexB;
@@ -184,6 +194,7 @@ export function createGameState(
     config: resolvedConfig,
     mapTiles: [...map.tiles.entries()] as [string, string][],
     mapRadius: map.radius,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     mapBases: map.bases as any,
     moveSubmissions: [],
     allKills: [],
@@ -213,6 +224,7 @@ export function validateMoveForPlayer(
     position: unit.position,
   };
   const validation = validatePath(moveUnit, path);
+  // @ts-expect-error TS2375: Type '{ valid: false; error: string | undefined; }' is not assignable to type '{ — TODO(2.3-followup)
   if (!validation.valid) return { valid: false, error: validation.error };
 
   return { valid: true };
@@ -228,6 +240,7 @@ export function submitMove(
 ): { state: CtlGameState; success: boolean; error?: string } {
   const validation = validateMoveForPlayer(state, playerId, path);
   if (!validation.valid) {
+    // @ts-expect-error TS2375: Type '{ state: CtlGameState; success: false; error: string | undefined; }' is no — TODO(2.3-followup)
     return { state, success: false, error: validation.error };
   }
 
@@ -259,12 +272,12 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   const submissions = new Map(state.moveSubmissions);
 
   // Deep-copy mutable parts
-  const units: GameUnit[] = state.units.map(u => ({ ...u, position: { ...u.position } }));
+  const units: GameUnit[] = state.units.map((u) => ({ ...u, position: { ...u.position } }));
   const flags = {
-    A: state.flags.A.map(f => ({ ...f, position: { ...f.position } })),
-    B: state.flags.B.map(f => ({ ...f, position: { ...f.position } })),
+    A: state.flags.A.map((f) => ({ ...f, position: { ...f.position } })),
+    B: state.flags.B.map((f) => ({ ...f, position: { ...f.position } })),
   };
-  let score = { ...state.score };
+  const score = { ...state.score };
   let phase: GamePhase = state.phase;
   let winner: 'A' | 'B' | null = state.winner;
 
@@ -272,6 +285,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   for (const unit of units) {
     if (!unit.alive && unit.respawnTurn === currentTurn) {
       unit.alive = true;
+      // @ts-expect-error TS2412: Type 'undefined' is not assignable to type 'number' with 'exactOptionalPropertyT — TODO(2.3-followup)
       unit.respawnTurn = undefined;
     }
   }
@@ -308,12 +322,13 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
 
   // 4. Update unit positions
   for (const result of moveResults) {
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const unit = units.find((u) => u.id === result.unitId)!;
     unit.position = { ...result.to };
 
     if (unit.carryingFlag) {
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const carriedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      const carriedFlag = flags[enemyTeam].find((f) => f.carrierId === unit.id);
       if (carriedFlag) {
         carriedFlag.position = { ...result.to };
       }
@@ -336,6 +351,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   // Capture post-move positions for dead units (before teleport to spawn)
   const deathPositions: Record<string, { q: number; r: number }> = {};
   for (const deadId of combatResult.deaths) {
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const unit = units.find((u) => u.id === deadId)!;
     deathPositions[deadId] = { q: unit.position.q, r: unit.position.r };
   }
@@ -348,6 +364,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   const spawnCountB = { current: 0 };
 
   for (const deadId of combatResult.deaths) {
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const unit = units.find((u) => u.id === deadId)!;
     unit.alive = false;
     // Respawn 2 turns later (skip next turn entirely)
@@ -357,6 +374,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
     const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
     if (spawns && spawns.length > 0) {
+      // @ts-expect-error TS2322: Type '{ q?: number; r?: number; }' is not assignable to type 'Hex'. — TODO(2.3-followup)
       unit.position = { ...spawns[counter.current % spawns.length] };
       counter.current++;
     }
@@ -365,15 +383,15 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     if (unit.carryingFlag) {
       unit.carryingFlag = false;
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const droppedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      const droppedFlag = flags[enemyTeam].find((f) => f.carrierId === unit.id);
       if (droppedFlag) {
         droppedFlag.carried = false;
+        // @ts-expect-error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyT — TODO(2.3-followup)
         droppedFlag.carrierId = undefined;
         const baseIdx = flags[enemyTeam].indexOf(droppedFlag);
+        // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
         droppedFlag.position = { ...mapBases[enemyTeam][baseIdx].flag };
-        flagEvents.push(
-          `${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`,
-        );
+        flagEvents.push(`${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`);
       }
     }
   }
@@ -406,11 +424,13 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
       flagEvents.push(`${unit.id} captured the flag! Team ${unit.team} scores!`);
 
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const capturedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      const capturedFlag = flags[enemyTeam].find((f) => f.carrierId === unit.id);
       if (capturedFlag) {
         const baseIdx = flags[enemyTeam].indexOf(capturedFlag);
         capturedFlag.carried = false;
+        // @ts-expect-error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyT — TODO(2.3-followup)
         capturedFlag.carrierId = undefined;
+        // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
         capturedFlag.position = { ...mapBases[enemyTeam][baseIdx].flag };
       }
       unit.carryingFlag = false;
@@ -445,6 +465,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     winner = null;
   }
 
+  // @ts-expect-error TS2375: Type '{ turn: number; phase: GamePhase; units: GameUnit[]; flags: { A: { positio — TODO(2.3-followup)
   const newState: CtlGameState = {
     turn: newTurn,
     phase,
@@ -457,10 +478,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     mapRadius: state.mapRadius,
     mapBases: state.mapBases,
     moveSubmissions: [], // cleared after resolution
-    allKills: [
-      ...state.allKills,
-      ...combatResult.kills.map(k => ({ ...k, turn: currentTurn })),
-    ],
+    allKills: [...state.allKills, ...combatResult.kills.map((k) => ({ ...k, turn: currentTurn }))],
     lastDeathPositions: Object.keys(deathPositions).length > 0 ? deathPositions : undefined,
   };
 
@@ -502,25 +520,29 @@ export function getStateForAgent(
   };
 
   const flagsForFog = {
-    A: state.flags.A.map(f => ({
+    A: state.flags.A.map((f) => ({
       position: f.position,
       carried: f.carried,
       carrierId: f.carrierId,
     })),
-    B: state.flags.B.map(f => ({
+    B: state.flags.B.map((f) => ({
       position: f.position,
       carried: f.carried,
       carrierId: f.carrierId,
     })),
   };
 
+  // @ts-expect-error TS2345: Argument of type '{ A: { position: Hex; carried: boolean; carrierId: string | un — TODO(2.3-followup)
   const visibleTiles = buildVisibleState(viewer, fogUnits, wallSet, tiles, flagsForFog);
 
   // Your flag status
   const yourFlags = state.flags[team];
   let yourFlagStatus: 'at_base' | 'carried' | 'unknown' = 'at_base';
   for (const f of yourFlags) {
-    if (f.carried) { yourFlagStatus = 'carried'; break; }
+    if (f.carried) {
+      yourFlagStatus = 'carried';
+      break;
+    }
   }
 
   // Enemy flag status
@@ -537,9 +559,7 @@ export function getStateForAgent(
       }
     } else if (!ef.carried) {
       const enemyFlagKey = hexToString(ef.position);
-      const isVisible = visibleTiles.some(
-        (t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey,
-      );
+      const isVisible = visibleTiles.some((t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey);
       if (isVisible && enemyFlagStatus === 'unknown') {
         enemyFlagStatus = 'at_base';
       }
@@ -554,6 +574,7 @@ export function getStateForAgent(
   return {
     turn: state.turn,
     phase: state.phase,
+    // @ts-expect-error TS2375: Type '{ id: string; unitClass: UnitClass; position: { q: number; r: number; }; c — TODO(2.3-followup)
     yourUnit: {
       id: unit.id,
       unitClass: unit.unitClass,

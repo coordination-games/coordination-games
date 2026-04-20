@@ -1,11 +1,12 @@
 /* OATHBREAKER Arcade Styles */
+/* biome-ignore-all lint/suspicious/noShorthandPropertyOverrides: keyframe animations override `background` shorthand intentionally — TODO(2.3-followup) */
 
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap");
 
 /* ---- Base ---- */
 
 .arcade-screen {
-  font-family: 'Press Start 2P', monospace;
+  font-family: "Press Start 2P", monospace;
   background: #0a0a0f;
   color: #e5e7eb;
   position: relative;
@@ -18,18 +19,20 @@
 }
 
 .pixel-text {
-  font-family: 'Press Start 2P', monospace;
+  font-family: "Press Start 2P", monospace;
 }
 
 /* ---- CRT Scanlines ---- */
 
 .arcade-screen::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   background: repeating-linear-gradient(
-    transparent 0px, transparent 1px,
-    rgba(0, 0, 0, 0.08) 1px, rgba(0, 0, 0, 0.08) 2px
+    transparent 0px,
+    transparent 1px,
+    rgba(0, 0, 0, 0.08) 1px,
+    rgba(0, 0, 0, 0.08) 2px
   );
   pointer-events: none;
   z-index: 100;
@@ -38,77 +41,183 @@
 /* ---- Animations ---- */
 
 @keyframes screenShake {
-  0%, 100% { transform: translate(0); }
-  10% { transform: translate(-4px, 2px); }
-  20% { transform: translate(4px, -2px); }
-  30% { transform: translate(-3px, 4px); }
-  40% { transform: translate(3px, -1px); }
-  50% { transform: translate(-2px, 3px); }
-  60% { transform: translate(2px, -3px); }
-  70% { transform: translate(-1px, 2px); }
-  80% { transform: translate(1px, -1px); }
-  90% { transform: translate(-1px, 1px); }
+  0%,
+  100% {
+    transform: translate(0);
+  }
+  10% {
+    transform: translate(-4px, 2px);
+  }
+  20% {
+    transform: translate(4px, -2px);
+  }
+  30% {
+    transform: translate(-3px, 4px);
+  }
+  40% {
+    transform: translate(3px, -1px);
+  }
+  50% {
+    transform: translate(-2px, 3px);
+  }
+  60% {
+    transform: translate(2px, -3px);
+  }
+  70% {
+    transform: translate(-1px, 2px);
+  }
+  80% {
+    transform: translate(1px, -1px);
+  }
+  90% {
+    transform: translate(-1px, 1px);
+  }
 }
 
 @keyframes goldenGlow {
-  0% { filter: brightness(1); }
-  50% { filter: brightness(1.5) sepia(0.3); }
-  100% { filter: brightness(1); }
+  0% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.5) sepia(0.3);
+  }
+  100% {
+    filter: brightness(1);
+  }
 }
 
 @keyframes floatUp {
-  0% { opacity: 1; transform: translateY(0); }
-  100% { opacity: 0; transform: translateY(-60px); }
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-60px);
+  }
 }
 
 @keyframes redFlash {
-  0% { background-color: transparent; }
-  50% { background-color: rgba(255, 0, 0, 0.25); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(255, 0, 0, 0.25);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
 @keyframes pulseBorder {
-  0%, 100% { border-color: rgba(59, 130, 246, 0.3); }
-  50% { border-color: rgba(59, 130, 246, 0.8); }
+  0%,
+  100% {
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+  50% {
+    border-color: rgba(59, 130, 246, 0.8);
+  }
 }
 
 @keyframes oathGlow {
-  0%, 100% { text-shadow: 0 0 4px rgba(234, 179, 8, 0.4); }
-  50% { text-shadow: 0 0 12px rgba(234, 179, 8, 0.9), 0 0 24px rgba(234, 179, 8, 0.4); }
+  0%,
+  100% {
+    text-shadow: 0 0 4px rgba(234, 179, 8, 0.4);
+  }
+  50% {
+    text-shadow:
+      0 0 12px rgba(234, 179, 8, 0.9),
+      0 0 24px rgba(234, 179, 8, 0.4);
+  }
 }
 
 @keyframes fadeInUp {
-  0% { opacity: 0; transform: translateY(10px); }
-  100% { opacity: 1; transform: translateY(0); }
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes darkenScreen {
-  0% { opacity: 0; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 @keyframes goldenRipple {
-  0% { background: radial-gradient(circle at center, rgba(251, 191, 36, 0.4) 0%, transparent 0%); }
-  50% { background: radial-gradient(circle at center, rgba(251, 191, 36, 0.2) 0%, rgba(251, 191, 36, 0.1) 40%, transparent 70%); }
-  100% { background: radial-gradient(circle at center, transparent 0%, rgba(251, 191, 36, 0.05) 60%, transparent 100%); }
+  0% {
+    background: radial-gradient(circle at center, rgba(251, 191, 36, 0.4) 0%, transparent 0%);
+  }
+  50% {
+    background: radial-gradient(
+      circle at center,
+      rgba(251, 191, 36, 0.2) 0%,
+      rgba(251, 191, 36, 0.1) 40%,
+      transparent 70%
+    );
+  }
+  100% {
+    background: radial-gradient(
+      circle at center,
+      transparent 0%,
+      rgba(251, 191, 36, 0.05) 60%,
+      transparent 100%
+    );
+  }
 }
 
 @keyframes sparkBurst {
-  0% { background: radial-gradient(circle at center, rgba(255, 255, 255, 0.8) 0%, transparent 10%); }
-  30% { background: radial-gradient(circle at center, rgba(255, 200, 50, 0.6) 0%, rgba(255, 100, 0, 0.3) 30%, transparent 50%); }
-  100% { background: radial-gradient(circle at center, transparent 0%, transparent 100%); }
+  0% {
+    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.8) 0%, transparent 10%);
+  }
+  30% {
+    background: radial-gradient(
+      circle at center,
+      rgba(255, 200, 50, 0.6) 0%,
+      rgba(255, 100, 0, 0.3) 30%,
+      transparent 50%
+    );
+  }
+  100% {
+    background: radial-gradient(circle at center, transparent 0%, transparent 100%);
+  }
 }
 
 @keyframes slashRight {
-  0% { opacity: 0; clip-path: polygon(55% 20%, 55% 20%, 55% 80%, 55% 80%); }
-  40% { opacity: 1; clip-path: polygon(45% 15%, 85% 15%, 85% 85%, 45% 85%); }
-  100% { opacity: 0; clip-path: polygon(45% 15%, 85% 15%, 85% 85%, 45% 85%); }
+  0% {
+    opacity: 0;
+    clip-path: polygon(55% 20%, 55% 20%, 55% 80%, 55% 80%);
+  }
+  40% {
+    opacity: 1;
+    clip-path: polygon(45% 15%, 85% 15%, 85% 85%, 45% 85%);
+  }
+  100% {
+    opacity: 0;
+    clip-path: polygon(45% 15%, 85% 15%, 85% 85%, 45% 85%);
+  }
 }
 
 @keyframes slashLeft {
-  0% { opacity: 0; clip-path: polygon(45% 20%, 45% 20%, 45% 80%, 45% 80%); }
-  40% { opacity: 1; clip-path: polygon(15% 15%, 55% 15%, 55% 85%, 15% 85%); }
-  100% { opacity: 0; clip-path: polygon(15% 15%, 55% 15%, 55% 85%, 15% 85%); }
+  0% {
+    opacity: 0;
+    clip-path: polygon(45% 20%, 45% 20%, 45% 80%, 45% 80%);
+  }
+  40% {
+    opacity: 1;
+    clip-path: polygon(15% 15%, 55% 15%, 55% 85%, 15% 85%);
+  }
+  100% {
+    opacity: 0;
+    clip-path: polygon(15% 15%, 55% 15%, 55% 85%, 15% 85%);
+  }
 }
 
 /* ---- Animation classes ---- */
@@ -155,7 +264,12 @@
 }
 
 .red-slash-left {
-  background: linear-gradient(-135deg, transparent 40%, rgba(255, 50, 50, 0.6) 50%, transparent 60%);
+  background: linear-gradient(
+    -135deg,
+    transparent 40%,
+    rgba(255, 50, 50, 0.6) 50%,
+    transparent 60%
+  );
   animation: slashLeft 0.6s ease-out forwards;
 }
 
@@ -195,7 +309,7 @@
 }
 
 .arena-bg::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
@@ -247,41 +361,41 @@
 
 /* Mobile: stacked (arena on top, chat below) */
 .battle-content {
-  flex-direction: column !important;
+  flex-direction: column;
 }
 
 .battle-content > div:first-child {
-  flex: 0 0 auto !important;
+  flex: 0 0 auto;
 }
 
 .battle-chat {
-  border-left: none !important;
+  border-left: none;
   border-top: 2px solid #333;
-  flex: 1 !important;
+  flex: 1;
   min-height: 0;
 }
 
 /* Wider mobile (>480px): bigger sprites */
 @media (min-width: 480px) {
   .arena-bg {
-    min-height: 320px !important;
+    min-height: 320px;
   }
 }
 
 /* Desktop (>640px): side-by-side */
 @media (min-width: 640px) {
   .battle-content {
-    flex-direction: row !important;
+    flex-direction: row;
   }
 
   .battle-content > div:first-child {
-    flex: 1 1 0% !important;
+    flex: 1 1 0%;
   }
 
   .battle-chat {
     width: 320px;
     flex-shrink: 0;
     border-top: none;
-    border-left: 2px solid #333 !important;
+    border-left: 2px solid #333;
   }
 }

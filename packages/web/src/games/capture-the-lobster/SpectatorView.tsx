@@ -1,20 +1,17 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import HexGrid from '../../components/HexGrid';
-import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
 import { ScrubberSlider } from '../../components/ScrubberSlider';
-import type { SpectatorViewProps } from '../types';
+import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
 import { API_BASE, getWsUrl } from '../../config.js';
-import type {
-  SpectatorGameState,
-  KillEvent,
-  ChatMessage,
-} from '../../types';
+import type { ChatMessage, KillEvent, SpectatorGameState } from '../../types';
+import type { SpectatorViewProps } from '../types';
 import { useHexAnimations } from './useHexAnimations';
 
 // Raw spectator-visible snapshot shape. Canonical source is
 // buildCtlSpectatorView in packages/games/capture-the-lobster/src/plugin.ts.
 // Kept as an open record to accept both /replay entries and WS envelopes
 // (which spread the snapshot plus type/gameType/handles/progressCounter).
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 type RawSnapshot = Record<string, any>;
 
 type RewindState =
@@ -26,12 +23,14 @@ type RewindState =
 // Map server state -> frontend types (CtL-specific)
 // ---------------------------------------------------------------------------
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function mapServerState(raw: any): SpectatorGameState | null {
   if (!raw) return null;
   const data = raw.data ?? raw;
 
   if (!data.tiles || !Array.isArray(data.tiles)) return null;
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const tiles = data.tiles.map((t: any) => ({
     q: t.q,
     r: t.r,
@@ -48,11 +47,13 @@ function mapServerState(raw: any): SpectatorGameState | null {
     flag: t.flag,
   }));
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const unitMap = new Map<string, any>();
   for (const u of data.units ?? []) {
     unitMap.set(u.id, u);
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const kills: KillEvent[] = (data.kills ?? []).map((k: any) => {
     const killer = unitMap.get(k.killerId);
     const victim = unitMap.get(k.victimId);
@@ -72,13 +73,9 @@ function mapServerState(raw: any): SpectatorGameState | null {
   const flagB = data.flagB ?? { status: 'at_base' };
 
   const flagAStatus =
-    flagA.status === 'carried' && flagA.carrier
-      ? `Carried by ${flagA.carrier}`
-      : 'At Base';
+    flagA.status === 'carried' && flagA.carrier ? `Carried by ${flagA.carrier}` : 'At Base';
   const flagBStatus =
-    flagB.status === 'carried' && flagB.carrier
-      ? `Carried by ${flagB.carrier}`
-      : 'At Base';
+    flagB.status === 'carried' && flagB.carrier ? `Carried by ${flagB.carrier}` : 'At Base';
 
   return {
     turn: data.turn ?? 0,
@@ -96,7 +93,11 @@ function mapServerState(raw: any): SpectatorGameState | null {
     visibleA: new Set(data.visibleA ?? []),
     visibleB: new Set(data.visibleB ?? []),
     visibleByUnit: Object.fromEntries(
-      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [id, new Set(hexes as string[])])
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [
+        id,
+        new Set(hexes as string[]),
+      ]),
     ),
     handles: data.handles ?? {},
     deathPositions: data.deathPositions ?? undefined,
@@ -116,18 +117,15 @@ const CLASS_ICONS: Record<string, string> = {
 function KillFeed({ kills }: { kills: KillEvent[] }) {
   return (
     <div className="flex flex-col gap-1.5">
-      {kills.length === 0 && (
-        <p className="text-gray-600 text-xs italic">No kills yet</p>
-      )}
+      {kills.length === 0 && <p className="text-gray-600 text-xs italic">No kills yet</p>}
       {[...kills].reverse().map((k, i) => {
         const killerColor = k.killerTeam === 'A' ? 'text-blue-400' : 'text-red-400';
         const victimColor = k.victimTeam === 'A' ? 'text-blue-400' : 'text-red-400';
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
           <div key={i} className="text-xs flex items-center gap-1 text-gray-300">
             <span className="text-gray-500 w-6 text-right shrink-0">T{k.turn}</span>
-            <span className={`font-bold ${killerColor}`}>
-              {CLASS_ICONS[k.killerClass]}
-            </span>
+            <span className={`font-bold ${killerColor}`}>{CLASS_ICONS[k.killerClass]}</span>
             <span className="text-gray-500">&rarr;</span>
             <span className={`font-bold ${victimColor} line-through opacity-60`}>
               {CLASS_ICONS[k.victimClass]}
@@ -164,13 +162,15 @@ function ChatLog({
     if (shouldAutoScroll.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [messages.length]);
+  }, []);
 
   return (
-    <div ref={containerRef} onScroll={handleScroll} className="flex flex-col gap-1 overflow-y-auto h-full">
-      {messages.length === 0 && (
-        <p className="text-gray-600 text-xs italic">No messages</p>
-      )}
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="flex flex-col gap-1 overflow-y-auto h-full"
+    >
+      {messages.length === 0 && <p className="text-gray-600 text-xs italic">No messages</p>}
       {messages.map((m, i) => {
         const msgTeam = m.team ?? team;
         const teamColor = msgTeam === 'A' ? 'text-blue-400' : 'text-red-400';
@@ -178,6 +178,7 @@ function ChatLog({
         const label = unitLabels?.[m.from];
         const displayName = label ? `${name} (${label})` : name;
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
           <div key={i} className="text-xs">
             <span className={`font-semibold ${teamColor}`}>{displayName}:</span>{' '}
             <span className="text-gray-300">&ldquo;{m.message}&rdquo;</span>
@@ -203,7 +204,15 @@ interface LobbyChatMessage {
 // ---------------------------------------------------------------------------
 
 export function CtlSpectatorView(props: SpectatorViewProps) {
-  const { gameState: rawGameState, gameId, handles, replaySnapshots, prevGameState: rawPrevState, animate } = props;
+  const {
+    gameState: rawGameState,
+    gameId,
+    // biome-ignore lint/correctness/noUnusedVariables: unused; remove in cleanup followup — TODO(2.3-followup)
+    handles,
+    replaySnapshots,
+    prevGameState: rawPrevState,
+    animate,
+  } = props;
   const isReplay = replaySnapshots != null;
 
   // Internal state for CtL-specific rendering
@@ -226,7 +235,9 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const snapshotCacheRef = useRef<Map<number, RawSnapshot>>(new Map());
   const [latestProgress, setLatestProgress] = useState<number | null>(null);
   const rewindRef = useRef<RewindState>(rewind);
-  useEffect(() => { rewindRef.current = rewind; }, [rewind]);
+  useEffect(() => {
+    rewindRef.current = rewind;
+  }, [rewind]);
 
   // Sync perspective from props
   useEffect(() => {
@@ -317,8 +328,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           }
           if (mapped.kills.length > 0) {
             setAllKills((prev) => {
-              const existing = new Set(prev.map(k => `${k.turn}:${k.victimId}`));
-              const newKills = mapped.kills.filter(k => !existing.has(`${k.turn}:${k.victimId}`));
+              const existing = new Set(prev.map((k) => `${k.turn}:${k.victimId}`));
+              const newKills = mapped.kills.filter((k) => !existing.has(`${k.turn}:${k.victimId}`));
               return newKills.length > 0 ? [...prev, ...newKills] : prev;
             });
           }
@@ -348,14 +359,17 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
 
     let haveAll = true;
     for (let i = 0; i <= latestProgress; i++) {
-      if (!snapshotCacheRef.current.has(i)) { haveAll = false; break; }
+      if (!snapshotCacheRef.current.has(i)) {
+        haveAll = false;
+        break;
+      }
     }
 
     if (!haveAll) {
       try {
         const res = await fetch(`${API_BASE}/games/${gameId}/replay`, { cache: 'no-store' });
         const data = await res.json();
-        if (rewindRef.current.mode !== 'loading') return;  // user bailed or game ended
+        if (rewindRef.current.mode !== 'loading') return; // user bailed or game ended
         if (data?.type === 'replay' && Array.isArray(data.snapshots)) {
           data.snapshots.forEach((s: RawSnapshot, i: number) => {
             if (!snapshotCacheRef.current.has(i)) {
@@ -411,7 +425,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       const index = Math.min(r.index, snapshots.length - 1);
       return { mode: 'active', index, snapshots };
     });
-  }, [latestProgress, rewind.mode, rewind.mode === 'active' ? rewind.snapshots.length : 0]);
+    // @ts-expect-error TS2339: Property 'snapshots' does not exist on type 'RewindState'. — TODO(2.3-followup)
+  }, [latestProgress, rewind.mode, rewind.snapshots.length]);
 
   // §6.9 Auto-exit rewind when the game ends — /replay is the right surface
   // for a finished game.
@@ -427,13 +442,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
 
   const displayRaw = rewind.mode === 'active' ? rewind.snapshots[rewind.index] : null;
   const rewindDisplayState = useMemo(
-    () => displayRaw ? mapServerState(displayRaw) : null,
+    () => (displayRaw ? mapServerState(displayRaw) : null),
     [displayRaw],
   );
 
-  const gameState = isReplay
-    ? replayState
-    : rewindDisplayState ?? liveState;
+  const gameState = isReplay ? replayState : (rewindDisplayState ?? liveState);
   const prevGameState = isReplay ? prevReplayState : null;
   const displayKills = isReplay
     ? (replayState?.kills ?? [])
@@ -481,7 +494,13 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         <div className="text-center">
           <div className="text-4xl mb-4">🦞</div>
           <p className="text-gray-400">
-            {error ? error : connected ? 'Waiting for game data...' : isReplay ? 'Loading replay...' : `Connecting to game ${gameId}...`}
+            {error
+              ? error
+              : connected
+                ? 'Waiting for game data...'
+                : isReplay
+                  ? 'Loading replay...'
+                  : `Connecting to game ${gameId}...`}
           </p>
         </div>
       </div>
@@ -493,7 +512,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const teamACounts: string[] = [];
   const teamBCounts: string[] = [];
   for (const tile of gameState.tiles) {
-    if (tile.unit && tile.unit.id) {
+    if (tile.unit?.id) {
+      // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
       const classLetter = tile.unit.unitClass[0].toUpperCase();
       if (tile.unit.team === 'A') {
         teamACounts.push(tile.unit.id);
@@ -515,8 +535,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             ...gameState.chatB.map((m) => ({ ...m, team: 'B' as const })),
           ].sort((a, b) => a.turn - b.turn);
 
-  const chatTeamLabel =
-    selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
+  const chatTeamLabel = selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
 
   const handlePerspectiveChange = (value: 'A' | 'B' | 'all') => {
     setSelectedTeam(value);
@@ -532,9 +551,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
-          {!isReplay && !connected && (
-            <span className="text-xs text-yellow-500">disconnected</span>
-          )}
+          {!isReplay && !connected && <span className="text-xs text-yellow-500">disconnected</span>}
           {/* FINISHED reads from liveState (not gameState) so scrubbing
               through past turns during rewind doesn't flash a misleading
               FINISHED badge when the game is still active. In replay
@@ -549,6 +566,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         </div>
         <div className="flex items-center gap-1">
           {selectedUnit && (
+            // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
             <button
               onClick={() => setSelectedUnit(null)}
               className="px-2 py-1 text-xs rounded font-medium bg-yellow-900/60 text-yellow-300 hover:bg-yellow-800/60 mr-1 cursor-pointer"
@@ -557,6 +575,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             </button>
           )}
           {teamButtons.map((btn) => (
+            // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
             <button
               key={btn.value}
               onClick={() => handlePerspectiveChange(btn.value)}
@@ -575,20 +594,21 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           ))}
           {/* Rewind toggle — shown only for live mode when there's
               something worth rewinding through and the game is ongoing. */}
-          {!isReplay
-            && rewind.mode !== 'active'
-            && latestProgress !== null
-            && latestProgress >= 1
-            && liveState?.phase !== 'finished' && (
-            <button
-              onClick={enterRewind}
-              disabled={rewind.mode === 'loading'}
-              className="ml-1 px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 disabled:opacity-50 disabled:cursor-wait"
-              title="Rewind to past turns (live view keeps updating in background)"
-            >
-              {rewind.mode === 'loading' ? '…' : '↻ Rewind'}
-            </button>
-          )}
+          {!isReplay &&
+            rewind.mode !== 'active' &&
+            latestProgress !== null &&
+            latestProgress >= 1 &&
+            liveState?.phase !== 'finished' && (
+              // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
+              <button
+                onClick={enterRewind}
+                disabled={rewind.mode === 'loading'}
+                className="ml-1 px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 disabled:opacity-50 disabled:cursor-wait"
+                title="Rewind to past turns (live view keeps updating in background)"
+              >
+                {rewind.mode === 'loading' ? '…' : '↻ Rewind'}
+              </button>
+            )}
         </div>
       </div>
 
@@ -601,16 +621,10 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           <ScrubberSlider
             currentTurn={rewind.index}
             totalTurns={rewind.snapshots.length}
-            onSeek={(i) =>
-              setRewind((r) =>
-                r.mode === 'active' ? { ...r, index: i } : r,
-              )
-            }
+            onSeek={(i) => setRewind((r) => (r.mode === 'active' ? { ...r, index: i } : r))}
             onPrev={() =>
               setRewind((r) =>
-                r.mode === 'active'
-                  ? { ...r, index: Math.max(0, r.index - 1) }
-                  : r,
+                r.mode === 'active' ? { ...r, index: Math.max(0, r.index - 1) } : r,
               )
             }
             onNext={() =>
@@ -621,6 +635,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               )
             }
           />
+          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
           <button
             onClick={backToLive}
             className="px-3 py-1 text-xs rounded font-semibold bg-emerald-800 text-emerald-200 hover:bg-emerald-700 transition-colors cursor-pointer shrink-0"
@@ -646,7 +661,10 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
                 <div className="text-center px-8 py-6">
                   {finishSrc.winner ? (
                     <>
-                      <div className="text-5xl md:text-7xl font-black mb-3" style={{ color: finishSrc.winner === 'A' ? '#60a5fa' : '#f87171' }}>
+                      <div
+                        className="text-5xl md:text-7xl font-black mb-3"
+                        style={{ color: finishSrc.winner === 'A' ? '#60a5fa' : '#f87171' }}
+                      >
                         {finishSrc.winner === 'A' ? '' : ''} TEAM {finishSrc.winner} WINS!
                       </div>
                       <div className="text-xl md:text-2xl text-gray-300 font-medium">
@@ -655,9 +673,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
                     </>
                   ) : (
                     <>
-                      <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">
-                        DRAW
-                      </div>
+                      <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">DRAW</div>
                       <div className="text-xl md:text-2xl text-gray-500 font-medium">
                         Turn limit reached — no capture
                       </div>
@@ -667,6 +683,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               </div>
             );
           })()}
+          {/* @ts-expect-error TS2375: Type '{ tiles: VisibleTile[]; fogTiles: Set<string> | undefined; mapRadius: numb — TODO(2.3-followup) */}
           <HexGrid
             tiles={gameState.tiles}
             fogTiles={fogTiles}
@@ -674,7 +691,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             selectedTeam={selectedTeam}
             visibleA={gameState.visibleA}
             visibleB={gameState.visibleB}
-            visibleOverride={selectedUnit && gameState.visibleByUnit?.[selectedUnit] ? gameState.visibleByUnit[selectedUnit] : undefined}
+            visibleOverride={
+              selectedUnit && gameState.visibleByUnit?.[selectedUnit]
+                ? gameState.visibleByUnit[selectedUnit]
+                : undefined
+            }
             floatingUnits={animState.floatingUnits}
             hiddenUnitIds={animState.hiddenUnitIds.size > 0 ? animState.hiddenUnitIds : undefined}
             killEffects={animState.killEffects}
@@ -696,9 +717,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         <div className="flex flex-col gap-2 md:w-52 shrink-0 min-h-0 overflow-hidden">
           {/* Kill feed */}
           <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-32 md:max-h-[40%] overflow-hidden">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              Kills
-            </h3>
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Kills</h3>
             <div className="overflow-y-auto flex-1">
               <KillFeed kills={displayKills} />
             </div>
@@ -710,6 +729,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               {chatTeamLabel}
             </h3>
             <div className="overflow-y-auto flex-1">
+              {/* @ts-expect-error TS2375: Type '{ messages: ({ team: "A"; from: string; message: string; turn: number; } | — TODO(2.3-followup) */}
               <ChatLog
                 messages={chatMessages}
                 team={selectedTeam === 'all' ? 'A' : selectedTeam}
@@ -720,43 +740,53 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           </div>
 
           {/* Pre-game / Lobby chat (collapsible) — live mode only */}
-          {!isReplay && (() => {
-            const preGameChat = selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
-            const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
-            const chatLabel = preGameChat.length > 0
-              ? `Pre-Game (${preGameChat.length})`
-              : `Lobby (${lobbyChat.length})`;
-            const chatColor = preGameChat.length > 0
-              ? (selectedTeam === 'A' ? 'text-blue-400' : 'text-red-400')
-              : 'text-yellow-400';
-            if (chatToShow.length === 0) return null;
-            return (
-              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-40 md:max-h-[30%] overflow-hidden">
-                <button
-                  onClick={() => setShowLobbyChat(!showLobbyChat)}
-                  className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
-                >
-                  <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>&#9654;</span>
-                  {chatLabel}
-                </button>
-                {showLobbyChat && (
-                  <div className="overflow-y-auto flex-1">
-                    <div className="flex flex-col gap-1">
-                      {chatToShow.map((m, i) => {
-                        const name = gameState.handles?.[m.from] ?? m.from;
-                        return (
-                          <div key={i} className="text-xs">
-                            <span className={`font-semibold ${chatColor}`}>{name}:</span>{' '}
-                            <span className="text-gray-300">{m.message}</span>
-                          </div>
-                        );
-                      })}
+          {!isReplay &&
+            (() => {
+              const preGameChat =
+                selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
+              const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
+              const chatLabel =
+                preGameChat.length > 0
+                  ? `Pre-Game (${preGameChat.length})`
+                  : `Lobby (${lobbyChat.length})`;
+              const chatColor =
+                preGameChat.length > 0
+                  ? selectedTeam === 'A'
+                    ? 'text-blue-400'
+                    : 'text-red-400'
+                  : 'text-yellow-400';
+              if (chatToShow.length === 0) return null;
+              return (
+                <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-40 md:max-h-[30%] overflow-hidden">
+                  {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
+                  <button
+                    onClick={() => setShowLobbyChat(!showLobbyChat)}
+                    className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
+                  >
+                    <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>
+                      &#9654;
+                    </span>
+                    {chatLabel}
+                  </button>
+                  {showLobbyChat && (
+                    <div className="overflow-y-auto flex-1">
+                      <div className="flex flex-col gap-1">
+                        {chatToShow.map((m, i) => {
+                          const name = gameState.handles?.[m.from] ?? m.from;
+                          return (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
+                            <div key={i} className="text-xs">
+                              <span className={`font-semibold ${chatColor}`}>{name}:</span>{' '}
+                              <span className="text-gray-300">{m.message}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+                  )}
+                </div>
+              );
+            })()}
         </div>
       </div>
 

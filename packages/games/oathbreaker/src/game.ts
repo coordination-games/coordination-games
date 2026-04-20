@@ -13,18 +13,17 @@
  * hidden until round-end batch resolution reveals everything at once.
  */
 
-import type {
-  OathConfig,
-  OathState,
-  OathAction,
-  OathPlayerState,
-  OathPairing,
-  OathPairingResult,
-  OathPairingOutcomeType,
-  OathInteraction,
-} from './types.js';
-
 import type { ActionResult } from '@coordination-games/engine';
+import type {
+  OathAction,
+  OathConfig,
+  OathInteraction,
+  OathPairing,
+  OathPairingOutcomeType,
+  OathPairingResult,
+  OathPlayerState,
+  OathState,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Seeded PRNG (mulberry32) — deterministic shuffle
@@ -54,6 +53,7 @@ function seededShuffle<T>(arr: T[], seed: string, round: number): T[] {
   const rng = mulberry32(hashSeed(seed, round));
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
+    // @ts-expect-error TS2322: Type 'T | undefined' is not assignable to type 'T'. — TODO(2.3-followup)
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
@@ -67,16 +67,14 @@ export function cooperationBonus(pledge: number, config: OathConfig): number {
   const R = config.startingPoints;
   const k = config.scalingK;
   const y = config.yieldRate / 100;
-  return pledge * y * Math.pow(Math.log(pledge / R + 1), k);
+  return pledge * y * Math.log(pledge / R + 1) ** k;
 }
 
 // ---------------------------------------------------------------------------
 // Create initial state
 // ---------------------------------------------------------------------------
 
-export function createInitialState(
-  config: OathConfig,
-): OathState {
+export function createInitialState(config: OathConfig): OathState {
   const playerIds = config.playerIds;
   const players: OathPlayerState[] = playerIds.map((id) => ({
     id,
@@ -195,6 +193,7 @@ export function applyAction(
 
     const pairings = [...state.pairings];
     const pairing = { ...pairings[pairingIndex] };
+    // @ts-expect-error TS2322: Type '{ player1?: string; player2?: string; phase?: PairingPhase; proposal1?: nu — TODO(2.3-followup)
     pairings[pairingIndex] = pairing;
 
     const isPlayer1 = pairing.player1 === playerId;
@@ -208,8 +207,10 @@ export function applyAction(
     if (
       pairing.proposal1 !== null &&
       pairing.proposal2 !== null &&
+      // @ts-expect-error TS18048: 'pairing.proposal1' is possibly 'undefined'. — TODO(2.3-followup)
       Math.abs(pairing.proposal1 - pairing.proposal2) < 0.001
     ) {
+      // @ts-expect-error TS2412: Type 'number | undefined' is not assignable to type 'number | null' with 'exactO — TODO(2.3-followup)
       pairing.agreedPledge = pairing.proposal1;
       pairing.phase = 'deciding';
     }
@@ -224,6 +225,7 @@ export function applyAction(
 
     const pairings = [...state.pairings];
     const pairing = { ...pairings[pairingIndex] };
+    // @ts-expect-error TS2322: Type '{ player1?: string; player2?: string; phase?: PairingPhase; proposal1?: nu — TODO(2.3-followup)
     pairings[pairingIndex] = pairing;
 
     const isPlayer1 = pairing.player1 === playerId;
@@ -291,7 +293,9 @@ function startRound(state: OathState): OathState {
   const pairings: OathPairing[] = [];
   for (let i = 0; i < shuffled.length - 1; i += 2) {
     pairings.push({
+      // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
       player1: shuffled[i].id,
+      // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
       player2: shuffled[i + 1].id,
       phase: 'pledging',
       proposal1: null,
@@ -350,10 +354,15 @@ function resolveRound(state: OathState): OathState {
   for (const pairing of state.pairings) {
     if (pairing.phase !== 'decided') continue;
 
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const p1 = playerMap.get(pairing.player1)!;
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const p2 = playerMap.get(pairing.player2)!;
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const pledge = pairing.agreedPledge!;
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const m1 = pairing.decision1!;
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const m2 = pairing.decision2!;
 
     let delta1 = 0;
@@ -372,7 +381,6 @@ function resolveRound(state: OathState): OathState {
       delta2 = bonus;
       printed += bonus * 2;
       outcome = 'cooperation';
-
     } else if (m1 === 'C' && m2 === 'D') {
       const tithe = pledge * titheRate;
       p1.balance -= pledge;
@@ -385,7 +393,6 @@ function resolveRound(state: OathState): OathState {
       delta2 = pledge - tithe;
       burned += tithe;
       outcome = 'betrayal_2';
-
     } else if (m1 === 'D' && m2 === 'C') {
       const tithe = pledge * titheRate;
       p2.balance -= pledge;
@@ -398,7 +405,6 @@ function resolveRound(state: OathState): OathState {
       delta2 = -pledge;
       burned += tithe;
       outcome = 'betrayal_1';
-
     } else {
       const tithe = pledge * titheRate;
       p1.balance -= tithe;
@@ -414,18 +420,31 @@ function resolveRound(state: OathState): OathState {
     }
 
     p1.history.push({
-      round: state.round, opponent: p2.id,
-      myMove: m1, theirMove: m2, pledge, delta: delta1,
+      round: state.round,
+      opponent: p2.id,
+      myMove: m1,
+      theirMove: m2,
+      pledge,
+      delta: delta1,
     });
     p2.history.push({
-      round: state.round, opponent: p1.id,
-      myMove: m2, theirMove: m1, pledge, delta: delta2,
+      round: state.round,
+      opponent: p1.id,
+      myMove: m2,
+      theirMove: m1,
+      pledge,
+      delta: delta2,
     });
 
     roundResults.push({
-      player1: p1.id, player2: p2.id,
-      move1: m1, move2: m2, pledge,
-      delta1, delta2, outcome,
+      player1: p1.id,
+      player2: p2.id,
+      move1: m1,
+      move2: m2,
+      pledge,
+      delta1,
+      delta2,
+      outcome,
     });
   }
 
@@ -447,15 +466,11 @@ function resolveRound(state: OathState): OathState {
 // ---------------------------------------------------------------------------
 
 function findPairing(state: OathState, playerId: string): OathPairing | undefined {
-  return state.pairings.find(
-    (p) => p.player1 === playerId || p.player2 === playerId,
-  );
+  return state.pairings.find((p) => p.player1 === playerId || p.player2 === playerId);
 }
 
 function findPairingIndex(state: OathState, playerId: string): number {
-  return state.pairings.findIndex(
-    (p) => p.player1 === playerId || p.player2 === playerId,
-  );
+  return state.pairings.findIndex((p) => p.player1 === playerId || p.player2 === playerId);
 }
 
 // ---------------------------------------------------------------------------
@@ -471,10 +486,7 @@ export function dollarValue(
   return balance * (totalDollarsInvested / totalSupply);
 }
 
-export function dollarPerPoint(
-  totalDollarsInvested: number,
-  totalSupply: number,
-): number {
+export function dollarPerPoint(totalDollarsInvested: number, totalSupply: number): number {
   if (totalSupply <= 0) return 0;
   return totalDollarsInvested / totalSupply;
 }
@@ -558,9 +570,7 @@ export function getAgentView(state: OathState, playerId: string): AgentView | nu
     yourProposal: isPlayer1 ? pairing.proposal1 : pairing.proposal2,
     opponentProposal: isPlayer1 ? pairing.proposal2 : pairing.proposal1,
     agreedPledge: pairing.agreedPledge,
-    opponentHasDecided: isPlayer1
-      ? pairing.decision2 !== null
-      : pairing.decision1 !== null,
+    opponentHasDecided: isPlayer1 ? pairing.decision2 !== null : pairing.decision1 !== null,
     yourDecision: isPlayer1 ? pairing.decision1 : pairing.decision2,
     historyWithOpponent,
     yourFullHistory: player.history,
@@ -573,7 +583,7 @@ export function getAgentView(state: OathState, playerId: string): AgentView | nu
 }
 
 export function getSpectatorView(state: OathState): SpectatorView {
-  const dpp = dollarPerPoint(state.totalDollarsInvested, state.totalSupply);
+  const _dpp = dollarPerPoint(state.totalDollarsInvested, state.totalSupply);
   const entryCost = state.totalDollarsInvested / Math.max(state.players.length, 1);
 
   return {

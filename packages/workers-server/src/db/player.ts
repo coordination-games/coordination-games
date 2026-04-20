@@ -26,6 +26,7 @@ export class PlayerHandleTakenError extends Error {
   }
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export function rowToPlayer(row: any): Player {
   return {
     id: row.id,
@@ -58,9 +59,11 @@ export async function resolvePlayer(
   const addressLower = address.toLowerCase();
 
   // 1. Check D1 cache
-  const row = await db.prepare(
-    'SELECT * FROM players WHERE wallet_address = ? COLLATE NOCASE'
-  ).bind(addressLower).first<any>();
+  const row = await db
+    .prepare('SELECT * FROM players WHERE wallet_address = ? COLLATE NOCASE')
+    .bind(addressLower)
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    .first<any>();
 
   if (row) {
     const player = rowToPlayer(row);
@@ -68,9 +71,12 @@ export async function resolvePlayer(
     // Sync handle if caller provides a different one
     if (hint?.handle && hint.handle !== player.handle) {
       try {
-        await db.prepare('UPDATE players SET handle = ? WHERE id = ?')
-          .bind(hint.handle, player.id).run();
+        await db
+          .prepare('UPDATE players SET handle = ? WHERE id = ?')
+          .bind(hint.handle, player.id)
+          .run();
         player.handle = hint.handle;
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         if (err.message?.includes('UNIQUE')) throw new PlayerHandleTakenError(hint.handle);
         throw err;
@@ -79,8 +85,10 @@ export async function resolvePlayer(
 
     // Backfill chain_agent_id if we have it now but didn't before
     if (hint?.chainAgentId && !player.chainAgentId) {
-      await db.prepare('UPDATE players SET chain_agent_id = ? WHERE id = ?')
-        .bind(hint.chainAgentId, player.id).run();
+      await db
+        .prepare('UPDATE players SET chain_agent_id = ? WHERE id = ?')
+        .bind(hint.chainAgentId, player.id)
+        .run();
       player.chainAgentId = hint.chainAgentId;
     }
 
@@ -95,23 +103,29 @@ export async function resolvePlayer(
     throw new Error(`Cannot create player for ${address}: no name from chain or caller`);
   }
 
-  const chainAgentId = hint?.chainAgentId
-    ?? (chainInfo?.registered ? Number(chainInfo.agentId) : null);
+  const chainAgentId =
+    hint?.chainAgentId ?? (chainInfo?.registered ? Number(chainInfo.agentId) : null);
 
   // 3. Create D1 row
   const playerId = crypto.randomUUID();
   const now = new Date().toISOString();
 
   try {
-    await db.prepare(
-      'INSERT INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES (?, ?, ?, ?, 1000, 0, 0, ?)'
-    ).bind(playerId, addressLower, handle, chainAgentId, now).run();
+    await db
+      .prepare(
+        'INSERT INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES (?, ?, ?, ?, 1000, 0, 0, ?)',
+      )
+      .bind(playerId, addressLower, handle, chainAgentId, now)
+      .run();
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   } catch (err: any) {
     if (err.message?.includes('UNIQUE')) {
       // Race condition: another request created the row — retry lookup
-      const retryRow = await db.prepare(
-        'SELECT * FROM players WHERE wallet_address = ? COLLATE NOCASE'
-      ).bind(addressLower).first<any>();
+      const retryRow = await db
+        .prepare('SELECT * FROM players WHERE wallet_address = ? COLLATE NOCASE')
+        .bind(addressLower)
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        .first<any>();
       if (retryRow) return { player: rowToPlayer(retryRow), created: false };
       // If still not found, the UNIQUE was on handle, not wallet_address
       throw new PlayerHandleTakenError(handle);

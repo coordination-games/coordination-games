@@ -1,15 +1,15 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
-import HomePage from './pages/HomePage';
-import LobbiesPage from './pages/LobbiesPage';
 import GamePage from './pages/GamePage';
-import LeaderboardPage from './pages/LeaderboardPage';
-import ReplayPage from './pages/ReplayPage';
-import LobbyPage from './pages/LobbyPage';
 import GamesPage from './pages/GamesPage';
+import HomePage from './pages/HomePage';
+import LeaderboardPage from './pages/LeaderboardPage';
+import LobbiesPage from './pages/LobbiesPage';
+import LobbyPage from './pages/LobbyPage';
 import RegisterPage from './pages/RegisterPage';
+import ReplayPage from './pages/ReplayPage';
 import './index.css';
 
 const router = createBrowserRouter([
@@ -30,6 +30,7 @@ const router = createBrowserRouter([
   },
 ]);
 
+// biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <RouterProvider router={router} />

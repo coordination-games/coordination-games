@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { CaptureTheLobsterPlugin } from '../plugin.js';
+import { describe, expect, it } from 'vitest';
 import type { CtlOutcome } from '../plugin.js';
+import { CaptureTheLobsterPlugin } from '../plugin.js';
 
 function outcome(winner: 'A' | 'B' | null, roster: Record<string, 'A' | 'B'>): CtlOutcome {
   const playerStats: CtlOutcome['playerStats'] = new Map();

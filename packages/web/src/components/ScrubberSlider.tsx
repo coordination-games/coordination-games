@@ -16,6 +16,7 @@ export function ScrubberSlider({
   const max = Math.max(0, totalTurns - 1);
   return (
     <div className="flex items-center gap-3 flex-1 min-w-0">
+      {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
       <button
         onClick={onPrev}
         disabled={currentTurn === 0}
@@ -24,7 +25,7 @@ export function ScrubberSlider({
       >
         &#9664;
       </button>
-
+      {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
       <button
         onClick={onNext}
         disabled={currentTurn >= max}
@@ -33,7 +34,6 @@ export function ScrubberSlider({
       >
         &#9654;
       </button>
-
       <input
         type="range"
         min={0}
@@ -55,7 +55,6 @@ export function ScrubberSlider({
           [&::-moz-range-thumb]:border-0
           [&::-moz-range-thumb]:hover:bg-emerald-400"
       />
-
       <span className="text-xs text-gray-400 tabular-nums w-14 text-right shrink-0">
         {currentTurn}/{max}
       </span>

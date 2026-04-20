@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWsUrl } from '../config.js';
 
 export interface GameSocketState {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   gameState: any | null;
   connected: boolean;
   error: string | null;
 }
 
 export function useGameSocket(gameId: string): GameSocketState {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const [gameState, setGameState] = useState<any | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);

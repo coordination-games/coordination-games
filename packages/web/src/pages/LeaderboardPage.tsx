@@ -32,19 +32,32 @@ export default function LeaderboardPage() {
       } catch {}
     }
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const sorted = [...players].sort((a, b) => b.elo - a.elo);
 
   return (
     <div>
-      <h2 className="font-heading mb-4 sm:mb-6 text-xl sm:text-2xl font-bold tracking-wide" style={{ color: 'var(--color-ink)' }}>Leaderboard</h2>
+      <h2
+        className="font-heading mb-4 sm:mb-6 text-xl sm:text-2xl font-bold tracking-wide"
+        style={{ color: 'var(--color-ink)' }}
+      >
+        Leaderboard
+      </h2>
 
       <div className="overflow-x-auto rounded-xl parchment-strong">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left font-heading text-xs uppercase tracking-wider" style={{ borderBottom: '2px solid rgba(42, 31, 14, 0.1)', color: 'var(--color-ink-faint)' }}>
+            <tr
+              className="text-left font-heading text-xs uppercase tracking-wider"
+              style={{
+                borderBottom: '2px solid rgba(42, 31, 14, 0.1)',
+                color: 'var(--color-ink-faint)',
+              }}
+            >
               <th className="px-2 sm:px-5 py-2 sm:py-3 w-10 sm:w-16">#</th>
               <th className="px-2 sm:px-5 py-2 sm:py-3">Handle</th>
               <th className="px-2 sm:px-5 py-2 sm:py-3 text-right">ELO</th>
@@ -56,7 +69,8 @@ export default function LeaderboardPage() {
           <tbody>
             {sorted.map((player, i) => {
               const rank = i + 1;
-              const winRate = player.gamesPlayed > 0 ? Math.round((player.wins / player.gamesPlayed) * 100) : 0;
+              const winRate =
+                player.gamesPlayed > 0 ? Math.round((player.wins / player.gamesPlayed) * 100) : 0;
 
               return (
                 <tr
@@ -71,21 +85,36 @@ export default function LeaderboardPage() {
                     {rank}
                   </td>
                   <td className="px-2 sm:px-5 py-2 sm:py-3">
-                    <span className="font-mono text-xs sm:text-sm" style={{ color: 'var(--color-ink)' }}>
+                    <span
+                      className="font-mono text-xs sm:text-sm"
+                      style={{ color: 'var(--color-ink)' }}
+                    >
                       {rank === 1 && <span className="mr-1.5">🦞</span>}
                       {player.handle}
                     </span>
                   </td>
-                  <td className="px-2 sm:px-5 py-2 sm:py-3 text-right text-sm sm:text-base font-bold font-heading" style={eloStyle(rank)}>
+                  <td
+                    className="px-2 sm:px-5 py-2 sm:py-3 text-right text-sm sm:text-base font-bold font-heading"
+                    style={eloStyle(rank)}
+                  >
                     {player.elo}
                   </td>
-                  <td className="hidden sm:table-cell px-5 py-3 text-right" style={{ color: 'var(--color-ink-light)' }}>
+                  <td
+                    className="hidden sm:table-cell px-5 py-3 text-right"
+                    style={{ color: 'var(--color-ink-light)' }}
+                  >
                     {player.gamesPlayed}
                   </td>
-                  <td className="hidden sm:table-cell px-5 py-3 text-right" style={{ color: 'var(--color-ink-light)' }}>
+                  <td
+                    className="hidden sm:table-cell px-5 py-3 text-right"
+                    style={{ color: 'var(--color-ink-light)' }}
+                  >
                     {player.wins}
                   </td>
-                  <td className="px-2 sm:px-5 py-2 sm:py-3 text-right font-medium" style={{ color: winRate >= 50 ? 'var(--color-forest)' : 'var(--color-blood)' }}>
+                  <td
+                    className="px-2 sm:px-5 py-2 sm:py-3 text-right font-medium"
+                    style={{ color: winRate >= 50 ? 'var(--color-forest)' : 'var(--color-blood)' }}
+                  >
                     {winRate}%
                   </td>
                 </tr>

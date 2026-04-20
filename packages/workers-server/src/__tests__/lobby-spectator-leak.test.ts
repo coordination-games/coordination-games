@@ -18,7 +18,7 @@
  * here.
  */
 
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Stub the `cloudflare:workers` module so importing LobbyDO does not
 // blow up under Node-based vitest. The `DurableObject` base class is
@@ -29,7 +29,9 @@ vi.mock('cloudflare:workers', () => ({
 }));
 
 // Lazy import — must come after vi.mock above.
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 let LobbyDO: any;
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 let teamFormationPhase: any;
 
 beforeAll(async () => {
@@ -37,7 +39,8 @@ beforeAll(async () => {
   // Pull the real CtL team-formation phase so getTeamForPlayer is
   // exercised against the registered plugin shape.
   const ctl = await import('@coordination-games/game-ctl');
-  teamFormationPhase = ctl.CaptureTheLobsterPlugin.lobby!.phases.find(
+  teamFormationPhase = ctl.CaptureTheLobsterPlugin.lobby?.phases.find(
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     (p: any) => p.id === 'team-formation',
   );
   if (!teamFormationPhase) throw new Error('test setup: team-formation phase not found');
@@ -60,6 +63,7 @@ const PLAYERS = [
 function buildLobbyAtTeamFormation() {
   // Skip the DurableObject constructor — we never touch ctx/env on the
   // code paths under test.
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   const lobby: any = Object.create(LobbyDO.prototype);
   lobby._loaded = true;
   lobby._meta = {
@@ -74,7 +78,7 @@ function buildLobbyAtTeamFormation() {
     noTimeout: true,
     createdAt: 0,
   };
-  lobby._agents = PLAYERS.map(p => ({ id: p.id, handle: p.handle, elo: 1000, joinedAt: 0 }));
+  lobby._agents = PLAYERS.map((p) => ({ id: p.id, handle: p.handle, elo: 1000, joinedAt: 0 }));
   lobby._spectatorFilterDrops = 0;
 
   // Drive the real phase through propose+accept so getTeamForPlayer
@@ -116,10 +120,42 @@ function buildLobbyAtTeamFormation() {
   // and one DM-style envelope (scope 'dm' is unknown to the player filter
   // so it falls into the "fully private" bucket — only the sender sees it).
   lobby._relay = [
-    { index: 0, type: 'messaging', data: { msg: 'public hi' },        scope: 'all',  pluginId: 'chat', sender: 'p1', timestamp: 1 },
-    { index: 1, type: 'messaging', data: { msg: 'team-A only' },       scope: 'team', pluginId: 'chat', sender: 'p1', timestamp: 2 },
-    { index: 2, type: 'messaging', data: { msg: 'team-B only' },       scope: 'team', pluginId: 'chat', sender: 'p3', timestamp: 3 },
-    { index: 3, type: 'messaging', data: { msg: 'private to nobody' }, scope: 'dm',   pluginId: 'chat', sender: 'p1', timestamp: 4 },
+    {
+      index: 0,
+      type: 'messaging',
+      data: { msg: 'public hi' },
+      scope: 'all',
+      pluginId: 'chat',
+      sender: 'p1',
+      timestamp: 1,
+    },
+    {
+      index: 1,
+      type: 'messaging',
+      data: { msg: 'team-A only' },
+      scope: 'team',
+      pluginId: 'chat',
+      sender: 'p1',
+      timestamp: 2,
+    },
+    {
+      index: 2,
+      type: 'messaging',
+      data: { msg: 'team-B only' },
+      scope: 'team',
+      pluginId: 'chat',
+      sender: 'p3',
+      timestamp: 3,
+    },
+    {
+      index: 3,
+      type: 'messaging',
+      data: { msg: 'private to nobody' },
+      scope: 'dm',
+      pluginId: 'chat',
+      sender: 'p1',
+      timestamp: 4,
+    },
   ];
 
   return lobby;
@@ -132,10 +168,9 @@ function buildLobbyAtTeamFormation() {
 describe('LobbyDO relay leak — spectator vs player filter', () => {
   it('GET /state with NO X-Player-Id returns only scope:"all" envelopes', async () => {
     const lobby = buildLobbyAtTeamFormation();
-    const resp: Response = await lobby.fetch(
-      new Request('https://do/state', { method: 'GET' }),
-    );
+    const resp: Response = await lobby.fetch(new Request('https://do/state', { method: 'GET' }));
     expect(resp.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const body: any = await resp.json();
     expect(Array.isArray(body.relay)).toBe(true);
     expect(body.relay.length).toBe(1); // only the public envelope
@@ -155,7 +190,9 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
       }),
     );
     expect(resp.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const body: any = await resp.json();
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const scopes = body.relay.map((m: any) => `${m.scope}:${m.sender}`);
     // p1 must see: own public 'all' (sender p1), own team-A team msg (sender p1),
     // own DM (sender p1). Must NOT see: p3's team-B message.
@@ -175,15 +212,14 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
         headers: { 'X-Player-Id': 'p3' },
       }),
     );
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     const body: any = await resp.json();
-    const teamScopedFromP1 = body.relay.filter(
-      (m: any) => m.scope === 'team' && m.sender === 'p1',
-    );
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    const teamScopedFromP1 = body.relay.filter((m: any) => m.scope === 'team' && m.sender === 'p1');
     expect(teamScopedFromP1).toEqual([]);
     // But p3 sees their own team-B team message.
-    const teamScopedFromP3 = body.relay.filter(
-      (m: any) => m.scope === 'team' && m.sender === 'p3',
-    );
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    const teamScopedFromP3 = body.relay.filter((m: any) => m.scope === 'team' && m.sender === 'p3');
     expect(teamScopedFromP3.length).toBe(1);
   });
 });

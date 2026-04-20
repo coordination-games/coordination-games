@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { hasLineOfSight, getVisibleHexes } from '../los.js';
-import { hexToString, hexesInRadius, type Hex } from '../hex.js';
+import { describe, expect, it } from 'vitest';
+import { type Hex, hexesInRadius, hexToString } from '../hex.js';
+import { getVisibleHexes, hasLineOfSight } from '../los.js';
 
 function wallSet(...hexes: Hex[]): Set<string> {
   return new Set(hexes.map(hexToString));

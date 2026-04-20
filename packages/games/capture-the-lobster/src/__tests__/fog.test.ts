@@ -1,7 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { hexToString, hexesInRadius, type Hex } from '../hex.js';
-import { getUnitVision, buildVisibleState, type FogUnit } from '../fog.js';
-import { CLASS_VISION } from '../combat.js';
+import { describe, expect, it } from 'vitest';
+import { buildVisibleState, type FogUnit, getUnitVision } from '../fog.js';
+import { type Hex, hexesInRadius, hexToString } from '../hex.js';
 
 function makeAllHexes(center: Hex, radius: number): Set<string> {
   return new Set(hexesInRadius(center, radius).map(hexToString));

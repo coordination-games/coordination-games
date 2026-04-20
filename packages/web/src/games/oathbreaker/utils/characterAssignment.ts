@@ -38,12 +38,13 @@ export function assignCharacters(
   playerIds: string[],
   seed: string = 'default',
 ): Record<string, CharacterAssignment> {
-  const rng = mulberry32(hashString(seed + 'characters'));
+  const rng = mulberry32(hashString(`${seed}characters`));
 
   // Shuffle character indices
   const indices = CHARACTERS.map((_, i) => i);
   for (let i = indices.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
+    // @ts-expect-error TS2322: Type 'number | undefined' is not assignable to type 'number'. — TODO(2.3-followup)
     [indices[i], indices[j]] = [indices[j], indices[i]];
   }
 
@@ -52,6 +53,7 @@ export function assignCharacters(
     const charIdx = indices[i % indices.length];
     const wrap = Math.floor(i / CHARACTERS.length);
     assignments[id] = {
+      // @ts-expect-error TS2538: Type 'undefined' cannot be used as an index type. — TODO(2.3-followup)
       characterName: CHARACTERS[charIdx].name,
       tint: wrap > 0 ? `hue-rotate(${wrap * 40}deg)` : null,
     };

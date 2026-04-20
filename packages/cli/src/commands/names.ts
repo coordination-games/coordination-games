@@ -1,16 +1,16 @@
-import { Command } from "commander";
-import { loadKey, getOrCreateKey } from "../keys.js";
-import { loadConfig, loadSession, saveSession } from "../config.js";
-import { ApiClient } from "../api-client.js";
-import { signPermit } from "../signing.js";
+import type { Command } from 'commander';
+import { ApiClient } from '../api-client.js';
+import { loadConfig, loadSession, saveSession } from '../config.js';
+import { loadKey } from '../keys.js';
+import { signPermit } from '../signing.js';
 
-const USDC_ADDRESS_OPTIMISM = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85";
+const USDC_ADDRESS_OPTIMISM = '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85';
 const REGISTRATION_COST_USDC = 5_000_000n; // 5 USDC (6 decimals)
 
 export function registerNameCommands(program: Command) {
   program
-    .command("check-name <name>")
-    .description("Check if a name is available for registration")
+    .command('check-name <name>')
+    .description('Check if a name is available for registration')
     .action(async (name: string) => {
       const config = loadConfig();
       const client = new ApiClient(config.serverUrl);
@@ -19,7 +19,7 @@ export function registerNameCommands(program: Command) {
         const data = await client.get(`/api/relay/check-name/${encodeURIComponent(name)}`);
         if (data.available) {
           const wallet = loadKey();
-          const addr = wallet?.address ?? "YOUR_AGENT_ADDRESS";
+          const addr = wallet?.address ?? 'YOUR_AGENT_ADDRESS';
           const expires = Math.floor(Date.now() / 1000) + 3600;
           const regUrl = `${config.serverUrl}/register?name=${encodeURIComponent(name)}&addr=${addr}&expires=${expires}`;
 
@@ -29,10 +29,11 @@ export function registerNameCommands(program: Command) {
         } else {
           process.stdout.write(`\n  "${name}" is taken.\n`);
           if (data.suggestions?.length) {
-            process.stdout.write(`  Suggestions: ${data.suggestions.join(", ")}\n`);
+            process.stdout.write(`  Suggestions: ${data.suggestions.join(', ')}\n`);
           }
           process.stdout.write(`\n`);
         }
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -40,9 +41,9 @@ export function registerNameCommands(program: Command) {
     });
 
   program
-    .command("register <name>")
-    .description("Register a name (costs 5 USDC)")
-    .option("-y, --yes", "Skip confirmation prompt")
+    .command('register <name>')
+    .description('Register a name (costs 5 USDC)')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (name: string, opts: { yes?: boolean }) => {
       const wallet = loadKey();
       if (!wallet) {
@@ -60,6 +61,7 @@ export function registerNameCommands(program: Command) {
           process.stdout.write(`\n  "${name}" is not available.\n\n`);
           return;
         }
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Error checking name: ${err.message}\n`);
         process.exit(1);
@@ -70,7 +72,7 @@ export function registerNameCommands(program: Command) {
         // In non-interactive mode (piped stdin), just proceed
         const isTTY = process.stdin.isTTY;
         if (isTTY) {
-          const readline = await import("node:readline");
+          const readline = await import('node:readline');
           const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
           const answer = await new Promise<string>((resolve) => {
             rl.question(`\n  Registration costs $5 USDC. Proceed? [y/N] `, (a) => {
@@ -78,7 +80,7 @@ export function registerNameCommands(program: Command) {
               resolve(a.trim());
             });
           });
-          if (answer.toLowerCase() !== "y") {
+          if (answer.toLowerCase() !== 'y') {
             process.stdout.write(`  Cancelled.\n\n`);
             return;
           }
@@ -94,10 +96,10 @@ export function registerNameCommands(program: Command) {
           USDC_ADDRESS_OPTIMISM,
           USDC_ADDRESS_OPTIMISM, // permit spender — will be overridden by server
           REGISTRATION_COST_USDC,
-          deadline
+          deadline,
         );
 
-        const result = await client.post("/api/relay/register", {
+        const result = await client.post('/api/relay/register', {
           name,
           address: wallet.address,
           agentURI: `https://coordination.games/agent/${wallet.address}`,
@@ -116,6 +118,7 @@ export function registerNameCommands(program: Command) {
         process.stdout.write(`  Name:     ${result.name}\n`);
         process.stdout.write(`  Agent ID: ${result.agentId}\n`);
         process.stdout.write(`  Credits:  ${result.credits}\n\n`);
+        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       } catch (err: any) {
         process.stderr.write(`  Registration failed: ${err.message}\n`);
         process.exit(1);

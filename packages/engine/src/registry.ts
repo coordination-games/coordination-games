@@ -11,6 +11,7 @@
 
 import type { CoordinationGame } from './types.js';
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 const games: Map<string, CoordinationGame<any, any, any, any>> = new Map();
 
 /** Declarer of a tool within a game plugin. */
@@ -25,19 +26,20 @@ interface ToolDeclarer {
  * Returns a map of colliding name → declarers. Empty map means no collisions.
  */
 function findToolCollisions(
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   plugin: CoordinationGame<any, any, any, any>,
 ): Map<string, ToolDeclarer[]> {
   const byName = new Map<string, ToolDeclarer[]>();
 
   for (const tool of plugin.gameTools ?? []) {
     if (!byName.has(tool.name)) byName.set(tool.name, []);
-    byName.get(tool.name)!.push({ kind: 'game' });
+    byName.get(tool.name)?.push({ kind: 'game' });
   }
 
   for (const phase of plugin.lobby?.phases ?? []) {
     for (const tool of phase.tools ?? []) {
       if (!byName.has(tool.name)) byName.set(tool.name, []);
-      byName.get(tool.name)!.push({ kind: 'lobby-phase', phaseId: phase.id });
+      byName.get(tool.name)?.push({ kind: 'lobby-phase', phaseId: phase.id });
     }
   }
 
@@ -57,14 +59,14 @@ export class ToolCollisionError extends Error {
   readonly declarers: string[];
 
   constructor(gameType: string, toolName: string, declarers: ToolDeclarer[]) {
-    const declarerLabels = declarers.map(d =>
+    const declarerLabels = declarers.map((d) =>
       d.kind === 'game'
         ? `GamePhase of game "${gameType}"`
         : `LobbyPhase "${d.phaseId}" of game "${gameType}"`,
     );
     const message =
       `Tool name collision: "${toolName}" is declared by:\n` +
-      declarerLabels.map(l => `  - ${l}`).join('\n') +
+      declarerLabels.map((l) => `  - ${l}`).join('\n') +
       `\n\nResolve by:\n` +
       `  - renaming one of the conflicting tools, or\n` +
       `  - removing the duplicate declaration from the game plugin.`;
@@ -75,6 +77,7 @@ export class ToolCollisionError extends Error {
   }
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export function registerGame(plugin: CoordinationGame<any, any, any, any>): void {
   if (games.has(plugin.gameType)) {
     throw new Error(`Game "${plugin.gameType}" already registered`);
@@ -90,6 +93,7 @@ export function registerGame(plugin: CoordinationGame<any, any, any, any>): void
   games.set(plugin.gameType, plugin);
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export function getGame(gameType: string): CoordinationGame<any, any, any, any> | undefined {
   return games.get(gameType);
 }
@@ -98,6 +102,7 @@ export function getRegisteredGames(): string[] {
   return Array.from(games.keys());
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export function getAllGames(): Map<string, CoordinationGame<any, any, any, any>> {
   return games;
 }

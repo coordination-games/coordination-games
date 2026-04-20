@@ -11,7 +11,7 @@
  * The server just relays the typed data by scope.
  */
 
-import type { ToolPlugin, Message, AgentInfo } from '@coordination-games/engine';
+import type { AgentInfo, Message, ToolPlugin } from '@coordination-games/engine';
 
 /** A relay message as received from the server. */
 export interface RelayMessage {
@@ -33,8 +33,7 @@ export function formatChatMessage(
   body: string,
   phase: string,
 ): { type: string; data: { body: string }; scope: 'team' | 'all'; pluginId: string } {
-  const scope: 'team' | 'all' =
-    phase === 'in_progress' || phase === 'pre_game' ? 'team' : 'all';
+  const scope: 'team' | 'all' = phase === 'in_progress' || phase === 'pre_game' ? 'team' : 'all';
 
   return {
     type: 'messaging',
@@ -53,12 +52,13 @@ export function extractMessages(relayMessages: RelayMessage[]): Message[] {
   return relayMessages
     .filter((msg) => msg.type === 'messaging')
     .map((msg) => {
+      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       const data = msg.data as { body?: string; tags?: Record<string, any> };
       return {
         from: parseInt(msg.sender, 10) || 0,
         body: data.body ?? '',
         turn: msg.turn,
-        scope: (msg.scope === 'team' || msg.scope === 'all') ? msg.scope : 'all',
+        scope: msg.scope === 'team' || msg.scope === 'all' ? msg.scope : 'all',
         tags: {
           ...data.tags,
           source: msg.pluginId,
@@ -86,12 +86,17 @@ export const BasicChatPlugin: ToolPlugin = {
   tools: [
     {
       name: 'chat',
-      description: 'Send a message. In the lobby, visible to everyone. During class selection and in-game, visible to your team only.',
+      description:
+        'Send a message. In the lobby, visible to everyone. During class selection and in-game, visible to your team only.',
       inputSchema: {
         type: 'object',
         properties: {
           message: { type: 'string', description: 'Your message' },
-          scope: { type: 'string', description: 'Who receives it: "team" (teammates only), "all" (everyone in game/lobby), or a player display name for a DM (e.g. "Clawdia")' },
+          scope: {
+            type: 'string',
+            description:
+              'Who receives it: "team" (teammates only), "all" (everyone in game/lobby), or a player display name for a DM (e.g. "Clawdia")',
+          },
         },
         required: ['message', 'scope'],
       },
@@ -99,14 +104,15 @@ export const BasicChatPlugin: ToolPlugin = {
     },
   ],
 
-  handleData(mode: string, inputs: Map<string, any>): Map<string, any> {
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  handleData(_mode: string, inputs: Map<string, any>): Map<string, any> {
     // Read raw relay messages from pipeline input
     const relayMessages: RelayMessage[] = inputs.get('relay-messages') ?? [];
     const messages = extractMessages(relayMessages);
     return new Map([['messaging', messages]]);
   },
 
-  handleCall(tool: string, args: unknown, caller: AgentInfo): unknown {
+  handleCall(tool: string, args: unknown, _caller: AgentInfo): unknown {
     if (tool === 'chat') {
       const { message, scope } = args as { message: string; scope: string };
       // Return relay data — the server sends it through the typed relay as-is.

@@ -1,22 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { generateMap, GameMap, TileType } from '../map.js';
+import { describe, expect, it } from 'vitest';
 import {
+  getNeighbors,
+  hexDistance,
+  hexEquals,
+  hexesInRadius,
   hexToString,
   stringToHex,
-  hexDistance,
-  hexesInRadius,
-  getNeighbors,
-  hexEquals,
 } from '../hex.js';
+import { generateMap, type TileType } from '../map.js';
 
-function bfsReachable(
-  startKey: string,
-  tiles: Map<string, TileType>,
-): Set<string> {
+function bfsReachable(startKey: string, tiles: Map<string, TileType>): Set<string> {
   const visited = new Set<string>();
   const queue: string[] = [startKey];
   visited.add(startKey);
   while (queue.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: pre-existing non-null assertion; verify in cleanup followup — TODO(2.3-followup)
     const current = queue.shift()!;
     const hex = stringToHex(current);
     for (const n of getNeighbors(hex)) {

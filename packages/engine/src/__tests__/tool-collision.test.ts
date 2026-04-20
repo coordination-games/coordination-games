@@ -14,17 +14,17 @@
  *  - Re-registering the same gameType throws the "already registered" error.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  registerGame,
-  ToolCollisionError,
-  getAllGames,
+  type AgentInfo,
   type CoordinationGame,
-  type ToolDefinition,
+  getAllGames,
   type LobbyPhase,
   type PhaseActionResult,
   type PhaseResult,
-  type AgentInfo,
+  registerGame,
+  ToolCollisionError,
+  type ToolDefinition,
 } from '../index.js';
 
 // ---------------------------------------------------------------------------
@@ -38,12 +38,19 @@ function fakePhase(id: string, tools: ToolDefinition[]): LobbyPhase {
     tools,
     timeout: null,
     acceptsJoins: true,
-    init(_players: AgentInfo[]) { return {}; },
+    init(_players: AgentInfo[]) {
+      return {};
+    },
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     handleAction(state: any, _action, _players): PhaseActionResult {
       return { state };
     },
-    handleTimeout(_state, _players): PhaseResult | null { return null; },
-    getView(_state) { return {}; },
+    handleTimeout(_state, _players): PhaseResult | null {
+      return null;
+    },
+    getView(_state) {
+      return {};
+    },
   };
 }
 
@@ -55,6 +62,7 @@ function fakeGame(options: {
   gameType: string;
   gameTools?: ToolDefinition[];
   phases?: LobbyPhase[];
+  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 }): CoordinationGame<any, any, any, any> {
   return {
     gameType: options.gameType,
@@ -66,19 +74,25 @@ function fakeGame(options: {
           queueType: 'open',
           phases: options.phases,
           matchmaking: {
-            minPlayers: 2, maxPlayers: 4, teamSize: 1, numTeams: 2, queueTimeoutMs: 60000,
+            minPlayers: 2,
+            maxPlayers: 4,
+            teamSize: 1,
+            numTeams: 2,
+            queueTimeoutMs: 60000,
           },
         }
       : undefined,
     // Stubs — not exercised by registerGame's collision check.
     createInitialState: () => ({}),
     validateAction: () => false,
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     applyAction: (state: any) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   } as unknown as CoordinationGame<any, any, any, any>;
 }
 
@@ -133,10 +147,7 @@ describe('ToolCollisionError — server-side', () => {
   it('throws when two lobby phases both declare the same tool name', () => {
     const plugin = fakeGame({
       gameType: uniq('collision-cross-phase'),
-      phases: [
-        fakePhase('phase-a', [chatTool()]),
-        fakePhase('phase-b', [chatTool()]),
-      ],
+      phases: [fakePhase('phase-a', [chatTool()]), fakePhase('phase-b', [chatTool()])],
     });
 
     expect(() => registerGame(plugin)).toThrow(ToolCollisionError);
@@ -187,8 +198,13 @@ describe('ToolCollisionError — server-side', () => {
       gameTools: [chatTool()],
       phases: [fakePhase('phase-x', [chatTool()])],
     });
+    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     let thrown: any;
-    try { registerGame(plugin); } catch (err) { thrown = err; }
+    try {
+      registerGame(plugin);
+    } catch (err) {
+      thrown = err;
+    }
     expect(thrown?.message).toMatch(/Resolve by:/);
     expect(thrown?.message).toMatch(/renaming one of the conflicting tools/);
   });
