@@ -68,10 +68,10 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
       const app = express();
       app.use(express.json());
 
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
       const transports = new Map<string, any>();
 
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
       app.post('/mcp', async (req: any, res: any) => {
         const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
@@ -89,14 +89,14 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
             sessionIdGenerator: () => crypto.randomUUID(),
           });
           transport.onclose = () => {
-            // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+            // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
             const sid = (transport as any).sessionId;
             if (sid) transports.delete(sid);
           };
           // @ts-expect-error TS2379: Argument of type 'StreamableHTTPServerTransport' is not assignable to parameter  — TODO(2.3-followup)
           await newServer.connect(transport);
           await transport.handleRequest(req, res);
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
           const sid = (transport as any).sessionId;
           if (sid) transports.set(sid, transport);
           return;
@@ -105,7 +105,7 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
         res.status(400).json({ error: 'Bad request' });
       });
 
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
       app.get('/mcp', async (req: any, res: any) => {
         const sessionId = req.headers['mcp-session-id'] as string | undefined;
         if (sessionId) {
@@ -121,9 +121,9 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
       app.listen(httpPort, () => {
         process.stderr.write(`MCP HTTP server listening on port ${httpPort}\n`);
       });
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      process.stderr.write(`Failed to start HTTP server: ${err.message}\n`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`Failed to start HTTP server: ${msg}\n`);
       process.stderr.write(`Falling back to stdio transport.\n`);
       const transport = new StdioServerTransport();
       await server.connect(transport);

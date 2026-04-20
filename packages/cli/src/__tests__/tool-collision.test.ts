@@ -28,7 +28,7 @@ import { ClientToolCollisionError, registerGameTools, STATIC_CLI_COMMANDS } from
 function makeStubServer() {
   const registered: string[] = [];
   return {
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
     tool: (name: string, _desc: string, _shape: any, _fn: any) => {
       registered.push(name);
     },
@@ -40,7 +40,7 @@ function makeStubServer() {
 // the static tool handlers, which run only when a tool is INVOKED. The
 // collision check and registration never call them. Cast as any to avoid
 // dragging the real class into tests.
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
 const stubClient: any = {};
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ function tool(name: string, extra: Partial<ToolDefinition> = {}): ToolDefinition
 function fakeGame(
   gameType: string,
   opts: { gameTools?: ToolDefinition[]; phaseTools?: Record<string, ToolDefinition[]> } = {},
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
 ): CoordinationGame<any, any, any, any> {
   return {
     gameType,
@@ -76,7 +76,7 @@ function fakeGame(
             timeout: null,
             acceptsJoins: true,
             init: () => ({}),
-            // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+            // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
             handleAction: (state: any) => ({ state }),
             handleTimeout: () => null,
             getView: () => ({}),
@@ -92,14 +92,14 @@ function fakeGame(
       : undefined,
     createInitialState: () => ({}),
     validateAction: () => false,
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
     applyAction: (state: any) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
   } as unknown as CoordinationGame<any, any, any, any>;
 }
 
@@ -126,7 +126,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
 
     let thrown: unknown;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
       registerGameTools(server as any, stubClient, { plugins: [plugin] });
     } catch (err) {
       thrown = err;
@@ -146,10 +146,10 @@ describe('ClientToolCollisionError — client-side surface', () => {
     });
     const server = makeStubServer();
 
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
     let thrown: any;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
       registerGameTools(server as any, stubClient, { plugins: [plugin], games: [game] });
     } catch (err) {
       thrown = err;
@@ -171,7 +171,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
     const server = makeStubServer();
 
     expect(() =>
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
       registerGameTools(server as any, stubClient, { games: [game], plugins: [plugin] }),
     ).not.toThrow();
     // Both dynamic tools end up registered on the server, plus the fixed
@@ -186,7 +186,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
     const plugin = fakePlugin('hidden-plugin', [tool('state', { mcpExpose: false })]);
     const server = makeStubServer();
 
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
     expect(() => registerGameTools(server as any, stubClient, { plugins: [plugin] })).not.toThrow();
   });
 
@@ -199,10 +199,10 @@ describe('ClientToolCollisionError — client-side surface', () => {
     });
     const server = makeStubServer();
 
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
     let thrown: any;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
       registerGameTools(server as any, stubClient, { games: [game] });
     } catch (err) {
       thrown = err;
@@ -224,10 +224,10 @@ describe('ClientToolCollisionError — client-side surface', () => {
 
   it('re-exported ClientToolCollisionError message ends with resolution suggestions', () => {
     const plugin = fakePlugin('colliding', [tool('state', { mcpExpose: true })]);
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
     let thrown: any;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
       registerGameTools(makeStubServer() as any, stubClient, { plugins: [plugin] });
     } catch (err) {
       thrown = err;

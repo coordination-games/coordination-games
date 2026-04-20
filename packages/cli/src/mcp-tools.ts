@@ -28,7 +28,7 @@ export interface RegisterToolsOptions {
   /** Active plugins — their mcpExpose tools get registered as MCP tools. */
   plugins?: ToolPlugin[];
   /** Registered games — declared surface used for dynamic MCP tool registration. */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
   games?: CoordinationGame<any, any, any, any>[];
 }
 
@@ -90,7 +90,7 @@ interface SurfaceEntry {
 }
 
 function buildFullSurface(
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
   games: CoordinationGame<any, any, any, any>[],
   plugins: ToolPlugin[],
 ): SurfaceEntry[] {
@@ -163,7 +163,7 @@ function checkSurfaceCollisions(entries: SurfaceEntry[]): void {
  *
  * Unknown shapes fall back to z.any() with the description attached.
  */
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
 function jsonPropToZod(prop: any): z.ZodTypeAny {
   if (!prop || typeof prop !== 'object') return z.any();
 
@@ -210,7 +210,7 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
 
   if (type === 'object') {
     const shape: Record<string, z.ZodTypeAny> = {};
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
     const props = (prop.properties ?? {}) as Record<string, any>;
     const required = new Set<string>(Array.isArray(prop.required) ? prop.required : []);
     for (const [k, v] of Object.entries(props)) {
@@ -229,11 +229,11 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
  * top-level `inputSchema` object (which is always `{type:'object', properties, required}`).
  */
 function toolInputShape(
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
   inputSchema: Record<string, any> | undefined,
 ): Record<string, z.ZodTypeAny> {
   if (!inputSchema || typeof inputSchema !== 'object') return {};
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
   const props = (inputSchema.properties ?? {}) as Record<string, any>;
   const required = new Set<string>(Array.isArray(inputSchema.required) ? inputSchema.required : []);
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -280,12 +280,12 @@ export function registerGameTools(
         .optional()
         .describe(`Game name (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Auto-detects if omitted.`),
     },
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
     async (args: any) => {
       try {
         const result = await client.getGuide(args.game);
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       } catch (err: any) {
         return jsonError(err);
       }
@@ -300,7 +300,7 @@ export function registerGameTools(
       try {
         const result = await client.getState();
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       } catch (err: any) {
         return jsonError(err);
       }
@@ -315,7 +315,7 @@ export function registerGameTools(
       try {
         const result = await client.waitForUpdate();
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       } catch (err: any) {
         return jsonError(err);
       }
@@ -326,7 +326,7 @@ export function registerGameTools(
     try {
       const result = await client.listLobbies();
       return jsonResult(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
     } catch (err: any) {
       return jsonError(err);
     }
@@ -340,7 +340,7 @@ export function registerGameTools(
       try {
         const result = await client.joinLobby(lobbyId);
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       } catch (err: any) {
         return jsonError(err);
       }
@@ -376,7 +376,7 @@ export function registerGameTools(
         const size = game === OATH_GAME_ID ? playerCount || 4 : teamSize || 2;
         const result = await client.createLobby(game, size);
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       } catch (err: any) {
         return jsonError(err);
       }
@@ -402,18 +402,18 @@ export function registerGameTools(
 
     if (entry.kind === 'plugin' && entry.plugin) {
       const plugin = entry.plugin;
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       server.tool(toolName, tool.description, shape, async (args: any) => {
         // Plugin tools are client-side: run handleCall locally, then post
         // any returned relay envelope to the unified endpoint.
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
         let out: any;
         try {
           out = plugin.handleCall?.(toolName, args, {
             id: 'self',
             handle: 'self',
           });
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
         } catch (err: any) {
           return jsonError({
             error: {
@@ -429,7 +429,7 @@ export function registerGameTools(
           try {
             const result = await client.callPluginRelay(out.relay);
             return jsonResult(result);
-            // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+            // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
           } catch (err: any) {
             // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
             if (err?.structured) return jsonError(err.structured);
@@ -441,9 +441,9 @@ export function registerGameTools(
       });
     } else {
       // Game / lobby-phase tool: dispatch through the unified endpoint.
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
       server.tool(toolName, tool.description, shape, async (args: any) => {
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
         const result: any = await client.callToolRaw(toolName, args ?? {});
         if (result.ok) return jsonResult(result.data);
         // Structured error — surface it so the agent can self-correct.
@@ -463,11 +463,11 @@ function jsonResult(data: unknown) {
   };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
 function jsonError(err: any) {
   // Accept either a thrown Error (from ApiClient) or a structured
   // `{error: {code, message, ...}}` payload from the dispatcher.
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
   let payload: any;
   if (err && typeof err === 'object' && 'error' in err) {
     payload = err;

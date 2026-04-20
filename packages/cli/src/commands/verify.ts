@@ -57,12 +57,12 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       // Step 1: Fetch game bundle
       // -------------------------------------------------------------------
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
       let bundle: any;
       try {
         bundle = await client.get(`/api/games/${encodeURIComponent(gameId)}/bundle`);
         steps.push(pass('Fetch game bundle', `${bundle.turns?.length ?? 0} turns`));
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
       } catch (err: any) {
         steps.push(fail('Fetch game bundle', err.message));
         printResults(steps);
@@ -72,12 +72,12 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       // Step 2: Fetch on-chain result (via server API)
       // -------------------------------------------------------------------
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
       let onChainResult: any;
       try {
         onChainResult = await client.get(`/api/games/${encodeURIComponent(gameId)}/result`);
         steps.push(pass('Fetch on-chain result', `turnCount=${onChainResult.turnCount}`));
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
       } catch (err: any) {
         // On-chain result may not be available (game not settled yet, or local testing)
         steps.push(
@@ -105,7 +105,7 @@ export function registerVerifyCommand(program: Command) {
               ),
             );
           }
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
         } catch (err: any) {
           steps.push(fail('Verify config hash', err.message));
         }
@@ -163,7 +163,7 @@ export function registerVerifyCommand(program: Command) {
                     `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... signed by ${recoveredAddress.slice(0, 10)}...`,
                   );
                 }
-                // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+                // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
               } catch (err: any) {
                 // Signature verification may fail if the schema doesn't match
                 // (e.g., game-specific move schemas). Count as unverifiable.
@@ -190,7 +190,7 @@ export function registerVerifyCommand(program: Command) {
               process.stdout.write(`         ... and ${sigErrors.length - 5} more\n`);
             }
           }
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
         } catch (err: any) {
           steps.push(fail('Verify move signatures', err.message));
         }
@@ -203,10 +203,10 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       if (bundle.turns && bundle.turns.length > 0) {
         try {
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
           const turns: TurnData[] = bundle.turns.map((t: any) => ({
             turnNumber: t.turnNumber,
-            // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+            // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
             moves: t.moves.map((m: any) => ({
               player: m.player,
               data: typeof m.data === 'string' ? m.data : JSON.stringify(m.data),
@@ -237,7 +237,7 @@ export function registerVerifyCommand(program: Command) {
               ),
             );
           }
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
         } catch (err: any) {
           steps.push(fail('Verify Merkle root', err.message));
         }

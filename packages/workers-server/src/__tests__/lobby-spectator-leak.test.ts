@@ -25,9 +25,9 @@ vi.mock('cloudflare:workers', () => ({
 }));
 
 // Lazy import — must come after vi.mock above.
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
 let LobbyDO: any;
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
 let teamFormationPhase: any;
 
 beforeAll(async () => {
@@ -36,7 +36,7 @@ beforeAll(async () => {
   // exercised against the registered plugin shape.
   const ctl = await import('@coordination-games/game-ctl');
   teamFormationPhase = ctl.CaptureTheLobsterPlugin.lobby?.phases.find(
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
     (p: any) => p.id === 'team-formation',
   );
   if (!teamFormationPhase) throw new Error('test setup: team-formation phase not found');
@@ -100,7 +100,7 @@ function makeMemoryStorage(): DurableObjectStorage {
  *  stubbed DO storage so the real `DOStorageRelayClient` filters it. */
 function buildLobbyAtTeamFormation() {
   const storage = makeMemoryStorage();
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
   const lobby: any = Object.create(LobbyDO.prototype);
   lobby._loaded = true;
   lobby.ctx = { storage };
@@ -213,7 +213,7 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
     const lobby = buildLobbyAtTeamFormation();
     const resp: Response = await lobby.fetch(new Request('https://do/state', { method: 'GET' }));
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
     const body: any = await resp.json();
     expect(Array.isArray(body.relay)).toBe(true);
     expect(body.relay.length).toBe(1); // only the public envelope
@@ -231,16 +231,16 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
       }),
     );
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
     const body: any = await resp.json();
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
     const scopes = body.relay.map((m: any) => `${m.scope.kind}:${m.sender}`);
     // p1 must see: own public 'all', own team-A, own DM. Must NOT see team-B.
     expect(scopes).toContain('all:p1');
     expect(scopes).toContain('team:p1');
     expect(scopes).toContain('dm:p1');
     // No team-scoped from p3 (team B sender) — that envelope is filtered out.
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
     const teamFromP3 = body.relay.filter((m: any) => m.scope.kind === 'team' && m.sender === 'p3');
     expect(teamFromP3).toEqual([]);
   });
@@ -253,16 +253,16 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
         headers: { 'X-Player-Id': 'p3' },
       }),
     );
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
     const body: any = await resp.json();
     const teamScopedFromP1 = body.relay.filter(
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+      // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
       (m: any) => m.scope.kind === 'team' && m.sender === 'p1',
     );
     expect(teamScopedFromP1).toEqual([]);
     // But p3 sees their own team-B team message.
     const teamScopedFromP3 = body.relay.filter(
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
+      // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
       (m: any) => m.scope.kind === 'team' && m.sender === 'p3',
     );
     expect(teamScopedFromP3.length).toBe(1);

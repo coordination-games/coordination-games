@@ -26,7 +26,7 @@ vi.mock('cloudflare:workers', () => ({
   DurableObject: class {},
 }));
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: test rigging pokes private DO internals (Object.create(prototype), _state, _meta) to exercise hibernation/load paths.
 let GameRoomDO: any;
 const TAG_SPECTATOR = '__spectator__';
 
@@ -83,7 +83,7 @@ function buildGameRoom(storage: DurableObjectStorage) {
     },
   };
 
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: test rigging pokes private DO internals (Object.create(prototype), _state, _meta) to exercise hibernation/load paths.
   const room: any = Object.create(GameRoomDO.prototype);
   room._loaded = true;
   room.ctx = {
@@ -170,7 +170,7 @@ describe('GameRoomDO — _lastSpectatorIdx persistence (Phase 7.3)', () => {
     await storage.put('lastSpectatorIdx', 1);
 
     // Build a fresh DO instance against that same storage.
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: test rigging pokes private DO internals (Object.create(prototype), _state, _meta) to exercise hibernation/load paths.
     const fresh: any = Object.create(GameRoomDO.prototype);
     fresh._loaded = false;
     fresh._spectatorSnapshots = [];

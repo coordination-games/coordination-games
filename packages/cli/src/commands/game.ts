@@ -82,7 +82,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 
   // Server-authoritative phase tools
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
     const state: any = await client.getState();
     const phaseTools = state?.currentPhase?.tools;
     if (Array.isArray(phaseTools)) {
@@ -109,7 +109,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 // k=v arg parsing driven by the tool's JSON inputSchema
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
 function coerceByType(raw: string, propSchema: any): any {
   const type = propSchema?.type;
   if (type === 'array') {
@@ -132,13 +132,13 @@ function coerceByType(raw: string, propSchema: any): any {
 
 function parseKvArgs(
   kvs: string[],
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   inputSchema: Record<string, any> | undefined,
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
 ): Record<string, any> {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   const args: Record<string, any> = {};
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   const props = (inputSchema?.properties ?? {}) as Record<string, any>;
 
   for (const kv of kvs) {
@@ -170,12 +170,12 @@ function parseKvArgs(
   return args;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+// biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
 function requiredFieldsError(tool: ToolDefinition, args: Record<string, any>): string | null {
   const required: string[] = (tool.inputSchema?.required as string[]) ?? [];
   const missing = required.filter((f) => !(f in args));
   if (missing.length === 0) return null;
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   const props = (tool.inputSchema?.properties ?? {}) as Record<string, any>;
   const lines = missing.map((f) => {
     const desc = props[f]?.description ? ` — ${props[f].description}` : '';
@@ -189,7 +189,7 @@ function printToolHelp(tool: ToolDefinition): void {
   process.stdout.write(`\n  ${tool.name}\n`);
   process.stdout.write(`    ${tool.description}\n`);
   const schema = tool.inputSchema ?? {};
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   const props = (schema.properties ?? {}) as Record<string, any>;
   const required = new Set<string>((schema.required as string[]) ?? []);
   const names = Object.keys(props);
@@ -240,7 +240,7 @@ export function registerGameCommands(program: Command) {
           }
         }
         process.stdout.write(`\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -281,7 +281,7 @@ export function registerGameCommands(program: Command) {
           session.currentLobbyId = lobbyId;
           saveSession(session);
         }
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -312,7 +312,7 @@ export function registerGameCommands(program: Command) {
         const session = loadSession();
         session.currentLobbyId = lobbyId;
         saveSession(session);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -336,7 +336,7 @@ export function registerGameCommands(program: Command) {
 
         process.stdout.write(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
         process.stdout.write('\n');
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -366,7 +366,7 @@ export function registerGameCommands(program: Command) {
         }
 
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -397,7 +397,7 @@ export function registerGameCommands(program: Command) {
         }
 
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -425,7 +425,7 @@ export function registerGameCommands(program: Command) {
         }
         process.stdout.write(`\n  Call with: coga tool <name> k=v [...]\n`);
         process.stdout.write(`  Help for one: coga tool <name> --help\n\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -443,17 +443,17 @@ export function registerGameCommands(program: Command) {
   // Disable the auto-generated --help on this subcommand so we can reserve
   // --schema for printing the tool's inputSchema. Top-level `coga --help` and
   // `coga help tool` still work.
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   (toolCmd as any).helpOption(false);
   toolCmd.option('--json <payload>', 'Pass raw JSON args (bypasses k=v parsing)');
   toolCmd.option('--schema', "Print the tool's input schema and exit");
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
   toolCmd.action(async (name: string, rawArgs: string[], opts: any) => {
     const client = await createClient();
     let registry: DiscoveredTool[];
     try {
       registry = await buildCliToolRegistry(client);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
     } catch (err: any) {
       process.stderr.write(`  Error building tool registry: ${err.message}\n`);
       process.exit(1);
@@ -486,12 +486,12 @@ export function registerGameCommands(program: Command) {
     }
 
     // Build args
-    // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+    // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
     let args: Record<string, any>;
     if (opts?.json) {
       try {
         args = JSON.parse(opts.json);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: invalid --json payload: ${err.message}\n`);
         process.exit(1);
@@ -500,7 +500,7 @@ export function registerGameCommands(program: Command) {
     } else {
       try {
         args = parseKvArgs(rawArgs ?? [], found.tool.inputSchema);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       } catch (err: any) {
         process.stderr.write(`  Error: ${err.message}\n`);
         process.exit(1);
@@ -520,11 +520,11 @@ export function registerGameCommands(program: Command) {
     try {
       if (found.source === 'plugin' && found.pluginId === BasicChatPlugin.id) {
         // Local client-side plugin: run handleCall to get the relay envelope.
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
         let out: any;
         try {
           out = BasicChatPlugin.handleCall?.(name, args, { id: 'self', handle: 'self' });
-          // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+          // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
         } catch (err: any) {
           const payload = {
             error: {
@@ -551,7 +551,7 @@ export function registerGameCommands(program: Command) {
       }
 
       // Phase tool (game or lobby) → unified endpoint
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
       const result: any = await client.callToolRaw(name, args);
       if (result.ok) {
         process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
@@ -559,7 +559,7 @@ export function registerGameCommands(program: Command) {
         process.stderr.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
         process.exit(1);
       }
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
+      // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
     } catch (err: any) {
       process.stderr.write(`  Error: ${err.message}\n`);
       process.exit(1);
