@@ -92,6 +92,9 @@ function fakeGame(options: {
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
+    // Phase 4.7 required methods.
+    getSummaryFromSpectator: () => ({}),
+    getReplayChrome: () => ({ isFinished: false, statusVariant: 'in_progress' as const }),
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   } as unknown as CoordinationGame<any, any, any, any>;
 }

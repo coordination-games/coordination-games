@@ -156,8 +156,13 @@ export default function ReplayPage() {
     );
   }
 
-  const isFinished = turnState.phase === 'finished' || turnState.winner;
-  const winner = turnState.winner ?? null;
+  // Per-game chrome (finish badge, winner label) is owned by the plugin so
+  // ReplayPage stays game-agnostic. Resolve playerId labels to handles when
+  // available so OATH shows display names instead of UUIDs.
+  const chrome = plugin.getReplayChrome(turnState);
+  const winnerLabel = chrome.winnerLabel
+    ? (replay.handles[chrome.winnerLabel] ?? chrome.winnerLabel)
+    : null;
 
   return (
     <div className="flex flex-col h-[calc(100vh-5rem)] -mx-6 -my-8 px-4 py-3 gap-2">
@@ -166,8 +171,9 @@ export default function ReplayPage() {
         currentTurn={currentTurn}
         totalTurns={totalTurns}
         isPlaying={isPlaying}
-        isFinished={!!isFinished}
-        winner={winner}
+        isFinished={chrome.isFinished}
+        statusVariant={chrome.statusVariant}
+        winnerLabel={winnerLabel}
         gameId={id ?? ''}
         gameType={plugin.displayName}
         onPrev={goPrev}
@@ -190,7 +196,7 @@ export default function ReplayPage() {
           handles={replay.handles}
           gameId={id ?? ''}
           gameType={replay.gameType}
-          phase={isFinished ? 'finished' : 'in_progress'}
+          phase={chrome.isFinished ? 'finished' : 'in_progress'}
           replaySnapshots={snapshots}
         />
       </div>
@@ -207,7 +213,8 @@ function ScrubberBar({
   totalTurns,
   isPlaying,
   isFinished,
-  winner,
+  statusVariant,
+  winnerLabel,
   gameId,
   gameType,
   onPrev,
@@ -219,7 +226,8 @@ function ScrubberBar({
   totalTurns: number;
   isPlaying: boolean;
   isFinished: boolean;
-  winner: string | null;
+  statusVariant: 'in_progress' | 'win' | 'draw';
+  winnerLabel: string | null;
   gameId: string;
   gameType: string;
   onPrev: () => void;
@@ -240,12 +248,12 @@ function ScrubberBar({
           </span>
         </div>
 
-        {isFinished && winner && (
+        {isFinished && statusVariant === 'win' && winnerLabel && (
           <span className="text-sm font-bold px-3 py-1 rounded bg-emerald-800 text-emerald-200 animate-pulse">
-            {winner} Wins!
+            {winnerLabel} Wins!
           </span>
         )}
-        {isFinished && !winner && (
+        {isFinished && statusVariant === 'draw' && (
           <span className="text-sm font-bold px-3 py-1 rounded bg-gray-700 text-gray-200">
             Draw!
           </span>

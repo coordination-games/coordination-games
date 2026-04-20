@@ -734,6 +734,26 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     };
   },
 
+  /**
+   * Replay/finish chrome for CtL. Uses the explicit `winner` field on the
+   * spectator snapshot (set by the engine when a flag is captured or the
+   * turn cap is reached). Null winner on a finished snapshot = draw on
+   * timeout.
+   */
+  getReplayChrome(snapshot: unknown): {
+    isFinished: boolean;
+    winnerLabel?: string;
+    statusVariant: 'in_progress' | 'win' | 'draw';
+  } {
+    const s = snapshot as SpectatorState;
+    const isFinished = s.phase === 'finished';
+    if (!isFinished) return { isFinished: false, statusVariant: 'in_progress' };
+    if (s.winner === 'A' || s.winner === 'B') {
+      return { isFinished: true, winnerLabel: `Team ${s.winner}`, statusVariant: 'win' };
+    }
+    return { isFinished: true, statusVariant: 'draw' };
+  },
+
   spectatorDelay: 2,
 
   chatScopes: ['all', 'team', 'dm'] as const,

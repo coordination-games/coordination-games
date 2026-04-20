@@ -77,10 +77,32 @@ export class ToolCollisionError extends Error {
   }
 }
 
+/**
+ * Required `CoordinationGame` methods checked at registration time. These
+ * are typed as required on the interface, but JS callers (tests, dynamic
+ * loaders) can still construct partial objects — the boot-time guard
+ * makes the contract a hard fail instead of a confusing runtime crash.
+ *
+ * Phase 4.7 added `getReplayChrome` (replay finish chrome) and promoted
+ * `getSummaryFromSpectator` from optional to required.
+ */
+const REQUIRED_GAME_METHODS = ['getReplayChrome', 'getSummaryFromSpectator'] as const;
+
 // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 export function registerGame(plugin: CoordinationGame<any, any, any, any>): void {
   if (games.has(plugin.gameType)) {
     throw new Error(`Game "${plugin.gameType}" already registered`);
+  }
+
+  for (const method of REQUIRED_GAME_METHODS) {
+    // biome-ignore lint/suspicious/noExplicitAny: dynamic method check
+    if (typeof (plugin as any)[method] !== 'function') {
+      throw new Error(
+        `Game "${plugin.gameType}" missing required method: ${method}. ` +
+          `Every game plugin must implement ${REQUIRED_GAME_METHODS.join(' and ')} ` +
+          `(see CoordinationGame interface).`,
+      );
+    }
   }
 
   const collisions = findToolCollisions(plugin);

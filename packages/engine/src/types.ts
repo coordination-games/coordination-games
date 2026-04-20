@@ -242,15 +242,35 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    * summary without leaking fields that the delayed spectator view does
    * not yet reveal.
    *
-   * If absent, the server falls back to calling `getSummary` with the
-   * snapshot cast — which only works if the snapshot shape exposes the
-   * same fields `getSummary` reads (same names, same types). Games whose
-   * `getSummary` reads private fields (e.g. `state.config.turnLimit`)
-   * MUST implement this. Games whose `getSummary` reads only fields that
-   * are named identically on their SpectatorView can omit it.
+   * REQUIRED — `registerGame` throws if missing. Games whose
+   * `getSummaryFromSpectator(buildSpectatorView(s))` does not produce a
+   * subset of `getSummary(s)` are buggy by definition (the spectator view
+   * is a privacy-filtered projection of state).
    */
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  getSummaryFromSpectator?(snapshot: unknown): Record<string, any>;
+  getSummaryFromSpectator(snapshot: unknown): Record<string, any>;
+
+  /**
+   * Per-game "is this finished and who won?" chrome derived from a public
+   * spectator snapshot. Data-only — no React, no DOM, no platform deps.
+   * The engine consumes this to gate D1 summary writes and the frontend
+   * consumes it to render replay/finish badges in a game-agnostic way.
+   *
+   * Convention:
+   *   - `isFinished`     : true iff the snapshot represents a terminal state.
+   *   - `winnerLabel`    : human-readable winner name (e.g. "Team A",
+   *                        "Player Foo"). Undefined for ties or
+   *                        in-progress.
+   *   - `statusVariant`  : 'in_progress' | 'win' | 'draw'. The frontend may
+   *                        derive 'loss' itself from a viewer perspective.
+   *
+   * REQUIRED — `registerGame` throws if missing.
+   */
+  getReplayChrome(snapshot: unknown): {
+    isFinished: boolean;
+    winnerLabel?: string;
+    statusVariant: 'in_progress' | 'win' | 'draw';
+  };
 
   /** IDs of players that need to submit an action in the current state. */
   getPlayersNeedingAction?(state: TState): string[];

@@ -275,6 +275,38 @@ export const OathbreakerPlugin = {
     };
   },
 
+  /**
+   * Replay/finish chrome for OATHBREAKER. FFA tournament — the player with
+   * the highest dollar value wins. Ties at the top => 'draw' with no
+   * winnerLabel. We deliberately return the player *id* (not handle) so
+   * the contract stays purely data + frontend resolves handles via its
+   * own `handles` map.
+   */
+  getReplayChrome(snapshot: unknown): {
+    isFinished: boolean;
+    winnerLabel?: string;
+    statusVariant: 'in_progress' | 'win' | 'draw';
+  } {
+    const s = snapshot as SpectatorView;
+    const isFinished = s.phase === 'finished';
+    if (!isFinished) return { isFinished: false, statusVariant: 'in_progress' };
+
+    if (!s.players || s.players.length === 0) {
+      return { isFinished: true, statusVariant: 'draw' };
+    }
+
+    let topValue = Number.NEGATIVE_INFINITY;
+    for (const p of s.players) {
+      if (p.dollarValue > topValue) topValue = p.dollarValue;
+    }
+    const leaders = s.players.filter((p) => p.dollarValue === topValue);
+    if (leaders.length !== 1) {
+      return { isFinished: true, statusVariant: 'draw' };
+    }
+    // biome-ignore lint/style/noNonNullAssertion: leaders.length === 1 checked above
+    return { isFinished: true, winnerLabel: leaders[0]!.id, statusVariant: 'win' };
+  },
+
   getPlayersNeedingAction(state: OathState): string[] {
     if (state.phase !== 'playing') return [];
     const needed: string[] = [];

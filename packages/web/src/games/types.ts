@@ -39,6 +39,19 @@ export interface GameCardProps {
   phase: string;
 }
 
+/**
+ * Replay/finish chrome derived from a spectator snapshot. Mirrors
+ * `CoordinationGame.getReplayChrome` on the engine side so the frontend
+ * stays game-agnostic. Per-plugin implementations should delegate to the
+ * engine plugin when possible.
+ */
+export interface ReplayChrome {
+  isFinished: boolean;
+  /** Human-readable winner name (e.g. "Team A", playerId). Undefined for draws. */
+  winnerLabel?: string;
+  statusVariant: 'in_progress' | 'win' | 'draw';
+}
+
 /** A spectator plugin for a specific game type. */
 export interface SpectatorPlugin {
   /** Game type identifier (must match server's gameType). */
@@ -51,4 +64,11 @@ export interface SpectatorPlugin {
   GameCard?: React.ComponentType<GameCardProps>;
   /** Total animation duration in ms. ReplayPage waits this + read time before advancing. */
   animationDuration?: number;
+  /**
+   * Compute the replay/finish chrome from a public spectator snapshot.
+   * Required — the generic ReplayPage uses this to render the finish
+   * badge without knowing the game's state shape.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: snapshot shape is per-game
+  getReplayChrome(snapshot: any): ReplayChrome;
 }
