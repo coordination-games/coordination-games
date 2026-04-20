@@ -28,7 +28,7 @@ export function registerStatusCommand(program: Command) {
 
       try {
         const client = new ApiClient(config.serverUrl);
-        const data = await client.get(`/api/relay/status/${wallet.address}`);
+        const data = await client.getRelayStatus(wallet.address);
 
         if (data.registered) {
           // Cache name in session for auth

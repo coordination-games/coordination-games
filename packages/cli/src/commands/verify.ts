@@ -1,7 +1,9 @@
 import type { Command } from 'commander';
+import type { TypedDataField } from 'ethers';
 import { ApiClient } from '../api-client.js';
 import { loadConfig } from '../config.js';
 import { buildMerkleTree, type TurnData } from '../merkle.js';
+import type { GameBundle, OnChainResult } from '../types.js';
 
 /**
  * Game verification command.
@@ -21,13 +23,20 @@ interface VerifyStep {
 }
 
 function pass(label: string, detail?: string): VerifyStep {
-  // @ts-expect-error TS2375: Type '{ label: string; passed: true; detail: string | undefined; }' is not assig — TODO(2.3-followup)
-  return { label, passed: true, detail };
+  const step: VerifyStep = { label, passed: true };
+  if (detail !== undefined) step.detail = detail;
+  return step;
 }
 
 function fail(label: string, detail?: string): VerifyStep {
-  // @ts-expect-error TS2375: Type '{ label: string; passed: false; detail: string | undefined; }' is not assi — TODO(2.3-followup)
-  return { label, passed: false, detail };
+  const step: VerifyStep = { label, passed: false };
+  if (detail !== undefined) step.detail = detail;
+  return step;
+}
+
+/** Extract a user-facing message from a caught error. */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function printStep(step: VerifyStep) {
@@ -57,14 +66,12 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       // Step 1: Fetch game bundle
       // -------------------------------------------------------------------
-      // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-      let bundle: any;
+      let bundle: GameBundle;
       try {
-        bundle = await client.get(`/api/games/${encodeURIComponent(gameId)}/bundle`);
+        bundle = await client.getGameBundle(gameId);
         steps.push(pass('Fetch game bundle', `${bundle.turns?.length ?? 0} turns`));
-        // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-      } catch (err: any) {
-        steps.push(fail('Fetch game bundle', err.message));
+      } catch (err) {
+        steps.push(fail('Fetch game bundle', errMsg(err)));
         printResults(steps);
         return;
       }
@@ -72,16 +79,14 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       // Step 2: Fetch on-chain result (via server API)
       // -------------------------------------------------------------------
-      // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-      let onChainResult: any;
+      let onChainResult: OnChainResult | undefined;
       try {
-        onChainResult = await client.get(`/api/games/${encodeURIComponent(gameId)}/result`);
+        onChainResult = await client.getGameResult(gameId);
         steps.push(pass('Fetch on-chain result', `turnCount=${onChainResult.turnCount}`));
-        // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-      } catch (err: any) {
+      } catch (err) {
         // On-chain result may not be available (game not settled yet, or local testing)
         steps.push(
-          fail('Fetch on-chain result', `${err.message} (game may not be settled on-chain)`),
+          fail('Fetch on-chain result', `${errMsg(err)} (game may not be settled on-chain)`),
         );
         // Continue with what we can verify
       }
@@ -105,9 +110,8 @@ export function registerVerifyCommand(program: Command) {
               ),
             );
           }
-          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-        } catch (err: any) {
-          steps.push(fail('Verify config hash', err.message));
+        } catch (err) {
+          steps.push(fail('Verify config hash', errMsg(err)));
         }
       } else {
         steps.push(pass('Verify config hash', 'skipped (no on-chain result available)'));
@@ -129,8 +133,12 @@ export function registerVerifyCommand(program: Command) {
             chainId: 10,
           };
 
-          // Move schema from bundle or default
-          const moveSchema = bundle.moveSchema || {
+          // Move schema from bundle or default. ethers expects
+          // `Record<string, TypedDataField[]>`; bundle.moveSchema is typed
+          // loosely (per-game) so we cast at this boundary.
+          const moveSchema: Record<string, TypedDataField[]> = (bundle.moveSchema as
+            | Record<string, TypedDataField[]>
+            | undefined) ?? {
             Move: [
               { name: 'gameId', type: 'bytes32' },
               { name: 'turnNumber', type: 'uint16' },
@@ -163,12 +171,11 @@ export function registerVerifyCommand(program: Command) {
                     `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... signed by ${recoveredAddress.slice(0, 10)}...`,
                   );
                 }
-                // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-              } catch (err: any) {
+              } catch (err) {
                 // Signature verification may fail if the schema doesn't match
                 // (e.g., game-specific move schemas). Count as unverifiable.
                 sigErrors.push(
-                  `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... — ${err.message}`,
+                  `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... — ${errMsg(err)}`,
                 );
               }
             }
@@ -190,9 +197,8 @@ export function registerVerifyCommand(program: Command) {
               process.stdout.write(`         ... and ${sigErrors.length - 5} more\n`);
             }
           }
-          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-        } catch (err: any) {
-          steps.push(fail('Verify move signatures', err.message));
+        } catch (err) {
+          steps.push(fail('Verify move signatures', errMsg(err)));
         }
       } else {
         steps.push(pass('Verify move signatures', 'no turns to verify'));
@@ -203,11 +209,9 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       if (bundle.turns && bundle.turns.length > 0) {
         try {
-          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-          const turns: TurnData[] = bundle.turns.map((t: any) => ({
+          const turns: TurnData[] = bundle.turns.map((t) => ({
             turnNumber: t.turnNumber,
-            // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-            moves: t.moves.map((m: any) => ({
+            moves: t.moves.map((m) => ({
               player: m.player,
               data: typeof m.data === 'string' ? m.data : JSON.stringify(m.data),
               signature: m.signature,
@@ -237,9 +241,8 @@ export function registerVerifyCommand(program: Command) {
               ),
             );
           }
-          // biome-ignore lint/suspicious/noExplicitAny: CLI verify command walks raw server/replay bundles + ethers tx responses; see api-client.ts for the same trade-off.
-        } catch (err: any) {
-          steps.push(fail('Verify Merkle root', err.message));
+        } catch (err) {
+          steps.push(fail('Verify Merkle root', errMsg(err)));
         }
       } else {
         steps.push(pass('Verify Merkle root', 'no turns to hash'));

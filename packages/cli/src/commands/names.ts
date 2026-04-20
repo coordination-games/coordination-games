@@ -17,7 +17,7 @@ export function registerNameCommands(program: Command) {
       const client = new ApiClient(config.serverUrl);
 
       try {
-        const data = await client.get(`/api/relay/check-name/${encodeURIComponent(name)}`);
+        const data = await client.checkName(name);
         if (data.available) {
           const wallet = loadKey();
           const addr = wallet?.address ?? 'YOUR_AGENT_ADDRESS';
@@ -57,7 +57,7 @@ export function registerNameCommands(program: Command) {
 
       // Check availability first
       try {
-        const check = await client.get(`/api/relay/check-name/${encodeURIComponent(name)}`);
+        const check = await client.checkName(name);
         if (!check.available) {
           process.stdout.write(`\n  "${name}" is not available.\n\n`);
           return;
@@ -100,7 +100,7 @@ export function registerNameCommands(program: Command) {
           deadline,
         );
 
-        const result = await client.post('/api/relay/register', {
+        const result = await client.registerName({
           name,
           address: wallet.address,
           agentURI: `https://coordination.games/agent/${wallet.address}`,

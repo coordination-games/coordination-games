@@ -22,7 +22,7 @@ export function registerWalletCommands(program: Command) {
 
       // First get agentId from status, then get balance
       try {
-        const status = await client.get(`/api/relay/status/${wallet.address}`);
+        const status = await client.getRelayStatus(wallet.address);
         if (!status.registered || !status.agentId) {
           process.stdout.write(`  Status:  Not registered\n`);
           process.stdout.write(`\n  Register first: coordination register <name>\n`);
@@ -30,7 +30,7 @@ export function registerWalletCommands(program: Command) {
           return;
         }
 
-        const data = await client.get(`/api/relay/balance/${status.agentId}`);
+        const data = await client.getBalance(status.agentId);
         process.stdout.write(`  Agent ID: ${status.agentId}\n`);
         // USDC is returned in raw 6-decimal units. Credits are also
         // raw 6-decimal units on-chain; format both as whole-unit displays.
@@ -78,7 +78,7 @@ export function registerWalletCommands(program: Command) {
 
       try {
         // Get agent ID from status
-        const status = await client.get(`/api/relay/status/${wallet.address}`);
+        const status = await client.getRelayStatus(wallet.address);
         if (!status.registered || !status.agentId) {
           process.stdout.write(`\n  Not registered. Register first.\n\n`);
           return;
@@ -86,9 +86,7 @@ export function registerWalletCommands(program: Command) {
 
         if (opts.execute) {
           // Execute a pending burn
-          const result = await client.post('/api/relay/burn-execute', {
-            agentId: status.agentId,
-          });
+          const result = await client.burnExecute({ agentId: status.agentId });
           process.stdout.write(`\n  Withdrawal executed!\n`);
           process.stdout.write(`  Tx: ${result.txHash}\n`);
           process.stdout.write(`  Remaining credits: ${formatCreditsDisplay(result.credits)}\n`);
@@ -96,7 +94,7 @@ export function registerWalletCommands(program: Command) {
           // `amount` is a user-facing whole-credit value. Scale to raw
           // 6-decimal on-chain units before hitting the contract.
           const rawAmount = parseCreditsInput(amount);
-          const result = await client.post('/api/relay/burn-request', {
+          const result = await client.burnRequest({
             agentId: status.agentId,
             amount: rawAmount.toString(),
           });

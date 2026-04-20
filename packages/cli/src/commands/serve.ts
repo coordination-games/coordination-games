@@ -49,7 +49,7 @@ export function registerServeCommand(program: Command) {
         } else if (wallet) {
           try {
             const api = new ApiClient(serverUrl);
-            const data = await api.get(`/api/relay/status/${wallet.address}`);
+            const data = await api.getRelayStatus(wallet.address);
             if (data.registered && data.name) {
               name = data.name;
               session.handle = data.name;

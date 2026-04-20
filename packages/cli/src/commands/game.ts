@@ -9,6 +9,18 @@ import { ApiClient } from '../api-client.js';
 import { loadConfig, loadSession, saveSession } from '../config.js';
 import { GameClient } from '../game-client.js';
 import { loadKey } from '../keys.js';
+import type { JsonSchema, PluginCallResult } from '../types.js';
+
+/** Narrow a ToolDefinition's `inputSchema` (Record<string, unknown>) to our walkable shape. */
+function schemaOf(tool: ToolDefinition): JsonSchema {
+  return (tool.inputSchema ?? {}) as JsonSchema;
+}
+
+/** Extract a user-facing message from a caught error. */
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
 
 /**
  * Resolve the player's registered name. Checks session cache first,
@@ -24,7 +36,7 @@ async function resolveName(
   // Fetch name from server
   try {
     const api = new ApiClient(serverUrl);
-    const data = await api.get(`/api/relay/status/${wallet.address}`);
+    const data = await api.getRelayStatus(wallet.address);
     if (data.registered && data.name) {
       session.handle = data.name;
       saveSession(session);
@@ -49,12 +61,12 @@ async function createClient(): Promise<GameClient> {
   const session = loadSession();
   const name = await resolveName(wallet, config.serverUrl);
 
-  // @ts-expect-error TS2379: Argument of type '{ privateKey: string; token: string | undefined; name: string; — TODO(2.3-followup)
-  return new GameClient(config.serverUrl, {
+  const options: { privateKey: string; name: string; token?: string } = {
     privateKey: wallet.privateKey,
-    token: session.token,
     name,
-  });
+  };
+  if (session.token) options.token = session.token;
+  return new GameClient(config.serverUrl, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +94,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 
   // Server-authoritative phase tools
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-    const state: any = await client.getState();
+    const state = await client.getState();
     const phaseTools = state?.currentPhase?.tools;
     if (Array.isArray(phaseTools)) {
       for (const tool of phaseTools) {
@@ -109,8 +120,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 // k=v arg parsing driven by the tool's JSON inputSchema
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-function coerceByType(raw: string, propSchema: any): any {
+function coerceByType(raw: string, propSchema: JsonSchema | undefined): unknown {
   const type = propSchema?.type;
   if (type === 'array') {
     const items = propSchema?.items ?? {};
@@ -130,16 +140,9 @@ function coerceByType(raw: string, propSchema: any): any {
   return raw;
 }
 
-function parseKvArgs(
-  kvs: string[],
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  inputSchema: Record<string, any> | undefined,
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-): Record<string, any> {
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  const args: Record<string, any> = {};
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  const props = (inputSchema?.properties ?? {}) as Record<string, any>;
+function parseKvArgs(kvs: string[], inputSchema: JsonSchema | undefined): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  const props = inputSchema?.properties ?? {};
 
   for (const kv of kvs) {
     const eq = kv.indexOf('=');
@@ -170,16 +173,18 @@ function parseKvArgs(
   return args;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-function requiredFieldsError(tool: ToolDefinition, args: Record<string, any>): string | null {
-  const required: string[] = (tool.inputSchema?.required as string[]) ?? [];
+function requiredFieldsError(tool: ToolDefinition, args: Record<string, unknown>): string | null {
+  const schema = schemaOf(tool);
+  const required = schema.required ?? [];
   const missing = required.filter((f) => !(f in args));
   if (missing.length === 0) return null;
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  const props = (tool.inputSchema?.properties ?? {}) as Record<string, any>;
+  const props = schema.properties ?? {};
   const lines = missing.map((f) => {
-    const desc = props[f]?.description ? ` — ${props[f].description}` : '';
-    const type = props[f]?.type ? ` (${props[f].type})` : '';
+    const prop = props[f];
+    const desc = prop?.description ? ` — ${prop.description}` : '';
+    const type = prop?.type
+      ? ` (${Array.isArray(prop.type) ? prop.type.join('|') : prop.type})`
+      : '';
     return `    ${f}${type}${desc}`;
   });
   return `Missing required args for "${tool.name}":\n${lines.join('\n')}`;
@@ -188,10 +193,9 @@ function requiredFieldsError(tool: ToolDefinition, args: Record<string, any>): s
 function printToolHelp(tool: ToolDefinition): void {
   process.stdout.write(`\n  ${tool.name}\n`);
   process.stdout.write(`    ${tool.description}\n`);
-  const schema = tool.inputSchema ?? {};
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  const props = (schema.properties ?? {}) as Record<string, any>;
-  const required = new Set<string>((schema.required as string[]) ?? []);
+  const schema = schemaOf(tool);
+  const props = schema.properties ?? {};
+  const required = new Set<string>(schema.required ?? []);
   const names = Object.keys(props);
   if (names.length === 0) {
     process.stdout.write(`    (no arguments)\n\n`);
@@ -200,7 +204,7 @@ function printToolHelp(tool: ToolDefinition): void {
   process.stdout.write(`\n    Arguments:\n`);
   for (const name of names) {
     const p = props[name];
-    const type = p?.type ?? 'any';
+    const type = p?.type ? (Array.isArray(p.type) ? p.type.join('|') : p.type) : 'any';
     const enumNote = Array.isArray(p?.enum) ? ` [${p.enum.join('|')}]` : '';
     const req = required.has(name) ? ' *required*' : '';
     const desc = p?.description ? ` — ${p.description}` : '';
@@ -240,9 +244,8 @@ export function registerGameCommands(program: Command) {
           }
         }
         process.stdout.write(`\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -269,21 +272,24 @@ export function registerGameCommands(program: Command) {
         if (gameType === OATH_GAME_ID) {
           process.stdout.write(`\n  OATHBREAKER game created: ${result.gameId}\n`);
           process.stdout.write(`  Players: ${result.playerCount}\n\n`);
-          const session = loadSession();
-          session.currentGameId = result.gameId;
-          saveSession(session);
+          if (result.gameId) {
+            const session = loadSession();
+            session.currentGameId = result.gameId;
+            saveSession(session);
+          }
         } else {
           const lobbyId = result.lobbyId;
           const teamSize = Math.min(6, Math.max(2, size));
           process.stdout.write(`\n  Lobby created: ${lobbyId}\n`);
           process.stdout.write(`  Team size: ${teamSize}v${teamSize}\n\n`);
-          const session = loadSession();
-          session.currentLobbyId = lobbyId;
-          saveSession(session);
+          if (lobbyId) {
+            const session = loadSession();
+            session.currentLobbyId = lobbyId;
+            saveSession(session);
+          }
         }
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -312,9 +318,8 @@ export function registerGameCommands(program: Command) {
         const session = loadSession();
         session.currentLobbyId = lobbyId;
         saveSession(session);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -329,16 +334,18 @@ export function registerGameCommands(program: Command) {
       try {
         const result = await client.getGuide(game);
 
-        if (result.error) {
-          process.stderr.write(`  Error: ${result.error}\n`);
-          process.exit(1);
+        if (typeof result === 'object' && result !== null && 'error' in result) {
+          const errField = (result as { error?: unknown }).error;
+          if (errField) {
+            process.stderr.write(`  Error: ${JSON.stringify(errField)}\n`);
+            process.exit(1);
+          }
         }
 
         process.stdout.write(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
         process.stdout.write('\n');
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -366,9 +373,8 @@ export function registerGameCommands(program: Command) {
         }
 
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -397,9 +403,8 @@ export function registerGameCommands(program: Command) {
         }
 
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -425,9 +430,8 @@ export function registerGameCommands(program: Command) {
         }
         process.stdout.write(`\n  Call with: coga tool <name> k=v [...]\n`);
         process.stdout.write(`  Help for one: coga tool <name> --help\n\n`);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
@@ -442,28 +446,39 @@ export function registerGameCommands(program: Command) {
     );
   // Disable the auto-generated --help on this subcommand so we can reserve
   // --schema for printing the tool's inputSchema. Top-level `coga --help` and
-  // `coga help tool` still work.
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  (toolCmd as any).helpOption(false);
+  // `coga help tool` still work. The `helpOption` is on Commander's internal
+  // command surface (runtime-available) but not typed in @types/commander.
+  (toolCmd as unknown as { helpOption: (flag: false) => void }).helpOption(false);
   toolCmd.option('--json <payload>', 'Pass raw JSON args (bypasses k=v parsing)');
   toolCmd.option('--schema', "Print the tool's input schema and exit");
-  // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-  toolCmd.action(async (name: string, rawArgs: string[], opts: any) => {
-    const client = await createClient();
-    let registry: DiscoveredTool[];
-    try {
-      registry = await buildCliToolRegistry(client);
-      // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-    } catch (err: any) {
-      process.stderr.write(`  Error building tool registry: ${err.message}\n`);
-      process.exit(1);
-      return;
-    }
+  toolCmd.action(
+    async (name: string, rawArgs: string[], opts: { json?: string; schema?: boolean }) => {
+      const client = await createClient();
+      let registry: DiscoveredTool[];
+      try {
+        registry = await buildCliToolRegistry(client);
+      } catch (err) {
+        process.stderr.write(`  Error building tool registry: ${errMsg(err)}\n`);
+        process.exit(1);
+        return;
+      }
 
-    const found = registry.find((d) => d.tool.name === name);
+      const found = registry.find((d) => d.tool.name === name);
 
-    // --schema
-    if (opts?.schema) {
+      // --schema
+      if (opts?.schema) {
+        if (!found) {
+          process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
+          process.stderr.write(
+            `  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`,
+          );
+          process.exit(1);
+          return;
+        }
+        printToolHelp(found.tool);
+        return;
+      }
+
       if (!found) {
         process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
         process.stderr.write(
@@ -472,97 +487,82 @@ export function registerGameCommands(program: Command) {
         process.exit(1);
         return;
       }
-      printToolHelp(found.tool);
-      return;
-    }
 
-    if (!found) {
-      process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
-      process.stderr.write(
-        `  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`,
-      );
-      process.exit(1);
-      return;
-    }
-
-    // Build args
-    // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-    let args: Record<string, any>;
-    if (opts?.json) {
-      try {
-        args = JSON.parse(opts.json);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: invalid --json payload: ${err.message}\n`);
-        process.exit(1);
-        return;
-      }
-    } else {
-      try {
-        args = parseKvArgs(rawArgs ?? [], found.tool.inputSchema);
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
-        process.exit(1);
-        return;
-      }
-    }
-
-    const missingErr = requiredFieldsError(found.tool, args);
-    if (missingErr) {
-      process.stderr.write(`  ${missingErr}\n`);
-      process.stderr.write(`  Try: coga tool ${name} --schema\n`);
-      process.exit(1);
-      return;
-    }
-
-    // Dispatch
-    try {
-      if (found.source === 'plugin' && found.pluginId === BasicChatPlugin.id) {
-        // Local client-side plugin: run handleCall to get the relay envelope.
-        // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-        let out: any;
+      // Build args
+      let args: Record<string, unknown>;
+      if (opts?.json) {
         try {
-          out = BasicChatPlugin.handleCall?.(name, args, { id: 'self', handle: 'self' });
-          // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-        } catch (err: any) {
-          const payload = {
-            error: {
-              code: 'PLUGIN_ERROR',
-              message: `Plugin "${found.pluginId}" handleCall threw: ${err?.message ?? err}`,
-            },
-          };
-          process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+          args = JSON.parse(opts.json) as Record<string, unknown>;
+        } catch (err) {
+          process.stderr.write(`  Error: invalid --json payload: ${errMsg(err)}\n`);
           process.exit(1);
           return;
         }
-        if (out?.error) {
-          process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+      } else {
+        try {
+          args = parseKvArgs(rawArgs ?? [], schemaOf(found.tool));
+        } catch (err) {
+          process.stderr.write(`  Error: ${errMsg(err)}\n`);
           process.exit(1);
           return;
         }
-        if (out?.relay) {
-          const result = await client.callPluginRelay(out.relay);
-          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-          return;
-        }
-        process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+      }
+
+      const missingErr = requiredFieldsError(found.tool, args);
+      if (missingErr) {
+        process.stderr.write(`  ${missingErr}\n`);
+        process.stderr.write(`  Try: coga tool ${name} --schema\n`);
+        process.exit(1);
         return;
       }
 
-      // Phase tool (game or lobby) → unified endpoint
-      // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-      const result: any = await client.callToolRaw(name, args);
-      if (result.ok) {
-        process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
-      } else {
-        process.stderr.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+      // Dispatch
+      try {
+        if (found.source === 'plugin' && found.pluginId === BasicChatPlugin.id) {
+          // Local client-side plugin: run handleCall to get the relay envelope.
+          let out: PluginCallResult | undefined;
+          try {
+            out = BasicChatPlugin.handleCall?.(name, args, {
+              id: 'self',
+              handle: 'self',
+            }) as PluginCallResult | undefined;
+          } catch (err) {
+            const payload = {
+              error: {
+                code: 'PLUGIN_ERROR',
+                message: `Plugin "${found.pluginId}" handleCall threw: ${errMsg(err)}`,
+              },
+            };
+            process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+            process.exit(1);
+            return;
+          }
+          if (out?.error) {
+            process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+            process.exit(1);
+            return;
+          }
+          if (out?.relay) {
+            const result = await client.callPluginRelay(out.relay);
+            process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+            return;
+          }
+          process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+          return;
+        }
+
+        // Phase tool (game or lobby) → unified endpoint
+        const result = await client.callToolRaw(name, args);
+        if (result.ok) {
+          process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+        } else {
+          process.stderr.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+          process.exit(1);
+        }
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
-      // biome-ignore lint/suspicious/noExplicitAny: CLI command file walks raw server JSON (state, move responses, relay envelopes) + commander opts; see api-client.ts for the same trade-off across all CLI command files.
-    } catch (err: any) {
-      process.stderr.write(`  Error: ${err.message}\n`);
-      process.exit(1);
-    }
-  });
+    },
+  );
 }

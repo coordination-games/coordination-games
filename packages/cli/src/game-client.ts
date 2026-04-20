@@ -14,6 +14,13 @@ import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { ethers } from 'ethers';
 import { ApiClient } from './api-client.js';
 import { processState } from './pipeline.js';
+import type {
+  CreateLobbyResponse,
+  JoinLobbyResponse,
+  LobbySummary,
+  StateResponse,
+  ToolResult,
+} from './types.js';
 
 export interface GameClientOptions {
   /** Pre-existing auth token (skips challenge-response). */
@@ -69,13 +76,13 @@ export class GameClient {
     const name = this.name || wallet.address.slice(0, 10);
 
     // 1. Request challenge
-    const challenge = await this.api.post('/api/player/auth/challenge');
+    const challenge = await this.api.authChallenge();
 
     // 2. Sign the challenge message
     const signature = await wallet.signMessage(challenge.message);
 
     // 3. Verify with server
-    const result = await this.api.post('/api/player/auth/verify', {
+    const result = await this.api.authVerify({
       nonce: challenge.nonce,
       signature,
       address: wallet.address,
@@ -110,26 +117,22 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /** Get the dynamic game guide/playbook. */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async getGuide(game?: string): Promise<any> {
+  async getGuide(game?: string): Promise<unknown> {
     await this.ensureAuth();
-    const query = game ? `?game=${encodeURIComponent(game)}` : '';
-    return this.api.get(`/api/player/guide${query}`);
+    return this.api.getGuide(game);
   }
 
   /** Get current game/lobby state (fog-filtered, with pipeline processing). */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async getState(): Promise<any> {
+  async getState(): Promise<StateResponse> {
     await this.ensureAuth();
-    const raw = await this.api.get('/api/player/state');
+    const raw = await this.api.getState();
     return this.processResponse(raw);
   }
 
   /** Long-poll for next event (turn change, chat, phase change). */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async waitForUpdate(): Promise<any> {
+  async waitForUpdate(): Promise<StateResponse> {
     await this.ensureAuth();
-    const raw = await this.api.get('/api/player/wait');
+    const raw = await this.api.waitForUpdate();
     return this.processResponse(raw);
   }
 
@@ -149,10 +152,9 @@ export class GameClient {
    * the caller sees the JSON body in err.message — callers that need the
    * structured shape should use `callToolRaw` below.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async callTool(toolName: string, args: Record<string, any> = {}): Promise<any> {
+  async callTool(toolName: string, args: Record<string, unknown> = {}): Promise<StateResponse> {
     await this.ensureAuth();
-    const raw = await this.api.post('/api/player/tool', { toolName, args });
+    const raw = (await this.api.callTool(toolName, args)) as StateResponse;
     return this.processResponse(raw);
   }
 
@@ -162,29 +164,20 @@ export class GameClient {
    * self-correct (e.g. MCP tool handlers returning structured errors to the
    * agent).
    */
-  async callToolRaw(
-    toolName: string,
-    // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-    args: Record<string, any> = {},
-  ): Promise<
-    // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-    | { ok: true; data: any }
-    // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-    | { ok: false; error: { code: string; message: string; [k: string]: any } }
-  > {
+  async callToolRaw(toolName: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
     await this.ensureAuth();
     try {
-      const raw = await this.api.post('/api/player/tool', { toolName, args });
+      const raw = (await this.api.callTool(toolName, args)) as StateResponse;
       return { ok: true, data: this.processResponse(raw) };
-      // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-    } catch (err: any) {
+    } catch (err: unknown) {
       // ApiClient throws `API error <status>: <body>` — try to parse the body.
-      const msg = String(err?.message ?? err);
+      const msg = err instanceof Error ? err.message : String(err);
       const match = msg.match(/^API error \d+: (.*)$/s);
-      if (match) {
+      if (match?.[1]) {
         try {
-          // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
-          const body = JSON.parse(match[1]);
+          const body = JSON.parse(match[1]) as {
+            error?: { code: string; message: string; [k: string]: unknown };
+          };
           if (body && typeof body === 'object' && body.error) {
             return { ok: false, error: body.error };
           }
@@ -210,22 +203,16 @@ export class GameClient {
     pluginId: string;
     data?: unknown;
     scope?: string;
-    // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  }): Promise<any> {
+  }): Promise<StateResponse> {
     await this.ensureAuth();
     try {
-      const raw = await this.api.post('/api/player/tool', {
-        toolName: 'plugin_relay',
-        args: { relay },
-      });
+      const raw = (await this.api.callTool('plugin_relay', { relay })) as StateResponse;
       return this.processResponse(raw);
-      // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-    } catch (err: any) {
-      const msg = String(err?.message ?? err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       // 5xx = relay unreachable; parse status from "API error <status>: ..."
       const statusMatch = msg.match(/^API error (\d+):/);
-      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
-      const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+      const status = statusMatch?.[1] ? parseInt(statusMatch[1], 10) : 0;
       if (status >= 500 && status < 600) {
         const structured = {
           error: {
@@ -244,30 +231,27 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /** List available lobbies. */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async listLobbies(): Promise<any> {
+  async listLobbies(): Promise<LobbySummary[]> {
     await this.ensureAuth();
-    return this.api.get('/api/lobbies');
+    return this.api.listLobbies();
   }
 
   /** Join an existing lobby or OATHBREAKER waiting room. */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async joinLobby(lobbyId: string): Promise<any> {
+  async joinLobby(lobbyId: string): Promise<JoinLobbyResponse> {
     await this.ensureAuth();
-    return this.api.post('/api/player/lobby/join', { lobbyId });
+    return this.api.joinLobby(lobbyId);
   }
 
   /** Create a new lobby (auto-joins the creator). */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  async createLobby(gameType?: string, size?: number): Promise<any> {
+  async createLobby(gameType?: string, size?: number): Promise<CreateLobbyResponse> {
     await this.ensureAuth();
     if (gameType === OATH_GAME_ID) {
       // For OATHBREAKER, teamSize is the total player count to auto-start (4-20)
       const teamSize = Math.min(20, Math.max(4, size || 4));
-      return this.api.post('/api/lobbies/create', { gameType, teamSize });
+      return this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
     }
     const teamSize = Math.min(6, Math.max(2, size || 2));
-    return this.api.post('/api/lobbies/create', { gameType, teamSize });
+    return this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
   }
 
   // ---------------------------------------------------------------------------
@@ -279,8 +263,7 @@ export class GameClient {
    * If the response contains relayMessages, processes them and merges
    * pipeline output back into the response.
    */
-  // biome-ignore lint/suspicious/noExplicitAny: game-client walks the raw server state JSON for whichever plugin is active.
-  private processResponse(raw: any): any {
+  private processResponse(raw: StateResponse): StateResponse {
     if (!raw || typeof raw !== 'object') return raw;
     const hasRelay = Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0;
     if (!hasRelay) {
@@ -294,6 +277,6 @@ export class GameClient {
     const output = processState(raw);
     // Drop the raw relay log + the pipelineOutput map (they duplicate `messages`)
     const { relayMessages: _r, ...rest } = raw;
-    return { ...rest, messages: output.messages };
+    return { ...rest, messages: output.messages } as StateResponse;
   }
 }

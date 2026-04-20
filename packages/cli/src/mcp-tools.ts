@@ -23,13 +23,16 @@ import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { GameClient } from './game-client.js';
+import type { JsonSchema, PluginCallResult } from './types.js';
+
+/** A CoordinationGame of any shape — the CLI just registers tools by name. */
+export type AnyCoordinationGame = CoordinationGame<unknown, unknown, unknown, unknown>;
 
 export interface RegisterToolsOptions {
   /** Active plugins — their mcpExpose tools get registered as MCP tools. */
   plugins?: ToolPlugin[];
   /** Registered games — declared surface used for dynamic MCP tool registration. */
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-  games?: CoordinationGame<any, any, any, any>[];
+  games?: AnyCoordinationGame[];
 }
 
 /** Static top-level CLI commands. Must not collide with any dynamic tool. */
@@ -89,11 +92,7 @@ interface SurfaceEntry {
   plugin?: ToolPlugin;
 }
 
-function buildFullSurface(
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-  games: CoordinationGame<any, any, any, any>[],
-  plugins: ToolPlugin[],
-): SurfaceEntry[] {
+function buildFullSurface(games: AnyCoordinationGame[], plugins: ToolPlugin[]): SurfaceEntry[] {
   const entries: SurfaceEntry[] = [];
   for (const game of games) {
     for (const tool of game.gameTools ?? []) {
@@ -163,24 +162,22 @@ function checkSurfaceCollisions(entries: SurfaceEntry[]): void {
  *
  * Unknown shapes fall back to z.any() with the description attached.
  */
-// biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-function jsonPropToZod(prop: any): z.ZodTypeAny {
+function jsonPropToZod(prop: JsonSchema | undefined): z.ZodTypeAny {
   if (!prop || typeof prop !== 'object') return z.any();
 
-  const desc: string | undefined =
-    typeof prop.description === 'string' ? prop.description : undefined;
+  const desc = typeof prop.description === 'string' ? prop.description : undefined;
   const attach = (s: z.ZodTypeAny) => (desc ? s.describe(desc) : s);
 
   if (Array.isArray(prop.oneOf) || Array.isArray(prop.anyOf)) {
-    const variants = (prop.oneOf ?? prop.anyOf).map(jsonPropToZod);
-    if (variants.length === 1) return attach(variants[0]);
+    const variants = (prop.oneOf ?? prop.anyOf ?? []).map(jsonPropToZod);
+    if (variants.length === 1 && variants[0]) return attach(variants[0]);
     // z.union requires at least 2 schemas — safe since we checked.
     return attach(z.union(variants as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]));
   }
 
   if (Array.isArray(prop.type)) {
-    const variants = prop.type.map((t: string) => jsonPropToZod({ ...prop, type: t }));
-    if (variants.length === 1) return attach(variants[0]);
+    const variants = prop.type.map((t) => jsonPropToZod({ ...prop, type: t }));
+    if (variants.length === 1 && variants[0]) return attach(variants[0]);
     return attach(z.union(variants as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]));
   }
 
@@ -210,8 +207,7 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
 
   if (type === 'object') {
     const shape: Record<string, z.ZodTypeAny> = {};
-    // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-    const props = (prop.properties ?? {}) as Record<string, any>;
+    const props = prop.properties ?? {};
     const required = new Set<string>(Array.isArray(prop.required) ? prop.required : []);
     for (const [k, v] of Object.entries(props)) {
       let zs = jsonPropToZod(v);
@@ -229,13 +225,12 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
  * top-level `inputSchema` object (which is always `{type:'object', properties, required}`).
  */
 function toolInputShape(
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-  inputSchema: Record<string, any> | undefined,
+  inputSchema: Record<string, unknown> | undefined,
 ): Record<string, z.ZodTypeAny> {
   if (!inputSchema || typeof inputSchema !== 'object') return {};
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-  const props = (inputSchema.properties ?? {}) as Record<string, any>;
-  const required = new Set<string>(Array.isArray(inputSchema.required) ? inputSchema.required : []);
+  const schema = inputSchema as JsonSchema;
+  const props = schema.properties ?? {};
+  const required = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const [k, v] of Object.entries(props)) {
     let zs = jsonPropToZod(v);
@@ -280,13 +275,11 @@ export function registerGameTools(
         .optional()
         .describe(`Game name (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Auto-detects if omitted.`),
     },
-    // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-    async (args: any) => {
+    async (args) => {
       try {
         const result = await client.getGuide(args.game);
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
@@ -300,8 +293,7 @@ export function registerGameTools(
       try {
         const result = await client.getState();
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
@@ -315,8 +307,7 @@ export function registerGameTools(
       try {
         const result = await client.waitForUpdate();
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
@@ -326,8 +317,7 @@ export function registerGameTools(
     try {
       const result = await client.listLobbies();
       return jsonResult(result);
-      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-    } catch (err: any) {
+    } catch (err) {
       return jsonError(err);
     }
   });
@@ -340,8 +330,7 @@ export function registerGameTools(
       try {
         const result = await client.joinLobby(lobbyId);
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
@@ -376,8 +365,7 @@ export function registerGameTools(
         const size = game === OATH_GAME_ID ? playerCount || 4 : teamSize || 2;
         const result = await client.createLobby(game, size);
         return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
@@ -402,37 +390,35 @@ export function registerGameTools(
 
     if (entry.kind === 'plugin' && entry.plugin) {
       const plugin = entry.plugin;
-      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      server.tool(toolName, tool.description, shape, async (args: any) => {
+      server.tool(toolName, tool.description, shape, async (args: Record<string, unknown>) => {
         // Plugin tools are client-side: run handleCall locally, then post
         // any returned relay envelope to the unified endpoint.
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-        let out: any;
+        let out: PluginCallResult | undefined;
         try {
           out = plugin.handleCall?.(toolName, args, {
             id: 'self',
             handle: 'self',
-          });
-          // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-        } catch (err: any) {
+          }) as PluginCallResult | undefined;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
           return jsonError({
             error: {
               code: 'PLUGIN_ERROR',
-              message: `Plugin "${plugin.id}" handleCall threw: ${err?.message ?? String(err)}`,
+              message: `Plugin "${plugin.id}" handleCall threw: ${msg}`,
             },
           });
         }
-        if (out && typeof out === 'object' && 'error' in out) {
+        if (out && typeof out === 'object' && 'error' in out && out.error) {
           return jsonError(out);
         }
         if (out && typeof out === 'object' && out.relay) {
           try {
             const result = await client.callPluginRelay(out.relay);
             return jsonResult(result);
-            // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-          } catch (err: any) {
+          } catch (err) {
             // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
-            if (err?.structured) return jsonError(err.structured);
+            const structured = (err as { structured?: { error: unknown } } | undefined)?.structured;
+            if (structured) return jsonError(structured);
             return jsonError(err);
           }
         }
@@ -441,10 +427,8 @@ export function registerGameTools(
       });
     } else {
       // Game / lobby-phase tool: dispatch through the unified endpoint.
-      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-      server.tool(toolName, tool.description, shape, async (args: any) => {
-        // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-        const result: any = await client.callToolRaw(toolName, args ?? {});
+      server.tool(toolName, tool.description, shape, async (args: Record<string, unknown>) => {
+        const result = await client.callToolRaw(toolName, args ?? {});
         if (result.ok) return jsonResult(result.data);
         // Structured error — surface it so the agent can self-correct.
         return jsonError({ error: result.error });
@@ -463,16 +447,15 @@ function jsonResult(data: unknown) {
   };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-function jsonError(err: any) {
+function jsonError(err: unknown) {
   // Accept either a thrown Error (from ApiClient) or a structured
   // `{error: {code, message, ...}}` payload from the dispatcher.
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK tool registration uses dynamic input schemas + raw call responses keyed by plugin-declared tool names.
-  let payload: any;
+  let payload: { error: unknown };
   if (err && typeof err === 'object' && 'error' in err) {
-    payload = err;
+    payload = err as { error: unknown };
   } else {
-    payload = { error: { code: 'CLIENT_ERROR', message: err?.message ?? String(err) } };
+    const message = err instanceof Error ? err.message : String(err);
+    payload = { error: { code: 'CLIENT_ERROR', message } };
   }
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],

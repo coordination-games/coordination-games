@@ -17,31 +17,45 @@
  */
 
 import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { describe, expect, it } from 'vitest';
-import { ClientToolCollisionError, registerGameTools, STATIC_CLI_COMMANDS } from '../mcp-tools.js';
+import type { GameClient } from '../game-client.js';
+import {
+  type AnyCoordinationGame,
+  ClientToolCollisionError,
+  registerGameTools,
+  STATIC_CLI_COMMANDS,
+} from '../mcp-tools.js';
 
 // ---------------------------------------------------------------------------
 // Stub McpServer — `registerGameTools` calls `server.tool(name, desc, shape, fn)`.
 // The stub collects registrations so tests can assert post-collision success.
 // ---------------------------------------------------------------------------
 
-function makeStubServer() {
+interface StubServer {
+  registered: string[];
+  tool: (name: string, desc: string, shape: unknown, fn: unknown) => void;
+}
+
+function makeStubServer(): StubServer {
   const registered: string[] = [];
   return {
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-    tool: (name: string, _desc: string, _shape: any, _fn: any) => {
+    tool: (name) => {
       registered.push(name);
     },
     registered,
   };
 }
 
+/** Cast a stub into the real surfaces registerGameTools() expects. */
+function asServer(stub: StubServer): McpServer {
+  return stub as unknown as McpServer;
+}
+
 // Minimal GameClient — only `client.getGuide`/`getState`/etc. are called from
 // the static tool handlers, which run only when a tool is INVOKED. The
-// collision check and registration never call them. Cast as any to avoid
-// dragging the real class into tests.
-// biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-const stubClient: any = {};
+// collision check and registration never call them.
+const stubClient = {} as GameClient;
 
 // ---------------------------------------------------------------------------
 // Fake factory helpers
@@ -59,8 +73,7 @@ function tool(name: string, extra: Partial<ToolDefinition> = {}): ToolDefinition
 function fakeGame(
   gameType: string,
   opts: { gameTools?: ToolDefinition[]; phaseTools?: Record<string, ToolDefinition[]> } = {},
-  // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-): CoordinationGame<any, any, any, any> {
+): AnyCoordinationGame {
   return {
     gameType,
     version: '0.0.0-test',
@@ -76,8 +89,7 @@ function fakeGame(
             timeout: null,
             acceptsJoins: true,
             init: () => ({}),
-            // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-            handleAction: (state: any) => ({ state }),
+            handleAction: (state: unknown) => ({ state }),
             handleTimeout: () => null,
             getView: () => ({}),
           })),
@@ -92,15 +104,13 @@ function fakeGame(
       : undefined,
     createInitialState: () => ({}),
     validateAction: () => false,
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-    applyAction: (state: any) => ({ state }),
+    applyAction: (state: unknown) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-  } as unknown as CoordinationGame<any, any, any, any>;
+  } as unknown as CoordinationGame<unknown, unknown, unknown, unknown>;
 }
 
 function fakePlugin(id: string, tools: ToolDefinition[]): ToolPlugin {
@@ -126,8 +136,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
 
     let thrown: unknown;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-      registerGameTools(server as any, stubClient, { plugins: [plugin] });
+      registerGameTools(asServer(server), stubClient, { plugins: [plugin] });
     } catch (err) {
       thrown = err;
     }
@@ -146,16 +155,14 @@ describe('ClientToolCollisionError — client-side surface', () => {
     });
     const server = makeStubServer();
 
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-    let thrown: any;
+    let thrown: unknown;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-      registerGameTools(server as any, stubClient, { plugins: [plugin], games: [game] });
+      registerGameTools(asServer(server), stubClient, { plugins: [plugin], games: [game] });
     } catch (err) {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(ClientToolCollisionError);
-    expect(thrown.toolName).toBe('chat');
+    expect((thrown as ClientToolCollisionError).toolName).toBe('chat');
     // Both declarers surface in the error.
     const declarers = (thrown as ClientToolCollisionError).declarers.join('|');
     expect(declarers).toMatch(/GamePhase of game "fake-game-with-chat"/);
@@ -171,8 +178,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
     const server = makeStubServer();
 
     expect(() =>
-      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-      registerGameTools(server as any, stubClient, { games: [game], plugins: [plugin] }),
+      registerGameTools(asServer(server), stubClient, { games: [game], plugins: [plugin] }),
     ).not.toThrow();
     // Both dynamic tools end up registered on the server, plus the fixed
     // built-ins. We only assert on the dynamic ones being present.
@@ -186,8 +192,9 @@ describe('ClientToolCollisionError — client-side surface', () => {
     const plugin = fakePlugin('hidden-plugin', [tool('state', { mcpExpose: false })]);
     const server = makeStubServer();
 
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-    expect(() => registerGameTools(server as any, stubClient, { plugins: [plugin] })).not.toThrow();
+    expect(() =>
+      registerGameTools(asServer(server), stubClient, { plugins: [plugin] }),
+    ).not.toThrow();
   });
 
   it('collision between two lobby phases throws with both LobbyPhase declarers', () => {
@@ -199,16 +206,14 @@ describe('ClientToolCollisionError — client-side surface', () => {
     });
     const server = makeStubServer();
 
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-    let thrown: any;
+    let thrown: unknown;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-      registerGameTools(server as any, stubClient, { games: [game] });
+      registerGameTools(asServer(server), stubClient, { games: [game] });
     } catch (err) {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(ClientToolCollisionError);
-    expect(thrown.toolName).toBe('go');
+    expect((thrown as ClientToolCollisionError).toolName).toBe('go');
     const declarers = (thrown as ClientToolCollisionError).declarers.join('|');
     expect(declarers).toMatch(/phase-a/);
     expect(declarers).toMatch(/phase-b/);
@@ -224,13 +229,11 @@ describe('ClientToolCollisionError — client-side surface', () => {
 
   it('re-exported ClientToolCollisionError message ends with resolution suggestions', () => {
     const plugin = fakePlugin('colliding', [tool('state', { mcpExpose: true })]);
-    // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-    let thrown: any;
+    let thrown: Error | undefined;
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness constructs partial ToolPlugin/CoordinationGame stubs (schemas + names only) to exercise the CLI collision detector.
-      registerGameTools(makeStubServer() as any, stubClient, { plugins: [plugin] });
+      registerGameTools(asServer(makeStubServer()), stubClient, { plugins: [plugin] });
     } catch (err) {
-      thrown = err;
+      thrown = err as Error;
     }
     expect(thrown?.message).toMatch(/Resolve by:/);
     expect(thrown?.message).toMatch(/renaming one of the conflicting tools/);

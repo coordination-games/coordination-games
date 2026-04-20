@@ -32,11 +32,10 @@ function createMcpServerWithClient(options?: ServeOptions): {
   client: GameClient;
 } {
   const serverUrl = options?.serverUrl || loadConfig().serverUrl;
-  // @ts-expect-error TS2379: Argument of type '{ privateKey: string | undefined; name: string | undefined; }' — TODO(2.3-followup)
-  const client = new GameClient(serverUrl, {
-    privateKey: options?.privateKey,
-    name: options?.name,
-  });
+  const clientOptions: { privateKey?: string; name?: string } = {};
+  if (options?.privateKey) clientOptions.privateKey = options.privateKey;
+  if (options?.name) clientOptions.name = options.name;
+  const client = new GameClient(serverUrl, clientOptions);
   const server = new McpServer({
     name: 'coordination-games',
     version: '0.1.0',
@@ -68,12 +67,29 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
       const app = express();
       app.use(express.json());
 
-      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
-      const transports = new Map<string, any>();
+      // Local shape of the express req/res we actually use. @types/express is
+      // not installed at the CLI level, so we declare the minimum surface
+      // instead of pulling in another dep. The StreamableHTTPServerTransport's
+      // `sessionId` field is runtime-available but not in its public types.
+      type ExpressReq = {
+        headers: Record<string, string | string[] | undefined>;
+        body: unknown;
+      };
+      type ExpressRes = {
+        status: (code: number) => { json: (body: unknown) => void };
+      };
+      type TransportWithSession = InstanceType<typeof StreamableHTTPServerTransport> & {
+        sessionId?: string;
+        handleRequest: (req: ExpressReq, res: ExpressRes) => Promise<void>;
+      };
 
-      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
-      app.post('/mcp', async (req: any, res: any) => {
-        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      const transports = new Map<string, TransportWithSession>();
+
+      app.post('/mcp', async (req: ExpressReq, res: ExpressRes) => {
+        const sessionId =
+          typeof req.headers['mcp-session-id'] === 'string'
+            ? req.headers['mcp-session-id']
+            : undefined;
 
         if (sessionId) {
           const transport = transports.get(sessionId);
@@ -87,17 +103,19 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
           const { server: newServer } = createMcpServerWithClient(options);
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => crypto.randomUUID(),
-          });
+          }) as TransportWithSession;
           transport.onclose = () => {
-            // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
-            const sid = (transport as any).sessionId;
+            const sid = transport.sessionId;
             if (sid) transports.delete(sid);
           };
-          // @ts-expect-error TS2379: Argument of type 'StreamableHTTPServerTransport' is not assignable to parameter  — TODO(2.3-followup)
+          // MCP SDK's `Transport` interface declares `onclose: () => void`
+          // (required), but `StreamableHTTPServerTransport` declares it
+          // `onclose?: () => void`. Under `exactOptionalPropertyTypes`, that's
+          // a mismatch; at runtime connect() handles both shapes fine.
+          // @ts-expect-error MCP SDK onclose optionality mismatch
           await newServer.connect(transport);
           await transport.handleRequest(req, res);
-          // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
-          const sid = (transport as any).sessionId;
+          const sid = transport.sessionId;
           if (sid) transports.set(sid, transport);
           return;
         }
@@ -105,9 +123,11 @@ export async function startMcpServer(mode: 'stdio' | 'http', options?: ServeOpti
         res.status(400).json({ error: 'Bad request' });
       });
 
-      // biome-ignore lint/suspicious/noExplicitAny: MCP SDK + express types — StreamableHTTPServerTransport doesn't expose `sessionId` publicly and express middleware req/res typings require type packages (@types/express) that we don't install at the CLI level.
-      app.get('/mcp', async (req: any, res: any) => {
-        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      app.get('/mcp', async (req: ExpressReq, res: ExpressRes) => {
+        const sessionId =
+          typeof req.headers['mcp-session-id'] === 'string'
+            ? req.headers['mcp-session-id']
+            : undefined;
         if (sessionId) {
           const transport = transports.get(sessionId);
           if (transport) {
