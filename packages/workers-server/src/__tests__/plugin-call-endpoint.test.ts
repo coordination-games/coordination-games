@@ -63,21 +63,26 @@ interface FakeStore {
 }
 
 function makeFakeD1(store: FakeStore): D1Database {
-  // biome-ignore lint/suspicious/noExplicitAny: minimal D1 surface stub
-  const stmt = (sql: string): any => {
+  // Matches the shape of what D1's `prepare().bind()` chain returns — we use
+  // a local type alias instead of importing D1PreparedStatement since we
+  // don't exercise the full surface.
+  interface FakeStmt {
+    bind: (...args: unknown[]) => FakeStmt;
+    first<T = unknown>(): Promise<T | null>;
+    all<T = unknown>(): Promise<{ results: T[] }>;
+  }
+  const stmt = (sql: string): FakeStmt => {
     let bindings: unknown[] = [];
-    const api = {
+    const api: FakeStmt = {
       bind(...args: unknown[]) {
         bindings = args;
         return api;
       },
-      // biome-ignore lint/suspicious/noExplicitAny: returning per-query shapes
-      async first<T = any>(): Promise<T | null> {
+      async first<T = unknown>(): Promise<T | null> {
         const r = run();
         return (Array.isArray(r) ? (r[0] ?? null) : r) as T | null;
       },
-      // biome-ignore lint/suspicious/noExplicitAny: returning per-query shapes
-      async all<T = any>(): Promise<{ results: T[] }> {
+      async all<T = unknown>(): Promise<{ results: T[] }> {
         const r = run();
         return { results: (Array.isArray(r) ? r : []) as T[] };
       },
@@ -119,17 +124,16 @@ function makeFakeD1(store: FakeStore): D1Database {
     }
     return api;
   };
-  // biome-ignore lint/suspicious/noExplicitAny: D1 stub
-  return { prepare: stmt } as any;
+  return { prepare: stmt } as unknown as D1Database;
 }
 
 function buildEnv(store: FakeStore): Env {
   return {
     DB: makeFakeD1(store),
-    // biome-ignore lint/suspicious/noExplicitAny: only DB is used by ELO plugin
-    GAME_ROOM: {} as any,
-    // biome-ignore lint/suspicious/noExplicitAny: only DB is used by ELO plugin
-    LOBBY: {} as any,
+    // GAME_ROOM / LOBBY are unused by the ELO plugin path — empty namespace
+    // stubs are enough. Typed via the canonical Env shape.
+    GAME_ROOM: {} as Env['GAME_ROOM'],
+    LOBBY: {} as Env['LOBBY'],
     ENVIRONMENT: 'test',
   };
 }

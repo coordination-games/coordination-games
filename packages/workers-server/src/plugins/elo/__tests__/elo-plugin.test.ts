@@ -64,21 +64,23 @@ interface FakeStore {
 }
 
 function makeFakeD1(store: FakeStore): D1Database {
-  // biome-ignore lint/suspicious/noExplicitAny: minimal D1 surface
-  const stmt = (sql: string): any => {
+  interface FakeStmt {
+    bind: (...args: unknown[]) => FakeStmt;
+    first<T = unknown>(): Promise<T | null>;
+    all<T = unknown>(): Promise<{ results: T[] }>;
+  }
+  const stmt = (sql: string): FakeStmt => {
     let bindings: unknown[] = [];
-    const api = {
+    const api: FakeStmt = {
       bind(...args: unknown[]) {
         bindings = args;
         return api;
       },
-      // biome-ignore lint/suspicious/noExplicitAny: returning per-query shapes
-      async first<T = any>(): Promise<T | null> {
+      async first<T = unknown>(): Promise<T | null> {
         const r = run();
         return (Array.isArray(r) ? (r[0] ?? null) : r) as T | null;
       },
-      // biome-ignore lint/suspicious/noExplicitAny: returning per-query shapes
-      async all<T = any>(): Promise<{ results: T[] }> {
+      async all<T = unknown>(): Promise<{ results: T[] }> {
         const r = run();
         return { results: (Array.isArray(r) ? r : []) as T[] };
       },
@@ -116,13 +118,14 @@ function makeFakeD1(store: FakeStore): D1Database {
     }
     return api;
   };
-  // biome-ignore lint/suspicious/noExplicitAny: D1 stub
-  return { prepare: stmt } as any;
+  return { prepare: stmt } as unknown as D1Database;
 }
 
 function makeMemoryStorage(): DurableObjectStorage {
-  // biome-ignore lint/suspicious/noExplicitAny: test stub of DurableObjectStorage
-  return {} as any;
+  // The ELO plugin doesn't touch storage; a bare cast is enough. The real
+  // in-memory storage helper lives in `../__tests__/test-helpers.ts` for
+  // tests that DO touch storage.
+  return {} as DurableObjectStorage;
 }
 
 function buildCaps(d1: D1Database): Capabilities {
@@ -137,8 +140,9 @@ function buildCaps(d1: D1Database): Capabilities {
     relay: fakeRelay,
     alarms: { scheduleAt: vi.fn(async () => {}), cancel: vi.fn(async () => {}) },
     d1,
-    // biome-ignore lint/suspicious/noExplicitAny: chain isn't required by the elo plugin; minimal stub
-    chain: {} as any,
+    // chain isn't exercised by the elo plugin; empty stub typed via the
+    // canonical interface.
+    chain: {} as Capabilities['chain'],
   };
 }
 

@@ -13,8 +13,7 @@ import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js'
 
 function makeMemoryStorage(): DurableObjectStorage {
   const map = new Map<string, unknown>();
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset StorageAlarmMux uses
-  const stub: any = {
+  const stub = {
     async get(key: string): Promise<unknown> {
       // structuredClone-equivalent for arrays — DO storage doesn't share
       // refs across get/put either.
@@ -29,7 +28,7 @@ function makeMemoryStorage(): DurableObjectStorage {
       return map.delete(key);
     },
   };
-  return stub as DurableObjectStorage;
+  return stub as unknown as DurableObjectStorage;
 }
 
 describe('StorageAlarmMux', () => {

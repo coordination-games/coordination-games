@@ -21,60 +21,43 @@
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
 import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { type GameRoomDOInternal, makeMemoryStorage } from './test-helpers.js';
 
 vi.mock('cloudflare:workers', () => ({
   DurableObject: class {},
 }));
 
-// biome-ignore lint/suspicious/noExplicitAny: test rigging pokes private DO internals (Object.create(prototype), _state, _meta) to exercise hibernation/load paths.
-let GameRoomDO: any;
+/**
+ * Narrower view of GameRoomDO used by this persistence test.
+ * `broadcastUpdates` / `ensureLoaded` are invoked directly on the DO instance;
+ * the rest of the surface is opaque via Object.create(prototype).
+ */
+type GameRoomWithBroadcast = GameRoomDOInternal & {
+  _loaded: boolean;
+  _spectatorSnapshots: unknown[];
+  _plugin: Record<string, unknown>;
+  _lastSpectatorIdx: number | null;
+  broadcastUpdates: () => Promise<void>;
+  ensureLoaded: () => Promise<void>;
+};
+
+type GameRoomDOCtor = { prototype: object };
+let GameRoomDO: GameRoomDOCtor;
 const TAG_SPECTATOR = '__spectator__';
 
 beforeAll(async () => {
-  ({ GameRoomDO } = await import('../do/GameRoomDO.js'));
+  ({ GameRoomDO } = (await import('../do/GameRoomDO.js')) as unknown as {
+    GameRoomDO: GameRoomDOCtor;
+  });
 });
-
-/** Minimal in-memory DurableObjectStorage matching the surface
- *  GameRoomDO's spectator-broadcast / ensureLoaded path uses. */
-function makeMemoryStorage(): DurableObjectStorage {
-  const map = new Map<string, unknown>();
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset under test
-  const stub: any = {
-    async get(keyOrKeys: string | string[]): Promise<unknown> {
-      if (Array.isArray(keyOrKeys)) {
-        const out = new Map<string, unknown>();
-        for (const k of keyOrKeys) if (map.has(k)) out.set(k, map.get(k));
-        return out;
-      }
-      return map.get(keyOrKeys);
-    },
-    async put(key: string, value: unknown): Promise<void> {
-      map.set(key, value);
-    },
-    async delete(key: string): Promise<boolean> {
-      return map.delete(key);
-    },
-    async list(opts?: { prefix?: string; start?: string }): Promise<Map<string, unknown>> {
-      const prefix = opts?.prefix ?? '';
-      const start = opts?.start;
-      const keys = [...map.keys()].sort();
-      const out = new Map<string, unknown>();
-      for (const k of keys) {
-        if (prefix && !k.startsWith(prefix)) continue;
-        if (start && k < start) continue;
-        out.set(k, map.get(k));
-      }
-      return out;
-    },
-  };
-  return stub as DurableObjectStorage;
-}
 
 /** Build a barely-functional DO instance: enough for broadcastUpdates
  *  and ensureLoaded to work, with no plugin registry / alarms. */
-function buildGameRoom(storage: DurableObjectStorage) {
-  // biome-ignore lint/suspicious/noExplicitAny: test rigging
-  const sentMessages: any[] = [];
+function buildGameRoom(storage: DurableObjectStorage): {
+  room: GameRoomWithBroadcast;
+  sentMessages: unknown[];
+} {
+  const sentMessages: unknown[] = [];
   // Stub WebSocket-shaped object so broadcastUpdates' send() loop
   // doesn't blow up.
   const fakeWs = {
@@ -83,15 +66,19 @@ function buildGameRoom(storage: DurableObjectStorage) {
     },
   };
 
-  // biome-ignore lint/suspicious/noExplicitAny: test rigging pokes private DO internals (Object.create(prototype), _state, _meta) to exercise hibernation/load paths.
-  const room: any = Object.create(GameRoomDO.prototype);
+  const room = Object.create(GameRoomDO.prototype) as GameRoomWithBroadcast;
   room._loaded = true;
   room.ctx = {
     storage,
-    getWebSockets: (tag: string) => (tag === TAG_SPECTATOR ? [fakeWs] : []),
+    getWebSockets: (tag: string) => (tag === TAG_SPECTATOR ? [fakeWs as unknown as WebSocket] : []),
+    // `blockConcurrencyWhile` / `waitUntil` aren't on the internal shape but
+    // the DO reads them off `ctx`; attach via Object.assign to keep
+    // GameRoomDOInternal the contract the rest of the tests rely on.
+  } as GameRoomWithBroadcast['ctx'];
+  Object.assign(room.ctx, {
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
     waitUntil: () => {},
-  };
+  });
 
   // Minimal _meta — broadcastUpdates needs gameType/handleMap/playerIds
   // and the publicSnapshotIndex helper needs spectatorDelay + finished.
@@ -170,17 +157,15 @@ describe('GameRoomDO — _lastSpectatorIdx persistence (Phase 7.3)', () => {
     await storage.put('lastSpectatorIdx', 1);
 
     // Build a fresh DO instance against that same storage.
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging pokes private DO internals (Object.create(prototype), _state, _meta) to exercise hibernation/load paths.
-    const fresh: any = Object.create(GameRoomDO.prototype);
+    const fresh = Object.create(GameRoomDO.prototype) as GameRoomWithBroadcast;
     fresh._loaded = false;
     fresh._spectatorSnapshots = [];
     fresh._lastSpectatorIdx = null;
-    fresh.ctx = {
-      storage,
-      getWebSockets: () => [],
+    fresh.ctx = { storage, getWebSockets: () => [] } as GameRoomWithBroadcast['ctx'];
+    Object.assign(fresh.ctx, {
       blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
       waitUntil: () => {},
-    };
+    });
 
     // Trigger ensureLoaded directly (private method — tests use [] syntax).
     await fresh.ensureLoaded();
@@ -200,7 +185,7 @@ describe('GameRoomDO — _lastSpectatorIdx persistence (Phase 7.3)', () => {
     // ensureLoaded would do for the persistence value alone — the
     // full reload path is exercised in the previous test.
     const { room: second, sentMessages } = buildGameRoom(storage);
-    second._lastSpectatorIdx = (await storage.get('lastSpectatorIdx')) ?? null;
+    second._lastSpectatorIdx = ((await storage.get('lastSpectatorIdx')) ?? null) as number | null;
 
     expect(second._lastSpectatorIdx).toBe(1);
 

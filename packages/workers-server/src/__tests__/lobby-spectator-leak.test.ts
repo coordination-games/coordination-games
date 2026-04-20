@@ -12,9 +12,10 @@
  * `ctx.storage` with an in-memory map.
  */
 
-import type { DurableObjectStorage } from '@cloudflare/workers-types';
+import type { LobbyPhase } from '@coordination-games/engine';
 import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { type LobbyDOInternal, makeMemoryStorage, readJson } from './test-helpers.js';
 
 // Stub the `cloudflare:workers` module so importing LobbyDO does not
 // blow up under Node-based vitest. The `DurableObject` base class is
@@ -24,22 +25,21 @@ vi.mock('cloudflare:workers', () => ({
   DurableObject: class {},
 }));
 
-// Lazy import — must come after vi.mock above.
-// biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
-let LobbyDO: any;
-// biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
-let teamFormationPhase: any;
+// Lazy imports under vi.mock — resolved in beforeAll. The `any`-typed
+// prototype slot is the canonical `Object.create` trick; all fixture access
+// goes through `LobbyDOInternal` (imported above).
+type LobbyDOCtor = { prototype: object };
+let LobbyDO: LobbyDOCtor;
+let teamFormationPhase: LobbyPhase;
 
 beforeAll(async () => {
-  ({ LobbyDO } = await import('../do/LobbyDO.js'));
+  ({ LobbyDO } = (await import('../do/LobbyDO.js')) as unknown as { LobbyDO: LobbyDOCtor });
   // Pull the real CtL team-formation phase so getTeamForPlayer is
   // exercised against the registered plugin shape.
   const ctl = await import('@coordination-games/game-ctl');
-  teamFormationPhase = ctl.CaptureTheLobsterPlugin.lobby?.phases.find(
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
-    (p: any) => p.id === 'team-formation',
-  );
-  if (!teamFormationPhase) throw new Error('test setup: team-formation phase not found');
+  const phase = ctl.CaptureTheLobsterPlugin.lobby?.phases.find((p) => p.id === 'team-formation');
+  if (!phase) throw new Error('test setup: team-formation phase not found');
+  teamFormationPhase = phase;
 });
 
 // ---------------------------------------------------------------------------
@@ -59,49 +59,12 @@ function padded(index: number): string {
   return `relay:${String(index).padStart(PADDED_INDEX_LEN, '0')}`;
 }
 
-/** Minimal in-memory DurableObjectStorage — only the methods the relay
- *  client and LobbyDO hit in the spectator-leak code path. */
-function makeMemoryStorage(): DurableObjectStorage {
-  const map = new Map<string, unknown>();
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset under test
-  const stub: any = {
-    async get(keyOrKeys: string | string[]): Promise<unknown> {
-      if (Array.isArray(keyOrKeys)) {
-        const out = new Map<string, unknown>();
-        for (const k of keyOrKeys) if (map.has(k)) out.set(k, map.get(k));
-        return out;
-      }
-      return map.get(keyOrKeys);
-    },
-    async put(key: string, value: unknown): Promise<void> {
-      map.set(key, value);
-    },
-    async delete(key: string): Promise<boolean> {
-      return map.delete(key);
-    },
-    async list(opts?: { prefix?: string; start?: string }): Promise<Map<string, unknown>> {
-      const prefix = opts?.prefix ?? '';
-      const start = opts?.start;
-      const keys = [...map.keys()].sort();
-      const out = new Map<string, unknown>();
-      for (const k of keys) {
-        if (prefix && !k.startsWith(prefix)) continue;
-        if (start && k < start) continue;
-        out.set(k, map.get(k));
-      }
-      return out;
-    },
-  };
-  return stub as DurableObjectStorage;
-}
-
 /** Build a LobbyDO instance frozen mid-team-formation with two formed teams.
  *  Seeds a representative relay log (public + both teams + DM) into the
  *  stubbed DO storage so the real `DOStorageRelayClient` filters it. */
-function buildLobbyAtTeamFormation() {
+function buildLobbyAtTeamFormation(): LobbyDOInternal {
   const storage = makeMemoryStorage();
-  // biome-ignore lint/suspicious/noExplicitAny: test rigging builds private LobbyDO internals directly to exercise spectator-leak isolation paths.
-  const lobby: any = Object.create(LobbyDO.prototype);
+  const lobby = Object.create(LobbyDO.prototype) as LobbyDOInternal;
   lobby._loaded = true;
   lobby.ctx = { storage };
   lobby._meta = {
@@ -144,8 +107,13 @@ function buildLobbyAtTeamFormation() {
   lobby._phaseState = state;
 
   // Sanity-check the fixture's team membership before we depend on it.
-  const t1 = teamFormationPhase.getTeamForPlayer(state, 'p1');
-  const t2 = teamFormationPhase.getTeamForPlayer(state, 'p3');
+  // `getTeamForPlayer` is CtL-specific; it's not on the engine's LobbyPhase
+  // interface, so narrow it here without pulling the whole plugin type.
+  const phaseWithTeams = teamFormationPhase as LobbyPhase & {
+    getTeamForPlayer: (state: unknown, pid: string) => string | null;
+  };
+  const t1 = phaseWithTeams.getTeamForPlayer(state, 'p1');
+  const t2 = phaseWithTeams.getTeamForPlayer(state, 'p3');
   if (!t1 || !t2 || t1 === t2) {
     throw new Error(`test setup: expected two distinct teams, got ${t1} / ${t2}`);
   }
@@ -213,11 +181,10 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
     const lobby = buildLobbyAtTeamFormation();
     const resp: Response = await lobby.fetch(new Request('https://do/state', { method: 'GET' }));
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-    const body: any = await resp.json();
+    const body = await readJson(resp);
     expect(Array.isArray(body.relay)).toBe(true);
-    expect(body.relay.length).toBe(1); // only the public envelope
-    for (const m of body.relay) {
+    expect(body.relay?.length).toBe(1); // only the public envelope
+    for (const m of body.relay ?? []) {
       expect(m.scope.kind).toBe('all');
     }
   });
@@ -231,17 +198,15 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
       }),
     );
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-    const body: any = await resp.json();
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-    const scopes = body.relay.map((m: any) => `${m.scope.kind}:${m.sender}`);
+    const body = await readJson(resp);
+    const relay = body.relay ?? [];
+    const scopes = relay.map((m) => `${m.scope.kind}:${m.sender}`);
     // p1 must see: own public 'all', own team-A, own DM. Must NOT see team-B.
     expect(scopes).toContain('all:p1');
     expect(scopes).toContain('team:p1');
     expect(scopes).toContain('dm:p1');
     // No team-scoped from p3 (team B sender) — that envelope is filtered out.
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-    const teamFromP3 = body.relay.filter((m: any) => m.scope.kind === 'team' && m.sender === 'p3');
+    const teamFromP3 = relay.filter((m) => m.scope.kind === 'team' && m.sender === 'p3');
     expect(teamFromP3).toEqual([]);
   });
 
@@ -253,18 +218,12 @@ describe('LobbyDO relay leak — spectator vs player filter', () => {
         headers: { 'X-Player-Id': 'p3' },
       }),
     );
-    // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-    const body: any = await resp.json();
-    const teamScopedFromP1 = body.relay.filter(
-      // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-      (m: any) => m.scope.kind === 'team' && m.sender === 'p1',
-    );
+    const body = await readJson(resp);
+    const relay = body.relay ?? [];
+    const teamScopedFromP1 = relay.filter((m) => m.scope.kind === 'team' && m.sender === 'p1');
     expect(teamScopedFromP1).toEqual([]);
     // But p3 sees their own team-B team message.
-    const teamScopedFromP3 = body.relay.filter(
-      // biome-ignore lint/suspicious/noExplicitAny: test rigging reaches into private LobbyDO internals to exercise spectator-leak isolation paths.
-      (m: any) => m.scope.kind === 'team' && m.sender === 'p3',
-    );
+    const teamScopedFromP3 = relay.filter((m) => m.scope.kind === 'team' && m.sender === 'p3');
     expect(teamScopedFromP3.length).toBe(1);
   });
 });

@@ -20,41 +20,12 @@ import {
   type Capabilities,
   type CapName,
   NamespacedStorage,
+  type OnChainRelay,
   type RelayClient,
   type SpectatorViewer,
 } from '../plugins/capabilities.js';
 import { type ServerPlugin, ServerPluginRuntime } from '../plugins/runtime.js';
-
-// ---------------------------------------------------------------------------
-// In-memory DurableObjectStorage stand-in. We only need the four methods
-// NamespacedStorage uses (get / put / delete / list).
-// ---------------------------------------------------------------------------
-
-function makeMemoryStorage(): DurableObjectStorage {
-  const map = new Map<string, unknown>();
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset NamespacedStorage uses
-  const stub: any = {
-    async get(key: string): Promise<unknown> {
-      return map.get(key);
-    },
-    async put(key: string, value: unknown): Promise<void> {
-      map.set(key, value);
-    },
-    async delete(key: string): Promise<boolean> {
-      return map.delete(key);
-    },
-    async list(opts?: { prefix?: string }): Promise<Map<string, unknown>> {
-      const out = new Map<string, unknown>();
-      for (const [k, v] of map.entries()) {
-        if (!opts?.prefix || k.startsWith(opts.prefix)) out.set(k, v);
-      }
-      return out;
-    },
-    /** Test helper — not part of the DurableObjectStorage surface. */
-    _raw: map,
-  };
-  return stub as DurableObjectStorage;
-}
+import { makeMemoryStorage } from './test-helpers.js';
 
 function buildCaps(storage: DurableObjectStorage): Capabilities {
   const fakeRelay: RelayClient = {
@@ -71,8 +42,10 @@ function buildCaps(storage: DurableObjectStorage): Capabilities {
       cancel: vi.fn(async () => {}),
     },
     d1: {} as D1Database,
-    // biome-ignore lint/suspicious/noExplicitAny: chain capability stub for tests; SettlementStateMachine is tested separately
-    chain: {} as any,
+    // chain capability isn't exercised here — SettlementStateMachine has its
+    // own dedicated test. An empty OnChainRelay cast is enough to satisfy the
+    // Capabilities shape while staying off the hot paths below.
+    chain: {} as OnChainRelay,
   };
 }
 
@@ -87,8 +60,10 @@ describe('ServerPluginRuntime — capability injection', () => {
     // Override storage with a per-plugin namespaced view inside the test
     const runtime = new ServerPluginRuntime(caps, { gameId: 'g1' });
 
-    // biome-ignore lint/suspicious/noExplicitAny: we inspect cap shape at runtime
-    let receivedCaps: any = null;
+    // Record the cap shape the runtime hands to the plugin, then assert
+    // on its keyset. Typed as `unknown` at the entry point and narrowed
+    // below for the assertion calls.
+    let receivedCaps: unknown = null;
     const plugin: ServerPlugin<'storage'> = {
       id: 'storage-only',
       requires: ['storage'] as const,
@@ -99,11 +74,12 @@ describe('ServerPluginRuntime — capability injection', () => {
 
     await runtime.register(plugin);
     expect(receivedCaps).not.toBeNull();
-    expect(Object.keys(receivedCaps)).toEqual(['storage']);
-    expect('relay' in receivedCaps).toBe(false);
-    expect('chain' in receivedCaps).toBe(false);
-    expect('alarms' in receivedCaps).toBe(false);
-    expect('d1' in receivedCaps).toBe(false);
+    const received = receivedCaps as Record<string, unknown>;
+    expect(Object.keys(received)).toEqual(['storage']);
+    expect('relay' in received).toBe(false);
+    expect('chain' in received).toBe(false);
+    expect('alarms' in received).toBe(false);
+    expect('d1' in received).toBe(false);
   });
 
   it('hands a multi-cap plugin exactly the requested set', async () => {
@@ -111,8 +87,7 @@ describe('ServerPluginRuntime — capability injection', () => {
     const caps = buildCaps(storage);
     const runtime = new ServerPluginRuntime(caps, { gameId: 'g1' });
 
-    // biome-ignore lint/suspicious/noExplicitAny: inspect cap shape at runtime
-    let receivedCaps: any = null;
+    let receivedCaps: unknown = null;
     const plugin: ServerPlugin<'storage' | 'd1'> = {
       id: 'storage-and-d1',
       requires: ['storage', 'd1'] as const,
@@ -122,35 +97,31 @@ describe('ServerPluginRuntime — capability injection', () => {
     };
 
     await runtime.register(plugin);
-    expect(Object.keys(receivedCaps).sort()).toEqual(['d1', 'storage']);
-    expect('relay' in receivedCaps).toBe(false);
+    const received = receivedCaps as Record<string, unknown>;
+    expect(Object.keys(received).sort()).toEqual(['d1', 'storage']);
+    expect('relay' in received).toBe(false);
   });
 
   it('namespaces storage keys per pluginId — two plugins do not collide', async () => {
     const rawStorage = makeMemoryStorage();
-    // biome-ignore lint/suspicious/noExplicitAny: pull the test-only handle off our stub
-    const rawMap: Map<string, unknown> = (rawStorage as any)._raw;
+    const rawMap = rawStorage._raw;
 
     // Each plugin sees its own namespaced view via NamespacedStorage(rawStorage, id).
+    // The non-storage caps are unused in this test — empty instances cast
+    // via the interface are enough to satisfy Capabilities.
     const capsForA: Capabilities = {
       storage: new NamespacedStorage(rawStorage, 'a'),
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stubs for caps not used by the test plugins
-      relay: {} as any,
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stubs for caps not used by the test plugins
-      alarms: {} as any,
+      relay: {} as RelayClient,
+      alarms: { scheduleAt: async () => {}, cancel: async () => {} },
       d1: {} as D1Database,
-      // biome-ignore lint/suspicious/noExplicitAny: chain capability stub for tests; SettlementStateMachine is tested separately
-      chain: {} as any,
+      chain: {} as OnChainRelay,
     };
     const capsForB: Capabilities = {
       storage: new NamespacedStorage(rawStorage, 'b'),
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stubs for caps not used by the test plugins
-      relay: {} as any,
-      // biome-ignore lint/suspicious/noExplicitAny: minimal stubs for caps not used by the test plugins
-      alarms: {} as any,
+      relay: {} as RelayClient,
+      alarms: { scheduleAt: async () => {}, cancel: async () => {} },
       d1: {} as D1Database,
-      // biome-ignore lint/suspicious/noExplicitAny: chain capability stub for tests; SettlementStateMachine is tested separately
-      chain: {} as any,
+      chain: {} as OnChainRelay,
     };
 
     const runtimeA = new ServerPluginRuntime(capsForA, { gameId: 'g1' });

@@ -22,10 +22,10 @@
  * path is taken, which ignores the agentId arg entirely).
  */
 
-import type { D1Database, DurableObjectStorage } from '@cloudflare/workers-types';
 import { CaptureTheLobsterPlugin, CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChainRelay } from '../chain/types.js';
+import { emptyD1, type LobbyDOInternal, makeMemoryStorage, readJson } from './test-helpers.js';
 
 // Stub `cloudflare:workers` so importing LobbyDO under Node/vitest doesn't
 // trip on the DurableObject base class. Same approach as
@@ -34,71 +34,33 @@ vi.mock('cloudflare:workers', () => ({
   DurableObject: class {},
 }));
 
-// biome-ignore lint/suspicious/noExplicitAny: lazy import under vi.mock; typed on first use
-let LobbyDO: any;
+type LobbyDOCtor = { prototype: object };
+let LobbyDO: LobbyDOCtor;
 
 beforeAll(async () => {
-  ({ LobbyDO } = await import('../do/LobbyDO.js'));
+  ({ LobbyDO } = (await import('../do/LobbyDO.js')) as unknown as { LobbyDO: LobbyDOCtor });
   // Sanity-check the fixture assumption: CtL entryCost must be 10 whole
   // credits so `10_000_000n` (below) is exactly the gating threshold.
   expect(CaptureTheLobsterPlugin.entryCost).toBe(10);
 });
 
-// ---------------------------------------------------------------------------
-// In-memory stubs — only the surface the balance-check path touches.
-// ---------------------------------------------------------------------------
-
-function makeMemoryStorage(): DurableObjectStorage {
-  const map = new Map<string, unknown>();
-  // biome-ignore lint/suspicious/noExplicitAny: test-only stub, subset of DurableObjectStorage
-  const stub: any = {
-    async get(keyOrKeys: string | string[]): Promise<unknown> {
-      if (Array.isArray(keyOrKeys)) {
-        const out = new Map<string, unknown>();
-        for (const k of keyOrKeys) if (map.has(k)) out.set(k, map.get(k));
-        return out;
-      }
-      return map.get(keyOrKeys);
-    },
-    async put(key: string, value: unknown): Promise<void> {
-      map.set(key, value);
-    },
-    async delete(key: string): Promise<boolean> {
-      return map.delete(key);
-    },
-    async list(opts?: { prefix?: string }): Promise<Map<string, unknown>> {
-      const prefix = opts?.prefix ?? '';
-      const out = new Map<string, unknown>();
-      for (const [k, v] of map.entries()) {
-        if (!prefix || k.startsWith(prefix)) out.set(k, v);
-      }
-      return out;
-    },
-    async setAlarm(_when: number): Promise<void> {},
-    async deleteAlarm(): Promise<void> {},
-  };
-  return stub as DurableObjectStorage;
-}
-
 /** Minimal ChainRelay stub — only `getBalance` is exercised here. */
 function makeBalanceRelay(rawBalance: bigint): ChainRelay {
-  // biome-ignore lint/suspicious/noExplicitAny: all other ChainRelay methods are irrelevant to this test
-  const stub: any = {
+  const stub = {
     async getBalance() {
       return { credits: rawBalance.toString(), usdc: '0' };
     },
   };
-  return stub as ChainRelay;
+  return stub as unknown as ChainRelay;
 }
 
 /**
  * Build a LobbyDO frozen at the start of CtL team-formation (phase index 0,
  * no agents yet) with a stubbed chain relay that reports `rawBalance`.
  */
-function buildLobby(rawBalance: bigint) {
+function buildLobby(rawBalance: bigint): LobbyDOInternal {
   const storage = makeMemoryStorage();
-  // biome-ignore lint/suspicious/noExplicitAny: test fixture — reaches into private fields
-  const lobby: any = Object.create(LobbyDO.prototype);
+  const lobby = Object.create(LobbyDO.prototype) as LobbyDOInternal;
   lobby._loaded = true;
   lobby.ctx = {
     storage,
@@ -110,7 +72,7 @@ function buildLobby(rawBalance: bigint) {
   // env.RPC_URL intentionally unset — takes the dev-mode path that skips
   // the D1 chain_agent_id lookup and passes the raw playerId to
   // relay.getBalance (our stub ignores it).
-  lobby.env = { DB: {} as D1Database };
+  lobby.env = { DB: emptyD1() };
   lobby._meta = {
     lobbyId: 'lobby-balance-check',
     gameType: CTL_GAME_ID,
@@ -152,8 +114,7 @@ describe('LobbyDO — pre-game credit balance check', () => {
       }),
     );
     expect(resp.status).toBe(402);
-    // biome-ignore lint/suspicious/noExplicitAny: test-only any on JSON body
-    const body: any = await resp.json();
+    const body = await readJson(resp);
     expect(body).toEqual({
       error: 'Insufficient credits',
       required: '10000000',
@@ -175,8 +136,7 @@ describe('LobbyDO — pre-game credit balance check', () => {
       }),
     );
     expect(resp.status).toBe(200);
-    // biome-ignore lint/suspicious/noExplicitAny: test-only any on JSON body
-    const body: any = await resp.json();
+    const body = await readJson(resp);
     expect(body.ok).toBe(true);
     // Agent appended to the roster — this is the side effect the gate
     // protects; the success path must still produce it.

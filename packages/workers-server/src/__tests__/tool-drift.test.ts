@@ -48,16 +48,20 @@ import { describe, expect, it } from 'vitest';
 // us the "undeclared shape rejected" invariant for free.
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-const AjvCtor: typeof Ajv = (Ajv as any).default ?? Ajv;
+// Ajv ships both ESM and CJS builds — TS resolves the constructor onto a
+// default property under ESM interop, not under CJS. This tiny shim covers
+// both without pretending to know which Vitest loader picks.
+const AjvCtor: typeof Ajv = (Ajv as unknown as { default?: typeof Ajv }).default ?? Ajv;
 const ajv = new AjvCtor({ allErrors: true, strict: false });
 
 // ---------------------------------------------------------------------------
 // Registered games + plugins under test
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-const GAMES: CoordinationGame<any, any, any, any>[] = [CaptureTheLobsterPlugin, OathbreakerPlugin];
+/** Opaque CoordinationGame — the drift harness walks plugin internals by name. */
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
+const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin];
 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
@@ -80,34 +84,29 @@ const CTL_PLAYERS: { id: string; handle: string }[] = [
 ];
 
 /** Build a CtL in-progress state with 4 players split 2v2, rogues on both teams. */
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-function buildCtlInProgressState(): { state: any; playerId: string } {
+function buildCtlInProgressState(): { state: unknown; playerId: string } {
   const setup = CaptureTheLobsterPlugin.createConfig?.(
     CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
     { teamSize: 2 },
   );
-  // @ts-expect-error TS18048: 'setup' is possibly 'undefined'. — TODO(2.3-followup)
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  let state: any = CaptureTheLobsterPlugin.createInitialState(setup.config);
+  if (!setup) throw new Error('drift fixture: CaptureTheLobsterPlugin.createConfig is missing');
+  const fresh = CaptureTheLobsterPlugin.createInitialState(setup.config);
   // Force into in_progress for the move validator to accept.
-  state = { ...state, phase: 'in_progress' };
-  // Pick an alive unit owner.
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  const firstUnit = state.units.find((u: any) => u.alive);
+  const state = { ...fresh, phase: 'in_progress' } as typeof fresh;
+  const firstUnit = state.units.find((u) => u.alive);
   if (!firstUnit) throw new Error('drift fixture: no alive unit in fresh CtL state');
   return { state, playerId: firstUnit.id };
 }
 
 /** Build a CtL pre_game state (for system-action-isolation tests). */
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-function buildCtlPreGameState(): any {
+function buildCtlPreGameState(): unknown {
   const setup = CaptureTheLobsterPlugin.createConfig?.(
     CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
     { teamSize: 2 },
   );
-  // @ts-expect-error TS18048: 'setup' is possibly 'undefined'. — TODO(2.3-followup)
+  if (!setup) throw new Error('drift fixture: CaptureTheLobsterPlugin.createConfig is missing');
   return CaptureTheLobsterPlugin.createInitialState(setup.config);
 }
 
@@ -119,12 +118,12 @@ const OATH_PLAYERS: { id: string; handle: string }[] = [
 ];
 
 /** Build an OATH state with the round already started and pairings in 'pledging'. */
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-function buildOathPledgingState(): { state: any; playerId: string } {
+function buildOathPledgingState(): { state: unknown; playerId: string } {
   const setup = OathbreakerPlugin.createConfig?.(
     OATH_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
+  if (!setup) throw new Error('drift fixture: OathbreakerPlugin.createConfig is missing');
   const initial = OathbreakerPlugin.createInitialState(setup.config);
   // game_start transitions from 'waiting' → 'playing' with pairings set.
   const result = OathbreakerPlugin.applyAction(initial, null, { type: 'game_start' });
@@ -134,13 +133,19 @@ function buildOathPledgingState(): { state: any; playerId: string } {
 }
 
 /** Build an OATH state with a pairing in 'deciding' (both proposals matched). */
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-function buildOathDecidingState(): { state: any; playerId: string } {
+function buildOathDecidingState(): { state: unknown; playerId: string } {
   const pledging = buildOathPledgingState();
-  const pairing = pledging.state.pairings[0];
+  // Narrow the opaque state for fixture access — OATHBREAKER's state type
+  // isn't re-exported at the package root and we don't want the drift
+  // harness to pull in its private plugin types just for a field walk.
+  const pledgingState = pledging.state as {
+    pairings: Array<{ player1: string; player2: string; phase?: string }>;
+  };
+  const pairing = pledgingState.pairings[0];
+  if (!pairing) throw new Error('drift fixture: oath pledging produced no pairing');
   const pledgeAmount = 10; // >= minPledge (5) and <= 50% of min balance (50)
   // Both players propose the same amount → transitions to 'deciding'.
-  const after1 = OathbreakerPlugin.applyAction(pledging.state, pairing.player1, {
+  const after1 = OathbreakerPlugin.applyAction(pledging.state as never, pairing.player1, {
     type: 'propose_pledge',
     amount: pledgeAmount,
   });
@@ -149,22 +154,20 @@ function buildOathDecidingState(): { state: any; playerId: string } {
     amount: pledgeAmount,
   });
   const updatedPairing = after2.state.pairings[0];
-  // @ts-expect-error TS18048: 'updatedPairing' is possibly 'undefined'. — TODO(2.3-followup)
+  if (!updatedPairing) throw new Error('drift fixture: oath pairing vanished after propose_pledge');
   if (updatedPairing.phase !== 'deciding') {
-    // @ts-expect-error TS18048: 'updatedPairing' is possibly 'undefined'. — TODO(2.3-followup)
     throw new Error(`drift fixture: oath pairing should be deciding, got ${updatedPairing.phase}`);
   }
-  // @ts-expect-error TS18048: 'updatedPairing' is possibly 'undefined'. — TODO(2.3-followup)
   return { state: after2.state, playerId: updatedPairing.player1 };
 }
 
 /** Build an OATH 'waiting' state (for system-action-isolation tests). */
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-function buildOathWaitingState(): any {
+function buildOathWaitingState(): unknown {
   const setup = OathbreakerPlugin.createConfig?.(
     OATH_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
+  if (!setup) throw new Error('drift fixture: OathbreakerPlugin.createConfig is missing');
   return OathbreakerPlugin.createInitialState(setup.config);
 }
 
@@ -190,28 +193,22 @@ function findCtlPhase(id: string): LobbyPhase {
 
 type GameToolFixture = {
   /** Valid sample args (must match the tool's inputSchema). */
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  validSample: Record<string, any>;
+  validSample: Record<string, unknown>;
   /** Build a state where the valid sample is semantically accepted. */
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  buildState: () => { state: any; playerId: string };
+  buildState: () => { state: unknown; playerId: string };
   /** The CoordinationGame owning this tool (for validateAction). */
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  game: CoordinationGame<any, any, any, any>;
+  game: AnyGame;
 };
 
 type LobbyToolFixture = {
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  validSample: Record<string, any>;
+  validSample: Record<string, unknown>;
   /** Build phase state + the player that can invoke this tool. */
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  buildState: () => { state: any; playerId: string; players: AgentInfo[] };
+  buildState: () => { state: unknown; playerId: string; players: AgentInfo[] };
   phase: LobbyPhase;
 };
 
 type PluginToolFixture = {
-  // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-  validSample: Record<string, any>;
+  validSample: Record<string, unknown>;
   plugin: ToolPlugin;
 };
 
@@ -345,10 +342,9 @@ interface DiscoveredTool {
   key: string; // matches DRIFT_FIXTURES key
   name: string;
   tool: ToolDefinition;
-  source: // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-    | { kind: 'game'; game: CoordinationGame<any, any, any, any> }
-    // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-    | { kind: 'lobby'; game: CoordinationGame<any, any, any, any>; phase: LobbyPhase }
+  source:
+    | { kind: 'game'; game: AnyGame }
+    | { kind: 'lobby'; game: AnyGame; phase: LobbyPhase }
     | { kind: 'plugin'; plugin: ToolPlugin };
 }
 
@@ -441,8 +437,13 @@ describe('Invariant 1 — declared shape is accepted', () => {
       it(`${d.key}: validateAction accepts the sample (no shape-mismatch rejection)`, () => {
         const { state, playerId } = f.buildState();
         const action = { type: d.name, ...f.validSample };
-        // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-        const accepted = f.game.validateAction(state, playerId, action as any);
+        // validateAction is generic in the plugin's action type; the harness
+        // treats it as opaque and just checks the validator's verdict.
+        const accepted = (f.game.validateAction as (s: unknown, p: string, a: unknown) => boolean)(
+          state,
+          playerId,
+          action,
+        );
         // The validator should return true (accepted). A false here would
         // indicate shape drift — the declaration says valid, the validator
         // says no. False is allowed ONLY if you can prove the rejection is
@@ -500,24 +501,32 @@ describe('Invariant 1 — declared shape is accepted', () => {
 describe('Invariant 2 — undeclared shape is rejected', () => {
   const REJECTION_KEYWORDS = new Set(['required', 'additionalProperties', 'type']);
 
+  // Minimal shape of a JSON-schema property we walk here. Matches the CLI's
+  // JsonSchema but kept local to avoid reaching across packages.
+  interface PropSchema {
+    type?: string;
+    enum?: unknown[];
+    description?: string;
+  }
+
   for (const d of DISCOVERED) {
     const entry = DRIFT_FIXTURES[d.key];
     if (!entry) continue;
 
     const validate = ajv.compile(d.tool.inputSchema);
     const sample = entry.fixture.validSample;
-    // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-    const props = (d.tool.inputSchema.properties ?? {}) as Record<string, any>;
+    const props = (d.tool.inputSchema.properties ?? {}) as Record<string, PropSchema>;
     const required: string[] = Array.isArray(d.tool.inputSchema.required)
       ? (d.tool.inputSchema.required as string[])
       : [];
 
     // -- missing required field --
     if (required.length > 0) {
-      it(`${d.key}: AJV rejects missing required field "${required[0]}"`, () => {
-        const broken = { ...sample };
-        // @ts-expect-error TS2538: Type 'undefined' cannot be used as an index type. — TODO(2.3-followup)
-        delete broken[required[0]];
+      const firstRequired = required[0];
+      if (!firstRequired) continue;
+      it(`${d.key}: AJV rejects missing required field "${firstRequired}"`, () => {
+        const broken: Record<string, unknown> = { ...sample };
+        delete broken[firstRequired];
         const ok = validate(broken);
         expect(ok).toBe(false);
         const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
@@ -575,14 +584,16 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
     );
     if (typedProp) {
       const [propName, propSchema] = typedProp;
-      const wrongValue = wrongTypeFor(propSchema.type);
-      it(`${d.key}: AJV rejects wrong type on "${propName}" (expected ${propSchema.type})`, () => {
+      if (!propSchema.type) continue;
+      const propType = propSchema.type;
+      const wrongValue = wrongTypeFor(propType);
+      it(`${d.key}: AJV rejects wrong type on "${propName}" (expected ${propType})`, () => {
         const broken = { ...sample, [propName]: wrongValue };
         const ok = validate(broken);
         expect(
           ok,
           `${d.key}: AJV accepted "${propName}": ${JSON.stringify(wrongValue)} ` +
-            `when the schema declares type: "${propSchema.type}"`,
+            `when the schema declares type: "${propType}"`,
         ).toBe(false);
         const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
         const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
@@ -593,8 +604,7 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
 });
 
 /** Produce a value that is deliberately the wrong type for a given JSON Schema type. */
-// biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-function wrongTypeFor(type: string): any {
+function wrongTypeFor(type: string): unknown {
   switch (type) {
     case 'string':
       return 42;
@@ -632,11 +642,18 @@ describe('Invariant 3 — system-action isolation', () => {
         // phase. Swap to a state where each system action could plausibly fire.
         const stateForType = (() => {
           if (game.gameType === CTL_GAME_ID && type === 'turn_timeout') {
-            return { ...state, phase: 'in_progress' };
+            return { ...(state as Record<string, unknown>), phase: 'in_progress' };
           }
           if (game.gameType === OATH_GAME_ID && type === 'round_timeout') {
-            // game_start → phase:'playing'
-            return OathbreakerPlugin.applyAction(state, null, { type: 'game_start' }).state;
+            // game_start → phase:'playing'. applyAction is generic in its
+            // state type; pass opaque and let the runtime do the work.
+            return (
+              OathbreakerPlugin.applyAction as (
+                s: unknown,
+                p: string | null,
+                a: { type: string },
+              ) => { state: unknown }
+            )(state, null, { type: 'game_start' }).state;
           }
           return state;
         })();
@@ -644,8 +661,11 @@ describe('Invariant 3 — system-action isolation', () => {
         // Try with a handful of non-null playerIds — every one must reject.
         const nonNullIds = ['p1', 'op1', 'nonexistent', 'attacker'];
         for (const pid of nonNullIds) {
-          // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-          const accepted = game.validateAction(stateForType, pid, { type } as any);
+          const accepted = (game.validateAction as (s: unknown, p: string, a: unknown) => boolean)(
+            stateForType,
+            pid,
+            { type },
+          );
           expect(
             accepted,
             `${game.gameType}: system action "${type}" must reject non-null playerId ` +
@@ -667,8 +687,9 @@ describe('Invariant 3 — system-action isolation', () => {
     it(`${d.key}: validateAction rejects playerId=null`, () => {
       const { state } = f.buildState();
       const action = { type: d.name, ...f.validSample };
-      // biome-ignore lint/suspicious/noExplicitAny: drift tests reach into both CtL + OATHBREAKER state shapes via a generic harness; the alternative is duplicating each plugin's internal state types in this file.
-      const accepted = f.game.validateAction(state, null, action as any);
+      const accepted = (
+        f.game.validateAction as (s: unknown, p: string | null, a: unknown) => boolean
+      )(state, null, action);
       expect(
         accepted,
         `${d.key}: tool "${d.name}" accepted playerId=null. This is a ` +

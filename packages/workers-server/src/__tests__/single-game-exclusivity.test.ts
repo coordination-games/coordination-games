@@ -22,6 +22,7 @@
 import type { D1Database, DurableObjectNamespace } from '@cloudflare/workers-types';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env.js';
+import { readJson } from './test-helpers.js';
 
 // Stub `cloudflare:workers` so importing `index.ts` under Node/vitest doesn't
 // trip on the DurableObject base class (same approach as
@@ -30,11 +31,13 @@ vi.mock('cloudflare:workers', () => ({
   DurableObject: class {},
 }));
 
-// biome-ignore lint/suspicious/noExplicitAny: lazy import under vi.mock; typed on first use
-let handlePlayerLobbyJoin: any;
+type HandlePlayerLobbyJoinFn = (playerId: string, req: Request, env: Env) => Promise<Response>;
+let handlePlayerLobbyJoin: HandlePlayerLobbyJoinFn;
 
 beforeAll(async () => {
-  ({ handlePlayerLobbyJoin } = await import('../index.js'));
+  ({ handlePlayerLobbyJoin } = (await import('../index.js')) as unknown as {
+    handlePlayerLobbyJoin: HandlePlayerLobbyJoinFn;
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -78,10 +81,8 @@ function makeDB(tables: Tables): D1Database {
   function prepare(sql: string) {
     const norm = sql.replace(/\s+/g, ' ').trim();
     return {
-      // biome-ignore lint/suspicious/noExplicitAny: mock type surface
-      _bindings: [] as any[],
-      // biome-ignore lint/suspicious/noExplicitAny: mock type surface
-      bind(...args: any[]) {
+      _bindings: [] as unknown[],
+      bind(...args: unknown[]) {
         this._bindings = args;
         return this;
       },
@@ -99,14 +100,12 @@ function makeDB(tables: Tables): D1Database {
             lobbyPhase: lobby.phase,
             gameId,
             gameFinished: game ? (game.finished as number) : null,
-            // biome-ignore lint/suspicious/noExplicitAny: mock result shape
-          } as any as T;
+          } as T;
         }
         if (norm.startsWith('SELECT handle, elo FROM players')) {
           const [id] = this._bindings;
           const row = tables.players.get(id as string);
-          // biome-ignore lint/suspicious/noExplicitAny: mock result shape
-          return (row ?? null) as any as T | null;
+          return (row ?? null) as T | null;
         }
         throw new Error(`unexpected SELECT: ${norm}`);
       },
@@ -124,8 +123,7 @@ function makeDB(tables: Tables): D1Database {
       },
     };
   }
-  // biome-ignore lint/suspicious/noExplicitAny: narrow D1 surface we actually call
-  return { prepare } as any as D1Database;
+  return { prepare } as unknown as D1Database;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,8 +135,7 @@ function makeDB(tables: Tables): D1Database {
 function makeLobbyNamespace(
   forwarded: Array<{ lobbyId: string; playerId: string | null }>,
 ): DurableObjectNamespace {
-  // biome-ignore lint/suspicious/noExplicitAny: narrow mock
-  const stub: any = {
+  const stub = {
     idFromName(name: string) {
       return { _name: name, toString: () => name };
     },
@@ -154,7 +151,7 @@ function makeLobbyNamespace(
       };
     },
   };
-  return stub as DurableObjectNamespace;
+  return stub as unknown as DurableObjectNamespace;
 }
 
 function makeEnv(
@@ -164,8 +161,7 @@ function makeEnv(
   return {
     DB: makeDB(tables),
     LOBBY: makeLobbyNamespace(forwarded),
-    // biome-ignore lint/suspicious/noExplicitAny: unused in these tests
-    GAME_ROOM: {} as any,
+    GAME_ROOM: {} as DurableObjectNamespace,
     ENVIRONMENT: 'test',
   };
 }
@@ -214,8 +210,7 @@ describe('handlePlayerLobbyJoin — single-game exclusivity guard', () => {
 
     const resp = await handlePlayerLobbyJoin('alice', joinRequest('lobby-B'), env);
     expect(resp.status).toBe(409);
-    // biome-ignore lint/suspicious/noExplicitAny: test-only any on JSON body
-    const body: any = await resp.json();
+    const body = await readJson(resp);
     expect(body).toEqual({
       error: 'Already in an active game or lobby',
       playerId: 'alice',
@@ -245,8 +240,7 @@ describe('handlePlayerLobbyJoin — single-game exclusivity guard', () => {
 
     const resp = await handlePlayerLobbyJoin('alice', joinRequest('lobby-B'), env);
     expect(resp.status).toBe(409);
-    // biome-ignore lint/suspicious/noExplicitAny: test-only any on JSON body
-    const body: any = await resp.json();
+    const body = await readJson(resp);
     expect(body).toEqual({
       error: 'Already in an active game or lobby',
       playerId: 'alice',

@@ -41,8 +41,7 @@ import {
 function makeMemoryStorage(): DurableObjectStorage {
   const map = new Map<string, unknown>();
   const clone = typeof structuredClone === 'function' ? structuredClone : <T>(v: T): T => v;
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset NamespacedStorage uses
-  const stub: any = {
+  const stub = {
     async get(key: string): Promise<unknown> {
       const v = map.get(key);
       return v === undefined ? undefined : clone(v);
@@ -61,7 +60,7 @@ function makeMemoryStorage(): DurableObjectStorage {
       return out;
     },
   };
-  return stub as DurableObjectStorage;
+  return stub as unknown as DurableObjectStorage;
 }
 
 type AlarmCall =
@@ -126,8 +125,7 @@ function buildCaps(opts: {
     relay: fakeRelay,
     alarms: opts.alarms,
     d1: {} as D1Database,
-    // biome-ignore lint/suspicious/noExplicitAny: chain stub typed as OnChainRelay (Capabilities.chain is narrowed at the SM boundary)
-    chain: opts.chain as any,
+    chain: opts.chain,
   };
 }
 

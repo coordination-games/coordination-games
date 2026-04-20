@@ -41,8 +41,7 @@ function makeMemoryStorage(): DurableObjectStorage {
   // platform's `structuredClone` so the stub matches DO semantics; falling
   // back to identity if Node lacks it (it's been built-in since 17).
   const clone = typeof structuredClone === 'function' ? structuredClone : <T>(v: T): T => v;
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset NamespacedStorage uses
-  const stub: any = {
+  const stub = {
     async get(key: string): Promise<unknown> {
       const v = map.get(key);
       if (v === undefined) return undefined;
@@ -63,7 +62,7 @@ function makeMemoryStorage(): DurableObjectStorage {
     },
     _raw: map,
   };
-  return stub as DurableObjectStorage;
+  return stub as unknown as DurableObjectStorage;
 }
 
 /**

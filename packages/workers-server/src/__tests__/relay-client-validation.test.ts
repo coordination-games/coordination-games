@@ -31,8 +31,7 @@ interface MemStorage extends DurableObjectStorage {
 
 function makeMemoryStorage(): MemStorage {
   const map = new Map<string, unknown>();
-  // biome-ignore lint/suspicious/noExplicitAny: stub satisfies the subset under test
-  const stub: any = {
+  const stub = {
     async get(keyOrKeys: string | string[]): Promise<unknown> {
       if (Array.isArray(keyOrKeys)) {
         const out = new Map<string, unknown>();
@@ -69,7 +68,7 @@ function makeMemoryStorage(): MemStorage {
     },
     _raw: map,
   };
-  return stub as MemStorage;
+  return stub as unknown as MemStorage;
 }
 
 type Partial = Omit<RelayEnvelope, 'index' | 'timestamp'>;
