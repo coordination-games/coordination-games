@@ -86,7 +86,6 @@ interface GameMeta {
 
 interface ProgressState {
   counter: number;
-  snapshots: number[]; // action log index at each progress point
 }
 
 interface ActionEntry {
@@ -132,11 +131,15 @@ export class GameRoomDO extends DurableObject<Env> {
   private _plugin: CoordinationGame<any, any, any, any> | null = null;
   private _state: unknown = null;
   private _actionLog: ActionEntry[] = [];
-  private _progress: ProgressState = { counter: 0, snapshots: [0] };
+  private _progress: ProgressState = { counter: 0 };
   private _relayClient: DOStorageRelayClient | null = null;
   private _spectatorSnapshots: unknown[] = []; // spectator view at each progress point
   // Last publicSnapshotIndex() value pushed to spectator WS sockets —
   // broadcastUpdates skips the push when the index hasn't advanced.
+  // Persisted to DO storage under key 'lastSpectatorIdx' (Phase 7.3) so
+  // it survives DO eviction; without persistence a hibernated DO that
+  // wakes up would always re-broadcast the latest index even when
+  // spectators already have it.
   private _lastSpectatorIdx: number | null = null;
 
   /**
@@ -480,7 +483,7 @@ export class GameRoomDO extends DurableObject<Env> {
       finished: false,
       spectatorDelay: plugin.spectatorDelay ?? 0,
     };
-    const progress: ProgressState = { counter: 0, snapshots: [0] };
+    const progress: ProgressState = { counter: 0 };
 
     // Build initial spectator snapshot (turn 0)
     const initialCtx = { handles: meta.handleMap, relayMessages: [] };
@@ -908,7 +911,6 @@ export class GameRoomDO extends DurableObject<Env> {
 
     if (progressAdvanced) {
       this._progress.counter++;
-      this._progress.snapshots.push(this._actionLog.length - 1);
 
       // Capture spectator snapshot at this progress point.
       // Include all 'all' + 'team' relay messages up to this turn for chat
@@ -1256,6 +1258,11 @@ export class GameRoomDO extends DurableObject<Env> {
           } catch {}
         }
         this._lastSpectatorIdx = idx;
+        // Persist so a post-eviction wake-up doesn't re-broadcast the
+        // same index spectators already have. Write only on actual
+        // bumps — broadcastUpdates may run several times per progress
+        // tick and we don't want to write-amp each call.
+        await this.ctx.storage.put('lastSpectatorIdx', idx);
       }
 
       for (const pid of this._meta.playerIds) {
@@ -1282,14 +1289,16 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, actionLog, progress, config, snapshotCount] = await Promise.all([
-        this.ctx.storage.get<GameMeta>('meta'),
-        this.ctx.storage.get<unknown>('state'),
-        this.ctx.storage.get<ActionEntry[]>('actionLog'),
-        this.ctx.storage.get<ProgressState>('progress'),
-        this.ctx.storage.get<unknown>('config'),
-        this.ctx.storage.get<number>('snapshotCount'),
-      ]);
+      const [meta, state, actionLog, progress, config, snapshotCount, lastSpectatorIdx] =
+        await Promise.all([
+          this.ctx.storage.get<GameMeta>('meta'),
+          this.ctx.storage.get<unknown>('state'),
+          this.ctx.storage.get<ActionEntry[]>('actionLog'),
+          this.ctx.storage.get<ProgressState>('progress'),
+          this.ctx.storage.get<unknown>('config'),
+          this.ctx.storage.get<number>('snapshotCount'),
+          this.ctx.storage.get<number | null>('lastSpectatorIdx'),
+        ]);
 
       // Drop the legacy prevProgressState key from older games.
       this.ctx.storage.delete('prevProgressState').catch(() => {});
@@ -1331,10 +1340,14 @@ export class GameRoomDO extends DurableObject<Env> {
       this._plugin = plugin;
       this._state = state ?? null;
       this._actionLog = actionLog ?? [];
-      this._progress = progress ?? { counter: 0, snapshots: [0] };
+      this._progress = progress ?? { counter: 0 };
       // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
       this._config = config ?? null;
       this._spectatorSnapshots = loadedSnapshots;
+      // Phase 7.3: restore last broadcast index so a post-hibernation
+      // tick doesn't duplicate-broadcast the same snapshot to
+      // spectators who already have it.
+      this._lastSpectatorIdx = lastSpectatorIdx ?? null;
       this._loaded = true;
     });
   }
