@@ -11,7 +11,14 @@
  * The server just relays the typed data by scope.
  */
 
-import type { AgentInfo, Message, RelayEnvelope, ToolPlugin } from '@coordination-games/engine';
+import {
+  type AgentInfo,
+  type Message,
+  type RelayEnvelope,
+  registerPluginRelayTypes,
+  type ToolPlugin,
+} from '@coordination-games/engine';
+import { z } from 'zod';
 
 /**
  * A relay message as received from the server. Re-exported from the engine
@@ -69,6 +76,29 @@ export function extractMessages(relayMessages: RelayEnvelope[]): Message[] {
 }
 
 /**
+ * Zod schema for the body of a `type: 'messaging'` relay envelope.
+ *
+ * The shape is intentionally LOOSE so existing chat traffic (CLI, bots,
+ * test fixtures, downstream plugins that enrich `tags`) continues to pass:
+ *  - `body` is required (the message text). Empty string allowed because
+ *    older flows have leaned on `extractMessages` defaulting an absent body
+ *    to '' — schema accepts the body explicitly so the legacy `data: {}`
+ *    case still fails fast and gets surfaced.
+ *  - `tags` is an open record so trust-scoring / spam plugins can enrich
+ *    payloads without a schema bump.
+ *  - `passthrough()` accepts any other top-level keys present on the wire
+ *    (defence in depth for any older sender we missed).
+ */
+export const ChatMessageSchema = z
+  .object({
+    body: z.string(),
+    // Open tag bag — trust/spam/etc plugins enrich freely. `unknown` keeps
+    // downstream consumers honest at narrow sites without schema versioning.
+    tags: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
+
+/**
  * The BasicChatPlugin for the client-side pipeline.
  *
  * As a pipeline producer, it takes raw relay messages (passed as initial
@@ -80,6 +110,7 @@ export const BasicChatPlugin: ToolPlugin = {
   version: '0.3.0',
   modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
   purity: 'pure',
+  relayTypes: { messaging: ChatMessageSchema },
 
   /** MCP tool: send a chat message */
   tools: [
@@ -128,3 +159,16 @@ export const BasicChatPlugin: ToolPlugin = {
     return { error: `Unknown tool: ${tool}` };
   },
 };
+
+/**
+ * Self-register the plugin's relay schemas at module import time.
+ *
+ * Why side-effect on import: the workers-server has no central plugin loader
+ * for `ToolPlugin`s today (games register via `registerGame()` side effects;
+ * tool plugins are imported by callers that need them). Registering here
+ * means any consumer that imports basic-chat — CLI, workers-server DOs,
+ * tests — gets the `'messaging'` schema in the registry without an extra
+ * bootstrap step. The registry's collision check guards against double
+ * registration if multiple modules import this file.
+ */
+registerPluginRelayTypes(BasicChatPlugin);

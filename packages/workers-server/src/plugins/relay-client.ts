@@ -26,7 +26,12 @@
  */
 
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
-import type { RelayEnvelope } from '@coordination-games/engine';
+import {
+  type RelayEnvelope,
+  RelayUnknownTypeError,
+  RelayValidationError,
+  validateRelayBody,
+} from '@coordination-games/engine';
 import type { RelayClient, SpectatorViewer } from './capabilities.js';
 
 const PADDED_INDEX_LEN = 10; // 10 digits = up to 10B envelopes per game
@@ -87,8 +92,30 @@ export class DOStorageRelayClient implements RelayClient {
       this.opts.log?.('relay.dedupe.skip', { dedupeKey: opts.dedupeKey });
       return;
     }
+    // Phase 4.2: validate the body against the registered schema for `type`
+    // BEFORE assigning an index or writing to storage. Unknown types and
+    // malformed bodies are rejected loudly — no silent drift past the wire.
+    let parsedData: unknown;
+    try {
+      parsedData = validateRelayBody(env.type, env.data);
+    } catch (err) {
+      if (err instanceof RelayUnknownTypeError || err instanceof RelayValidationError) {
+        this.opts.log?.('relay.validation.reject', {
+          type: env.type,
+          pluginId: env.pluginId,
+          sender: env.sender,
+          reason: err.name,
+          zodIssues: err instanceof RelayValidationError ? err.zodIssues : undefined,
+        });
+      }
+      throw err;
+    }
+    this.opts.log?.('relay.validation.accept', {
+      type: env.type,
+      pluginId: env.pluginId,
+    });
     const tip = await this.ensureTip();
-    const full: RelayEnvelope = { ...env, index: tip, timestamp: Date.now() };
+    const full: RelayEnvelope = { ...env, data: parsedData, index: tip, timestamp: Date.now() };
     // Bounded write per publish — independent of relay length.
     await this.storage.put(paddedKey(tip), full);
     await this.storage.put(RELAY_TIP_KEY, tip + 1);

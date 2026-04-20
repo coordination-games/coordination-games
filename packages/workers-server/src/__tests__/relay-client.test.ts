@@ -15,9 +15,26 @@
  */
 
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
-import type { RelayEnvelope } from '@coordination-games/engine';
-import { describe, expect, it } from 'vitest';
+import {
+  clearRelayRegistry,
+  type RelayEnvelope,
+  registerRelayType,
+} from '@coordination-games/engine';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
+
+// Phase 4.2: publish() validates envelopes against the relay registry.
+// Register a permissive schema for the test 'messaging' fixture so the
+// existing publish-then-read assertions still exercise the visibility rules
+// (the validation path itself is covered by relay-client-validation.test.ts).
+beforeEach(() => {
+  clearRelayRegistry();
+  registerRelayType(
+    'messaging',
+    z.object({ msg: z.string().optional(), body: z.string().optional() }).passthrough(),
+  );
+});
 
 // ---------------------------------------------------------------------------
 // In-memory DurableObjectStorage stand-in. Implements the get/put/delete/list

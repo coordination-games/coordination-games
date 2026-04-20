@@ -9,7 +9,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@coordination-games/engine": "*"
+    "@coordination-games/engine": "*",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "vitest": "^2.0.0"

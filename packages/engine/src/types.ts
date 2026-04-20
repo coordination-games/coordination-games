@@ -359,6 +359,16 @@ export interface ToolPlugin {
   /** MCP tools exposed to agents (optional) */
   readonly tools?: ToolDefinition[];
 
+  /**
+   * Zod schemas for the relay envelope `type`s this plugin emits, keyed by
+   * `type` string (e.g. `'messaging'`). Phase 4.2: every type a plugin
+   * publishes MUST have a schema here — the inbound relay path validates
+   * envelopes by `type` and rejects anything unregistered. Optional only so
+   * older plugins compile during migration; production plugins MUST declare.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: Zod 4 schema is generic; carrying the inferred T through ToolPlugin shape would cascade everywhere
+  readonly relayTypes?: Record<string, import('zod').ZodType<any>>;
+
   /** Initialize plugin with game context */
   init?(ctx: PluginContext): void;
 

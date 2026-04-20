@@ -5,6 +5,7 @@
  * a topologically sorted pipeline for execution.
  */
 
+import { registerPluginRelayTypes } from './relay-registry.js';
 import type { PluginMode, ToolDefinition, ToolPlugin } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -74,9 +75,16 @@ export class PluginPipeline {
 export class PluginLoader {
   private registry: Map<string, ToolPlugin> = new Map();
 
-  /** Register a plugin. */
+  /**
+   * Register a plugin. Also walks `plugin.relayTypes` and registers each
+   * Zod schema in the global relay registry so inbound envelopes can be
+   * validated by `validateRelay` / `validateRelayBody`. Throws on relay
+   * type collisions (Phase 4.2: "Plugin re-registers same type → boot-time
+   * error").
+   */
   register(plugin: ToolPlugin): void {
     this.registry.set(plugin.id, plugin);
+    registerPluginRelayTypes(plugin);
   }
 
   /** Get a plugin by ID. */

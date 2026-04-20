@@ -39,4 +39,16 @@ export {
   registerGame,
   ToolCollisionError,
 } from './registry.js';
+// Relay envelope validation registry (Phase 4.2)
+export {
+  clearRelayRegistry,
+  isRelayTypeRegistered,
+  RelayUnknownTypeError,
+  RelayValidationError,
+  registerPluginRelayTypes,
+  registerRelayType,
+  type ValidatedRelayEnvelope,
+  validateRelay,
+  validateRelayBody,
+} from './relay-registry.js';
 export * from './types.js';
