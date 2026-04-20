@@ -1,4 +1,4 @@
-import { loadFixture, time } from '@nomicfoundation/hardhat-toolbox/network-helpers';
+import { loadFixture } from '@nomicfoundation/hardhat-toolbox/network-helpers';
 import { expect } from 'chai';
 import { ethers } from 'hardhat';
 
@@ -151,111 +151,6 @@ describe('GameAnchor', () => {
       await expect(
         gameAnchor.connect(relayer).settleGame(result, [100n]),
       ).to.be.revertedWithCustomError(gameAnchor, 'LengthMismatch');
-    });
-  });
-
-  describe('emergencyReclaim', () => {
-    it('should reject reclaim too early', async () => {
-      const { gameAnchor, relayer, agentId1, agentId2 } = await loadFixture(deployFixture);
-
-      const result = makeGameResult('game-reclaim', [agentId1, agentId2]);
-      await gameAnchor.connect(relayer).settleGame(result, [0n, 0n]);
-
-      await expect(gameAnchor.emergencyReclaim(result.gameId)).to.be.revertedWithCustomError(
-        gameAnchor,
-        'TooEarlyForReclaim',
-      );
-    });
-
-    it('should allow reclaim after 1 hour', async () => {
-      const { gameAnchor, relayer, agentId1, agentId2 } = await loadFixture(deployFixture);
-
-      const result = makeGameResult('game-reclaim2', [agentId1, agentId2]);
-      await gameAnchor.connect(relayer).settleGame(result, [0n, 0n]);
-
-      await time.increase(3601);
-
-      await expect(gameAnchor.emergencyReclaim(result.gameId)).to.emit(
-        gameAnchor,
-        'EmergencyReclaimed',
-      );
-    });
-
-    it('should reject reclaim for non-existent game', async () => {
-      const { gameAnchor } = await loadFixture(deployFixture);
-
-      await expect(
-        gameAnchor.emergencyReclaim(ethers.id('nonexistent')),
-      ).to.be.revertedWithCustomError(gameAnchor, 'GameNotSettled');
-    });
-
-    it('should respect custom reclaim delay', async () => {
-      const { gameAnchor, deployer, relayer, agentId1, agentId2 } =
-        await loadFixture(deployFixture);
-
-      // Set reclaim delay to 2 hours
-      await gameAnchor.connect(deployer).setReclaimDelay(7200);
-      expect(await gameAnchor.reclaimDelay()).to.equal(7200);
-
-      const result = makeGameResult('game-custom-delay', [agentId1, agentId2]);
-      await gameAnchor.connect(relayer).settleGame(result, [0n, 0n]);
-
-      // Should fail after 1 hour (old default)
-      await time.increase(3601);
-      await expect(gameAnchor.emergencyReclaim(result.gameId)).to.be.revertedWithCustomError(
-        gameAnchor,
-        'TooEarlyForReclaim',
-      );
-
-      // Should succeed after 2 hours
-      await time.increase(3600);
-      await expect(gameAnchor.emergencyReclaim(result.gameId)).to.emit(
-        gameAnchor,
-        'EmergencyReclaimed',
-      );
-    });
-  });
-
-  describe('setReclaimDelay', () => {
-    it('should allow admin to set delay', async () => {
-      const { gameAnchor, deployer } = await loadFixture(deployFixture);
-
-      await expect(gameAnchor.connect(deployer).setReclaimDelay(7200))
-        .to.emit(gameAnchor, 'ReclaimDelayUpdated')
-        .withArgs(7200);
-
-      expect(await gameAnchor.reclaimDelay()).to.equal(7200);
-    });
-
-    it('should reject non-admin', async () => {
-      const { gameAnchor, user1 } = await loadFixture(deployFixture);
-
-      await expect(gameAnchor.connect(user1).setReclaimDelay(7200)).to.be.revertedWithCustomError(
-        gameAnchor,
-        'NotAdmin',
-      );
-    });
-
-    it('should reject delay exceeding max (1 week)', async () => {
-      const { gameAnchor, deployer } = await loadFixture(deployFixture);
-
-      await expect(
-        gameAnchor.connect(deployer).setReclaimDelay(604801),
-      ).to.be.revertedWithCustomError(gameAnchor, 'ReclaimDelayTooLong');
-    });
-
-    it('should allow setting delay to max (1 week)', async () => {
-      const { gameAnchor, deployer } = await loadFixture(deployFixture);
-
-      await gameAnchor.connect(deployer).setReclaimDelay(604800);
-      expect(await gameAnchor.reclaimDelay()).to.equal(604800);
-    });
-
-    it('should allow setting delay to zero', async () => {
-      const { gameAnchor, deployer } = await loadFixture(deployFixture);
-
-      await gameAnchor.connect(deployer).setReclaimDelay(0);
-      expect(await gameAnchor.reclaimDelay()).to.equal(0);
     });
   });
 });

@@ -37,6 +37,9 @@ const config: HardhatUserConfig = {
       accounts: getDeployerKey(),
     },
   },
+  // Etherscan v2: a single API key works across all supported chains, with
+  // chain selection passed via the `?chainid=` query param. Both `hardhat
+  // deploy --verify` and standalone `hardhat verify` use this config.
   etherscan: {
     apiKey: {
       opSepolia: process.env.OP_ETHERSCAN_KEY || 'empty',
@@ -46,7 +49,7 @@ const config: HardhatUserConfig = {
         network: 'opSepolia',
         chainId: 11155420,
         urls: {
-          apiURL: 'https://api-sepolia-optimistic.etherscan.io/api',
+          apiURL: 'https://api.etherscan.io/v2/api?chainid=11155420',
           browserURL: 'https://sepolia-optimism.etherscan.io',
         },
       },

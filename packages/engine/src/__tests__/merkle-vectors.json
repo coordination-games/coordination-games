@@ -1,0 +1,64 @@
+[
+  {
+    "name": "empty",
+    "actions": [],
+    "leaves": [],
+    "root": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  {
+    "name": "single",
+    "actions": [{ "actionIndex": 0, "playerId": "p1", "actionData": "{\"x\":1}" }],
+    "leaves": ["0xeb9276953ad93296aa39bc71e4b3a1b32f4eaeda11cfbf38e037e2119f63b3bd"],
+    "root": "0xc1bcf52a0881c946b47ddb3227696739663dc5f3428fa7c8e9c83b248d048bd1"
+  },
+  {
+    "name": "two",
+    "actions": [
+      { "actionIndex": 0, "playerId": "p1", "actionData": "{\"x\":1}" },
+      { "actionIndex": 1, "playerId": "p2", "actionData": "{\"x\":2}" }
+    ],
+    "leaves": [
+      "0xeb9276953ad93296aa39bc71e4b3a1b32f4eaeda11cfbf38e037e2119f63b3bd",
+      "0xdcde1335935e8f52e9b03cb0c2cb7297d63f103ebafe196ca1615e7e038815b4"
+    ],
+    "root": "0xa6588a33bd48957168bd50b4803a7373533f56f21e56ee24f4a6591d9e63ce01"
+  },
+  {
+    "name": "four",
+    "actions": [
+      { "actionIndex": 0, "playerId": "p1", "actionData": "{\"x\":1}" },
+      { "actionIndex": 1, "playerId": "p2", "actionData": "{\"x\":2}" },
+      { "actionIndex": 2, "playerId": null, "actionData": "{\"sys\":true}" },
+      { "actionIndex": 3, "playerId": "p1", "actionData": "{\"x\":3}", "stateHash": "sh-3" }
+    ],
+    "leaves": [
+      "0xeb9276953ad93296aa39bc71e4b3a1b32f4eaeda11cfbf38e037e2119f63b3bd",
+      "0xdcde1335935e8f52e9b03cb0c2cb7297d63f103ebafe196ca1615e7e038815b4",
+      "0xc4934dccaf285a43b90c3f40040b94e7b725fb38dbcb9003798e15bd099a39d5",
+      "0x83f8bd6657a054c55a06063e39714be974219ae414980028598e283513c0bfd8"
+    ],
+    "root": "0xba384cf0aa560faebb030fe644351c17ea04ac8b965d8c02506f83aabf119b42"
+  },
+  {
+    "name": "seven",
+    "actions": [
+      { "actionIndex": 0, "playerId": "a", "actionData": "A" },
+      { "actionIndex": 1, "playerId": "b", "actionData": "B" },
+      { "actionIndex": 2, "playerId": "c", "actionData": "C" },
+      { "actionIndex": 3, "playerId": "d", "actionData": "D" },
+      { "actionIndex": 4, "playerId": "e", "actionData": "E" },
+      { "actionIndex": 5, "playerId": "f", "actionData": "F" },
+      { "actionIndex": 6, "playerId": "g", "actionData": "G" }
+    ],
+    "leaves": [
+      "0xe19e0250307631ea037406396530d656a87a16538de3903826dea98db8f478c1",
+      "0x7a5144c3d76abeb4d89c8f600916a9edb1ab484b6fcc37b34d6f21c414e7b4d4",
+      "0xf73f59ad507b37b7560dba54dfc3261b2a93382a64b9285265723368fda5f99e",
+      "0x7438c2f53576b750c496af494400a411614372342b84caf71dca056d1ff56c65",
+      "0xd222547f3b028acf6425fc956976c674cf0119887b20cd3ebd7519bdaee35b0b",
+      "0x6e39387ad94d448b51869211cc95b499851d4b187cf20d4030c3a7a44363f929",
+      "0x92ad27809e43cb1e1071d279d4a64c07595e628c8302afcefedbf5edeb30929e"
+    ],
+    "root": "0x41e31b844933ff5d74ec5da712e5618f66135e1b6bff5ae2763a16cf5a2a457e"
+  }
+]

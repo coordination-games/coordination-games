@@ -9,6 +9,9 @@
     "build": "tsc --skipLibCheck",
     "test": "vitest run"
   },
+  "dependencies": {
+    "viem": "^2.0.0"
+  },
   "devDependencies": {
     "typescript": "^5.4.0",
     "vitest": "^2.0.0"

@@ -834,8 +834,8 @@ export class GameRoomDO extends DurableObject<Env> {
       const { createRelay } = await import('../chain/index.js');
       const relay = createRelay(this.env);
 
-      // merkle.ts returns un-prefixed hex; viem needs 0x-prefixed for bytes32.
-      const movesRoot = tree.root.startsWith('0x') ? tree.root : `0x${tree.root}`;
+      // merkle.ts returns 0x-prefixed hex (keccak256), already a viem-ready bytes32.
+      const movesRoot = tree.root;
 
       const receipt = await relay.settleGame(
         {

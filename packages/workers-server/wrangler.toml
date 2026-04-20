@@ -21,7 +21,11 @@ tag = "v1"
 new_classes = ["GameRoomDO", "LobbyDO"]
 
 # On-chain mode secrets (set via `wrangler secret put`):
-# RPC_URL             — OP Sepolia RPC endpoint
+# RPC_URLS            — Comma-separated list of OP Sepolia RPC endpoints (preferred).
+#                        Auth path tries them in order with exponential backoff and
+#                        caches the first successful URL per request. Single-URL
+#                        config behaves identically to legacy RPC_URL.
+# RPC_URL             — Legacy single OP Sepolia RPC endpoint (used when RPC_URLS unset).
 # RELAYER_PRIVATE_KEY — Relayer wallet private key (gas payer)
 # REGISTRY_ADDRESS    — CoordinationRegistry contract
 # ERC8004_ADDRESS     — ERC-8004 agent identity NFT

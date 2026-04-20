@@ -1,8 +1,8 @@
-import { createPublicClient, http, keccak256, toBytes, verifyMessage } from 'viem';
-import { optimismSepolia } from 'viem/chains';
+import { keccak256, toBytes, verifyMessage } from 'viem';
 import { createRelay } from './chain/index.js';
 import { PlayerHandleTakenError, resolvePlayer } from './db/player.js';
 import type { Env } from './env.js';
+import { createFallbackPublicClient, parseRpcUrls } from './rpc-fallback.js';
 
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -101,12 +101,12 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
   }
 
   // Optional: ERC-8004 on-chain name ownership check
-  if (env.RPC_URL && env.REGISTRY_ADDRESS && env.ERC8004_ADDRESS) {
+  const rpcUrls = parseRpcUrls(env);
+  if (rpcUrls.length > 0 && env.REGISTRY_ADDRESS && env.ERC8004_ADDRESS) {
     try {
-      const client = createPublicClient({
-        chain: optimismSepolia,
-        transport: http(env.RPC_URL),
-      });
+      // One fallback client per request — `currentUrl` cache lives here so
+      // both readContract calls below reuse the same known-good URL.
+      const { client } = createFallbackPublicClient(rpcUrls);
 
       const registryAbi = [
         {

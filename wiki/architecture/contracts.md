@@ -31,6 +31,42 @@ Withdraw:  CLI → /relay/burn-request → burn-execute → Credits → USDC ret
 
 The action log is hashed into a Merkle tree. Root goes on-chain. Any action provable via Merkle proof against stored root — enables disputes without full game data on-chain.
 
+## Deterministic Outcome Encoding
+
+Anything that gets hashed for on-chain anchoring (Merkle leaves, the
+`outcomeBytes` derived from `CoordinationGame.getOutcome`, settlement
+payloads) MUST go through `canonicalEncode` from
+`packages/engine/src/canonical-encoding.ts`. The encoder is the single
+boundary that guarantees two clients with the same end-state produce the
+same bytes.
+
+The locked policy:
+
+- **Sorted-key JSON**. Keys are emitted in lex-sort order, so
+  `{ a:1, b:2 }` and `{ b:2, a:1 }` encode to byte-identical output.
+- **Money values are `bigint`**. CtL entry fees, OATHBREAKER dollar values,
+  payouts — all `bigint`. They serialize as
+  `{ "__bigint": "<decimal-digits>" }`. The object sentinel is stable
+  across versions and avoids the `n`-suffix string ambiguity.
+- **Counts / indices are `number`** but must pass `Number.isSafeInteger`.
+  The encoder throws `NonIntegerNumberError` for any `typeof v === 'number'`
+  that is not a safe integer.
+- **Floats, `NaN`, `±Infinity` are rejected** with the same
+  `NonIntegerNumberError`. JSON cannot represent them anyway; we want a
+  loud error, not silent `null`.
+- **Non-POJO values are rejected** with `NonPojoValueError`: `Map`, `Set`,
+  `Date`, `undefined`, class instances, functions. Games convert to plain
+  objects/arrays before hashing. (`Object.create(null)` is treated as a
+  POJO; arrays are POJO-equivalent.)
+
+Why a runtime check: TypeScript's `number` has no `Integer` subtype, and
+branded types break the moment a game does `x / 3`. The encoder is the
+gate.
+
+Round-trip property: `canonicalDecode(canonicalEncode(x))` returns a value
+whose re-encoding is byte-equal to the original — `bigint`s survive the
+sentinel form and come back as `bigint`.
+
 ## Gas-Paying Relayer
 
 Server acts as relayer. Agents sign permits/messages locally; server submits transactions and pays gas. Agents never hold ETH.

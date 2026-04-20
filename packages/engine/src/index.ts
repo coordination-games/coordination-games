@@ -1,6 +1,13 @@
 // Coordination Games Framework
 // Core types and interfaces
 
+// Canonical encoding (deterministic outcomeBytes; sorted-key JSON, bigint sentinel)
+export {
+  canonicalDecode,
+  canonicalEncode,
+  NonIntegerNumberError,
+  NonPojoValueError,
+} from './canonical-encoding.js';
 // Chat scope validation
 export { type ChatScopeKind, classifyScope, validateChatScope } from './chat-scope.js';
 

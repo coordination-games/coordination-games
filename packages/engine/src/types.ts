@@ -120,7 +120,22 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Is the game over? */
   isOver(state: TState): boolean;
 
-  /** Final outcome. Only valid when isOver() is true. */
+  /**
+   * Final outcome. Only valid when isOver() is true.
+   *
+   * The returned outcome is fed through `canonicalEncode` (see
+   * `canonical-encoding.ts`) to produce deterministic `outcomeBytes` for
+   * Merkle leaves and on-chain anchoring. The encoder enforces:
+   *   - sorted-key JSON (insertion order does not matter)
+   *   - `bigint` for all money values, serialized via `{ "__bigint": "..." }`
+   *   - `number` only for counts/indices and only if `Number.isSafeInteger`;
+   *     floats / `NaN` / `Infinity` are rejected
+   *   - POJO + array only — `Map`, `Set`, `Date`, `undefined`, class
+   *     instances, and functions are rejected
+   *
+   * Convert non-POJO state (Maps, Sets, etc.) to plain objects/arrays before
+   * returning. See `wiki/architecture/contracts.md` for the full policy.
+   */
   getOutcome(state: TState): TOutcome;
 
   /** Entry cost in credits per player. */
