@@ -753,7 +753,7 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
   );
 }
 
-async function handlePlayerLobbyJoin(
+export async function handlePlayerLobbyJoin(
   playerId: string,
   request: Request,
   env: Env,
@@ -763,6 +763,61 @@ async function handlePlayerLobbyJoin(
 
   const lobbyId = body?.lobbyId ?? body?.gameId;
   if (!lobbyId) return Response.json({ error: 'lobbyId is required' }, { status: 400 });
+
+  // Single-game exclusivity guard. The pre-game balance check in
+  // `LobbyDO.handleJoin` asks "does this player have the credits right
+  // now?" but can't see a concurrent lobby/game the player is already in —
+  // both holds would read the same unmoved on-chain balance and both would
+  // pass. `player_sessions` has a PRIMARY KEY on player_id, but the
+  // `INSERT OR REPLACE` below would silently move the session without
+  // checking the previous row. So before we forward the join, reject any
+  // attempt to enter a DIFFERENT lobby while the player's current session
+  // is unfinished.
+  //
+  // "Unfinished" = the player's current session points at a lobby that
+  // hasn't terminated. Termination requires either:
+  //   • `lobbies.phase = 'finished'`   — disbanded / errored lobby, OR
+  //   • `lobbies.game_id` set AND `games.finished = 1` — game is over.
+  // Note that a post-game `lobbies` row stays on `phase = 'in_progress'`
+  // (LobbyDO only flips it to 'finished' on disband/fail), so we MUST
+  // consult `games.finished` to let bots cycle through back-to-back games.
+  // Same-lobby re-join is idempotent and allowed (LobbyDO.handleJoin is
+  // itself idempotent on the agent roster).
+  const existing = await env.DB.prepare(
+    `SELECT ps.lobby_id AS lobbyId, l.phase AS lobbyPhase, l.game_id AS gameId,
+            g.finished AS gameFinished
+     FROM player_sessions ps
+     JOIN lobbies l ON l.id = ps.lobby_id
+     LEFT JOIN games g ON g.game_id = l.game_id
+     WHERE ps.player_id = ?`,
+  )
+    .bind(playerId)
+    .first<{
+      lobbyId: string;
+      lobbyPhase: string;
+      gameId: string | null;
+      gameFinished: number | null;
+    }>();
+
+  if (existing) {
+    const lobbyTerminated = existing.lobbyPhase === 'finished';
+    const gameTerminated = existing.gameId !== null && existing.gameFinished === 1;
+    const unfinished = !lobbyTerminated && !gameTerminated;
+    if (unfinished && existing.lobbyId !== lobbyId) {
+      return Response.json(
+        {
+          error: 'Already in an active game or lobby',
+          playerId,
+          existing: {
+            lobbyId: existing.lobbyId,
+            gameId: existing.gameId ?? undefined,
+            status: existing.gameId ? 'in_game' : 'in_lobby',
+          },
+        },
+        { status: 409 },
+      );
+    }
+  }
 
   // Fetch handle + ELO from D1 players table
   const player = await env.DB.prepare('SELECT handle, elo FROM players WHERE id = ?')
