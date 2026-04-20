@@ -32,6 +32,7 @@ import { getGame, buildActionMerkleTree, validateChatScope } from '@coordination
 import type { CoordinationGame, MerkleLeafData } from '@coordination-games/engine';
 import type { Env } from '../env.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
+import { resolveGameId } from './resolve-gameid.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
@@ -202,7 +203,17 @@ export class GameRoomDO extends DurableObject<Env> {
       return Response.json({ error: `createInitialState failed: ${err.message}` }, { status: 400 });
     }
 
-    const gameId = (bodyGameId as string | undefined) ?? (this.ctx.id.name ?? '');
+    // Authoritative: ctx.id.name IS the gameId. Body field is optional and
+    // must match if present — otherwise an attacker could pre-claim a future
+    // game UUID and brick its on-chain settlement. See resolve-gameid.ts.
+    const resolved = resolveGameId(bodyGameId as string | undefined, this.ctx.id.name);
+    if (resolved.ok === false) {
+      console.warn(
+        `[GameRoomDO] settlement.gameid.mismatch requestedId=${resolved.log.requestedId} actualId=${resolved.log.actualId}`,
+      );
+      return new Response(resolved.body, { status: resolved.status });
+    }
+    const gameId = resolved.gameId;
     const meta: GameMeta = {
       gameId,
       gameType,

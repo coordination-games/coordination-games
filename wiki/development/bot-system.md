@@ -6,7 +6,7 @@ Bots use Claude Haiku via the Agent SDK with in-process MCP.
 
 1. Server creates bot via `createSdkMcpServer()` + `tool()` from Agent SDK
 2. Each MCP tool calls `GameClient` methods → REST API (same path as real players)
-3. Bots get server-issued tokens (`createBotToken()`) — no wallet auth needed
+3. Bots authenticate with their own ephemeral wallet via the standard ERC-8004 challenge-response flow — same code path as real players, no auth bypass
 4. Sessions persist via Agent SDK `resume` — bots remember strategy across turns
 5. System prompt is generic. Game knowledge comes from `get_guide()`, not hardcoded rules.
 
@@ -42,6 +42,8 @@ Errors from the dispatcher are structured so a Haiku bot can self-correct withou
 
 See `docs/plans/unified-tool-surface.md` for the full error taxonomy. The `INITIAL_PROMPT` in `scripts/lib/bot-agent.ts` teaches the bot to recognise these codes and react.
 
-## Bot Auth vs Player Auth
+## Bot Auth
 
-Bots skip the ERC-8004 challenge-response flow entirely. `createBotToken()` generates an in-memory token. From `GameClient`'s perspective, it's just a token — same code path after that point.
+Bots use the same ERC-8004 challenge-response flow as real players. Each bot has its own wallet (ephemeral in `run-game.ts` / `spawn-bots.sh`, persistent in `~/.coordination/bot-pool.json` for `fill-bots.ts`) and `GameClient` auto-authenticates before the first API call.
+
+This is load-bearing: there is no bot-specific auth bypass anywhere on the server. Any future auth hardening (rate limits, signature replay protection, registration gating) covers bots automatically because they traverse the same code path.

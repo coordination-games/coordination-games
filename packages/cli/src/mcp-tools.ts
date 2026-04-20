@@ -27,8 +27,6 @@ import type {
 } from "@coordination-games/engine";
 
 export interface RegisterToolsOptions {
-  /** When true, indicates this is a bot session (reserved for future bot-specific behavior). */
-  botMode?: boolean;
   /** Active plugins — their mcpExpose tools get registered as MCP tools. */
   plugins?: ToolPlugin[];
   /** Registered games — declared surface used for dynamic MCP tool registration. */

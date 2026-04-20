@@ -87,6 +87,9 @@ export class LobbyDO extends DurableObject<Env> {
   private _agents: AgentEntry[] = [];
   private _phaseState: any = null;
   private _relay: RelayMessage[] = [];
+  // Counter for observability — number of non-'all' envelopes filtered out
+  // of a spectator-bound payload since this DO instance was loaded.
+  private _spectatorFilterDrops = 0;
 
   // ─────────────────────────────────────────────────────────────────────────
   // fetch() — HTTP + WS entry point
@@ -223,7 +226,7 @@ export class LobbyDO extends DurableObject<Env> {
   private async handleGetState(request: Request): Promise<Response> {
     if (!this._meta) return Response.json({ error: 'Lobby not found' }, { status: 404 });
     const playerId = this.headerPlayerId(request);
-    return Response.json(this.buildState(playerId ?? undefined));
+    return Response.json(this.buildStateForViewer(playerId));
   }
 
   /** X-Player-Id header. Absent = spectator/system. Never read from body or URL. */
@@ -249,7 +252,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     // Idempotent — don't add twice
     if (this._agents.find(a => a.id === playerId)) {
-      return Response.json({ ok: true, ...this.buildState(playerId) });
+      return Response.json({ ok: true, ...this.buildStateForViewer(playerId) });
     }
 
     const agent: AgentEntry = { id: playerId, handle, elo: elo ?? 1000, joinedAt: Date.now() };
@@ -276,7 +279,7 @@ export class LobbyDO extends DurableObject<Env> {
     this.broadcastUpdate();
 
     console.log(`[LobbyDO] ${handle} joined lobby ${this._meta.lobbyId}`);
-    return Response.json({ ok: true, ...this.buildState(playerId) });
+    return Response.json({ ok: true, ...this.buildStateForViewer(playerId) });
   }
 
   private async handleAction(request: Request): Promise<Response> {
@@ -321,7 +324,7 @@ export class LobbyDO extends DurableObject<Env> {
     await this.saveState();
     this.broadcastUpdate();
 
-    return Response.json({ ok: true, ...this.buildState(playerId) });
+    return Response.json({ ok: true, ...this.buildStateForViewer(playerId) });
   }
 
   private async handleTool(request: Request): Promise<Response> {
@@ -382,7 +385,9 @@ export class LobbyDO extends DurableObject<Env> {
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
     if (this._meta) {
-      server.send(JSON.stringify(this.buildState()));
+      // WS connections are unauthenticated spectators — always use the
+      // spectator filter for the initial payload.
+      server.send(JSON.stringify(this.buildStateForViewer(null)));
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -569,17 +574,25 @@ export class LobbyDO extends DurableObject<Env> {
   // State builder
   // ─────────────────────────────────────────────────────────────────────────
 
-  private buildState(playerId?: string): object {
+  /**
+   * Build the lobby state object for a specific viewer. `playerId === null`
+   * means an unauthenticated spectator (HTTP `/state` without `X-Player-Id`,
+   * or any WS connection — WS has no auth surface).
+   *
+   * Routes the relay through one of two filters:
+   *  - spectator filter: only `scope: 'all'` envelopes
+   *  - player filter: `all` + own messages + same-team `team` + DMs to me
+   */
+  private buildStateForViewer(playerId: string | null): object {
     if (!this._meta) return { error: 'Lobby not found' };
 
     const plugin = getGame(this._meta.gameType);
     const phases = plugin?.lobby?.phases ?? [];
     const currentPhase = phases[this._meta.currentPhaseIndex];
 
-    // Filter relay messages by scope for the requesting player
-    const filteredRelay = playerId
-      ? this._relay.filter(msg => this.isRelayVisible(msg, playerId, currentPhase))
-      : this._relay;
+    const filteredRelay = playerId === null
+      ? this.filterRelayForSpectator(this._relay)
+      : this.filterRelayForPlayer(this._relay, playerId, currentPhase);
 
     const state: Record<string, any> = {
       lobbyId: this._meta.lobbyId,
@@ -593,7 +606,7 @@ export class LobbyDO extends DurableObject<Env> {
         ? {
             id: currentPhase.id,
             name: currentPhase.name,
-            view: currentPhase.getView(this._phaseState, playerId),
+            view: currentPhase.getView(this._phaseState, playerId ?? undefined),
             tools: currentPhase.tools ?? [],
           }
         : null,
@@ -606,6 +619,38 @@ export class LobbyDO extends DurableObject<Env> {
     };
 
     return state;
+  }
+
+  /** Spectator filter — only public (`scope === 'all'`) envelopes survive. */
+  private filterRelayForSpectator(relay: RelayMessage[]): RelayMessage[] {
+    const out: RelayMessage[] = [];
+    let dropped = 0;
+    for (const m of relay) {
+      if (m.scope === 'all') {
+        out.push(m);
+      } else {
+        dropped++;
+      }
+    }
+    if (dropped > 0) {
+      this._spectatorFilterDrops += dropped;
+      // Periodic counter log — keeps observability cheap. We log on every
+      // call that drops anything; volume is bounded by chat activity.
+      console.log(
+        `[LobbyDO] spectator filter dropped ${dropped} non-'all' envelope(s) ` +
+          `(lobby ${this._meta?.lobbyId}, total drops since load: ${this._spectatorFilterDrops})`,
+      );
+    }
+    return out;
+  }
+
+  /** Player filter — `all` + own + same-team + DMs addressed to this player. */
+  private filterRelayForPlayer(
+    relay: RelayMessage[],
+    playerId: string,
+    currentPhase?: LobbyPhase,
+  ): RelayMessage[] {
+    return relay.filter(m => this.isRelayVisible(m, playerId, currentPhase));
   }
 
   private isRelayVisible(msg: RelayMessage, playerId: string, currentPhase?: LobbyPhase): boolean {
@@ -626,7 +671,10 @@ export class LobbyDO extends DurableObject<Env> {
 
   private broadcastUpdate(): void {
     if (!this._meta) return;
-    const msg = JSON.stringify(this.buildState());
+    // WS connections are unauthenticated spectators — broadcast the
+    // spectator-filtered payload to every connection. (If WS auth lands
+    // later, switch to per-connection per-viewer filtering here.)
+    const msg = JSON.stringify(this.buildStateForViewer(null));
     for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
       try { ws.send(msg); } catch {}
     }

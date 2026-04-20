@@ -24,7 +24,6 @@ export interface ServeOptions {
   serverUrl: string;
   privateKey?: string;
   name?: string;
-  botMode?: boolean;
   httpPort?: number;
 }
 
@@ -39,7 +38,6 @@ function createMcpServerWithClient(options?: ServeOptions): { server: McpServer;
     version: "0.1.0",
   });
   registerGameTools(server, client, {
-    botMode: options?.botMode,
     plugins: [BasicChatPlugin],
     games: [CaptureTheLobsterPlugin, OathbreakerPlugin],
   });

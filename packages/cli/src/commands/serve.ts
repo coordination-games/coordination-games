@@ -29,7 +29,6 @@ export function registerServeCommand(program: Command) {
           serverUrl,
           privateKey: key,
           name,
-          botMode: true,
           httpPort,
         });
       } else {
@@ -62,7 +61,6 @@ export function registerServeCommand(program: Command) {
           serverUrl,
           privateKey: wallet?.privateKey,
           name,
-          botMode: false,
           httpPort,
         });
       }
