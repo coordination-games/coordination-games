@@ -65,13 +65,13 @@ jobs:
         run: npx tsc --noEmit
         working-directory: packages/games/oathbreaker
 
-      - name: Typecheck — plugins/elo
-        run: npx tsc --noEmit
-        working-directory: packages/plugins/elo
-
       - name: Typecheck — plugins/basic-chat
         run: npx tsc --noEmit
         working-directory: packages/plugins/basic-chat
+
+      - name: Typecheck — plugins/kibitzer
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/kibitzer
 
   test:
     runs-on: ubuntu-latest
@@ -97,7 +97,7 @@ jobs:
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/plugins/basic-chat
-          npm run build -w packages/plugins/elo
+          npm run build -w packages/plugins/kibitzer
 
       # contracts workspace has a pre-existing hardhat dependency issue;
       # excluded from CI until fixed separately.
@@ -116,4 +116,4 @@ jobs:
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
                    -w packages/plugins/basic-chat \
-                   -w packages/plugins/elo
+                   -w packages/plugins/kibitzer
