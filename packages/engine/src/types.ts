@@ -105,8 +105,8 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
 
   /**
    * Build the spectator view for a given state. Required.
-   * Called by the engine's GameRoom.getSpectatorView() to produce the
-   * frontend-ready spectator payload. Each game defines its own shape.
+   * Called by GameRoomDO.getSpectatorView() to produce the frontend-ready
+   * spectator payload. Each game defines its own shape.
    */
   buildSpectatorView(state: TState, prevState: TState | null, context: SpectatorContext): unknown;
 

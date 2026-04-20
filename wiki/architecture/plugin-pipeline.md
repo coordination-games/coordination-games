@@ -16,7 +16,7 @@ interface ToolPlugin {
 
 ## Type-Based Resolution
 
-Plugins declare `consumes` and `provides` — capability type names, not plugin IDs. The pipeline builder runs Kahn's topological sort on type edges.
+Plugins declare `consumes` and `provides` — capability type names, not plugin IDs. The pipeline builder (`PluginLoader.buildPipeline()` in `packages/engine/src/plugin-loader.ts`) builds an edge `i → j` whenever step `j` consumes any type that step `i` provides, then runs **Kahn's algorithm** on that graph.
 
 ```
 basic-chat          consumes: —              provides: messaging
@@ -30,9 +30,10 @@ trust-filter        consumes: messaging      provides: messaging
 
 ## Edge Cases
 
-- **Unresolved types:** Plugin consumes a type nobody provides → warning, plugin skipped (graceful degradation)
-- **Type overwriting:** Multiple plugins provide same type → later plugin overwrites (intentional for filters/enrichers)
-- **Same-type filters** (consumes X, provides X): Pipeline builder needs to order filters after enrichers. Current approach: insertion order as tiebreaker when topological order is ambiguous.
+- **Unresolved types:** Plugin consumes a type nobody provides → the consumer just receives no entry for that capability key. No warning, no skip — pipeline runs, plugin gets `undefined`.
+- **Type overwriting:** Multiple plugins provide same type → later step in the topo order overwrites the accumulated map entry (intentional for filters/enrichers).
+- **Cycles error fast.** Same-type cycles (two steps that each consume what the other provides) leave the queue empty before all steps are processed; `buildPipeline()` throws `Plugin dependency cycle detected: <id>:<mode> → ...`. There is no fallback ordering — a cycle is a configuration bug, not a tiebreak.
+- **Self-loops are allowed.** A single step that both consumes and provides the same type (`consumes: ['messaging'], provides: ['messaging']`) doesn't form a cycle — the edge-build skips `i === j`. Two same-type filters from different plugins, however, will cycle and error.
 
 ## Current Plugins
 

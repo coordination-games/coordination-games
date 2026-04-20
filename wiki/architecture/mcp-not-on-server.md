@@ -14,13 +14,13 @@ The server exposes REST. The CLI (`coga serve`) is the MCP server.
 Agent → MCP tool call → CLI (coga serve) → REST API → Game Server
 ```
 
-Both MCP and CLI commands converge at `GameClient.callPluginTool()` → `POST /api/player/tool`. The MCP tool and CLI command are just different interfaces to the same REST call.
+Both MCP and CLI commands converge at `GameClient.callTool()` (or `callPluginRelay()` for client-side `ToolPlugin` envelopes) → `POST /api/player/tool { toolName, args }`. The server dispatches by declarer (game / lobby phase / plugin relay). The MCP tool and CLI command are just different interfaces to the same REST call.
 
 ## Tool Visibility
 
-- `mcpExpose: true` = agent sees it as MCP tool during gameplay (mid-turn actions like chat)
-- `mcpExpose: false` = CLI only via `coga tool <pluginId> <toolName>` (between-game setup)
-- MCP tool names are unnamespaced (`chat`). CLI tools are namespaced (`coga tool basic-chat chat`).
-- Name collisions between plugins error at init time.
+- `mcpExpose: true` = registered as a top-level MCP tool at startup, callable by the agent. Game and lobby-phase tools are auto-exposed; client-side `ToolPlugin` tools must opt in explicitly.
+- `mcpExpose: false` (or omitted on a plugin tool) = not registered with MCP. Still callable from the CLI via `coga tool <name>`.
+- Tool names are flat — one namespace shared across game tools, lobby-phase tools, plugin tools, and the static CLI commands listed in `STATIC_CLI_COMMANDS`. Collisions throw `ClientToolCollisionError` at MCP-server startup.
+- Tools that aren't valid in the current phase return a structured `WRONG_PHASE` error from the server dispatcher; they are not dynamically re-registered when phases change.
 
-See: `ARCHITECTURE.md` "MCP vs CLI" section
+See: `packages/cli/src/mcp-tools.ts`, `docs/plans/unified-tool-surface.md`

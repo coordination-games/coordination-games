@@ -2,7 +2,7 @@
  * Capture the Lobster — Stateless Game Engine
  *
  * All game logic is expressed as pure functions: state in, state out.
- * No mutable classes, no caching. The framework (GameRoom) holds the state
+ * No mutable classes, no caching. The framework (GameRoomDO) holds the state
  * and passes it to these functions each turn.
  */
 

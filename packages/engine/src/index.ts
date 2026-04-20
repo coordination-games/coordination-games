@@ -22,16 +22,6 @@ export {
   type PipelineStep,
 } from './plugin-loader.js';
 
-// Platform MCP — phase-aware tool visibility
-export {
-  getAvailableTools,
-  generateGuide,
-  PHASE_TOOLS,
-} from './mcp.js';
-
-// Game room (v2 action-based)
-export { GameRoom } from './game-session.js';
-
 // Game plugin registry
 export {
   registerGame,
@@ -46,13 +36,3 @@ export { OpenQueuePhase, type OpenQueueState } from './phases/open-queue.js';
 
 // Chat scope validation
 export { validateChatScope, classifyScope, type ChatScopeKind } from './chat-scope.js';
-
-// Server-side framework
-export {
-  GameFramework,
-  AuthManager,
-  BalanceTracker,
-  buildGameResult,
-  type AuthConfig,
-  type BalanceConfig,
-} from './server/index.js';

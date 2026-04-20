@@ -4,7 +4,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 
 ## Architecture
 
-- [Engine Philosophy](architecture/engine-philosophy.md) — action-based design, timer stale-ID pattern, lobby unification rule
+- [Engine Philosophy](architecture/engine-philosophy.md) — action-based design, deadline alarm pattern, lobby unification rule
 - [Data Flow](architecture/data-flow.md) — game state vs relay data, client-side pipeline, spectator delay
 - [Plugin Pipeline](architecture/plugin-pipeline.md) — type-based topological sort, ToolPlugin interface, current + planned plugins
 - [MCP Not On Server](architecture/mcp-not-on-server.md) — why CLI is the MCP server, tool visibility rules

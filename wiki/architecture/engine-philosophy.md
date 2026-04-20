@@ -15,9 +15,17 @@ The original engine used `resolveTurn()` — collect all moves, resolve simultan
 
 One engine, both patterns. The deadline timer is the unifying mechanism.
 
-## Timer Stale-ID Pattern
+## Deadline Alarm Pattern
 
-`GameRoom` uses incrementing `_timerId` to prevent stale timeouts. Every `setDeadline()` increments the ID. When a timeout fires, it checks `myId !== this._timerId` — if true, the timer is stale (another action already changed the deadline). This avoids race conditions without cancellation tracking.
+`GameRoomDO` uses a single Cloudflare DO alarm correlated to a persisted `deadline` record in DO storage. `applyAction()` returns `{ deadline }`; the DO writes `{ action, deadlineMs }` and calls `setAlarm(deadlineMs)`. Clearing an active deadline (`deadline: null`) calls `delete('deadline')` and `deleteAlarm()`.
+
+When `alarm()` fires it re-reads the storage record and self-corrects:
+
+- No `deadline` record → no-op. The action that would have cleared it already ran (either an earlier action returned `deadline: null`, or the game finished and the `deleteAlarm`/`delete('deadline')` pair already executed). Stale fires are silently absorbed.
+- `Date.now() < deadlineMs - 500` → fired early due to clock drift. Re-arm with `setAlarm(deadlineMs)` and return.
+- Otherwise → apply the stored deadline action as a system action (`playerId = null`).
+
+There is no `_timerId` counter. Persisted-deadline + `deleteAlarm()` is enough — a fresh `setAlarm()` overwrites the previous one, and a stale fire that survives is no-op'd by the missing storage record. On apply failure the deadline record is deleted before re-throwing, so a broken plugin can't trap the DO in an infinite alarm-retry loop.
 
 ## The Lobby Unification Rule
 
