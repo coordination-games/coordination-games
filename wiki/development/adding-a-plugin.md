@@ -1,15 +1,18 @@
 # Adding a Plugin
 
-Lessons-learned from Phase 5.4's keystone acceptance test
-(`packages/plugins/kibitzer/`). If you read one section, read **Gaps**.
+Reference implementation: `packages/plugins/basic-chat/`. The code
+examples below use a hypothetical `kibitzer` plugin (a spectator-only
+commentary overlay) as a pedagogical template — it exercises both relay
+read and write plus its own envelope type, which basic-chat doesn't.
+If you read one section, read **Gaps**.
 
 ## What "plugin" means here
 
 Two halves under one id:
 
 - **`ServerPlugin`** — runs in the workers-server. Per-DO instance for
-  game-scoped plugins (settlement, kibitzer); worker-level singleton for
-  cross-game plugins (ELO).
+  game-scoped plugins (settlement, basic-chat); worker-level singleton
+  for cross-game plugins (ELO).
 - **`WebToolPlugin`** — React component(s) registered into named slots
   (`lobby:card`, `lobby:panel`, `game:panel`, `game:overlay`).
 
@@ -18,7 +21,7 @@ data plugin with no UI; a chrome-only widget that only reads payload).
 
 ## Files you must create per plugin
 
-Reference template: `packages/plugins/kibitzer/`. Minimum file set:
+Live reference: `packages/plugins/basic-chat/`. Minimum file set:
 
 ```
 packages/plugins/<id>/
