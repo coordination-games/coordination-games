@@ -29,8 +29,13 @@ import type {
   ToolDefinition,
   ToolPlugin,
 } from '@coordination-games/engine';
-import { CaptureTheLobsterPlugin, CTL_SYSTEM_ACTION_TYPES } from '@coordination-games/game-ctl';
 import {
+  CaptureTheLobsterPlugin,
+  CTL_GAME_ID,
+  CTL_SYSTEM_ACTION_TYPES,
+} from '@coordination-games/game-ctl';
+import {
+  OATH_GAME_ID,
   OATHBREAKER_SYSTEM_ACTION_TYPES,
   OathbreakerPlugin,
 } from '@coordination-games/game-oathbreaker';
@@ -57,8 +62,8 @@ const GAMES: CoordinationGame<any, any, any, any>[] = [CaptureTheLobsterPlugin, 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
 const SYSTEM_ACTIONS: Record<string, readonly string[]> = {
-  'capture-the-lobster': CTL_SYSTEM_ACTION_TYPES,
-  oathbreaker: OATHBREAKER_SYSTEM_ACTION_TYPES,
+  [CTL_GAME_ID]: CTL_SYSTEM_ACTION_TYPES,
+  [OATH_GAME_ID]: OATHBREAKER_SYSTEM_ACTION_TYPES,
 };
 
 // ---------------------------------------------------------------------------
@@ -620,16 +625,16 @@ describe('Invariant 3 — system-action isolation', () => {
         // Build a state where the system action *would* be valid with null
         // playerId — so the ONLY way it rejects below is the null-gate.
         const state =
-          game.gameType === 'capture-the-lobster'
+          game.gameType === CTL_GAME_ID
             ? buildCtlPreGameState() // pre_game → game_start valid with null
             : buildOathWaitingState(); // waiting → game_start valid with null
         // For 'turn_timeout' / 'round_timeout' we need the in-progress/playing
         // phase. Swap to a state where each system action could plausibly fire.
         const stateForType = (() => {
-          if (game.gameType === 'capture-the-lobster' && type === 'turn_timeout') {
+          if (game.gameType === CTL_GAME_ID && type === 'turn_timeout') {
             return { ...state, phase: 'in_progress' };
           }
-          if (game.gameType === 'oathbreaker' && type === 'round_timeout') {
+          if (game.gameType === OATH_GAME_ID && type === 'round_timeout') {
             // game_start → phase:'playing'
             return OathbreakerPlugin.applyAction(state, null, { type: 'game_start' }).state;
           }

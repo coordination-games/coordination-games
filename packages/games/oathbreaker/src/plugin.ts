@@ -230,8 +230,16 @@ const GAME_TOOLS: ToolDefinition[] = [
   },
 ];
 
+/**
+ * Canonical OATHBREAKER game ID. Re-exported so test fixtures, registries,
+ * and other call sites import this constant instead of inlining the string
+ * literal — eliminates typos and centralizes the change point if the ID is
+ * ever renamed.
+ */
+export const OATH_GAME_ID = 'oathbreaker' as const;
+
 export const OathbreakerPlugin = {
-  gameType: 'oathbreaker' as const,
+  gameType: OATH_GAME_ID,
   version: '0.3.0',
 
   entryCost: 1,

@@ -13,6 +13,7 @@
  */
 
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Stub the `cloudflare:workers` module so importing LobbyDO does not
@@ -105,7 +106,7 @@ function buildLobbyAtTeamFormation() {
   lobby.ctx = { storage };
   lobby._meta = {
     lobbyId: 'lobby-test-1',
-    gameType: 'capture-the-lobster',
+    gameType: CTL_GAME_ID,
     currentPhaseIndex: 0,
     accumulatedMetadata: {},
     phase: 'lobby',

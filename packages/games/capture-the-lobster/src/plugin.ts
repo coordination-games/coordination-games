@@ -505,13 +505,21 @@ const GAME_TOOLS: ToolDefinition[] = [
 // The plugin
 // ---------------------------------------------------------------------------
 
+/**
+ * Canonical CtL game ID. Re-exported so test fixtures, registries, and other
+ * call sites import this constant instead of inlining the string literal —
+ * eliminates typos and centralizes the change point if the ID is ever
+ * renamed.
+ */
+export const CTL_GAME_ID = 'capture-the-lobster' as const;
+
 export const CaptureTheLobsterPlugin: CoordinationGame<
   CtlConfig,
   CtlGameState,
   CtlAction,
   CtlOutcome
 > = {
-  gameType: 'capture-the-lobster',
+  gameType: CTL_GAME_ID,
   version: '0.2.0',
 
   createInitialState(config: CtlConfig): CtlGameState {

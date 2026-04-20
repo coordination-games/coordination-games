@@ -10,6 +10,7 @@
 
 import type { D1Database, DurableObjectStorage } from '@cloudflare/workers-types';
 import type { RelayEnvelope } from '@coordination-games/engine';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { describe, expect, it, vi } from 'vitest';
 import {
   SETTLEMENT_ALARM_KIND,
@@ -131,7 +132,7 @@ function buildCaps(opts: {
 
 const PAYLOAD: SettlementPayload = {
   gameId: 'game-test',
-  gameType: 'capture-the-lobster',
+  gameType: CTL_GAME_ID,
   playerIds: ['p1', 'p2'],
   outcome: { winner: 'A' },
   movesRoot: `0x${'1'.repeat(64)}`,

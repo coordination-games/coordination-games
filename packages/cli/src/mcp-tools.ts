@@ -18,6 +18,8 @@
  */
 
 import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { GameClient } from './game-client.js';
@@ -276,9 +278,7 @@ export function registerGameTools(
       game: z
         .string()
         .optional()
-        .describe(
-          'Game name (e.g. "capture-the-lobster", "oathbreaker"). Auto-detects if omitted.',
-        ),
+        .describe(`Game name (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Auto-detects if omitted.`),
     },
     // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     async (args: any) => {
@@ -355,7 +355,7 @@ export function registerGameTools(
         .string()
         .optional()
         .describe(
-          'Game type (e.g. "capture-the-lobster", "oathbreaker"). Defaults to capture-the-lobster.',
+          `Game type (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Defaults to ${CTL_GAME_ID}.`,
         ),
       teamSize: z
         .number()
@@ -372,8 +372,8 @@ export function registerGameTools(
     },
     async ({ gameType, teamSize, playerCount }) => {
       try {
-        const game = gameType || 'capture-the-lobster';
-        const size = game === 'oathbreaker' ? playerCount || 4 : teamSize || 2;
+        const game = gameType || CTL_GAME_ID;
+        const size = game === OATH_GAME_ID ? playerCount || 4 : teamSize || 2;
         const result = await client.createLobby(game, size);
         return jsonResult(result);
         // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)

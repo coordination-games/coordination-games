@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ToolDefinition } from '@coordination-games/engine';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type { Command } from 'commander';
 import { ApiClient } from '../api-client.js';
@@ -250,11 +252,7 @@ export function registerGameCommands(program: Command) {
     .command('create-lobby')
     .description('Create a new game lobby')
     .option('-s, --size <n>', 'Team size (2-6) for CtL, player count (4-20) for OATHBREAKER', '2')
-    .option(
-      '-g, --game <name>',
-      'Game type: capture-the-lobster or oathbreaker',
-      'capture-the-lobster',
-    )
+    .option('-g, --game <name>', `Game type: ${CTL_GAME_ID} or ${OATH_GAME_ID}`, CTL_GAME_ID)
     .action(async (opts) => {
       const client = await createClient();
       const gameType = opts.game;
@@ -268,7 +266,7 @@ export function registerGameCommands(program: Command) {
           process.exit(1);
         }
 
-        if (gameType === 'oathbreaker') {
+        if (gameType === OATH_GAME_ID) {
           process.stdout.write(`\n  OATHBREAKER game created: ${result.gameId}\n`);
           process.stdout.write(`  Players: ${result.playerCount}\n\n`);
           const session = loadSession();

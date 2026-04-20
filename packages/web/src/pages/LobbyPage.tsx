@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { JoinInstructions, PlayerList, TeamPanel, TimerBar } from '../components/lobby';
 import { API_BASE, getWsUrl } from '../config.js';
+import { getDefaultPlugin, getSpectatorPlugin } from '../games/registry';
 import { SlotHost } from '../plugins';
 
 // ---------------------------------------------------------------------------
@@ -283,9 +284,16 @@ export default function LobbyPage() {
 
   if (!state) return null;
 
-  // Derive display info from the new state shape
-  const gameType = state.gameType ?? 'capture-the-lobster';
-  const gameLabel = gameType === 'oathbreaker' ? 'OATHBREAKER' : 'Capture the Lobster';
+  // Derive display info from the new state shape. Branding (label + whether
+  // to show it as a sub-header) is read from the registered spectator
+  // plugin so this page stays game-agnostic. The default plugin's id is the
+  // "no badge" case — for non-default games we render the long brand name
+  // next to the lobby header.
+  const defaultPlugin = getDefaultPlugin();
+  const gameType = state.gameType ?? defaultPlugin.gameType;
+  const gameLabel =
+    getSpectatorPlugin(gameType)?.branding.longName ?? defaultPlugin.branding.longName;
+  const showGameLabel = gameType !== defaultPlugin.gameType;
   const phaseId = state.currentPhase?.id;
   const phaseView = state.currentPhase?.view;
 
@@ -308,10 +316,12 @@ export default function LobbyPage() {
           <h1 className="font-heading text-xl font-bold" style={{ color: 'var(--color-ink)' }}>
             Lobby
           </h1>
-          {gameType !== 'capture-the-lobster' && (
+          {showGameLabel && (
             <span
               className="font-heading text-sm font-medium"
-              style={{ color: 'var(--color-blood)' }}
+              style={{
+                color: getSpectatorPlugin(gameType)?.branding.primaryColor ?? 'var(--color-blood)',
+              }}
             >
               {gameLabel}
             </span>

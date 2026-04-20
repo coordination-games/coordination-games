@@ -17,6 +17,7 @@
  */
 
 import type { D1Database } from '@cloudflare/workers-types';
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Env } from '../env.js';
 import {
@@ -149,7 +150,7 @@ describe('POST /api/plugin/:pluginId/call — Phase 5.2', () => {
         { id: 'p2', handle: 'bob', elo: 1200, games_played: 8, wins: 4 },
         { id: 'p3', handle: 'carol', elo: 1700, games_played: 12, wins: 9 },
       ],
-      matches: [{ id: 'm1', game_type: 'oathbreaker', started_at: 't0', ended_at: 't1' }],
+      matches: [{ id: 'm1', game_type: OATH_GAME_ID, started_at: 't0', ended_at: 't1' }],
       matchPlayers: [
         {
           match_id: 'm1',

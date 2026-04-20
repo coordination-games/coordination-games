@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { API_BASE, getWsUrl } from '../config.js';
-import { getSpectatorPlugin } from '../games/registry';
+import { getDefaultPlugin, getSpectatorPlugin } from '../games/registry';
 import { type RelayMessageView, SlotHost } from '../plugins';
 
 // ---------------------------------------------------------------------------
@@ -42,10 +42,13 @@ export default function GamePage() {
   useEffect(() => {
     if (!id) return;
 
+    // Default unknown gameType (legacy rows) onto the registry's default
+    // plugin id rather than hardcoding a literal here.
+    const defaultGameType = getDefaultPlugin().gameType;
     fetch(`${API_BASE}/games/${id}`)
       .then((r) => r.json())
       .then((data) => {
-        setGameType(data.gameType ?? 'capture-the-lobster');
+        setGameType(data.gameType ?? defaultGameType);
         const h = extractHandles(data);
         if (Object.keys(h).length) setHandles(h);
         const r = extractRelay(data);
@@ -53,7 +56,7 @@ export default function GamePage() {
         setLoading(false);
       })
       .catch(() => {
-        setGameType('capture-the-lobster');
+        setGameType(defaultGameType);
         setLoading(false);
       });
 

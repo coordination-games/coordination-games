@@ -540,7 +540,15 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   const body = await parseJsonBody(request);
   if (body instanceof Response) return body;
 
-  const gameType = (body?.gameType as string) ?? 'capture-the-lobster';
+  // Default to the first registered game (matches the web shell's
+  // `getDefaultPlugin()`). No literal — adding/removing games doesn't
+  // require shell edits.
+  const registered = getRegisteredGames();
+  const defaultGameType = registered[0];
+  if (!defaultGameType) {
+    return Response.json({ error: 'No games registered' }, { status: 500 });
+  }
+  const gameType = (body?.gameType as string) ?? defaultGameType;
   const noTimeout = !!body?.noTimeout;
   // Broad bounds — LobbyDO enforces per-game limits via plugin.lobby.matchmaking
   const teamSize = Math.min(20, Math.max(1, Math.floor((body?.teamSize as number) ?? 2)));

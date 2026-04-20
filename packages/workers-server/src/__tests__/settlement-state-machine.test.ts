@@ -14,6 +14,7 @@
  */
 
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_ATTEMPTS,
@@ -129,7 +130,7 @@ function makeChainStub(opts: {
 
 const PAYLOAD: SettlementPayload = {
   gameId: 'game-test',
-  gameType: 'capture-the-lobster',
+  gameType: CTL_GAME_ID,
   playerIds: ['p1', 'p2'],
   outcome: { winner: 'A' },
   movesRoot: `0x${'1'.repeat(64)}`,

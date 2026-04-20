@@ -17,6 +17,7 @@
 
 import type { D1Database, DurableObjectStorage } from '@cloudflare/workers-types';
 import type { RelayEnvelope } from '@coordination-games/engine';
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type Capabilities,
@@ -197,7 +198,7 @@ describe('ELO ServerPlugin — handleCall', () => {
   it('my-stats returns the caller row + recent matches when authenticated', async () => {
     const store: FakeStore = {
       players: [{ id: 'p1', handle: 'alice', elo: 1500, games_played: 10, wins: 7 }],
-      matches: [{ id: 'm1', game_type: 'oathbreaker' }],
+      matches: [{ id: 'm1', game_type: OATH_GAME_ID }],
       matchPlayers: [
         {
           match_id: 'm1',

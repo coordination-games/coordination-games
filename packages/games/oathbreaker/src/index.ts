@@ -11,6 +11,7 @@ export {
 } from './game.js';
 export {
   distributePot,
+  OATH_GAME_ID,
   OATHBREAKER_SYSTEM_ACTION_TYPES,
   OathbreakerPlugin,
   rankPlayersForSettlement,

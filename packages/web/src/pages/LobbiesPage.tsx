@@ -3,8 +3,19 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchGames, type GameSummary } from '../api';
 import { API_BASE } from '../config.js';
+import { CaptureTheLobsterSpectator } from '../games/capture-the-lobster';
+import { OathbreakerSpectator } from '../games/oathbreaker';
+import { getAllPlugins, getDefaultPlugin } from '../games/registry';
 import { getRegisteredWebPlugins, SlotHost } from '../plugins';
 import type { GameSummaryView, LobbySummaryView } from '../plugins/types';
+
+// Per-game IDs sourced from the spectator plugins (their `gameType` fields
+// are the SOURCE OF TRUTH for the web bundle — see games/registry.ts). The
+// game-specific create-form widgets below switch on these IDs; once a
+// `lobby:create-form` slot lands the form moves into each web plugin and
+// these constants go away.
+const CTL_ID = CaptureTheLobsterSpectator.gameType;
+const OATH_ID = OathbreakerSpectator.gameType;
 
 function FallbackCard({
   id,
@@ -47,9 +58,7 @@ export default function LobbiesPage() {
   const [lobbies, setLobbies] = useState<LobbySummaryView[]>([]);
   const [creating, setCreating] = useState(false);
   const [teamSize, setTeamSize] = useState(2);
-  const [gameTab, setGameTab] = useState<'capture-the-lobster' | 'oathbreaker'>(
-    'capture-the-lobster',
-  );
+  const [gameTab, setGameTab] = useState<string>(getDefaultPlugin().gameType);
   const [oathPlayerCount, setOathPlayerCount] = useState(4);
   const navigate = useNavigate();
 
@@ -93,35 +102,32 @@ export default function LobbiesPage() {
   async function handleCreateLobby() {
     setCreating(true);
     try {
-      if (gameTab === 'oathbreaker') {
-        const res = await fetch(`${API_BASE}/lobbies/create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gameType: 'oathbreaker', playerCount: oathPlayerCount }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          navigate(`/lobby/${data.lobbyId}`);
-          return;
-        }
-      } else {
-        const res = await fetch(`${API_BASE}/lobbies/create`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ teamSize }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          navigate(`/lobby/${data.lobbyId}`);
-          return;
-        }
+      // Each game's create payload is currently game-specific (CtL: `teamSize`,
+      // OATH: `playerCount`). Once `lobby:create-form` becomes a slot the
+      // payload move into the per-game web plugin and this branch goes away.
+      const body =
+        gameTab === OATH_ID
+          ? { gameType: OATH_ID, playerCount: oathPlayerCount }
+          : { gameType: gameTab, teamSize };
+      const res = await fetch(`${API_BASE}/lobbies/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        navigate(`/lobby/${data.lobbyId}`);
+        return;
       }
     } catch {}
     setCreating(false);
   }
 
-  const filteredGames = games.filter((g) => (g.gameType ?? 'capture-the-lobster') === gameTab);
-  const filteredLobbies = lobbies.filter((l) => (l.gameType ?? 'capture-the-lobster') === gameTab);
+  // Default unknown gameTypes onto the default plugin's id so legacy rows
+  // (no `gameType` column populated) still render under a tab.
+  const defaultId = getDefaultPlugin().gameType;
+  const filteredGames = games.filter((g) => (g.gameType ?? defaultId) === gameTab);
+  const filteredLobbies = lobbies.filter((l) => (l.gameType ?? defaultId) === gameTab);
   const activeGames = filteredGames.filter((g) => g.phase !== 'finished');
   const finishedGames = filteredGames.filter((g) => g.phase === 'finished');
 
@@ -129,53 +135,43 @@ export default function LobbiesPage() {
     <div className="space-y-12">
       {/* Game type tabs + create controls */}
       <div className="flex flex-col gap-3">
-        {/* Tab selector */}
+        {/* Tab selector — one tab per registered spectator plugin. Each
+            plugin contributes its own brand color for the active state. */}
         <div className="flex items-center gap-2">
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
-          <button
-            onClick={() => setGameTab('capture-the-lobster')}
-            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
-            style={
-              gameTab === 'capture-the-lobster'
-                ? {
-                    background: 'rgba(58, 90, 42, 0.15)',
-                    color: 'var(--color-forest)',
-                    border: '1px solid rgba(58, 90, 42, 0.3)',
-                  }
-                : {
-                    background: 'transparent',
-                    color: 'var(--color-ink-faint)',
-                    border: '1px solid rgba(42, 31, 14, 0.15)',
-                  }
-            }
-          >
-            Capture the Lobster
-          </button>
-          {/* biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup) */}
-          <button
-            onClick={() => setGameTab('oathbreaker')}
-            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
-            style={
-              gameTab === 'oathbreaker'
-                ? {
-                    background: 'rgba(139, 32, 32, 0.12)',
-                    color: 'var(--color-blood)',
-                    border: '1px solid rgba(139, 32, 32, 0.3)',
-                  }
-                : {
-                    background: 'transparent',
-                    color: 'var(--color-ink-faint)',
-                    border: '1px solid rgba(42, 31, 14, 0.15)',
-                  }
-            }
-          >
-            OATHBREAKER
-          </button>
+          {getAllPlugins().map((plugin) => {
+            const active = gameTab === plugin.gameType;
+            const color = plugin.branding.primaryColor;
+            return (
+              // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
+              <button
+                key={plugin.gameType}
+                onClick={() => setGameTab(plugin.gameType)}
+                className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
+                style={
+                  active
+                    ? {
+                        background: `color-mix(in srgb, ${color} 15%, transparent)`,
+                        color,
+                        border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
+                      }
+                    : {
+                        background: 'transparent',
+                        color: 'var(--color-ink-faint)',
+                        border: '1px solid rgba(42, 31, 14, 0.15)',
+                      }
+                }
+              >
+                {plugin.branding.longName}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Create controls */}
+        {/* Create controls — per-game form still lives here (follow-up task
+            promotes it to a `lobby:create-form` slot); the tab id governs
+            which widget shows. */}
         <div className="flex items-center justify-end gap-3">
-          {gameTab === 'capture-the-lobster' ? (
+          {gameTab === CTL_ID ? (
             <div className="flex items-center gap-2">
               {[2, 3, 4, 5, 6].map((size) => (
                 // biome-ignore lint/a11y/useButtonType: pre-existing button without type; cleanup followup — TODO(2.3-followup)
@@ -255,7 +251,7 @@ export default function LobbiesPage() {
           <SectionHeader title="Active Lobbies" count={filteredLobbies.length} />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredLobbies.map((lobby, i) => {
-              const gt = lobby.gameType ?? 'capture-the-lobster';
+              const gt = lobby.gameType ?? defaultId;
               return (
                 <motion.div
                   key={lobby.lobbyId}
@@ -297,7 +293,7 @@ export default function LobbiesPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {activeGames.map((game, i) => {
-              const gt = game.gameType ?? 'capture-the-lobster';
+              const gt = game.gameType ?? defaultId;
               return (
                 <motion.div
                   key={game.id}
@@ -327,7 +323,7 @@ export default function LobbiesPage() {
           <SectionHeader title="Recent Games" count={finishedGames.length} />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {finishedGames.map((game, i) => {
-              const gt = game.gameType ?? 'capture-the-lobster';
+              const gt = game.gameType ?? defaultId;
               return (
                 <motion.div
                   key={game.id}

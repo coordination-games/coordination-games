@@ -10,6 +10,7 @@
  * The server dispatches by declarer (game / lobby phase / plugin relay).
  */
 
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { ethers } from 'ethers';
 import { ApiClient } from './api-client.js';
 import { processState } from './pipeline.js';
@@ -260,7 +261,7 @@ export class GameClient {
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
   async createLobby(gameType?: string, size?: number): Promise<any> {
     await this.ensureAuth();
-    if (gameType === 'oathbreaker') {
+    if (gameType === OATH_GAME_ID) {
       // For OATHBREAKER, teamSize is the total player count to auto-start (4-20)
       const teamSize = Math.min(20, Math.max(4, size || 4));
       return this.api.post('/api/lobbies/create', { gameType, teamSize });

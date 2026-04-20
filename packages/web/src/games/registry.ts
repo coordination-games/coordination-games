@@ -2,10 +2,16 @@ import { CaptureTheLobsterSpectator } from './capture-the-lobster';
 import { OathbreakerSpectator } from './oathbreaker';
 import type { SpectatorPlugin } from './types';
 
-const SPECTATOR_PLUGINS: Record<string, SpectatorPlugin> = {
-  'capture-the-lobster': CaptureTheLobsterSpectator,
-  oathbreaker: OathbreakerSpectator,
-};
+/**
+ * Registered web spectator plugins. Each plugin owns its `gameType` literal
+ * — the registry derives keys from `plugin.gameType` so the IDs aren't
+ * inlined twice.
+ */
+const REGISTERED_PLUGINS: SpectatorPlugin[] = [CaptureTheLobsterSpectator, OathbreakerSpectator];
+
+const SPECTATOR_PLUGINS: Record<string, SpectatorPlugin> = Object.fromEntries(
+  REGISTERED_PLUGINS.map((p) => [p.gameType, p]),
+);
 
 export function getSpectatorPlugin(gameType: string): SpectatorPlugin | undefined {
   return SPECTATOR_PLUGINS[gameType];
