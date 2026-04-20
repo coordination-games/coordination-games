@@ -32,7 +32,8 @@ import type {
   PhaseResult,
   RelayScope,
 } from '@coordination-games/engine';
-import { getGame, validateChatScope } from '@coordination-games/engine';
+import { CREDIT_SCALE, getGame, validateChatScope } from '@coordination-games/engine';
+import type { ChainRelay } from '../chain/types.js';
 import type { Env } from '../env.js';
 import type { SpectatorViewer } from '../plugins/capabilities.js';
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
@@ -111,6 +112,23 @@ export class LobbyDO extends DurableObject<Env> {
   // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
   private _phaseState: any = null;
   private _relayClient: DOStorageRelayClient | null = null;
+
+  /**
+   * Lazy chain-relay accessor for the pre-game credit balance check.
+   * Imported dynamically so DO cold-start doesn't pay viem's module cost
+   * when no one ever joins (mirrors `GameRoomDO.lazyCreateRelay`). In dev
+   * mode (`env.RPC_URL` unset) this yields `MockRelay`, whose `getBalance`
+   * returns `MOCK_CREDIT_BALANCE` so local bots / tests don't need real
+   * credits. In on-chain mode it yields `OnChainRelay`, which reads the
+   * live `CoordinationCredits.balances` mapping.
+   */
+  private _chainRelayPromise: Promise<ChainRelay> | null = null;
+  private async getChainRelay(): Promise<ChainRelay> {
+    if (!this._chainRelayPromise) {
+      this._chainRelayPromise = import('../chain/index.js').then((m) => m.createRelay(this.env));
+    }
+    return this._chainRelayPromise;
+  }
 
   /**
    * Lazy accessor — constructs the canonical relay client on first use.
@@ -320,6 +338,17 @@ export class LobbyDO extends DurableObject<Env> {
     // Idempotent — don't add twice
     if (this._agents.find((a) => a.id === playerId)) {
       return Response.json({ ok: true, ...(await this.buildStateForViewer(playerId)) });
+    }
+
+    // Pre-game credit balance check. MVP: read-only "can this player afford
+    // the entry cost right now?" — no committed-stake ledger. Single-lobby
+    // invariant (`player_sessions` PRIMARY KEY = player_id, so a player can
+    // only be routed to one lobby/game at a time) keeps a live-balance check
+    // sufficient pre-launch. See `wiki/architecture/credit-economics.md`.
+    const gatePlugin = getGame(this._meta.gameType);
+    if (gatePlugin) {
+      const balanceError = await this.checkBalanceOrError(playerId, gatePlugin.entryCost);
+      if (balanceError) return balanceError;
     }
 
     const agent: AgentEntry = { id: playerId, handle, elo: elo ?? 1000, joinedAt: Date.now() };
@@ -831,6 +860,89 @@ export class LobbyDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
   // Helpers
   // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Pre-game credit balance check. Returns `null` on success, or a 402
+   * Response describing the shortfall. `entryCost` is the plugin-declared
+   * value in WHOLE credits; we scale by `CREDIT_SCALE` (6-dec, matches
+   * `CoordinationCredits` storage and `GameRoomDO.kickOffSettlement`) for
+   * the raw-unit comparison.
+   *
+   * Balance source: `ChainRelay.getBalance(agentId)`. On-chain mode reads
+   * the live `CoordinationCredits.balances(uint256)` value — the same
+   * number that `GameAnchor.settleGame` will debit at game end. In dev/test
+   * mode (`env.RPC_URL` unset), `MockRelay` returns `MOCK_CREDIT_BALANCE`,
+   * trivially satisfying the check for local bots and tests.
+   *
+   * `entryCost: 0` (tests, free games) short-circuits to success without
+   * hitting the relay.
+   *
+   * On-chain mode requires an on-chain agent id to query `balances`. If the
+   * player has no `chain_agent_id` in D1 they cannot settle either — we
+   * reject upfront so the lobby doesn't fill with unsettleable entries.
+   *
+   * Errors from the relay itself (RPC flake) bubble up as 503 — we fail
+   * closed; letting the join through on an RPC error would bypass the gate.
+   */
+  private async checkBalanceOrError(
+    playerId: string,
+    entryCostWhole: number,
+  ): Promise<Response | null> {
+    if (!entryCostWhole || entryCostWhole <= 0) return null;
+    const required = BigInt(entryCostWhole) * CREDIT_SCALE;
+
+    // On-chain mode: translate D1 UUID → chain_agent_id. MockRelay ignores
+    // the arg, so only pay the D1 cost when we actually have an RPC config.
+    let agentIdForRelay = playerId;
+    if (this.env.RPC_URL) {
+      const row = await this.env.DB.prepare('SELECT chain_agent_id FROM players WHERE id = ?')
+        .bind(playerId)
+        .first<{ chain_agent_id: number | null }>();
+      if (!row?.chain_agent_id) {
+        return Response.json(
+          {
+            error: 'Insufficient credits',
+            required: entryCostWhole,
+            available: 0,
+            agentId: playerId,
+          },
+          { status: 402 },
+        );
+      }
+      agentIdForRelay = String(row.chain_agent_id);
+    }
+
+    let creditsStr: string;
+    try {
+      const relay = await this.getChainRelay();
+      const { credits } = await relay.getBalance(agentIdForRelay);
+      creditsStr = credits;
+    } catch (err) {
+      console.error(
+        `[LobbyDO] getBalance failed for player ${playerId} (agent ${agentIdForRelay}):`,
+        err,
+      );
+      return Response.json({ error: 'Balance lookup failed', agentId: playerId }, { status: 503 });
+    }
+
+    const available = BigInt(creditsStr);
+    if (available < required) {
+      // `available` scaled down to whole credits for the response body. The
+      // reported `required` is whole credits so the two match what the
+      // player's CLI / web UI displays.
+      const availableWhole = Number(available / CREDIT_SCALE);
+      return Response.json(
+        {
+          error: 'Insufficient credits',
+          required: entryCostWhole,
+          available: availableWhole,
+          agentId: agentIdForRelay,
+        },
+        { status: 402 },
+      );
+    }
+    return null;
+  }
 
   private getCurrentPhase(): LobbyPhase | null {
     if (!this._meta) return null;

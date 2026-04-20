@@ -23,7 +23,7 @@ export const CREDIT_SCALE = 10n ** 6n; // 1_000_000n
 - `GameRoomDO.kickOffSettlement` scales at the settlement boundary: `BigInt(plugin.entryCost) * CREDIT_SCALE`. The scaled value is what `computePayouts` consumes, what invariant checks (`sum === 0n`, `delta ≥ -entryCost`) run against, and what gets relayed to `settleGame` as int256 deltas.
 - Plugin `computePayouts` functions do **not** need to be scale-aware — they do proportional math and conservation; scale passes through from input to output.
 - Consumer-facing surfaces (`coga balance`, `coga status`, web register flow) divide by `CREDIT_SCALE` before display. User-typed burn amounts (`coga withdraw 100`) are multiplied by `CREDIT_SCALE` before hitting the contract.
-- `MockRelay` (in-memory mode) does not track balances at all — `getBalance` returns `'0'`, mint/burn throw, settlement `submit` is a no-op. Scaling is a silent no-op in that mode, which is why the bug was invisible until on-chain settlement landed.
+- `MockRelay` (in-memory mode) does not track balances — `getBalance` returns a high synthetic value (`MOCK_CREDIT_BALANCE`, 10^18 raw units ≈ 10^12 whole credits) so the join-time balance check passes for everyone in dev/test; mint/burn throw; settlement `submit` is a no-op. Scaling is a silent no-op in that mode, which is why the scale bug was invisible until on-chain settlement landed.
 
 Worked example (CtL, `entryCost: 10`, Alice beats Bob):
 
@@ -67,11 +67,9 @@ Implementation: `distributePot` in `packages/games/oathbreaker/src/plugin.ts`; p
 
 ## Balance Tracking
 
-```typescript
-available = onChainBalance - committed - pendingBurns
-```
-- `committed` = locked in active games
-- `pendingBurns` = awaiting burn execution (cooldown prevents flash-loan attacks)
+**Pre-game check:** `LobbyDO.handleJoin` verifies `balance >= entryCost * CREDIT_SCALE` against the on-chain `CoordinationCredits.balances(agentId)` (via `ChainRelay.getBalance`) before appending the player to the lobby roster. Insufficient balance → HTTP 402 Payment Required with `{ error, required, available, agentId }`. Pre-launch assumption: a player can only be in one lobby at a time (enforced by `player_sessions` single-row-per-player), so we don't yet need a committed-stake ledger — the live balance is a sufficient gate.
+
+**Future work:** a full committed/available ledger (`available = balance - committed - pendingBurns`, where `committed` accumulates across concurrent active games and releases on settlement) is a planned improvement for multi-game concurrency. Tracked separately; not needed for launch. `pendingBurns` already lives on-chain in `CoordinationCredits` — the withdrawal cooldown prevents flash-loan / rug attacks regardless of off-chain bookkeeping.
 
 ## Credit Lifecycle
 

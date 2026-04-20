@@ -16,19 +16,32 @@ import type {
 /**
  * In-memory dev/test relay.
  *
- * MockRelay does NOT track credit balances: `getAgentByAddress` / `getBalance`
- * always return `credits: '0'`, `topup` / `requestBurn` / `executeBurn` throw
- * ("Credits not available in mock mode"), and `submit` is a no-op that
- * discards the deltas after returning a fake tx hash. Because of that, the
- * 6-decimal scaling applied in `GameRoomDO.kickOffSettlement` (see
- * `CREDIT_SCALE` in `@coordination-games/engine`) has no observable effect
- * here — scaled or unscaled, the numbers go nowhere.
+ * MockRelay does NOT track credit balances. `getAgentByAddress` / `getBalance`
+ * report `MOCK_CREDIT_BALANCE` (a very large raw-unit value) so the pre-game
+ * balance check in `LobbyDO.handleJoin` passes for everyone in dev/test mode
+ * — we'd otherwise need to run a local chain just to exercise the lobby path.
+ * `topup` / `requestBurn` / `executeBurn` throw ("Credits not available in
+ * mock mode"), and `submit` is a no-op that discards the deltas after
+ * returning a fake tx hash. Because of that, the 6-decimal scaling applied
+ * in `GameRoomDO.kickOffSettlement` (see `CREDIT_SCALE` in
+ * `@coordination-games/engine`) has no observable effect here — scaled or
+ * unscaled, the numbers go nowhere.
  *
  * Consequence: in-memory mode stays internally consistent whether deltas are
  * scaled or not, which is why the pre-scaling bug was silent. On-chain mode
  * is the only path where the scale mismatch would corrupt balances, and
  * that path is fixed at the settlement boundary.
  */
+
+/**
+ * High synthetic balance returned by `MockRelay.getBalance` (raw credit units,
+ * 6-dec scale). 10^18 ≈ 10^12 whole credits — comfortably above any plausible
+ * `entryCost * CREDIT_SCALE` so dev lobbies don't hit the join-time balance
+ * gate. Expressed as a decimal string to match the on-chain `uint256` wire
+ * format everywhere else in this file.
+ */
+export const MOCK_CREDIT_BALANCE = '1000000000000000000';
+
 export class MockRelay implements ChainRelay {
   constructor(private db: D1Database) {}
 
@@ -44,7 +57,7 @@ export class MockRelay implements ChainRelay {
       address: row.wallet_address,
       agentId: row.id,
       name: row.handle,
-      credits: '0',
+      credits: MOCK_CREDIT_BALANCE,
       registered: true,
     };
   }
@@ -61,11 +74,11 @@ export class MockRelay implements ChainRelay {
     params: RegisterParams,
   ): Promise<{ agentId: string; name: string; credits: string }> {
     const { player } = await resolvePlayer(params.address, this, this.db, { handle: params.name });
-    return { agentId: player.id, name: player.handle, credits: '0' };
+    return { agentId: player.id, name: player.handle, credits: MOCK_CREDIT_BALANCE };
   }
 
   async getBalance(_agentId: string): Promise<BalanceInfo> {
-    return { credits: '0', usdc: '0' };
+    return { credits: MOCK_CREDIT_BALANCE, usdc: '0' };
   }
 
   async topup(_agentId: string, _permit: PermitParams): Promise<{ credits: string }> {
