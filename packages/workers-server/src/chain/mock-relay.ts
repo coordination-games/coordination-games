@@ -1,14 +1,16 @@
 import { resolvePlayer } from '../db/player.js';
 import type {
+  ReceiptResult,
+  SettlementSubmitPayload,
+  SubmitResult,
+} from '../plugins/capabilities.js';
+import type {
   AgentInfo,
   BalanceInfo,
   BurnRequest,
   ChainRelay,
-  CreditDelta,
-  GameSettlement,
   PermitParams,
   RegisterParams,
-  SettlementReceipt,
 } from './types.js';
 
 export class MockRelay implements ChainRelay {
@@ -66,8 +68,24 @@ export class MockRelay implements ChainRelay {
     throw new Error('Withdrawal not available in mock mode');
   }
 
-  async settleGame(_result: GameSettlement, _deltas: CreditDelta[]): Promise<SettlementReceipt> {
-    // Mock: no-op, return fake tx hash
-    return { txHash: `0x${'0'.repeat(64)}` };
+  /**
+   * Mock settlement submit — no-op, return a deterministic fake tx hash so
+   * the state machine can observe it through `pollReceipt`.
+   * The "nonce" is a monotonic counter scoped to this MockRelay instance.
+   */
+  private _mockNonce = 0;
+  async submit(
+    _payload: SettlementSubmitPayload,
+    opts?: { nonce?: number },
+  ): Promise<SubmitResult> {
+    const nonce = opts?.nonce ?? this._mockNonce++;
+    const txHash = `0x${'0'.repeat(63)}${(nonce & 0xf).toString(16)}` as `0x${string}`;
+    return { txHash, nonce };
+  }
+
+  async pollReceipt(_txHash: `0x${string}`): Promise<ReceiptResult> {
+    // Mock mode: every submitted tx is instantly "confirmed" at block 0 so
+    // local-dev settlement never sits in the submitted state forever.
+    return { status: 'confirmed', blockNumber: 0 };
   }
 }

@@ -2,16 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { API_BASE, getWsUrl } from '../config.js';
 import { getSpectatorPlugin } from '../games/registry';
+import { type RelayMessageView, SlotHost } from '../plugins';
 
 // ---------------------------------------------------------------------------
-// Helpers — extract platform data (handles, chat) from server payloads
+// Helpers — extract platform data (handles, raw relay) from server payloads
 // ---------------------------------------------------------------------------
 
-interface ChatMessage {
-  from: string;
-  message: string;
-  timestamp: number;
-}
+// Phase 5.1: this page no longer extracts chat. Chat lives in a
+// `WebToolPlugin` rendered by `<SlotHost name="game:panel">`. The page
+// just keeps the raw relay slice from the most recent payload and forwards
+// it to the slot host. The current SpectatorView still wants `chatMessages`
+// because Phase 6 owns the broader spectator-API refactor — for now we
+// pass an empty array and let the slot host render chat above the view.
 
 // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
 function extractHandles(data: any): Record<string, string> {
@@ -19,20 +21,9 @@ function extractHandles(data: any): Record<string, string> {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-function extractChat(data: any): ChatMessage[] {
+function extractRelay(data: any): RelayMessageView[] {
   const relay = data?.relayMessages;
-  if (!Array.isArray(relay)) return [];
-  const msgs: ChatMessage[] = [];
-  for (const msg of relay) {
-    if (msg.type === 'messaging' && msg.data?.body) {
-      msgs.push({
-        from: msg.sender ?? msg.from ?? msg.data?.from ?? 'unknown',
-        message: msg.data.body,
-        timestamp: msg.timestamp ?? 0,
-      });
-    }
-  }
-  return msgs;
+  return Array.isArray(relay) ? (relay as RelayMessageView[]) : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +35,7 @@ export default function GamePage() {
   const [perspective, setPerspective] = useState<'all' | 'A' | 'B'>('all');
   const [gameType, setGameType] = useState<string | null>(null);
   const [handles, setHandles] = useState<Record<string, string>>({});
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [relayMessages, setRelayMessages] = useState<RelayMessageView[]>([]);
   const [loading, setLoading] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -58,8 +49,8 @@ export default function GamePage() {
         setGameType(data.gameType ?? 'capture-the-lobster');
         const h = extractHandles(data);
         if (Object.keys(h).length) setHandles(h);
-        const c = extractChat(data);
-        if (c.length) setChatMessages(c);
+        const r = extractRelay(data);
+        if (r.length) setRelayMessages(r);
         setLoading(false);
       })
       .catch(() => {
@@ -78,8 +69,8 @@ export default function GamePage() {
         const data = raw.data ?? raw;
         const h = extractHandles(data);
         if (Object.keys(h).length) setHandles(h);
-        const c = extractChat(data);
-        if (c.length) setChatMessages(c);
+        const r = extractRelay(data);
+        if (r.length) setRelayMessages(r);
       } catch {}
     };
 
@@ -112,17 +103,24 @@ export default function GamePage() {
   }
 
   const SpectatorView = plugin.SpectatorView;
+  // Build a synthetic agents array from `handles` so plugin slots can render
+  // friendly names. The game payload doesn't carry a roster object, so we
+  // derive one from the same map the spectator view uses.
+  const agents = Object.entries(handles).map(([id, handle]) => ({ id, handle }));
 
   return (
-    <SpectatorView
-      gameState={null}
-      chatMessages={chatMessages}
-      handles={handles}
-      gameId={id ?? ''}
-      gameType={gameType}
-      phase="in_progress"
-      perspective={perspective}
-      onPerspectiveChange={setPerspective}
-    />
+    <>
+      <SlotHost name="game:panel" gameId={id ?? ''} relayMessages={relayMessages} agents={agents} />
+      <SpectatorView
+        gameState={null}
+        chatMessages={[]}
+        handles={handles}
+        gameId={id ?? ''}
+        gameType={gameType}
+        phase="in_progress"
+        perspective={perspective}
+        onPerspectiveChange={setPerspective}
+      />
+    </>
   );
 }

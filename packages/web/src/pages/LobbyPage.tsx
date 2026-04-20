@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChatPanel, JoinInstructions, PlayerList, TeamPanel, TimerBar } from '../components/lobby';
+import { JoinInstructions, PlayerList, TeamPanel, TimerBar } from '../components/lobby';
 import { API_BASE, getWsUrl } from '../config.js';
+import { SlotHost } from '../plugins';
 
 // ---------------------------------------------------------------------------
 // Shared types — matches the new generic LobbyDO state shape
@@ -12,16 +13,12 @@ interface LobbyAgent {
   handle: string;
   elo?: number;
 }
-interface ChatMessage {
-  from: string;
-  message: string;
-  timestamp: number;
-}
 
-// Relay messages from the typed relay (e.g. basic-chat plugin).
-// Server-side scope is the discriminated `RelayScope` union after Phase 4.1.
-// Frontend reads only sender/type/data/timestamp; scope kind is opaque here
-// and full typing lands in Phase 4.4 / 7.1.
+// Relay messages from the typed relay. Phase 5.1: this page no longer
+// inspects `type`/`data` — it just forwards the array to `<SlotHost>` so
+// plugin-provided panels (chat, future trust panel, etc.) can render their
+// own slice. Field names mirror the wire shape so plugins can share a
+// type with the SlotProps `relayMessages`.
 type RelayScopeKind = 'all' | 'team' | 'dm';
 interface RelayMessage {
   type: string;
@@ -153,20 +150,6 @@ function phaseBadge(phase: string, currentPhaseId?: string) {
       {labels[phase] ?? phase}
     </span>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Helper: extract chat messages from relay messages
-// ---------------------------------------------------------------------------
-
-function extractChatMessages(relay: RelayMessage[]): ChatMessage[] {
-  return relay
-    .filter((r) => r.type === 'messaging')
-    .map((r) => ({
-      from: r.sender,
-      message: r.data?.body ?? r.data?.message ?? '',
-      timestamp: r.timestamp,
-    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +288,6 @@ export default function LobbyPage() {
   const gameLabel = gameType === 'oathbreaker' ? 'OATHBREAKER' : 'Capture the Lobster';
   const phaseId = state.currentPhase?.id;
   const phaseView = state.currentPhase?.view;
-  const chatMessages = extractChatMessages(state.relay ?? []);
 
   // Determine if this is a team-based or simple lobby from phase view data
   const isTeamPhase = phaseId === 'team-formation';
@@ -441,8 +423,13 @@ export default function LobbyPage() {
         </div>
       )}
 
-      {/* Chat (from relay messages) */}
-      {chatMessages.length > 0 && <ChatPanel messages={chatMessages} agents={state.agents} />}
+      {/* Plugin-provided side panels — chat, future trust UI, etc. */}
+      <SlotHost
+        name="lobby:panel"
+        lobbyId={state.lobbyId}
+        relayMessages={state.relay ?? []}
+        agents={state.agents.map((a) => ({ id: a.id, handle: a.handle }))}
+      />
     </div>
   );
 }

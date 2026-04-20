@@ -14,7 +14,7 @@
  */
 
 import type { RelayEnvelope } from '@coordination-games/engine';
-import type { Capabilities, CapName } from './capabilities.js';
+import type { Capabilities, CapName, SpectatorViewer } from './capabilities.js';
 
 export interface GameContext {
   gameId: string;
@@ -26,7 +26,13 @@ export interface ServerPlugin<R extends CapName = never> {
   requires: readonly R[];
   init(caps: Pick<Capabilities, R>, game: GameContext): Promise<void>;
   handleRelay?(env: RelayEnvelope): Promise<RelayEnvelope[] | undefined>;
-  handleCall?(name: string, args: unknown): Promise<unknown>;
+  /**
+   * Direct call into the plugin. `viewer` carries authentication context —
+   * `{ kind: 'spectator' }` for unauthenticated callers, `{ kind: 'player',
+   * playerId }` for authenticated ones, etc. Plugins decide what to allow
+   * for which viewer kinds.
+   */
+  handleCall?(name: string, args: unknown, viewer: SpectatorViewer): Promise<unknown>;
   handleAlarm?(name: string): Promise<void>;
   dispose?(): Promise<void>;
 }
@@ -93,13 +99,23 @@ export class ServerPluginRuntime {
    * Direct call into a specific plugin. Throws if the plugin is not
    * registered, or if it does not expose `handleCall`.
    */
-  async handleCall(pluginId: string, name: string, args: unknown): Promise<unknown> {
+  async handleCall(
+    pluginId: string,
+    name: string,
+    args: unknown,
+    viewer: SpectatorViewer,
+  ): Promise<unknown> {
     const entry = this.plugins.get(pluginId);
-    if (!entry) throw new Error(`Plugin not registered: ${pluginId}`);
+    if (!entry) throw new PluginNotFoundError(pluginId);
     if (!entry.plugin.handleCall) {
-      throw new Error(`Plugin does not support handleCall: ${pluginId}`);
+      throw new PluginCallUnsupportedError(pluginId);
     }
-    return entry.plugin.handleCall(name, args);
+    return entry.plugin.handleCall(name, args, viewer);
+  }
+
+  /** Whether a plugin id is registered. */
+  has(pluginId: string): boolean {
+    return this.plugins.has(pluginId);
   }
 
   /**
@@ -129,5 +145,21 @@ export class ServerPluginRuntime {
         console.error(`[plugin-runtime] dispose error in ${plugin.id}:`, err);
       }
     }
+  }
+}
+
+/** Raised when `handleCall` targets a plugin that isn't registered. */
+export class PluginNotFoundError extends Error {
+  constructor(public readonly pluginId: string) {
+    super(`Plugin not registered: ${pluginId}`);
+    this.name = 'PluginNotFoundError';
+  }
+}
+
+/** Raised when `handleCall` targets a plugin that has no `handleCall` impl. */
+export class PluginCallUnsupportedError extends Error {
+  constructor(public readonly pluginId: string) {
+    super(`Plugin does not support handleCall: ${pluginId}`);
+    this.name = 'PluginCallUnsupportedError';
   }
 }

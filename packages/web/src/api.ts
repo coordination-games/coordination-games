@@ -42,12 +42,6 @@ export async function fetchGame(id: string): Promise<any> {
   return request<any>(`/games/${id}`);
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-export async function fetchLeaderboard(): Promise<any[]> {
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  return request<any[]>('/leaderboard');
-}
-
 export interface ReplayData {
   /**
    * 'replay' — snapshots contain 1..N entries representing progress ticks

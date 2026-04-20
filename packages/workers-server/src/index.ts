@@ -1,10 +1,15 @@
 import { getGame, getRegisteredGames } from '@coordination-games/engine';
 import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
 import { createRelay } from './chain/index.js';
-import { D1EloTracker } from './db/elo.js';
 import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
 import type { Env } from './env.js';
+import {
+  handlePluginCall,
+  PluginEndpointBadRequestError,
+  PluginEndpointNotFoundError,
+  PluginEndpointUnauthorizedError,
+} from './plugin-endpoint.js';
 import { dispatchToolCall, handleAdminSessionTools } from './tool-dispatcher.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
@@ -278,16 +283,51 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   // ------------------------------------------------------------------
-  // Public leaderboard / profile
+  // Generic plugin-call endpoint
+  //
+  // POST /api/plugin/:pluginId/call  body: { name, args }
+  //
+  // Single entry point for every server-plugin handleCall (Phase 5.2 — ELO
+  // is the first user; settlement migrates to the same shape in 5.3).
+  // Identity comes from the optional `Authorization: Bearer <token>` header
+  // (validated → playerId), exactly the same way every other authenticated
+  // route works. Unauthenticated callers reach the plugin as
+  // `{ kind: 'spectator' }`; plugins gate sensitive calls themselves.
   // ------------------------------------------------------------------
-  if (pathname === '/api/leaderboard' && method === 'GET') {
-    return handleLeaderboard(request, env);
-  }
-
-  const profileMatch = pathname.match(/^\/api\/profile\/([^/]+)$/);
-  if (profileMatch && method === 'GET') {
-    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
-    return handleProfile(profileMatch[1], env);
+  const pluginCallMatch = pathname.match(/^\/api\/plugin\/([^/]+)\/call$/);
+  if (pluginCallMatch && method === 'POST') {
+    // biome-ignore lint/style/noNonNullAssertion: regex group always present when match() returns
+    const pluginId = pluginCallMatch[1]!;
+    // Optional auth — leaderboard is public, my-stats requires playerId.
+    const playerId = await validateBearerToken(request, env);
+    try {
+      const body = await parseJsonBody<{ name?: string; args?: unknown }>(request);
+      if (body instanceof Response) return body;
+      const name = typeof body?.name === 'string' ? body.name : '';
+      if (!name) {
+        return Response.json(
+          { error: 'plugin call body must include `name` (string)' },
+          { status: 400 },
+        );
+      }
+      const result = await handlePluginCall(env, pluginId, name, body.args ?? {}, playerId);
+      return Response.json(result);
+    } catch (err) {
+      if (err instanceof PluginEndpointNotFoundError) {
+        return Response.json({ error: err.message }, { status: 404 });
+      }
+      if (err instanceof PluginEndpointBadRequestError) {
+        return Response.json({ error: err.message }, { status: 400 });
+      }
+      if (err instanceof PluginEndpointUnauthorizedError) {
+        return Response.json({ error: err.message }, { status: 401 });
+      }
+      console.error(`[plugin-call] ${pluginId}.${(err as Error)?.message ?? err}`);
+      return Response.json(
+        { error: (err as Error)?.message ?? 'plugin call failed' },
+        { status: 500 },
+      );
+    }
   }
 
   // ------------------------------------------------------------------
@@ -402,18 +442,6 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // ------------------------------------------------------------------
   // Authenticated player endpoints
   // ------------------------------------------------------------------
-
-  if (pathname === '/api/player/leaderboard' && method === 'GET') {
-    const auth = await requireAuth(request, env);
-    if (auth instanceof Response) return auth;
-    return handleLeaderboard(request, env);
-  }
-
-  if (pathname === '/api/player/stats' && method === 'GET') {
-    const auth = await requireAuth(request, env);
-    if (auth instanceof Response) return auth;
-    return handlePlayerStats(auth, env);
-  }
 
   if (pathname === '/api/player/state' && method === 'GET') {
     const auth = await requireAuth(request, env);
@@ -801,36 +829,6 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
   }
 
   return Response.json({ gameType, guide, tools });
-}
-
-// ---------------------------------------------------------------------------
-// Leaderboard / profile handlers
-// ---------------------------------------------------------------------------
-
-async function handleLeaderboard(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
-  const offset = Math.max(parseInt(url.searchParams.get('offset') ?? '0', 10), 0);
-  const tracker = D1EloTracker.fromEnv(env);
-  const players = await tracker.getLeaderboard(limit, offset);
-  return Response.json(players);
-}
-
-async function handleProfile(handle: string, env: Env): Promise<Response> {
-  const tracker = D1EloTracker.fromEnv(env);
-  const player = await tracker.getPlayerByHandle(decodeURIComponent(handle));
-  if (!player) return Response.json({ error: 'Player not found' }, { status: 404 });
-  const { walletAddress: _omit, ...publicProfile } = player;
-  return Response.json(publicProfile);
-}
-
-async function handlePlayerStats(playerId: string, env: Env): Promise<Response> {
-  const tracker = D1EloTracker.fromEnv(env);
-  const player = await tracker.getPlayer(playerId);
-  if (!player) return Response.json({ error: 'Player not found' }, { status: 404 });
-  const matches = await tracker.getPlayerMatches(playerId, 20);
-  const { walletAddress: _omit, ...stats } = player;
-  return Response.json({ ...stats, recentMatches: matches });
 }
 
 // ---------------------------------------------------------------------------

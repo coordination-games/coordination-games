@@ -1,14 +1,21 @@
 /**
  * Basic Chat Plugin — Tier 2 (Relayed) chat for Coordination Games.
  *
- * Client-side plugin that:
- * - Formats outgoing messages as relay data (type: "messaging")
- * - In the pipeline, acts as a producer: reads relay messages of type
- *   "messaging" and provides them as the "messaging" capability
- * - Scope is determined by game phase (lobby=all, gameplay=team)
+ * Two surfaces share one plugin id:
+ *   1. `BasicChatPlugin` (ToolPlugin)   — runs on the agent's machine (CLI):
+ *      formats outgoing messages, runs the pipeline producer that hands
+ *      `messaging` to downstream plugins, exposes the `chat` MCP tool.
+ *   2. `BasicChatServerPlugin` (ServerPlugin) — runs in the workers-server
+ *      `ServerPluginRuntime`. It claims the chat relay `type` (currently
+ *      `'messaging'`, exported as `CHAT_RELAY_TYPE`) so DOs can dispatch by
+ *      relay type without hard-coding the string. handleCall accepts
+ *      `{ name: 'chat', args }` for parity with the CLI tool.
  *
- * This code runs on the agent's machine (CLI), NOT on the server.
- * The server just relays the typed data by scope.
+ * Consumers (LobbyDO, GameRoomDO, CtL plugin spectator filter, web
+ * components) MUST import `CHAT_RELAY_TYPE` from this module rather than
+ * spelling the literal — that's the contract Phase 5.1 enforces. If this
+ * plugin is ever removed from the registered set, the relay type goes
+ * unregistered and chat envelopes are rejected at publish time.
  */
 
 import {
@@ -19,6 +26,14 @@ import {
   type ToolPlugin,
 } from '@coordination-games/engine';
 import { z } from 'zod';
+
+/**
+ * The relay envelope `type` string this plugin owns. Exported so consumers
+ * can dispatch by type without spelling the literal. The value is wire
+ * format and changing it is a breaking change — that's why it lives in the
+ * plugin module rather than the engine.
+ */
+export const CHAT_RELAY_TYPE = 'messaging';
 
 /**
  * A relay message as received from the server. Re-exported from the engine
@@ -38,7 +53,7 @@ export function formatChatMessage(
   const scope: 'team' | 'all' = phase === 'in_progress' || phase === 'pre_game' ? 'team' : 'all';
 
   return {
-    type: 'messaging',
+    type: CHAT_RELAY_TYPE,
     data: { body },
     scope,
     pluginId: 'basic-chat',
@@ -52,7 +67,7 @@ export function formatChatMessage(
  */
 export function extractMessages(relayMessages: RelayEnvelope[]): Message[] {
   return relayMessages
-    .filter((msg) => msg.type === 'messaging')
+    .filter((msg) => msg.type === CHAT_RELAY_TYPE)
     .map((msg) => {
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred
       const data = msg.data as { body?: string; tags?: Record<string, any> };
@@ -76,7 +91,7 @@ export function extractMessages(relayMessages: RelayEnvelope[]): Message[] {
 }
 
 /**
- * Zod schema for the body of a `type: 'messaging'` relay envelope.
+ * Zod schema for the body of a chat (`CHAT_RELAY_TYPE`) relay envelope.
  *
  * The shape is intentionally LOOSE so existing chat traffic (CLI, bots,
  * test fixtures, downstream plugins that enrich `tags`) continues to pass:
@@ -110,7 +125,7 @@ export const BasicChatPlugin: ToolPlugin = {
   version: '0.3.0',
   modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
   purity: 'pure',
-  relayTypes: { messaging: ChatMessageSchema },
+  relayTypes: { [CHAT_RELAY_TYPE]: ChatMessageSchema },
 
   /** MCP tool: send a chat message */
   tools: [
@@ -149,7 +164,7 @@ export const BasicChatPlugin: ToolPlugin = {
       // Agent chooses scope: 'team', 'all', or a specific agentId for DM.
       return {
         relay: {
-          type: 'messaging',
+          type: CHAT_RELAY_TYPE,
           data: { body: message },
           scope: scope || 'team',
           pluginId: 'basic-chat',
@@ -167,8 +182,14 @@ export const BasicChatPlugin: ToolPlugin = {
  * for `ToolPlugin`s today (games register via `registerGame()` side effects;
  * tool plugins are imported by callers that need them). Registering here
  * means any consumer that imports basic-chat — CLI, workers-server DOs,
- * tests — gets the `'messaging'` schema in the registry without an extra
+ * tests — gets the chat relay schema in the registry without an extra
  * bootstrap step. The registry's collision check guards against double
  * registration if multiple modules import this file.
  */
 registerPluginRelayTypes(BasicChatPlugin);
+
+// ---------------------------------------------------------------------------
+// Server-side surface (Phase 5.1) — see ./server.js
+// ---------------------------------------------------------------------------
+
+export { BasicChatServerPlugin, type BasicChatServerPluginShape } from './server.js';

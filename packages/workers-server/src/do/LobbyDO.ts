@@ -39,10 +39,11 @@ import { DOStorageRelayClient } from '../plugins/relay-client.js';
 // Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
-// Side-effect import: registers the basic-chat 'messaging' relay schema in
-// the engine's relay-registry so DOStorageRelayClient.publish accepts chat
-// envelopes (Phase 4.2).
-import '@coordination-games/plugin-chat';
+// Phase 4.2 + 5.1: importing basic-chat (a) self-registers the chat relay
+// schema in the engine's relay-registry so `DOStorageRelayClient.publish`
+// accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO
+// can dispatch by relay type without spelling the literal string.
+import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -401,7 +402,7 @@ export class LobbyDO extends DurableObject<Env> {
       );
     }
 
-    if (relay.type === 'messaging') {
+    if (relay.type === CHAT_RELAY_TYPE) {
       const scopeError = validateChatScope(relay.scope, getGame(this._meta.gameType)?.chatScopes);
       if (scopeError) {
         return Response.json(

@@ -383,33 +383,9 @@ export function registerGameTools(
     },
   );
 
-  server.tool(
-    'get_leaderboard',
-    'View the ELO leaderboard',
-    {
-      limit: z.number().optional().describe('Number of entries (default 20, max 100)'),
-      offset: z.number().optional().describe('Offset for pagination'),
-    },
-    async ({ limit, offset }) => {
-      try {
-        const result = await client.getLeaderboard(limit, offset);
-        return jsonResult(result);
-        // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
-  server.tool('get_my_stats', 'View your own ELO rating, rank, and game history', {}, async () => {
-    try {
-      const result = await client.getMyStats();
-      return jsonResult(result);
-      // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } catch (err: any) {
-      return jsonError(err);
-    }
-  });
+  // Phase 5.2: ELO tools (`get_leaderboard`, `get_my_stats`) used to be
+  // hard-coded here; they now come from the dynamic plugin registration
+  // path below — no per-plugin static stubs in the CLI.
 
   // ---------------------------------------------------------------------------
   // Dynamic per-name tools from the declared surface

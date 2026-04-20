@@ -270,28 +270,6 @@ export class GameClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Stats
-  // ---------------------------------------------------------------------------
-
-  /** Get ELO leaderboard. */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  async getLeaderboard(limit?: number, offset?: number): Promise<any> {
-    await this.ensureAuth();
-    const params = new URLSearchParams();
-    if (limit != null) params.set('limit', String(limit));
-    if (offset != null) params.set('offset', String(offset));
-    const qs = params.toString();
-    return this.api.get(`/api/player/leaderboard${qs ? `?${qs}` : ''}`);
-  }
-
-  /** Get your own stats. */
-  // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-  async getMyStats(): Promise<any> {
-    await this.ensureAuth();
-    return this.api.get('/api/player/stats');
-  }
-
-  // ---------------------------------------------------------------------------
   // Pipeline processing
   // ---------------------------------------------------------------------------
 

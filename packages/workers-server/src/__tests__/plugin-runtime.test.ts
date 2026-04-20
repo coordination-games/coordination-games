@@ -70,7 +70,8 @@ function buildCaps(storage: DurableObjectStorage): Capabilities {
       cancel: vi.fn(async () => {}),
     },
     d1: {} as D1Database,
-    chain: {},
+    // biome-ignore lint/suspicious/noExplicitAny: chain capability stub for tests; SettlementStateMachine is tested separately
+    chain: {} as any,
   };
 }
 
@@ -137,7 +138,8 @@ describe('ServerPluginRuntime — capability injection', () => {
       // biome-ignore lint/suspicious/noExplicitAny: minimal stubs for caps not used by the test plugins
       alarms: {} as any,
       d1: {} as D1Database,
-      chain: {},
+      // biome-ignore lint/suspicious/noExplicitAny: chain capability stub for tests; SettlementStateMachine is tested separately
+      chain: {} as any,
     };
     const capsForB: Capabilities = {
       storage: new NamespacedStorage(rawStorage, 'b'),
@@ -146,7 +148,8 @@ describe('ServerPluginRuntime — capability injection', () => {
       // biome-ignore lint/suspicious/noExplicitAny: minimal stubs for caps not used by the test plugins
       alarms: {} as any,
       d1: {} as D1Database,
-      chain: {},
+      // biome-ignore lint/suspicious/noExplicitAny: chain capability stub for tests; SettlementStateMachine is tested separately
+      chain: {} as any,
     };
 
     const runtimeA = new ServerPluginRuntime(capsForA, { gameId: 'g1' });

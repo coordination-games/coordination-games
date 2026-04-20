@@ -10,7 +10,15 @@ import LobbiesPage from './pages/LobbiesPage';
 import LobbyPage from './pages/LobbyPage';
 import RegisterPage from './pages/RegisterPage';
 import ReplayPage from './pages/ReplayPage';
+// Phase 5.1: register web plugins at app boot. Order matters only when
+// SlotHost renders multiple plugins for the same slot — chat is the only
+// slot consumer today so any order is fine.
+import { ChatSlotPlugin, registerWebPlugin } from './plugins';
 import './index.css';
+
+// Removing this single line removes chat from every shell that uses
+// <SlotHost>. The acceptance test for Phase 5.1 leans on that property.
+registerWebPlugin(ChatSlotPlugin);
 
 const router = createBrowserRouter([
   // Standalone pages (no shared layout)

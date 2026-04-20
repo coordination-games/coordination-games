@@ -59,11 +59,55 @@ export interface AlarmScheduler {
 }
 
 /**
- * Forward-declared marker interface for Phase 5.3 settlement plugins.
- * Intentionally empty today — minimum surface to compile.
+ * Settlement payload — the data the state machine hands to `OnChainRelay.submit`
+ * to anchor a finished game on-chain. Phase 3.2 introduced this as a stable
+ * shape so the state machine and chain adapter agree even though the latter
+ * builds the actual viem call.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: intentional forward-declared marker for Phase 5.3
-export interface OnChainRelay {}
+export type SettlementSubmitPayload = {
+  gameId: string;
+  gameType: string;
+  playerIds: string[];
+  // biome-ignore lint/suspicious/noExplicitAny: outcome shape is per-game; chain adapter encodes it as bytes
+  outcome: any;
+  movesRoot: `0x${string}`;
+  configHash: `0x${string}`;
+  turnCount: number;
+  timestamp: number;
+  /** Already-validated, zero-sum, floor-checked deltas. */
+  deltas: ReadonlyArray<{ agentId: string; delta: bigint }>;
+};
+
+export type SubmitResult = { txHash: `0x${string}`; nonce: number };
+
+export type ReceiptResult =
+  | { status: 'pending' }
+  | { status: 'confirmed'; blockNumber: number }
+  | { status: 'reverted'; reason?: string }
+  /** Idempotency: contract reverted with `AlreadySettled` (or equivalent).
+   *  Caller treats this as confirmed of the existing settlement. */
+  | { status: 'already-settled'; blockNumber?: number };
+
+/**
+ * Settlement-focused on-chain surface used by `SettlementStateMachine`.
+ * Concrete implementations live in `chain/onchain-relay.ts` (real) and
+ * `chain/mock-relay.ts` (dev). Phase 5.3 swaps the state machine into a
+ * `ServerPlugin`; this surface stays the same.
+ */
+export interface OnChainRelay {
+  /**
+   * Submit a settlement tx. Pin a nonce on the first attempt; retries pass
+   * the same nonce so the chain dedupes duplicate broadcasts. Caller may
+   * pass `nonce: undefined` on the first call to let the adapter fetch one.
+   */
+  submit(payload: SettlementSubmitPayload, opts?: { nonce?: number }): Promise<SubmitResult>;
+  /**
+   * Poll a previously-submitted tx for its receipt. Implementations must not
+   * block waiting for confirmation — return `pending` if the receipt isn't
+   * available yet so the state machine can re-arm an alarm.
+   */
+  pollReceipt(txHash: `0x${string}`): Promise<ReceiptResult>;
+}
 
 /**
  * The full set of capabilities the runtime can offer. A plugin's

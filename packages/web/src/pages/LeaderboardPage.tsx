@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchLeaderboard } from '../api';
+import { callPlugin } from '../lib/plugin-call';
 
 interface Player {
   handle: string;
@@ -27,8 +27,8 @@ export default function LeaderboardPage() {
     let cancelled = false;
     async function load() {
       try {
-        const data = await fetchLeaderboard();
-        if (!cancelled) setPlayers(data as Player[]);
+        const data = await callPlugin<Player[]>('elo', 'leaderboard', { limit: 50 });
+        if (!cancelled) setPlayers(data);
       } catch {}
     }
     load();

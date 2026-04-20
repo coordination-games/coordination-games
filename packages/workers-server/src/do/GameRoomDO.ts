@@ -30,8 +30,10 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { CoordinationGame, MerkleLeafData, RelayScope } from '@coordination-games/engine';
 import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
+import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
+import { SETTLEMENT_ALARM_KIND, SettlementStateMachine } from '../chain/SettlementStateMachine.js';
 import type { Env } from '../env.js';
-import type { SpectatorViewer } from '../plugins/capabilities.js';
+import { NamespacedStorage, type SpectatorViewer } from '../plugins/capabilities.js';
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
@@ -39,10 +41,11 @@ import { computePublicSnapshotIndex } from './spectator-delay.js';
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
-// Side-effect import: registers the basic-chat 'messaging' relay schema in
-// the engine's relay-registry so DOStorageRelayClient.publish accepts chat
-// envelopes (Phase 4.2).
-import '@coordination-games/plugin-chat';
+// Phase 4.2 + 5.1: importing basic-chat (a) self-registers the chat relay
+// schema in the engine's relay-registry so `DOStorageRelayClient.publish`
+// accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO
+// can dispatch by relay type without spelling the literal string.
+import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
 
 // ---------------------------------------------------------------------------
 // WS tags
@@ -131,6 +134,132 @@ export class GameRoomDO extends DurableObject<Env> {
   private _lastSpectatorIdx: number | null = null;
 
   /**
+   * Phase 3.2 — alarm multiplexer. The DO has one alarm slot but two
+   * consumers (turn deadlines + settlement state machine). Every consumer
+   * goes through this; `alarm()` pops due entries and dispatches by `kind`.
+   */
+  private _alarmMux: StorageAlarmMux | null = null;
+
+  private getAlarmMux(): StorageAlarmMux {
+    if (!this._alarmMux) {
+      this._alarmMux = new StorageAlarmMux(this.ctx.storage);
+    }
+    return this._alarmMux;
+  }
+
+  /**
+   * Build a fresh `SettlementStateMachine`. Constructed on demand because
+   * its caps (storage, chain, alarms) are independent of the DO instance
+   * state and we want it cheap to re-create after a hibernation tick.
+   */
+  private buildSettlementStateMachine(): SettlementStateMachine {
+    const namespacedStorage = new NamespacedStorage(this.ctx.storage, 'settlement');
+    return new SettlementStateMachine({
+      storage: namespacedStorage,
+      // Plugin runtime needs the full ChainRelay surface; the state machine
+      // only sees the OnChainRelay subset (submit + pollReceipt).
+      chain: this.lazyCreateRelay(),
+      alarms: {
+        scheduleAt: async (when, kind, payload) => {
+          await this.scheduleAlarmEntry({ when, kind, payload });
+        },
+        cancel: async (kind) => {
+          await this.cancelAlarmKind(kind);
+        },
+      },
+      log: (event, data) => {
+        // Single sink — console at the boundary makes it easy to grep
+        // logs and pipe to monitoring.
+        console.log(`[settlement] ${event}`, JSON.stringify(data));
+      },
+    });
+  }
+
+  /**
+   * Lazy chain-relay accessor. Imports `createRelay` lazily so DO startup
+   * doesn't pay viem's module cost when the game never settles (e.g. dev
+   * mode without RPC_URL). Cached on first access.
+   */
+  private _chainRelayPromise: Promise<import('../chain/types.js').ChainRelay> | null = null;
+  private lazyCreateRelay(): import('../chain/types.js').ChainRelay {
+    // Returns a thin proxy that resolves on first method call. Awaits the
+    // dynamic import internally so the SettlementStateMachine sees a real
+    // OnChainRelay-shaped object.
+    const env = this.env;
+    const getRelay = (): Promise<import('../chain/types.js').ChainRelay> => {
+      if (!this._chainRelayPromise) {
+        this._chainRelayPromise = import('../chain/index.js').then((m) => m.createRelay(env));
+      }
+      return this._chainRelayPromise;
+    };
+    return {
+      async submit(payload, opts) {
+        return (await getRelay()).submit(payload, opts);
+      },
+      async pollReceipt(txHash) {
+        return (await getRelay()).pollReceipt(txHash);
+      },
+      // The state machine only ever calls submit + pollReceipt; the rest of
+      // ChainRelay is irrelevant to its own surface but the type wants
+      // them, so forward through the promise as well.
+      async getAgentByAddress(addr) {
+        return (await getRelay()).getAgentByAddress(addr);
+      },
+      async checkName(name) {
+        return (await getRelay()).checkName(name);
+      },
+      async register(p) {
+        return (await getRelay()).register(p);
+      },
+      async getBalance(id) {
+        return (await getRelay()).getBalance(id);
+      },
+      async topup(id, p) {
+        return (await getRelay()).topup(id, p);
+      },
+      async requestBurn(id, amt) {
+        return (await getRelay()).requestBurn(id, amt);
+      },
+      async executeBurn(id) {
+        return (await getRelay()).executeBurn(id);
+      },
+      async cancelBurn(id) {
+        return (await getRelay()).cancelBurn(id);
+      },
+    };
+  }
+
+  /**
+   * Schedule a multiplexed alarm entry. Persists the entry in the queue,
+   * then arms the DO alarm slot at the new earliest `when`.
+   */
+  private async scheduleAlarmEntry(entry: AlarmEntry): Promise<void> {
+    const mux = this.getAlarmMux();
+    await mux.schedule(entry);
+    const earliest = await mux.earliestWhen();
+    if (earliest !== null) {
+      await this.ctx.storage.setAlarm(earliest);
+    }
+  }
+
+  /**
+   * Cancel every queued entry of `kind` and re-arm the DO alarm slot to
+   * the next earliest entry (or clear the slot if the queue is empty).
+   */
+  private async cancelAlarmKind(kind: string): Promise<void> {
+    const mux = this.getAlarmMux();
+    await mux.cancelKind(kind);
+    const earliest = await mux.earliestWhen();
+    if (earliest === null) {
+      try {
+        await this.ctx.storage.deleteAlarm();
+      } catch {}
+    } else {
+      await this.ctx.storage.setAlarm(earliest);
+    }
+  }
+
+  /**
    * Lazy accessor for the canonical relay client. Team membership comes from
    * the game plugin's `getTeamForPlayer(state, playerId)` so FFA games (where
    * each player is their own team) and team games share one code path. The
@@ -180,32 +309,93 @@ export class GameRoomDO extends DurableObject<Env> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // alarm() — turn deadline
+  // alarm() — multiplexed dispatcher
   // ─────────────────────────────────────────────────────────────────────────
+  //
+  // The DO has a single alarm slot. `StorageAlarmMux` queues entries by
+  // `{ when, kind, payload }`. On fire we pop everything due, dispatch by
+  // `kind`, then re-arm the slot to whatever is earliest in the queue.
 
   override async alarm(): Promise<void> {
     await this.ensureLoaded();
+    const mux = this.getAlarmMux();
+    const due = await mux.popDue(Date.now());
+
+    if (due.length === 0) {
+      // Spurious wakeup — nothing was due. Re-arm to the next entry if
+      // any (handles clock drift / DO scheduler weirdness).
+      const next = await mux.earliestWhen();
+      if (next !== null) {
+        await this.ctx.storage.setAlarm(next);
+      }
+      return;
+    }
+
+    for (const entry of due) {
+      try {
+        await this.dispatchAlarm(entry);
+      } catch (err) {
+        console.error(`[GameRoomDO] alarm dispatch failed kind=${entry.kind}:`, err);
+        // Don't rethrow — other queued kinds in `due` should still get a
+        // shot at running.
+      }
+    }
+
+    // Re-arm to the earliest remaining entry. Empty queue → leave the
+    // slot unset (CF won't fire again until the next schedule call).
+    const next = await mux.earliestWhen();
+    if (next !== null) {
+      await this.ctx.storage.setAlarm(next);
+    }
+  }
+
+  /**
+   * Dispatch a single popped alarm entry to its handler. Each `kind`
+   * needs exactly one of these.
+   */
+  private async dispatchAlarm(entry: AlarmEntry): Promise<void> {
+    if (entry.kind === 'deadline') {
+      await this.dispatchDeadlineAlarm(entry);
+      return;
+    }
+    if (entry.kind === SETTLEMENT_ALARM_KIND) {
+      const sm = this.buildSettlementStateMachine();
+      await sm.tick();
+      return;
+    }
+    console.warn(`[GameRoomDO] unknown alarm kind: ${entry.kind}`);
+  }
+
+  /**
+   * Turn-deadline alarm handler. Mirrors the pre-3.2 behavior except the
+   * deadline data is on the queued payload rather than a 'deadline' key.
+   */
+  private async dispatchDeadlineAlarm(entry: AlarmEntry): Promise<void> {
     if (!this._meta || !this._plugin) return;
+    const payload = entry.payload as DeadlineEntry | null;
+    if (!payload) return;
 
-    const deadline = await this.ctx.storage.get<DeadlineEntry>('deadline');
-    if (!deadline) return;
-
-    if (Date.now() < deadline.deadlineMs - 500) {
-      // Fired too early (clock drift) — re-arm
-      await this.ctx.storage.setAlarm(deadline.deadlineMs);
+    if (Date.now() < payload.deadlineMs - 500) {
+      // Clock drift — re-queue this same entry. (Schedule pushes it back
+      // onto the queue; the post-loop re-arm picks the right `when`.)
+      await this.getAlarmMux().schedule({
+        when: payload.deadlineMs,
+        kind: 'deadline',
+        payload,
+      });
       return;
     }
 
     console.log(
-      `[GameRoomDO] Alarm fired — applying deadline action for turn ${this._progress.counter}`,
+      `[GameRoomDO] Deadline alarm fired — applying action for turn ${this._progress.counter}`,
     );
     try {
-      await this.applyActionInternal(null, deadline.action);
+      await this.applyActionInternal(null, payload.action);
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
     } catch (err: any) {
-      console.error(`[GameRoomDO] Alarm action failed:`, err?.stack ?? err);
-      // Delete the broken deadline to avoid infinite retry loop
-      await this.ctx.storage.delete('deadline');
+      console.error(`[GameRoomDO] Deadline action failed:`, err?.stack ?? err);
+      // The popDue() already removed this entry, so we won't infinite-loop;
+      // just rethrow for observability.
       throw err;
     }
   }
@@ -561,7 +751,7 @@ export class GameRoomDO extends DurableObject<Env> {
       return Response.json({ error: 'relay must have type and pluginId' }, { status: 400 });
     }
 
-    if (relayObj.type === 'messaging') {
+    if (relayObj.type === CHAT_RELAY_TYPE) {
       const scopeError = validateChatScope(
         relayObj.scope as string | undefined,
         this._plugin?.chatScopes,
@@ -683,20 +873,26 @@ export class GameRoomDO extends DurableObject<Env> {
     //   omitted        -> leave alarm unchanged
     //   { kind:'none' } -> cancel
     //   { kind:'absolute', at } -> set absolute alarm
+    //
+    // Phase 3.2: deadlines route through the alarm multiplexer so settlement
+    // and turn deadlines coexist on the single DO alarm slot.
     if (result.deadline !== undefined) {
       if (result.deadline.kind === 'none') {
         // @ts-expect-error TS2339: Property '_deadlineMs' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
         this._deadlineMs = null;
-        await this.ctx.storage.delete('deadline');
-        try {
-          await this.ctx.storage.deleteAlarm();
-        } catch {}
+        await this.cancelAlarmKind('deadline');
       } else {
         const deadlineMs = result.deadline.at;
         // @ts-expect-error TS2339: Property '_deadlineMs' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
         this._deadlineMs = deadlineMs;
-        await this.ctx.storage.put('deadline', { action: result.deadline.action, deadlineMs });
-        await this.ctx.storage.setAlarm(deadlineMs);
+        // Replace any existing deadline entry with the new one (a deadline is
+        // a single per-game timer, not a queue).
+        await this.cancelAlarmKind('deadline');
+        await this.scheduleAlarmEntry({
+          when: deadlineMs,
+          kind: 'deadline',
+          payload: { action: result.deadline.action, deadlineMs },
+        });
       }
     }
 
@@ -747,10 +943,9 @@ export class GameRoomDO extends DurableObject<Env> {
     if (finished && !this._meta.finished) {
       this._meta.finished = true;
       await this.ctx.storage.put('meta', this._meta);
-      try {
-        await this.ctx.storage.deleteAlarm();
-      } catch {}
-      await this.ctx.storage.delete('deadline');
+      // Game's over — drop the turn-deadline entry (settlement may schedule
+      // its own alarm next, so we don't blanket-clear the slot).
+      await this.cancelAlarmKind('deadline');
       console.log(
         `[GameRoomDO] Game over — ${this._meta.gameType}, ${this._actionLog.length} actions`,
       );
@@ -767,10 +962,12 @@ export class GameRoomDO extends DurableObject<Env> {
       } catch (err) {
         console.error(`[GameRoomDO] Failed to update D1 on game over:`, err);
       }
-      // Settle on-chain (or against MockRelay in dev). ctx.waitUntil keeps the
-      // isolate alive past this request's response; otherwise the Workers runtime
-      // may hibernate the DO before the tx lands.
-      this.ctx.waitUntil(this.settleOnChain());
+      // Phase 3.2: settle on-chain via SettlementStateMachine. The state
+      // machine takes ownership of retries + receipt polling — once
+      // submit() returns, the alarm path drives it to terminal. Wrap the
+      // first submit in waitUntil so the request response doesn't trigger
+      // hibernation mid-broadcast.
+      this.ctx.waitUntil(this.kickOffSettlement());
     }
 
     await this.broadcastUpdates();
@@ -781,7 +978,12 @@ export class GameRoomDO extends DurableObject<Env> {
   /**
    * Anchor the finished game on-chain with credit deltas from the plugin.
    *
-   * Server-side invariants (enforced before sending tx):
+   * Phase 3.2: this method now builds the payload + enforces invariants, then
+   * hands off to `SettlementStateMachine`. The state machine survives Worker
+   * hibernation, retries with a pinned nonce on RPC failure, and treats the
+   * contract's `AlreadySettled` revert as idempotent confirmation.
+   *
+   * Server-side invariants (enforced before kicking off the state machine):
    *   • sum(deltas) === 0              — zero-sum; GameAnchor enforces this too
    *   • every delta ≥ -entryCost       — no player loses more than their stake
    *   • every player has chain_agent_id — only registered identities can settle
@@ -789,13 +991,13 @@ export class GameRoomDO extends DurableObject<Env> {
    * If any invariant fails we log and skip — never throw, never attack chain.
    * MockRelay ignores deltas, so in dev mode this still exercises the path.
    */
-  private async settleOnChain(): Promise<void> {
+  private async kickOffSettlement(): Promise<void> {
     if (!this._plugin || !this._meta) return;
     const gameId = this._meta.gameId;
     const { playerIds, gameType, handleMap, teamMap, createdAt } = this._meta;
 
     try {
-      // Build merkle + configHash (same as before)
+      // Build merkle + configHash
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
       const leaves: MerkleLeafData[] = this._actionLog.map((e: any, i: number) => ({
         actionIndex: i,
@@ -810,11 +1012,10 @@ export class GameRoomDO extends DurableObject<Env> {
         'SHA-256',
         new TextEncoder().encode(configJson),
       );
-      const configHash =
-        '0x' +
+      const configHash = ('0x' +
         Array.from(new Uint8Array(hashBuffer))
           .map((b) => b.toString(16).padStart(2, '0'))
-          .join('');
+          .join('')) as `0x${string}`;
 
       const outcome = this._plugin.getOutcome(this._state);
       // Plugins still declare `entryCost` as `number` (a small constant per
@@ -829,7 +1030,6 @@ export class GameRoomDO extends DurableObject<Env> {
         delta: payouts.get(id) ?? 0n,
       }));
 
-      // Logs need string-rendered BigInt (BigInt isn't JSON-serializable).
       const renderDeltas = () =>
         deltas.map((d) => ({ agentId: d.agentId, delta: d.delta.toString() }));
 
@@ -872,31 +1072,23 @@ export class GameRoomDO extends DurableObject<Env> {
         }
       }
 
-      const { createRelay } = await import('../chain/index.js');
-      const relay = createRelay(this.env);
-
       // merkle.ts returns 0x-prefixed hex (keccak256), already a viem-ready bytes32.
-      const movesRoot = tree.root;
+      const movesRoot = tree.root as `0x${string}`;
 
-      const receipt = await relay.settleGame(
-        {
-          gameId,
-          gameType,
-          playerIds,
-          outcome,
-          movesRoot,
-          configHash,
-          turnCount: this._actionLog.length,
-          timestamp: Date.now(),
-        },
+      const sm = this.buildSettlementStateMachine();
+      await sm.submit({
+        gameId,
+        gameType,
+        playerIds,
+        outcome,
+        movesRoot,
+        configHash,
+        turnCount: this._actionLog.length,
+        timestamp: Date.now(),
         deltas,
-      );
-
-      console.log(
-        `[settle ${gameId}] ok tx=${receipt.txHash ?? 'mock'} deltas=${JSON.stringify(renderDeltas())}`,
-      );
+      });
     } catch (err) {
-      console.error(`[settle ${gameId}] failed:`, err);
+      console.error(`[settle ${gameId}] kickOff failed:`, err);
     }
   }
 
@@ -1078,17 +1270,14 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, actionLog, progress, deadline, config, snapshotCount] = await Promise.all(
-        [
-          this.ctx.storage.get<GameMeta>('meta'),
-          this.ctx.storage.get<unknown>('state'),
-          this.ctx.storage.get<ActionEntry[]>('actionLog'),
-          this.ctx.storage.get<ProgressState>('progress'),
-          this.ctx.storage.get<DeadlineEntry>('deadline'),
-          this.ctx.storage.get<unknown>('config'),
-          this.ctx.storage.get<number>('snapshotCount'),
-        ],
-      );
+      const [meta, state, actionLog, progress, config, snapshotCount] = await Promise.all([
+        this.ctx.storage.get<GameMeta>('meta'),
+        this.ctx.storage.get<unknown>('state'),
+        this.ctx.storage.get<ActionEntry[]>('actionLog'),
+        this.ctx.storage.get<ProgressState>('progress'),
+        this.ctx.storage.get<unknown>('config'),
+        this.ctx.storage.get<number>('snapshotCount'),
+      ]);
 
       // Drop the legacy prevProgressState key from older games.
       this.ctx.storage.delete('prevProgressState').catch(() => {});
@@ -1096,6 +1285,9 @@ export class GameRoomDO extends DurableObject<Env> {
       // now live under 'relay:<paddedIndex>' + 'relay:tip'. No migration
       // (per the no-backwards-compat rule for pre-launch).
       this.ctx.storage.delete('relay').catch(() => {});
+      // Phase 3.2: drop the legacy 'deadline' key from pre-multiplexer games.
+      // Deadlines now live in `alarm:queue` as `{ kind: 'deadline', ... }`.
+      this.ctx.storage.delete('deadline').catch(() => {});
 
       if (!meta) {
         this._loaded = true;
@@ -1128,8 +1320,6 @@ export class GameRoomDO extends DurableObject<Env> {
       this._state = state ?? null;
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0, snapshots: [0] };
-      // @ts-expect-error TS2339: Property '_deadlineMs' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
-      this._deadlineMs = deadline?.deadlineMs ?? null;
       // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
       this._config = config ?? null;
       this._spectatorSnapshots = loadedSnapshots;

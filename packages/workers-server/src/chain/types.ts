@@ -66,11 +66,19 @@ export interface SettlementReceipt {
   txHash: string;
 }
 
+import type { OnChainRelay } from '../plugins/capabilities.js';
+
 /**
  * ChainRelay — abstraction over on-chain contract interactions.
  * Two implementations: OnChainRelay (viem + real contracts) and MockRelay (D1-backed).
+ *
+ * Settlement (Phase 3.2) goes through `OnChainRelay` capability methods
+ * (`submit` + `pollReceipt`) on the `ChainRelay` instance, driven by
+ * `SettlementStateMachine`. The pre-3.2 synchronous `settleGame(result, deltas)`
+ * is gone — submit + receipt-poll are now separate so we can survive
+ * hibernation between broadcast and confirmation.
  */
-export interface ChainRelay {
+export interface ChainRelay extends OnChainRelay {
   // Identity
   getAgentByAddress(address: string): Promise<AgentInfo | null>;
   checkName(name: string): Promise<{ available: boolean }>;
@@ -83,6 +91,5 @@ export interface ChainRelay {
   executeBurn(agentId: string): Promise<{ credits: string }>;
   cancelBurn(agentId: string): Promise<void>;
 
-  // Settlement
-  settleGame(result: GameSettlement, deltas: CreditDelta[]): Promise<SettlementReceipt>;
+  // Settlement: see OnChainRelay (submit / pollReceipt).
 }

@@ -17,6 +17,11 @@ import type {
   ToolDefinition,
 } from '@coordination-games/engine';
 import { registerGame } from '@coordination-games/engine';
+// Phase 5.1: spectator filter dispatches by relay type via the constant the
+// chat plugin exports — no magic strings, no consumer knowledge of the wire
+// format. If basic-chat is removed from the platform, this import breaks at
+// build time, which is the desired loud failure.
+import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
 import { getUnitVision } from './fog.js';
 import {
   allMovesSubmitted,
@@ -283,7 +288,7 @@ function buildCtlSpectatorView(
   // Extract chat from relay messages
   const relayMessages = context.relayMessages ?? [];
   const isTeamMsgFromTeam = (m: RelayEnvelope, team: 'A' | 'B'): boolean =>
-    m.type === 'messaging' &&
+    m.type === CHAT_RELAY_TYPE &&
     m.scope.kind === 'team' &&
     units.some((u) => u.id === m.sender && u.team === team);
   const chatA = relayMessages

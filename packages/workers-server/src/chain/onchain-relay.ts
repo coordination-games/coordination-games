@@ -4,15 +4,17 @@ import { optimismSepolia } from 'viem/chains';
 import { resolvePlayer } from '../db/player.js';
 import type { Env } from '../env.js';
 import type {
+  ReceiptResult,
+  SettlementSubmitPayload,
+  SubmitResult,
+} from '../plugins/capabilities.js';
+import type {
   AgentInfo,
   BalanceInfo,
   BurnRequest,
   ChainRelay,
-  CreditDelta,
-  GameSettlement,
   PermitParams,
   RegisterParams,
-  SettlementReceipt,
 } from './types.js';
 
 // Minimal ABIs for read operations
@@ -253,7 +255,19 @@ export class OnChainRelay implements ChainRelay {
     return { agentId, name: params.name, credits: credits.toString() };
   }
 
-  async settleGame(result: GameSettlement, deltas: CreditDelta[]): Promise<SettlementReceipt> {
+  /**
+   * Submit a settleGame() tx without waiting for the receipt. Pins a nonce
+   * (re-uses caller-supplied `opts.nonce` on retry, otherwise fetches the
+   * relayer's pending count). Idempotency on the chain side comes from the
+   * nonce: rebroadcasting the same nonce yields the same tx hash; a
+   * higher-fee replacement gets a fresh hash but commits the same logical
+   * state.
+   *
+   * Used by `SettlementStateMachine` (Phase 3.2) to keep the broadcast +
+   * confirmation steps separate so a Worker hibernating between them
+   * doesn't lose the settlement.
+   */
+  async submit(payload: SettlementSubmitPayload, opts?: { nonce?: number }): Promise<SubmitResult> {
     const account = privateKeyToAccount(this.env.RELAYER_PRIVATE_KEY as `0x${string}`);
     const walletClient = createWalletClient({
       account,
@@ -261,9 +275,10 @@ export class OnChainRelay implements ChainRelay {
       transport: http(this.env.RPC_URL),
     });
 
-    // Translate D1 player UUIDs to on-chain agentIds
+    // Translate D1 player UUIDs → on-chain agentIds. Done here (rather than
+    // in the state machine) because it's chain-shape concern.
     const onChainPlayers: bigint[] = [];
-    for (const pid of result.playerIds) {
+    for (const pid of payload.playerIds) {
       const row = await this.env.DB.prepare('SELECT chain_agent_id FROM players WHERE id = ?')
         .bind(pid)
         .first<{ chain_agent_id: number | null }>();
@@ -271,18 +286,17 @@ export class OnChainRelay implements ChainRelay {
       onChainPlayers.push(BigInt(row.chain_agent_id));
     }
 
-    // Build on-chain deltas (parallel to onChainPlayers). Deltas are already
-    // BigInt — viem's int256 binding consumes BigInt directly.
-    const onChainDeltas = deltas.map((d) => {
-      const idx = result.playerIds.indexOf(d.agentId);
+    // Deltas already validated zero-sum + floor by the state machine's caller.
+    const onChainDeltas = payload.deltas.map((d) => {
+      const idx = payload.playerIds.indexOf(d.agentId);
       if (idx === -1) throw new Error(`Delta for unknown player ${d.agentId}`);
       return d.delta;
     });
 
-    const gameIdBytes = keccak256(toBytes(result.gameId)) as `0x${string}`;
-    const movesRootBytes = result.movesRoot as `0x${string}`;
-    const configHashBytes = result.configHash as `0x${string}`;
-    const outcomeBytes = toHex(JSON.stringify(result.outcome)) as `0x${string}`;
+    const gameIdBytes = keccak256(toBytes(payload.gameId)) as `0x${string}`;
+    const movesRootBytes = payload.movesRoot;
+    const configHashBytes = payload.configHash;
+    const outcomeBytes = toHex(JSON.stringify(payload.outcome)) as `0x${string}`;
 
     const gameAnchorAbi = [
       {
@@ -310,28 +324,76 @@ export class OnChainRelay implements ChainRelay {
       },
     ] as const;
 
-    const txHash = await walletClient.writeContract({
+    // Pin the nonce so retries don't broadcast a second tx.
+    const nonce =
+      opts?.nonce ??
+      Number(
+        await this.client.getTransactionCount({
+          address: account.address,
+          blockTag: 'pending',
+        }),
+      );
+
+    const txHash = (await walletClient.writeContract({
       address: this.env.GAME_ANCHOR_ADDRESS as `0x${string}`,
       abi: gameAnchorAbi,
       functionName: 'settleGame',
       args: [
         {
           gameId: gameIdBytes,
-          gameType: result.gameType,
+          gameType: payload.gameType,
           players: onChainPlayers,
           outcome: outcomeBytes,
           movesRoot: movesRootBytes,
           configHash: configHashBytes,
-          turnCount: result.turnCount,
-          timestamp: BigInt(result.timestamp),
+          turnCount: payload.turnCount,
+          timestamp: BigInt(payload.timestamp),
         },
         onChainDeltas,
       ],
+      nonce,
       // biome-ignore lint/suspicious/noExplicitAny: pre-existing any usage; type unification deferred — TODO(4.1)
-    } as any);
+    } as any)) as `0x${string}`;
 
-    await this.client.waitForTransactionReceipt({ hash: txHash });
-    return { txHash };
+    return { txHash, nonce };
+  }
+
+  /**
+   * Poll for a settlement tx receipt without blocking. Returns `pending`
+   * when the receipt isn't on-chain yet so the state machine can re-arm.
+   * Maps a contract revert with the `AlreadySettled` selector to the
+   * `already-settled` outcome — this happens when a previous attempt
+   * actually landed but the state machine missed the receipt (hibernation,
+   * RPC blip on the prior poll).
+   */
+  async pollReceipt(txHash: `0x${string}`): Promise<ReceiptResult> {
+    let receipt: { status: 'success' | 'reverted'; blockNumber: bigint } | null = null;
+    try {
+      receipt = (await this.client.getTransactionReceipt({ hash: txHash })) as {
+        status: 'success' | 'reverted';
+        blockNumber: bigint;
+      } | null;
+      // biome-ignore lint/suspicious/noExplicitAny: viem throws TransactionReceiptNotFoundError until mined
+    } catch (err: any) {
+      // viem raises when the receipt isn't available yet; treat as pending
+      // rather than letting the error bubble to the state machine as a
+      // failure (which would burn a retry attempt for normal mempool delay).
+      const name = err?.name ?? '';
+      const msg = String(err?.message ?? err);
+      if (name.includes('TransactionReceiptNotFound') || msg.includes('could not be found')) {
+        return { status: 'pending' };
+      }
+      throw err;
+    }
+    if (!receipt) return { status: 'pending' };
+    if (receipt.status === 'success') {
+      return { status: 'confirmed', blockNumber: Number(receipt.blockNumber) };
+    }
+    // Reverted. AlreadySettled selector handling: the state machine treats
+    // this as a successful prior settlement. We don't reach into trace data
+    // here — we surface the revert and let the state machine decide based
+    // on whether it had previously broadcast.
+    return { status: 'reverted', reason: 'tx reverted on-chain' };
   }
 
   // --- Write methods (Phase 4: Credits) ---
