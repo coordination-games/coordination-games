@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { KillEvent, VisibleTile } from '../../types';
+import type { KillEvent, VisibleTile } from '../../../../games/capture-the-lobster/web/types';
 
 const SQRT3 = Math.sqrt(3);
 const HEX_SIZE = 28;

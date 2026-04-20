@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import HexGrid from '../../components/HexGrid';
+import HexGrid from '../../../../games/capture-the-lobster/web/HexGrid';
+import type {
+  ChatMessage,
+  KillEvent,
+  SpectatorGameState,
+} from '../../../../games/capture-the-lobster/web/types';
 import { ScrubberSlider } from '../../components/ScrubberSlider';
 import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
 import { API_BASE, getWsUrl } from '../../config.js';
-import type { ChatMessage, KillEvent, SpectatorGameState } from '../../types';
 import type { SpectatorViewProps } from '../types';
 import { useHexAnimations } from './useHexAnimations';
 

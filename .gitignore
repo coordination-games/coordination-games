@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# Per-game static assets synced from packages/games/<gameId>/web/assets/
+# by packages/web/scripts/sync-game-assets.ts (regenerated on every build).
+packages/web/public/games/
 *.db
 *.db-shm
 *.db-wal

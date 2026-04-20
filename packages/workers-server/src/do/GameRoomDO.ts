@@ -31,10 +31,16 @@ import { DurableObject } from 'cloudflare:workers';
 import type { CoordinationGame, MerkleLeafData, RelayScope } from '@coordination-games/engine';
 import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
 import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
-import { SETTLEMENT_ALARM_KIND, SettlementStateMachine } from '../chain/SettlementStateMachine.js';
+import { SETTLEMENT_ALARM_KIND } from '../chain/SettlementStateMachine.js';
 import type { Env } from '../env.js';
-import { NamespacedStorage, type SpectatorViewer } from '../plugins/capabilities.js';
+import {
+  type Capabilities,
+  NamespacedStorage,
+  type SpectatorViewer,
+} from '../plugins/capabilities.js';
 import { DOStorageRelayClient } from '../plugins/relay-client.js';
+import { ServerPluginRuntime } from '../plugins/runtime.js';
+import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlement/index.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
 
@@ -148,31 +154,29 @@ export class GameRoomDO extends DurableObject<Env> {
   }
 
   /**
-   * Build a fresh `SettlementStateMachine`. Constructed on demand because
-   * its caps (storage, chain, alarms) are independent of the DO instance
-   * state and we want it cheap to re-create after a hibernation tick.
+   * Per-DO `ServerPluginRuntime` (Phase 5.3). Hosts the settlement plugin
+   * today; future per-game plugins land here. Worker-level plugins (ELO)
+   * live in a different runtime instance.
    */
-  private buildSettlementStateMachine(): SettlementStateMachine {
-    const namespacedStorage = new NamespacedStorage(this.ctx.storage, 'settlement');
-    return new SettlementStateMachine({
-      storage: namespacedStorage,
-      // Plugin runtime needs the full ChainRelay surface; the state machine
-      // only sees the OnChainRelay subset (submit + pollReceipt).
-      chain: this.lazyCreateRelay(),
-      alarms: {
-        scheduleAt: async (when, kind, payload) => {
-          await this.scheduleAlarmEntry({ when, kind, payload });
+  private _pluginRuntime: Promise<ServerPluginRuntime> | null = null;
+  private getPluginRuntime(): Promise<ServerPluginRuntime> {
+    if (!this._pluginRuntime) {
+      const caps: Capabilities = {
+        storage: new NamespacedStorage(this.ctx.storage, SETTLEMENT_PLUGIN_ID),
+        relay: this.getRelayClient(),
+        alarms: {
+          scheduleAt: (when, kind, payload) => this.scheduleAlarmEntry({ when, kind, payload }),
+          cancel: (kind) => this.cancelAlarmKind(kind),
         },
-        cancel: async (kind) => {
-          await this.cancelAlarmKind(kind);
-        },
-      },
-      log: (event, data) => {
-        // Single sink — console at the boundary makes it easy to grep
-        // logs and pipe to monitoring.
-        console.log(`[settlement] ${event}`, JSON.stringify(data));
-      },
-    });
+        d1: this.env.DB,
+        chain: this.lazyCreateRelay(),
+      };
+      const runtime = new ServerPluginRuntime(caps, {
+        gameId: this._meta?.gameId ?? this.ctx.id.name ?? '__unknown__',
+      });
+      this._pluginRuntime = runtime.register(createSettlementPlugin()).then(() => runtime);
+    }
+    return this._pluginRuntime;
   }
 
   /**
@@ -359,8 +363,8 @@ export class GameRoomDO extends DurableObject<Env> {
       return;
     }
     if (entry.kind === SETTLEMENT_ALARM_KIND) {
-      const sm = this.buildSettlementStateMachine();
-      await sm.tick();
+      const runtime = await this.getPluginRuntime();
+      await runtime.handleAlarm(SETTLEMENT_ALARM_KIND);
       return;
     }
     console.warn(`[GameRoomDO] unknown alarm kind: ${entry.kind}`);
@@ -1075,18 +1079,26 @@ export class GameRoomDO extends DurableObject<Env> {
       // merkle.ts returns 0x-prefixed hex (keccak256), already a viem-ready bytes32.
       const movesRoot = tree.root as `0x${string}`;
 
-      const sm = this.buildSettlementStateMachine();
-      await sm.submit({
-        gameId,
-        gameType,
-        playerIds,
-        outcome,
-        movesRoot,
-        configHash,
-        turnCount: this._actionLog.length,
-        timestamp: Date.now(),
-        deltas,
-      });
+      const runtime = await this.getPluginRuntime();
+      await runtime.handleCall(
+        SETTLEMENT_PLUGIN_ID,
+        'submit',
+        {
+          gameId,
+          gameType,
+          playerIds,
+          outcome,
+          movesRoot,
+          configHash,
+          turnCount: this._actionLog.length,
+          timestamp: Date.now(),
+          deltas,
+        },
+        // Settlement is server-driven (not a player action). Use the
+        // admin viewer kind — the plugin doesn't gate on viewer today,
+        // but this future-proofs against a `requireAdmin` predicate.
+        { kind: 'admin' },
+      );
     } catch (err) {
       console.error(`[settle ${gameId}] kickOff failed:`, err);
     }

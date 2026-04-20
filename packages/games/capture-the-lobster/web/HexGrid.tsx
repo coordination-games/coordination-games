@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import type { VisibleTile } from '../types';
+import type { VisibleTile } from './types';
 
 /** A unit rendered at absolute pixel coordinates (for animations) */
 export interface FloatingUnit {
@@ -89,9 +89,9 @@ function grassVariant(q: number, r: number): string {
   // Simple hash: mix q and r to get a stable pseudo-random value
   const hash = Math.abs(((q * 73856093) ^ (r * 19349663)) | 0) % 3;
   const variants = [
-    '/tiles/terrain/green.png',
-    '/tiles/terrain/green2.png',
-    '/tiles/terrain/green3.png',
+    '/games/capture-the-lobster/tiles/terrain/green.png',
+    '/games/capture-the-lobster/tiles/terrain/green2.png',
+    '/games/capture-the-lobster/tiles/terrain/green3.png',
   ];
   // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
   return variants[hash];
@@ -274,13 +274,13 @@ export default function HexGrid({
       case 'base_b':
         // Flag hex uses keep, surrounding base/spawn uses castle
         if (tile.flag) {
-          return '/tiles/terrain/keep.png';
+          return '/games/capture-the-lobster/tiles/terrain/keep.png';
         }
-        return '/tiles/terrain/castle.png';
+        return '/games/capture-the-lobster/tiles/terrain/castle.png';
       default: {
         // Use dirt for ground tiles near bases
         const nearBase = basePositions.some((b) => hexDistance(q, r, b.q, b.r) <= 2);
-        if (nearBase) return '/tiles/terrain/dirt.png';
+        if (nearBase) return '/games/capture-the-lobster/tiles/terrain/dirt.png';
         return grassVariant(q, r);
       }
     }
@@ -380,7 +380,7 @@ export default function HexGrid({
                 transform={`translate(${cx},${cy})`}
               >
                 <image
-                  href="/tiles/terrain/forest-deciduous.png"
+                  href="/games/capture-the-lobster/tiles/terrain/forest-deciduous.png"
                   x={-forestWidth / 2}
                   y={-forestHeight / 2}
                   width={forestWidth}
@@ -466,7 +466,7 @@ export default function HexGrid({
                 ) => {
                   const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
                   const isDead = u.alive === false;
-                  const unitSprite = `/tiles/units/${u.unitClass}.png`;
+                  const unitSprite = `/games/capture-the-lobster/tiles/units/${u.unitClass}.png`;
                   const isTeamB = u.team === 'B';
                   return (
                     // biome-ignore lint/a11y/noStaticElementInteractions: pre-existing div onClick; cleanup followup — TODO(2.3-followup)
@@ -636,7 +636,7 @@ export default function HexGrid({
       {/* Floating units layer — animated units at sub-tile pixel positions */}
       {floatingUnits?.map((u) => {
         const dim = selectedTeam !== 'all' && u.team !== selectedTeam;
-        const unitSprite = `/tiles/units/${u.unitClass}.png`;
+        const unitSprite = `/games/capture-the-lobster/tiles/units/${u.unitClass}.png`;
         const isTeamB = u.team === 'B';
 
         return (
@@ -743,7 +743,6 @@ export default function HexGrid({
                   const sy = k.y + Math.sin(angle) * dist;
                   const sparkOpacity = Math.max(0, 1 - k.progress * 2);
                   return (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: list is stable; refactor in cleanup followup — TODO(2.3-followup)
                     <circle key={i} cx={sx} cy={sy} r={1.5} fill="#fcd34d" opacity={sparkOpacity} />
                   );
                 })}

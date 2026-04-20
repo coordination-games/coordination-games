@@ -154,7 +154,7 @@ export default function HomePage() {
             {['rogue', 'knight', 'mage'].map((unit, i) => (
               <motion.img
                 key={unit}
-                src={`/tiles/units/${unit}.png`}
+                src={`/games/capture-the-lobster/tiles/units/${unit}.png`}
                 alt={unit}
                 className="w-24 h-24 sm:w-32 sm:h-32"
                 style={{
