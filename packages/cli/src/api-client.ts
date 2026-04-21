@@ -63,6 +63,45 @@ export function flattenStateEnvelope(raw: unknown): StateResponse {
 }
 
 /**
+ * Resolve once the target WS emits its first message after the initial
+ * snapshot, or after `timeoutMs`. All exit paths resolve (never reject): a
+ * caller that fetches state afterwards has no reason to care whether the
+ * wakeup came from an actual server push or a timeout.
+ *
+ * The DO sends a snapshot immediately on connect; that first frame is
+ * ignored. Any subsequent frame (or a close/error) ends the wait.
+ */
+function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let ws: WebSocket | null = null;
+    let frames = 0;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        ws?.close();
+      } catch {}
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    try {
+      ws = new WebSocket(url);
+    } catch {
+      finish();
+      return;
+    }
+    ws.addEventListener('message', () => {
+      frames += 1;
+      if (frames >= 2) finish();
+    });
+    ws.addEventListener('error', finish);
+    ws.addEventListener('close', finish);
+  });
+}
+
+/**
  * Simple HTTP client for the coordination game server API.
  *
  * `get()` / `post()` return `unknown` — callers either pass through a typed
@@ -189,8 +228,31 @@ export class ApiClient {
     return flattenStateEnvelope(await this.get('/api/player/state'));
   }
 
+  /**
+   * Block until the server reports a lobby or game state change, then return
+   * the fresh player state. Opens a WebSocket to the player's current DO
+   * (lobby spectator or authenticated game player), waits for the first
+   * post-snapshot push, closes the socket, and refetches state via HTTP.
+   *
+   * If the player isn't in a lobby or game, or the WS wakeup times out, this
+   * falls back to returning the current HTTP state — callers then decide
+   * whether to call again.
+   */
   async waitForUpdate(): Promise<StateResponse> {
-    return flattenStateEnvelope(await this.get('/api/player/wait'));
+    const state = await this.getState();
+    const lobbyId = state.lobbyId as string | undefined;
+    const gameId = state.gameId as string | undefined;
+    const loc: 'game' | 'lobby' | null = gameId ? 'game' : lobbyId ? 'lobby' : null;
+    if (!loc) return state;
+
+    const wsBase = this.serverUrl.replace(/^http/, 'ws');
+    const wsUrl =
+      loc === 'game'
+        ? `${wsBase}/ws/game/${gameId}/player?token=${encodeURIComponent(this.authToken ?? '')}`
+        : `${wsBase}/ws/lobby/${lobbyId}`;
+
+    await waitForWsWakeup(wsUrl, 25_000);
+    return this.getState();
   }
 
   async getGuide(game?: string): Promise<unknown> {
