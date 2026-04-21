@@ -5,8 +5,10 @@ import { ethers } from 'ethers';
 import { authenticate, api, faucetBot, registerBotOnChain } from './lib/bot-agent.js';
 
 const SERVER = process.env.GAME_SERVER ?? 'https://api.capturethelobster.com';
-const GAME_TYPE = process.env.GAME_TYPE ?? 'capture-the-lobster';
-const TEAM_SIZE = parseInt(process.env.TEAM_SIZE ?? '2', 10);
+// Positional args first, then env fallback, then defaults.
+// Usage: `tsx scripts/create-lobby.ts [oathbreaker|capture-the-lobster] [teamSize]`
+const GAME_TYPE = process.argv[2] ?? process.env.GAME_TYPE ?? 'capture-the-lobster';
+const TEAM_SIZE = parseInt(process.argv[3] ?? process.env.TEAM_SIZE ?? '2', 10);
 
 async function main() {
   const wallet = ethers.Wallet.createRandom();
@@ -22,9 +24,7 @@ async function main() {
   const { token } = await authenticate(SERVER, wallet.privateKey, name);
   console.error('authenticated');
 
-  const body = GAME_TYPE === 'oathbreaker'
-    ? { gameType: GAME_TYPE, teamSize: TEAM_SIZE }
-    : { gameType: GAME_TYPE, teamSize: TEAM_SIZE };
+  const body = { gameType: GAME_TYPE, teamSize: TEAM_SIZE };
   const lobby = await api(SERVER, '/api/lobbies/create', { method: 'POST', body, token });
   console.log(lobby.lobbyId);
   console.error(`lobby: ${lobby.lobbyId} (${GAME_TYPE}, teamSize=${TEAM_SIZE})`);

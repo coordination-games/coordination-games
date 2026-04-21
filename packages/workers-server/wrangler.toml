@@ -3,6 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Rebuild all workspace deps before bundling. The worker imports from
+# `@coordination-games/*` which resolve to sibling packages' `dist/`; stale
+# dists have shipped wrong money field names + wrong types to prod twice.
+[build]
+command = "cd ../.. && npm run build --workspaces --if-present --silent"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "ctl-db"
