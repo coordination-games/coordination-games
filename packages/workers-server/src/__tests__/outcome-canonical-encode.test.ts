@@ -48,14 +48,13 @@ describe('CtL outcome → canonical bytes', () => {
   });
 
   it('is deterministic across key-insertion order', () => {
+    const { alice, bob } = outcome.playerStats;
+    if (!alice || !bob) throw new Error('test fixture missing players');
     const a = canonicalEncode(outcome);
     const b = canonicalEncode({
       // Same values, reversed-ish key order.
       turnCount: 42,
-      playerStats: {
-        bob: outcome.playerStats.bob,
-        alice: outcome.playerStats.alice,
-      },
+      playerStats: { bob, alice },
       score: { B: 1, A: 3 },
       winner: 'A',
     } satisfies CtlOutcome);
