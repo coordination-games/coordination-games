@@ -1,5 +1,10 @@
 import { getGame, getRegisteredGames } from '@coordination-games/engine';
-import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
+import {
+  handleAuthChallenge,
+  handleAuthVerify,
+  validateBearerToken,
+  validateWsToken,
+} from './auth.js';
 import { createRelay } from './chain/index.js';
 import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
@@ -65,19 +70,16 @@ async function requireAuth(request: Request, env: Env): Promise<string | Respons
   return playerId;
 }
 
-/**
- * WebSocket clients can't set an Authorization header (native WebSocket spec,
- * not a Cloudflare limitation). For WS upgrade routes only, accept the bearer
- * token via `?token=` and synthesize an Authorization header so the downstream
- * auth path is identical.
- */
-function withTokenFromQuery(request: Request, url: URL): Request {
-  if (request.headers.get('Authorization')) return request;
-  const qToken = url.searchParams.get('token');
-  if (!qToken) return request;
-  const authedReq = new Request(request.url, request);
-  authedReq.headers.set('Authorization', `Bearer ${qToken}`);
-  return authedReq;
+/** WebSocket equivalent of `requireAuth` — token comes from `?token=` per the WS spec. */
+async function requireWsAuth(url: URL, env: Env): Promise<string | Response> {
+  const playerId = await validateWsToken(url, env);
+  if (!playerId) {
+    return Response.json(
+      { error: 'auth_required', message: 'Missing or invalid ?token=' },
+      { status: 401 },
+    );
+  }
+  return playerId;
 }
 
 export default {
@@ -456,16 +458,14 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered)
   const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
   if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-    const authedReq = withTokenFromQuery(request, url);
-    const auth = await requireAuth(authedReq, env);
+    const auth = await requireWsAuth(url, env);
     if (auth instanceof Response) return auth;
     const playerId = auth;
     const location = await getPlayerLocation(playerId, env);
     if (location?.kind !== 'game' || location.gameId !== wsPlayerMatch[1]) {
       return Response.json({ error: 'Not a player in this game' }, { status: 403 });
     }
-    const forwarded = new Request(request.url, authedReq);
-    forwarded.headers.delete('Authorization');
+    const forwarded = new Request(request.url, request);
     forwarded.headers.set('X-Player-Id', playerId);
     return forwardToGameDO(env, wsPlayerMatch[1], '/', forwarded);
   }

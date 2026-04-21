@@ -195,14 +195,11 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
 }
 
 // ---------------------------------------------------------------------------
-// Bearer token validation — returns playerId or null
+// Token validation — returns playerId or null
 // ---------------------------------------------------------------------------
 
-export async function validateBearerToken(request: Request, env: Env): Promise<string | null> {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const token = authHeader.slice(7);
-
+/** Validate a raw bearer token string. Used by both HTTP + WebSocket paths. */
+export async function validateToken(token: string, env: Env): Promise<string | null> {
   const row = await env.DB.prepare(
     'SELECT player_id, expires_at FROM auth_sessions WHERE token = ?',
   )
@@ -217,4 +214,18 @@ export async function validateBearerToken(request: Request, env: Env): Promise<s
   }
 
   return row.player_id;
+}
+
+/** HTTP auth: token comes from `Authorization: Bearer <token>`. */
+export async function validateBearerToken(request: Request, env: Env): Promise<string | null> {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  return validateToken(authHeader.slice(7), env);
+}
+
+/** WebSocket auth: native clients can't set headers, so token comes from `?token=`. */
+export async function validateWsToken(url: URL, env: Env): Promise<string | null> {
+  const token = url.searchParams.get('token');
+  if (!token) return null;
+  return validateToken(token, env);
 }
