@@ -246,10 +246,13 @@ export class ApiClient {
     if (!loc) return state;
 
     const wsBase = this.serverUrl.replace(/^http/, 'ws');
-    const wsUrl =
-      loc === 'game'
-        ? `${wsBase}/ws/game/${gameId}/player?token=${encodeURIComponent(this.authToken ?? '')}`
-        : `${wsBase}/ws/lobby/${lobbyId}`;
+    let wsUrl: string;
+    if (loc === 'game') {
+      const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
+      wsUrl = `${wsBase}/ws/game/${gameId}/player?ticket=${encodeURIComponent(ticket)}`;
+    } else {
+      wsUrl = `${wsBase}/ws/lobby/${lobbyId}`;
+    }
 
     await waitForWsWakeup(wsUrl, 25_000);
     return this.getState();

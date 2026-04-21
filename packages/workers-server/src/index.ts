@@ -1,9 +1,10 @@
 import { getGame, getRegisteredGames } from '@coordination-games/engine';
 import {
+  consumeWsTicket,
+  createWsTicket,
   handleAuthChallenge,
   handleAuthVerify,
   validateBearerToken,
-  validateWsToken,
 } from './auth.js';
 import { createRelay } from './chain/index.js';
 import { GameRoomDO } from './do/GameRoomDO.js';
@@ -70,12 +71,16 @@ async function requireAuth(request: Request, env: Env): Promise<string | Respons
   return playerId;
 }
 
-/** WebSocket equivalent of `requireAuth` — token comes from `?token=` per the WS spec. */
-async function requireWsAuth(url: URL, env: Env): Promise<string | Response> {
-  const playerId = await validateWsToken(url, env);
+/**
+ * Consume the single-use `?ticket=` query param on a WebSocket upgrade.
+ * The ticket is issued by `POST /api/player/ws-ticket` (Bearer-authed) so
+ * the long-lived session token never appears in the WS URL.
+ */
+async function requireWsTicket(url: URL, env: Env): Promise<string | Response> {
+  const playerId = await consumeWsTicket(url, env);
   if (!playerId) {
     return Response.json(
-      { error: 'auth_required', message: 'Missing or invalid ?token=' },
+      { error: 'auth_required', message: 'Missing, expired, or invalid ?ticket=' },
       { status: 401 },
     );
   }
@@ -458,7 +463,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered)
   const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
   if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-    const auth = await requireWsAuth(url, env);
+    const auth = await requireWsTicket(url, env);
     if (auth instanceof Response) return auth;
     const playerId = auth;
     const location = await getPlayerLocation(playerId, env);
@@ -478,6 +483,15 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const auth = await requireAuth(request, env);
     if (auth instanceof Response) return auth;
     return handlePlayerState(auth, env);
+  }
+
+  // POST /api/player/ws-ticket — trade a Bearer token for a single-use, 30s
+  // ticket. The client opens authed WebSockets as `/ws/...?ticket=<id>`.
+  if (pathname === '/api/player/ws-ticket' && method === 'POST') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    const ticket = await createWsTicket(auth, env);
+    return Response.json({ ticket });
   }
 
   // GET /api/player/wait — poll for state updates (CLI long-poll shim)

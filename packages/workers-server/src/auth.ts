@@ -195,11 +195,14 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
 }
 
 // ---------------------------------------------------------------------------
-// Token validation — returns playerId or null
+// Bearer token validation — returns playerId or null
 // ---------------------------------------------------------------------------
 
-/** Validate a raw bearer token string. Used by both HTTP + WebSocket paths. */
-export async function validateToken(token: string, env: Env): Promise<string | null> {
+export async function validateBearerToken(request: Request, env: Env): Promise<string | null> {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7);
+
   const row = await env.DB.prepare(
     'SELECT player_id, expires_at FROM auth_sessions WHERE token = ?',
   )
@@ -216,16 +219,41 @@ export async function validateToken(token: string, env: Env): Promise<string | n
   return row.player_id;
 }
 
-/** HTTP auth: token comes from `Authorization: Bearer <token>`. */
-export async function validateBearerToken(request: Request, env: Env): Promise<string | null> {
-  const authHeader = request.headers.get('Authorization');
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  return validateToken(authHeader.slice(7), env);
+// ---------------------------------------------------------------------------
+// WebSocket tickets — single-use, short-lived auth for WS upgrades
+//
+// Native WebSocket clients (including Node's global and browsers) can't set
+// custom headers on the upgrade request. The ticket pattern keeps the
+// long-lived session token in `Authorization: Bearer` on HTTP and only
+// exposes a ~30s single-use ID in the URL, so access logs can't be replayed.
+// ---------------------------------------------------------------------------
+
+const WS_TICKET_TTL_MS = 30_000;
+
+/** Issue a new single-use ticket for the given player. Caller must be authed. */
+export async function createWsTicket(playerId: string, env: Env): Promise<string> {
+  const ticket = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + WS_TICKET_TTL_MS).toISOString();
+  await env.DB.prepare('INSERT INTO ws_tickets (ticket, player_id, expires_at) VALUES (?, ?, ?)')
+    .bind(ticket, playerId, expiresAt)
+    .run();
+  return ticket;
 }
 
-/** WebSocket auth: native clients can't set headers, so token comes from `?token=`. */
-export async function validateWsToken(url: URL, env: Env): Promise<string | null> {
-  const token = url.searchParams.get('token');
-  if (!token) return null;
-  return validateToken(token, env);
+/**
+ * Consume the `?ticket=` query param from a WS upgrade URL. The row is
+ * deleted unconditionally — even when missing or expired — so a leaked ID
+ * can't be replayed. Returns the associated playerId on success.
+ */
+export async function consumeWsTicket(url: URL, env: Env): Promise<string | null> {
+  const ticket = url.searchParams.get('ticket');
+  if (!ticket) return null;
+  const row = await env.DB.prepare('SELECT player_id, expires_at FROM ws_tickets WHERE ticket = ?')
+    .bind(ticket)
+    .first<{ player_id: string; expires_at: string }>();
+  // Unconditional delete: single-use semantics.
+  await env.DB.prepare('DELETE FROM ws_tickets WHERE ticket = ?').bind(ticket).run();
+  if (!row) return null;
+  if (Date.now() > new Date(row.expires_at).getTime()) return null;
+  return row.player_id;
 }
