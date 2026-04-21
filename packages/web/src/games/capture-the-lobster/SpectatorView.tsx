@@ -428,6 +428,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   }, []);
 
   // §6.5 Keep rewind.snapshots aligned with cache growth.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the ternary gates re-runs to active-rewind only; depending on raw snapshots.length would re-fire during live playback.
   useEffect(() => {
     if (rewind.mode !== 'active') return;
     if (latestProgress === null) return;
@@ -447,11 +448,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
       const index = Math.min(r.index, snapshots.length - 1);
       return { mode: 'active', index, snapshots };
     });
-  }, [
-    latestProgress,
-    rewind.mode,
-    rewind.mode === 'active' ? rewind.snapshots.length : 0,
-  ]);
+  }, [latestProgress, rewind.mode, rewind.mode === 'active' ? rewind.snapshots.length : 0]);
 
   // §6.9 Auto-exit rewind when the game ends — /replay is the right surface
   // for a finished game.

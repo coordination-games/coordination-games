@@ -8,6 +8,7 @@
     "packages/plugins/*"
   ],
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "build": "npm run build -w packages/engine && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/plugins/basic-chat -w packages/plugins/elo -w packages/plugins/kibitzer && npm run build -w packages/web -w packages/cli",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/workers-server",

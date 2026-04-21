@@ -2,7 +2,7 @@
 // Create a lobby on prod as an ephemeral (random) identity, so fill-bots sees
 // every seat empty. Prints the lobbyId on stdout.
 import { ethers } from 'ethers';
-import { authenticate, api, faucetBot, registerBotOnChain } from './lib/bot-agent.js';
+import { api, authenticate, faucetBot, registerBotOnChain } from './lib/bot-agent.js';
 
 const SERVER = process.env.GAME_SERVER ?? 'https://api.capturethelobster.com';
 // Positional args first, then env fallback, then defaults.
@@ -30,4 +30,7 @@ async function main() {
   console.error(`lobby: ${lobby.lobbyId} (${GAME_TYPE}, teamSize=${TEAM_SIZE})`);
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

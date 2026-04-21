@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Pre-commit hook: biome check (lint + format) on the whole workspace.
+# Typecheck is intentionally left to CI — too slow for pre-commit (~20s).
+# To bypass (emergencies only): git commit --no-verify
+set -e
+
+if ! command -v npx >/dev/null 2>&1; then
+  echo "pre-commit: npx not found, skipping biome check" >&2
+  exit 0
+fi
+
+npx biome check .

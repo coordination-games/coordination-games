@@ -1040,9 +1040,7 @@ async function handleAdminSessionInspect(
   const gameId =
     lobbyRow?.game_id ??
     (
-      await env.DB.prepare(
-        'SELECT game_id FROM games WHERE game_id = ? LIMIT 1',
-      )
+      await env.DB.prepare('SELECT game_id FROM games WHERE game_id = ? LIMIT 1')
         .bind(sessionId)
         .first<{ game_id: string }>()
     )?.game_id ??
