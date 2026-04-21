@@ -84,14 +84,16 @@ jobs:
         # (e.g. zod version drift between MCP SDK and CLI testing).
         run: npm install --include=dev --legacy-peer-deps
 
-      - name: Build engine + games + plugins
+      - name: Build engine + plugins + games
         # Tests in workers-server resolve `@coordination-games/game-*` via the
         # `main`/`types` fields (dist/*). They must be built before tests run.
+        # Order matters: basic-chat must precede the games, since both
+        # capture-the-lobster and workers-server import from plugin-chat.
         run: |
           npm run build -w packages/engine
+          npm run build -w packages/plugins/basic-chat
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
-          npm run build -w packages/plugins/basic-chat
 
       # contracts workspace has a pre-existing hardhat dependency issue;
       # excluded from CI until fixed separately.
