@@ -3,11 +3,13 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Rebuild all workspace deps before bundling. The worker imports from
-# `@coordination-games/*` which resolve to sibling packages' `dist/`; stale
-# dists have shipped wrong money field names + wrong types to prod twice.
+# Rebuild worker-side workspace deps before bundling. The worker imports from
+# `@coordination-games/{engine, plugin-chat, game-*}` which resolve to sibling
+# packages' `dist/`; stale dists have shipped wrong money field names + wrong
+# types to prod twice. Web is deployed separately via Pages and has a
+# flaky npm-workspace install — excluded to keep server deploy resilient.
 [build]
-command = "cd ../.. && npm run build --workspaces --if-present --silent"
+command = "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker"
 
 [[d1_databases]]
 binding = "DB"
