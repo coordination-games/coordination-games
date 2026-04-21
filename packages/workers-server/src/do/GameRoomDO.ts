@@ -354,9 +354,57 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'GET' && path === '/spectator') return this.handleSpectator(request);
     if (method === 'GET' && path === '/replay') return this.handleReplay();
     if (method === 'GET' && path === '/bundle') return this.handleBundle();
+    if (method === 'GET' && path === '/inspect') return this.handleInspect();
     if (method === 'DELETE' && path === '/') return this.handleForceFinish();
 
     return new Response('Not found', { status: 404 });
+  }
+
+  /**
+   * Admin-only live-state dump. Returns a JSON snapshot of every DO storage
+   * key a human might need to diagnose a stuck game (meta, progress, alarm
+   * queue, current alarm slot, raw game state, action-log size). Gated by
+   * the main Worker's `ADMIN_TOKEN`; this method is unauthenticated on its
+   * own because the DO is not directly reachable from the internet.
+   */
+  private async handleInspect(): Promise<Response> {
+    await this.ensureLoaded();
+    const mux = this.getAlarmMux();
+    const [alarmQueue, alarmSlot, snapshotCount] = await Promise.all([
+      this.ctx.storage.get<AlarmEntry[]>(StorageAlarmMux.KEY).then((q) => q ?? []),
+      this.ctx.storage.getAlarm(),
+      this.ctx.storage.get<number>('snapshotCount'),
+    ]);
+    const earliest = await mux.earliestWhen();
+    const now = Date.now();
+    const wsCount = this.ctx.getWebSockets().length;
+
+    const payload = {
+      now,
+      meta: this._meta,
+      progress: this._progress,
+      actionLogLength: this._actionLog.length,
+      snapshotCount: snapshotCount ?? this._spectatorSnapshots.length,
+      alarm: {
+        slot: alarmSlot,
+        slotDelta: alarmSlot === null ? null : alarmSlot - now,
+        earliestQueued: earliest,
+        queue: alarmQueue.map((e) => ({ ...e, deltaMs: e.when - now })),
+      },
+      websockets: wsCount,
+      gameState: this._state,
+      isOver: this._plugin && this._state !== null ? this._plugin.isOver(this._state) : null,
+      pluginProgress:
+        this._plugin && this._state !== null ? this._plugin.getProgressCounter(this._state) : null,
+    };
+
+    // gameState carries bigints (e.g. OB balances); default JSON.stringify
+    // throws on BigInt. Stringify them as `<n>n` so the wire format survives
+    // and a human reader can still distinguish number-vs-bigint.
+    const body = JSON.stringify(payload, (_k, v) =>
+      typeof v === 'bigint' ? `${v.toString()}n` : v,
+    );
+    return new Response(body, { headers: { 'Content-Type': 'application/json' } });
   }
 
   /**

@@ -513,6 +513,12 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return handleAdminSessionKill(decodeURIComponent(adminKillMatch[1]), request, env);
   }
 
+  const adminInspectMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/inspect$/);
+  if (adminInspectMatch && method === 'GET') {
+    // @ts-expect-error TS2345 — decoded match is always a string here
+    return handleAdminSessionInspect(decodeURIComponent(adminInspectMatch[1]), request, env);
+  }
+
   // ------------------------------------------------------------------
   // Not found
   // ------------------------------------------------------------------
@@ -994,6 +1000,86 @@ async function handleAdminSessionKill(
     gameId: row.game_id,
     lobbyDisbanded: lobbyOk,
     gameMarkedFinished: gameMarked,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin — inspect a session's live DO state (diagnostic; read-only).
+// ---------------------------------------------------------------------------
+
+async function handleAdminSessionInspect(
+  sessionId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const expected = env.ADMIN_TOKEN;
+  if (!expected) {
+    return Response.json(
+      { error: 'Admin endpoint disabled (ADMIN_TOKEN not set)' },
+      { status: 503 },
+    );
+  }
+  if (request.headers.get('X-Admin-Token') !== expected) {
+    return Response.json({ error: 'Invalid admin token' }, { status: 401 });
+  }
+
+  const lobbyRow = await env.DB.prepare(
+    `SELECT id AS lobby_id, game_id, game_type, team_size, phase, created_at
+     FROM lobbies WHERE id = ?1 OR game_id = ?1 LIMIT 1`,
+  )
+    .bind(sessionId)
+    .first<{
+      lobby_id: string;
+      game_id: string | null;
+      game_type: string;
+      team_size: number;
+      phase: string;
+      created_at: string;
+    }>();
+
+  const gameId =
+    lobbyRow?.game_id ??
+    (
+      await env.DB.prepare(
+        'SELECT game_id FROM games WHERE game_id = ? LIMIT 1',
+      )
+        .bind(sessionId)
+        .first<{ game_id: string }>()
+    )?.game_id ??
+    null;
+
+  if (!lobbyRow && !gameId) {
+    return Response.json({ error: 'Session not found', sessionId }, { status: 404 });
+  }
+
+  let gameInspect: unknown = null;
+  if (gameId) {
+    const stub = getGameDO(env, gameId);
+    const resp = await stub
+      .fetch(new Request('https://do/inspect', { method: 'GET' }))
+      .catch((err) => new Response(`DO error: ${err}`, { status: 500 }));
+    if (resp.ok) {
+      gameInspect = await resp.json();
+    } else {
+      gameInspect = { error: `DO inspect failed: ${resp.status}`, body: await resp.text() };
+    }
+  }
+
+  const gameRow = gameId
+    ? await env.DB.prepare(
+        'SELECT game_id, game_type, finished, created_at FROM games WHERE game_id = ? LIMIT 1',
+      )
+        .bind(gameId)
+        .first()
+    : null;
+
+  return Response.json({
+    sessionId,
+    lobby: lobbyRow,
+    gameRow,
+    gameId,
+    gameInspect,
+    now: Date.now(),
   });
 }
 
