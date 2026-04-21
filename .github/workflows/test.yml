@@ -36,6 +36,20 @@ jobs:
       - name: Biome check (lint + format)
         run: npm run check
 
+      - name: Build engine + plugins + games
+        # Typechecks below resolve `@coordination-games/engine` and
+        # `@coordination-games/game-*` via each package's `main`/`types`
+        # pointing at `dist/*`. Without built artifacts, every workspace
+        # consumer fails with TS2307 "Cannot find module" — which also
+        # makes @ts-expect-error directives appear "unused". Order matters:
+        # basic-chat must precede the games (both capture-the-lobster and
+        # workers-server import from plugin-chat).
+        run: |
+          npm run build -w packages/engine
+          npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/games/capture-the-lobster
+          npm run build -w packages/games/oathbreaker
+
       # Per-package typecheck. Each package is invoked individually so the
       # failure surface in the PR log points at the offending package.
       # `contracts` is intentionally omitted — it has a pre-existing
