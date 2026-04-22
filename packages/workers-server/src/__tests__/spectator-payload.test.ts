@@ -82,6 +82,7 @@ describe('buildSpectatorPayload', () => {
       viewer: { kind: 'spectator' },
       relay,
       relayTip: 0,
+      stateVersion: 0,
     });
     expect(payload.type).toBe('spectator_pending');
     expect(payload.meta.gameId).toBe('g1');
@@ -106,6 +107,7 @@ describe('buildSpectatorPayload', () => {
       viewer: { kind: 'spectator' },
       relay,
       relayTip: 3,
+      stateVersion: 1,
     });
     expect(payload.type).toBe('state_update');
     if (payload.type !== 'state_update') return;
@@ -130,6 +132,7 @@ describe('buildSpectatorPayload', () => {
       relay,
       relayTip: 2,
       sinceIdx: 999, // attacker-claimed
+      stateVersion: 1,
     });
     if (payload.type !== 'state_update') throw new Error('expected state_update');
     expect(payload.relay).toEqual([]);
@@ -154,6 +157,7 @@ describe('buildSpectatorPayload', () => {
       relay,
       relayTip: 3,
       sinceIdx: 1,
+      stateVersion: 1,
     });
     if (payload.type !== 'state_update') throw new Error('expected state_update');
     expect(payload.relay.map((r) => r.index)).toEqual([1, 2]);
@@ -173,9 +177,53 @@ describe('buildSpectatorPayload', () => {
       viewer: { kind: 'spectator' },
       relay,
       relayTip: 5,
+      stateVersion: 1,
     });
     if (payload.type !== 'state_update') throw new Error('expected state_update');
     expect(payload.relay).toEqual([]);
     expect(payload.meta.sinceIdx).toBe(5);
+  });
+
+  it('omits state when knownStateVersion matches current stateVersion (ETag hit)', async () => {
+    const envs = [makeEnv(0, { kind: 'all' })];
+    const relay = fakeRelay(envs);
+    const payload = await buildSpectatorPayload({
+      gameId: 'g1',
+      gameType: 'capture-the-lobster',
+      handles: {},
+      finished: false,
+      publicSnapshotIndex: 1,
+      state: { tiles: [] },
+      viewer: { kind: 'spectator' },
+      relay,
+      relayTip: 1,
+      stateVersion: 7,
+      knownStateVersion: 7,
+    });
+    if (payload.type !== 'state_update') throw new Error('expected state_update');
+    expect(payload.state).toBeNull();
+    expect(payload.relay.length).toBe(1); // relay deltas still flow
+    expect(payload.meta.stateVersion).toBe(7);
+  });
+
+  it('sends state when knownStateVersion is stale (ETag miss)', async () => {
+    const envs: RelayEnvelope[] = [];
+    const relay = fakeRelay(envs);
+    const payload = await buildSpectatorPayload({
+      gameId: 'g1',
+      gameType: 'capture-the-lobster',
+      handles: {},
+      finished: false,
+      publicSnapshotIndex: 2,
+      state: { tiles: ['fresh'] },
+      viewer: { kind: 'spectator' },
+      relay,
+      relayTip: 0,
+      stateVersion: 10,
+      knownStateVersion: 5,
+    });
+    if (payload.type !== 'state_update') throw new Error('expected state_update');
+    expect(payload.state).toEqual({ tiles: ['fresh'] });
+    expect(payload.meta.stateVersion).toBe(10);
   });
 });

@@ -113,6 +113,14 @@ export class LobbyDO extends DurableObject<Env> {
   private _meta: LobbyMeta | null = null;
   private _agents: AgentEntry[] = [];
   private _phaseState: unknown = null;
+  /**
+   * Monotonic counter bumped inside `saveState()` — every persisted
+   * change to meta/agents/phaseState is a viewer-visible state change.
+   * Clients echo the last-seen value as `?knownStateVersion=N`; when it
+   * matches, the server omits the `state` block on the response.
+   * Chat publishes don't touch saveState and thus don't bump this.
+   */
+  private _stateVersion = 0;
   private _relayClient: DOStorageRelayClient | null = null;
 
   /**
@@ -302,7 +310,11 @@ export class LobbyDO extends DurableObject<Env> {
     const url = new URL(request.url);
     const rawSince = url.searchParams.get('sinceIdx');
     const sinceIdx = rawSince === null ? undefined : Number(rawSince);
-    return Response.json(await this.buildLobbySpectatorPayload(playerId, sinceIdx));
+    const rawVersion = url.searchParams.get('knownStateVersion');
+    const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+    return Response.json(
+      await this.buildLobbySpectatorPayload(playerId, sinceIdx, knownStateVersion),
+    );
   }
 
   /** X-Player-Id header. Absent = spectator/system. Never read from body or URL. */
@@ -515,9 +527,16 @@ export class LobbyDO extends DurableObject<Env> {
       // Phase 7.1 — spectator WS receives the same unified payload that
       // HTTP `/state` returns. `?sinceIdx=N` filters the initial snapshot
       // for CLI reconnects; subsequent broadcasts emit deltas.
-      const rawSince = new URL(request.url).searchParams.get('sinceIdx');
+      // `?knownStateVersion=N` lets the client skip the state block when
+      // it matches its cache (same ETag-style short-circuit as HTTP).
+      const url = new URL(request.url);
+      const rawSince = url.searchParams.get('sinceIdx');
       const sinceIdx = rawSince === null ? undefined : Number(rawSince);
-      server.send(JSON.stringify(await this.buildLobbySpectatorPayload(null, sinceIdx)));
+      const rawVersion = url.searchParams.get('knownStateVersion');
+      const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+      server.send(
+        JSON.stringify(await this.buildLobbySpectatorPayload(null, sinceIdx, knownStateVersion)),
+      );
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -741,6 +760,7 @@ export class LobbyDO extends DurableObject<Env> {
   private async buildLobbySpectatorPayload(
     viewerPlayerId: string | null,
     sinceIdx?: number,
+    knownStateVersion?: number,
   ): Promise<SpectatorPayload> {
     if (!this._meta) {
       return {
@@ -752,6 +772,7 @@ export class LobbyDO extends DurableObject<Env> {
           progressCounter: null,
           finished: false,
           sinceIdx: 0,
+          stateVersion: this._stateVersion,
           lastUpdate: Date.now(),
         },
       };
@@ -806,6 +827,8 @@ export class LobbyDO extends DurableObject<Env> {
       relay: relayClient,
       relayTip,
       sinceIdx,
+      stateVersion: this._stateVersion,
+      knownStateVersion,
     };
     // Auth-only: advertise the callable tool surface + a stable `gameOver`
     // alias so CLI callers can dispatch without a second hop.
@@ -983,10 +1006,12 @@ export class LobbyDO extends DurableObject<Env> {
   // ─────────────────────────────────────────────────────────────────────────
 
   private async saveState(): Promise<void> {
+    this._stateVersion += 1;
     await Promise.all([
       this.ctx.storage.put('meta', this._meta),
       this.ctx.storage.put('agents', this._agents),
       this.ctx.storage.put('phaseState', this._phaseState),
+      this.ctx.storage.put('stateVersion', this._stateVersion),
     ]);
   }
 
@@ -994,10 +1019,11 @@ export class LobbyDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, agents, phaseState] = await Promise.all([
+      const [meta, agents, phaseState, stateVersion] = await Promise.all([
         this.ctx.storage.get<LobbyMeta>('meta'),
         this.ctx.storage.get<AgentEntry[]>('agents'),
         this.ctx.storage.get<unknown>('phaseState'),
+        this.ctx.storage.get<number>('stateVersion'),
       ]);
 
       // Drop the legacy single-array 'relay' key from pre-Phase-4.4 DOs.
@@ -1009,6 +1035,7 @@ export class LobbyDO extends DurableObject<Env> {
       this._meta = meta ?? null;
       this._agents = agents ?? [];
       this._phaseState = phaseState ?? null;
+      this._stateVersion = stateVersion ?? 0;
       this._loaded = true;
     });
   }

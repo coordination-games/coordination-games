@@ -137,6 +137,14 @@ export class GameRoomDO extends DurableObject<Env> {
   private _state: unknown = null;
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0 };
+  /**
+   * Monotonic counter bumped on every viewer-visible state mutation
+   * (action applied, game created, force-finished, meta-finished flipped).
+   * Does NOT bump on chat/relay publishes. Clients echo the last-seen
+   * value as `?knownStateVersion=N`; when it matches, the server omits
+   * the `state` block on the response and the client reuses its cache.
+   */
+  private _stateVersion = 0;
   private _relayClient: DOStorageRelayClient | null = null;
   private _spectatorSnapshots: unknown[] = []; // spectator view at each progress point
   // Last publicSnapshotIndex() value pushed to spectator WS sockets —
@@ -416,10 +424,14 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.ensureLoaded();
     if (!this._meta) return Response.json({ error: 'Game not found' }, { status: 404 });
     this._meta.finished = true;
+    this._stateVersion += 1;
     try {
       await this.ctx.storage.deleteAlarm();
     } catch {}
-    await this.ctx.storage.put('meta', this._meta);
+    await Promise.all([
+      this.ctx.storage.put('meta', this._meta),
+      this.ctx.storage.put('stateVersion', this._stateVersion),
+    ]);
     for (const ws of this.ctx.getWebSockets()) {
       try {
         ws.close(1000, 'Game force-finished by admin');
@@ -602,6 +614,7 @@ export class GameRoomDO extends DurableObject<Env> {
     const initialCtx = { handles: meta.handleMap, relayMessages: [] };
     const initialSnapshot = plugin.buildSpectatorView(initialState, null, initialCtx);
 
+    this._stateVersion = 1;
     await Promise.all([
       this.ctx.storage.put('meta', meta),
       this.ctx.storage.put('state', initialState),
@@ -610,6 +623,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.storage.put('config', config),
       this.ctx.storage.put('snapshotCount', 1),
       this.ctx.storage.put('snapshot:0', initialSnapshot),
+      this.ctx.storage.put('stateVersion', this._stateVersion),
     ]);
 
     this._meta = meta;
@@ -672,14 +686,20 @@ export class GameRoomDO extends DurableObject<Env> {
     // Unified envelope for both. Player callers get a fog-filtered current
     // state + top-level `currentPhase`/`gameOver`; spectator callers get
     // the delayed public snapshot. `?sinceIdx=N` is honored on both paths
-    // so CLI callers can request relay deltas.
+    // so CLI callers can request relay deltas. `?knownStateVersion=N` is
+    // the ETag cursor — when it matches the DO's current version the server
+    // omits the state block and the client reuses its cache.
     const url = new URL(request.url);
     const rawSince = url.searchParams.get('sinceIdx');
     const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    const rawVersion = url.searchParams.get('knownStateVersion');
+    const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
     if (playerId !== null) {
-      return Response.json(await this.buildPlayerPayload(playerId, sinceIdx));
+      return Response.json(await this.buildPlayerPayload(playerId, sinceIdx, knownStateVersion));
     }
-    return Response.json(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx));
+    return Response.json(
+      await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx, knownStateVersion),
+    );
   }
 
   /**
@@ -779,7 +799,11 @@ export class GameRoomDO extends DurableObject<Env> {
     const url = new URL(request.url);
     const rawSince = url.searchParams.get('sinceIdx');
     const sinceIdx = rawSince === null ? undefined : Number(rawSince);
-    return Response.json(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx));
+    const rawVersion = url.searchParams.get('knownStateVersion');
+    const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+    return Response.json(
+      await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx, knownStateVersion),
+    );
   }
 
   private async handleReplay(): Promise<Response> {
@@ -828,14 +852,22 @@ export class GameRoomDO extends DurableObject<Env> {
     const playerId = request.headers.get('X-Player-Id');
     // `?sinceIdx=N` filters the initial snapshot to relay envelopes >= N
     // so a CLI reconnect doesn't replay history it already has.
-    const rawSince = new URL(request.url).searchParams.get('sinceIdx');
+    // `?knownStateVersion=N` is the ETag cursor — when it matches the
+    // current version the initial frame omits the state block (the client
+    // is reconnecting with a fresh cache and only needs wake-up pulses).
+    const url = new URL(request.url);
+    const rawSince = url.searchParams.get('sinceIdx');
     const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    const rawVersion = url.searchParams.get('knownStateVersion');
+    const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
 
     if (playerId) {
       // Authenticated player connection
       this.ctx.acceptWebSocket(server, [playerId]);
       if (this._meta && this._plugin) {
-        server.send(JSON.stringify(await this.buildPlayerPayload(playerId, sinceIdx)));
+        server.send(
+          JSON.stringify(await this.buildPlayerPayload(playerId, sinceIdx, knownStateVersion)),
+        );
       }
     } else {
       // Unauthenticated spectator connection — same unified payload that
@@ -844,7 +876,9 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
       if (this._meta && this._plugin) {
         server.send(
-          JSON.stringify(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx)),
+          JSON.stringify(
+            await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx, knownStateVersion),
+          ),
         );
       }
     }
@@ -1080,10 +1114,12 @@ export class GameRoomDO extends DurableObject<Env> {
       this.writeSummaryToD1();
     }
 
+    this._stateVersion += 1;
     const storagePuts: Promise<void>[] = [
       this.ctx.storage.put('state', this._state),
       this.ctx.storage.put('actionLog', this._actionLog),
       this.ctx.storage.put('progress', this._progress),
+      this.ctx.storage.put('stateVersion', this._stateVersion),
     ];
     if (progressAdvanced) {
       const idx = this._spectatorSnapshots.length - 1;
@@ -1332,7 +1368,11 @@ export class GameRoomDO extends DurableObject<Env> {
    * top level so CLI / bot callers can read the callable tool surface
    * without a second endpoint.
    */
-  private async buildPlayerPayload(playerId: string, sinceIdx?: number): Promise<SpectatorPayload> {
+  private async buildPlayerPayload(
+    playerId: string,
+    sinceIdx?: number,
+    knownStateVersion?: number,
+  ): Promise<SpectatorPayload> {
     if (!this._meta || !this._plugin) {
       return {
         type: 'spectator_pending',
@@ -1343,6 +1383,7 @@ export class GameRoomDO extends DurableObject<Env> {
           progressCounter: null,
           finished: false,
           sinceIdx: 0,
+          stateVersion: this._stateVersion,
           lastUpdate: Date.now(),
         },
       };
@@ -1373,6 +1414,8 @@ export class GameRoomDO extends DurableObject<Env> {
       relay: relayClient,
       relayTip,
       sinceIdx,
+      stateVersion: this._stateVersion,
+      knownStateVersion,
       currentPhase,
       gameOver: finished,
     });
@@ -1403,6 +1446,7 @@ export class GameRoomDO extends DurableObject<Env> {
   private async buildSpectatorPayload(
     viewer: SpectatorViewer,
     sinceIdx?: number,
+    knownStateVersion?: number,
   ): Promise<SpectatorPayload> {
     if (!this._meta) {
       // Defensive: caller should have checked meta before invoking us, but
@@ -1417,6 +1461,7 @@ export class GameRoomDO extends DurableObject<Env> {
           progressCounter: null,
           finished: false,
           sinceIdx: 0,
+          stateVersion: this._stateVersion,
           lastUpdate: Date.now(),
         },
       };
@@ -1436,6 +1481,8 @@ export class GameRoomDO extends DurableObject<Env> {
       relay: relayClient,
       relayTip,
       sinceIdx,
+      stateVersion: this._stateVersion,
+      knownStateVersion,
     });
   }
 
@@ -1510,16 +1557,25 @@ export class GameRoomDO extends DurableObject<Env> {
     if (this._loaded) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       if (this._loaded) return;
-      const [meta, state, actionLog, progress, config, snapshotCount, lastSpectatorIdx] =
-        await Promise.all([
-          this.ctx.storage.get<GameMeta>('meta'),
-          this.ctx.storage.get<unknown>('state'),
-          this.ctx.storage.get<ActionEntry[]>('actionLog'),
-          this.ctx.storage.get<ProgressState>('progress'),
-          this.ctx.storage.get<unknown>('config'),
-          this.ctx.storage.get<number>('snapshotCount'),
-          this.ctx.storage.get<number | null>('lastSpectatorIdx'),
-        ]);
+      const [
+        meta,
+        state,
+        actionLog,
+        progress,
+        config,
+        snapshotCount,
+        lastSpectatorIdx,
+        stateVersion,
+      ] = await Promise.all([
+        this.ctx.storage.get<GameMeta>('meta'),
+        this.ctx.storage.get<unknown>('state'),
+        this.ctx.storage.get<ActionEntry[]>('actionLog'),
+        this.ctx.storage.get<ProgressState>('progress'),
+        this.ctx.storage.get<unknown>('config'),
+        this.ctx.storage.get<number>('snapshotCount'),
+        this.ctx.storage.get<number | null>('lastSpectatorIdx'),
+        this.ctx.storage.get<number>('stateVersion'),
+      ]);
 
       // Drop the legacy prevProgressState key from older games.
       this.ctx.storage.delete('prevProgressState').catch(() => {});
@@ -1562,6 +1618,7 @@ export class GameRoomDO extends DurableObject<Env> {
       this._state = state ?? null;
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0 };
+      this._stateVersion = stateVersion ?? 0;
       // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
       this._config = config ?? null;
       this._spectatorSnapshots = loadedSnapshots;

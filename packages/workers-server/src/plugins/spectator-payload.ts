@@ -45,6 +45,15 @@ export interface SpectatorPayloadMeta {
    * the current public relay tip. Always server-authoritative (clamped).
    */
   sinceIdx: number;
+  /**
+   * Monotonic counter that increments whenever viewer-visible game/lobby
+   * state actually mutates (phase transitions, action results, alarms,
+   * join/disband). Does NOT bump on pure relay publishes (chat) —
+   * those ride the `sinceIdx` cursor. Clients echo the last-seen value
+   * as `?knownStateVersion=N`; when it matches, the server omits
+   * `state`/`currentPhase`/`gameOver` and the client reuses its cache.
+   */
+  stateVersion: number;
   /** Wall-clock send time (ms epoch) — handy for client-side staleness checks. */
   lastUpdate: number;
 }
@@ -59,8 +68,12 @@ export interface SpectatorPayloadMeta {
 export interface SpectatorStateUpdatePayload {
   type: 'state_update';
   meta: SpectatorPayloadMeta;
-  /** Game-specific spectator view (`game.buildSpectatorView` output). */
-  state: unknown;
+  /**
+   * Game-specific spectator view (`game.buildSpectatorView` output).
+   * `null` means "ETag match — reuse your cached state"; see
+   * `SpectatorPayloadMeta.stateVersion`.
+   */
+  state: unknown | null;
   /** Relay envelopes filtered through `RelayClient.visibleTo(viewer)`. */
   relay: RelayEnvelope[];
   /**
@@ -127,6 +140,19 @@ export interface BuildSpectatorPayloadCtx {
    */
   sinceIdx?: number | undefined;
   /**
+   * Current monotonic state-version for the DO. Always included in
+   * `meta.stateVersion` so clients can cache + echo it back. See
+   * `SpectatorPayloadMeta.stateVersion`.
+   */
+  stateVersion: number;
+  /**
+   * Client-echoed last-seen `stateVersion`. When it equals the current
+   * `stateVersion`, the payload omits `state`/`currentPhase`/`gameOver`
+   * (ETag-style 304) and the client reuses its cached view. Pre-window
+   * payloads ignore this (spectator_pending never carries state anyway).
+   */
+  knownStateVersion?: number | undefined;
+  /**
    * Auth-only fields. Pass these in when the viewer is a player; leave
    * undefined for spectator viewers. Carried verbatim onto the payload.
    */
@@ -172,11 +198,29 @@ export async function buildSpectatorPayload(
     progressCounter: ctx.publicSnapshotIndex,
     finished: ctx.finished,
     sinceIdx: nextCursor,
+    stateVersion: ctx.stateVersion,
     lastUpdate: Date.now(),
   };
 
   if (ctx.publicSnapshotIndex === null || ctx.state === null) {
     return { type: 'spectator_pending', meta };
+  }
+
+  // ETag short-circuit: client already has this stateVersion cached.
+  // Emit an empty-state frame — relay deltas still flow through meta.sinceIdx.
+  // `currentPhase` and `gameOver` are omitted because they're viewer-visible
+  // state and always change in lockstep with `state` itself.
+  if (
+    ctx.knownStateVersion !== undefined &&
+    Number.isFinite(ctx.knownStateVersion) &&
+    ctx.knownStateVersion === ctx.stateVersion
+  ) {
+    return {
+      type: 'state_update',
+      meta,
+      state: null,
+      relay: filteredRelay,
+    };
   }
 
   const payload: SpectatorStateUpdatePayload = {
