@@ -242,7 +242,12 @@ export class ApiClient {
     const state = await this.getState();
     const lobbyId = state.lobbyId as string | undefined;
     const gameId = state.gameId as string | undefined;
-    const loc: 'game' | 'lobby' | null = gameId ? 'game' : lobbyId ? 'lobby' : null;
+    // lobbyId wins over gameId: while a game is forming, LobbyDO fills
+    // `meta.gameId` with the lobby ID as its spectator-stream identifier,
+    // which flattens into `state.gameId`. Routing to `/ws/game/...` in that
+    // case 403s. Post-spawn, `handlePlayerState` routes to the GameRoomDO,
+    // which omits lobbyId from the payload, so gameId alone is authoritative.
+    const loc: 'game' | 'lobby' | null = lobbyId ? 'lobby' : gameId ? 'game' : null;
     if (!loc) return state;
 
     const wsBase = this.serverUrl.replace(/^http/, 'ws');
