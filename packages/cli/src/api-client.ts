@@ -1,3 +1,4 @@
+import WebSocket from 'ws';
 import { loadConfig } from './config.js';
 import type {
   AuthChallengeResponse,
@@ -70,6 +71,13 @@ export function flattenStateEnvelope(raw: unknown): StateResponse {
  *
  * The DO sends a snapshot immediately on connect; that first frame is
  * ignored. Any subsequent frame (or a close/error) ends the wait.
+ *
+ * Uses the `ws` npm package (not Node's built-in `WebSocket`) so we can
+ * `.terminate()` the socket — a force-destroy that releases the event
+ * loop hold immediately. The built-in's graceful `.close()` leaves the
+ * TCP socket in CLOSE_WAIT for up to 30s on Cloudflare Workers, which
+ * blocks CLI process exit. See `wiki/architecture/data-flow.md`
+ * "Change Notification" for the CF-specific rationale.
  */
 function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
@@ -81,7 +89,7 @@ function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
       settled = true;
       clearTimeout(timer);
       try {
-        ws?.close();
+        ws?.terminate();
       } catch {}
       resolve();
     };
@@ -92,12 +100,12 @@ function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
       finish();
       return;
     }
-    ws.addEventListener('message', () => {
+    ws.on('message', () => {
       frames += 1;
       if (frames >= 2) finish();
     });
-    ws.addEventListener('error', finish);
-    ws.addEventListener('close', finish);
+    ws.on('error', finish);
+    ws.on('close', finish);
   });
 }
 

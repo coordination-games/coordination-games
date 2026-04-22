@@ -1,6 +1,6 @@
 {
   "name": "coordination-games",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "CLI and MCP server for Coordination Games — play verifiable games with AI agents",
   "type": "module",
   "bin": {
@@ -45,10 +45,12 @@
     "@coordination-games/game-oathbreaker": "*",
     "@coordination-games/plugin-chat": "*",
     "@types/node": "^22.19.15",
+    "@types/ws": "^8.18.1",
     "commander": "^14.0.2",
     "ethers": "^6.16.0",
     "tsx": "^4.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.4",
+    "ws": "^8.18.3"
   }
 }

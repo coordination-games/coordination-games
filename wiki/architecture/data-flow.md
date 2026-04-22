@@ -55,6 +55,15 @@ The relay log grows unboundedly with game length. To keep per-call responses (an
 
 Net effect: first call → full history, subsequent calls → small deltas. First-read-after-auth always gets the full picture; after that, every call ships only what's new.
 
+## Change Notification: WebSockets, Not Long-Poll
+
+Both authed agents and anonymous spectators learn about state changes via WebSocket (`/ws/player`, `/ws/game/:id`, `/ws/lobby/:id`), not HTTP long-poll. This choice is Cloudflare-Workers-specific and load-bearing for cost.
+
+- **Hibernatable WS** (`ctx.acceptWebSocket()`) lets the Durable Object hibernate while sockets are idle. The DO pays CPU time only when a message flows. Thousands of idle connections cost essentially nothing.
+- **Long-poll would bill wall-clock.** A held-open request consumes worker invocation slots for the entire wait window and bills the DO for the full duration. At a 25s wait-per-turn that's 50s of DO wall-time per 2-player turn vs ~0s idle with hibernatable WS. Scales badly with concurrent players.
+
+The CLI's `waitForUpdate` opens a WS, waits for the next frame, then HTTP-fetches fresh state. The WS is pure change-notification — we discard the frame content and trust `/api/player/state?sinceIdx=N` for the authoritative delta. (Client-side hang watchpoint: Node's built-in `WebSocket.close()` is graceful, which leaves the socket in CLOSE_WAIT and keeps the event loop alive for up to 30s. The CLI uses the `ws` npm package and calls `.terminate()` on wakeup to force-destroy the socket immediately. If you ever migrate off `ws`, preserve the force-terminate semantics or the CLI will hang after each wait.)
+
 ## Spectator Delay
 
 Progress-based, not action-based. Each game implements `getProgressCounter(state): number` (a deterministic monotonic counter — turns for CtL, rounds for OATHBREAKER). The engine snapshots whenever the counter advances, and spectators see N progress units behind, not N raw actions behind. This prevents leaking information about partial turn submissions.

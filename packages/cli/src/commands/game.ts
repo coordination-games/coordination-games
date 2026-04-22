@@ -403,13 +403,6 @@ export function registerGameCommands(program: Command) {
         }
 
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-        // The WebSocket opened in waitForUpdate initiates a graceful close
-        // but Node keeps the event loop alive waiting for the peer close
-        // ack — that's up to 30s of phantom hang AFTER the JSON has been
-        // written to stdout. Shell agents read the pipe and see EOF only
-        // when the process exits, so we force-exit here. This is safe:
-        // `wait` is a one-shot CLI command.
-        process.exit(0);
       } catch (err) {
         process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
