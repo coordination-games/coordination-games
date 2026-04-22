@@ -671,13 +671,14 @@ export class GameRoomDO extends DurableObject<Env> {
 
     // Unified envelope for both. Player callers get a fog-filtered current
     // state + top-level `currentPhase`/`gameOver`; spectator callers get
-    // the delayed public snapshot.
-    if (playerId !== null) {
-      return Response.json(await this.buildPlayerPayload(playerId));
-    }
+    // the delayed public snapshot. `?sinceIdx=N` is honored on both paths
+    // so CLI callers can request relay deltas.
     const url = new URL(request.url);
     const rawSince = url.searchParams.get('sinceIdx');
     const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    if (playerId !== null) {
+      return Response.json(await this.buildPlayerPayload(playerId, sinceIdx));
+    }
     return Response.json(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx));
   }
 
@@ -825,20 +826,26 @@ export class GameRoomDO extends DurableObject<Env> {
     // X-Player-Id is set by the Worker after validating the Bearer token.
     // Absent = spectator (no auth required).
     const playerId = request.headers.get('X-Player-Id');
+    // `?sinceIdx=N` filters the initial snapshot to relay envelopes >= N
+    // so a CLI reconnect doesn't replay history it already has.
+    const rawSince = new URL(request.url).searchParams.get('sinceIdx');
+    const sinceIdx = rawSince === null ? undefined : Number(rawSince);
 
     if (playerId) {
       // Authenticated player connection
       this.ctx.acceptWebSocket(server, [playerId]);
       if (this._meta && this._plugin) {
-        server.send(JSON.stringify(await this.buildPlayerPayload(playerId)));
+        server.send(JSON.stringify(await this.buildPlayerPayload(playerId, sinceIdx)));
       }
     } else {
       // Unauthenticated spectator connection — same unified payload that
-      // HTTP /state and /spectator return. WS sends the full snapshot on
-      // connect (sinceIdx omitted), then deltas on each broadcast.
+      // HTTP /state and /spectator return. WS sends the initial snapshot
+      // (filtered by sinceIdx if supplied), then deltas on each broadcast.
       this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
       if (this._meta && this._plugin) {
-        server.send(JSON.stringify(await this.buildSpectatorPayload({ kind: 'spectator' })));
+        server.send(
+          JSON.stringify(await this.buildSpectatorPayload({ kind: 'spectator' }, sinceIdx)),
+        );
       }
     }
 
@@ -1325,7 +1332,7 @@ export class GameRoomDO extends DurableObject<Env> {
    * top level so CLI / bot callers can read the callable tool surface
    * without a second endpoint.
    */
-  private async buildPlayerPayload(playerId: string): Promise<SpectatorPayload> {
+  private async buildPlayerPayload(playerId: string, sinceIdx?: number): Promise<SpectatorPayload> {
     if (!this._meta || !this._plugin) {
       return {
         type: 'spectator_pending',
@@ -1365,6 +1372,7 @@ export class GameRoomDO extends DurableObject<Env> {
       viewer,
       relay: relayClient,
       relayTip,
+      sinceIdx,
       currentPhase,
       gameOver: finished,
     });

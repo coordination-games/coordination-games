@@ -166,7 +166,7 @@ export class LobbyDO extends DurableObject<Env> {
 
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       await this.ensureLoaded();
-      return await this.handleWebSocket();
+      return await this.handleWebSocket(request);
     }
 
     // Create is allowed before loading (it's the initializer)
@@ -507,15 +507,17 @@ export class LobbyDO extends DurableObject<Env> {
     return Response.json({ ok: true });
   }
 
-  private async handleWebSocket(): Promise<Response> {
+  private async handleWebSocket(request: Request): Promise<Response> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server, [TAG_SPECTATOR]);
     if (this._meta) {
       // Phase 7.1 — spectator WS receives the same unified payload that
-      // HTTP `/state` returns. Initial connect → full snapshot (no
-      // `sinceIdx`); subsequent broadcasts emit deltas.
-      server.send(JSON.stringify(await this.buildLobbySpectatorPayload(null)));
+      // HTTP `/state` returns. `?sinceIdx=N` filters the initial snapshot
+      // for CLI reconnects; subsequent broadcasts emit deltas.
+      const rawSince = new URL(request.url).searchParams.get('sinceIdx');
+      const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+      server.send(JSON.stringify(await this.buildLobbySpectatorPayload(null, sinceIdx)));
     }
     return new Response(null, { status: 101, webSocket: client });
   }

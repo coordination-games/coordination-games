@@ -112,6 +112,13 @@ function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
 export class ApiClient {
   private serverUrl: string;
   private authToken?: string;
+  /**
+   * Relay delta cursor. Starts at 0 (full history on first read), advances
+   * from each state envelope's `meta.sinceIdx`. The server clamps; we just
+   * echo what it returns. Reset to 0 on auth change. Pure plumbing — the
+   * MCP tool surface never exposes it to the agent.
+   */
+  private relayCursor = 0;
 
   constructor(serverUrl?: string) {
     this.serverUrl = serverUrl || loadConfig().serverUrl;
@@ -119,6 +126,15 @@ export class ApiClient {
 
   setAuthToken(token: string) {
     this.authToken = token;
+    // New auth = new session = no assumed history.
+    this.relayCursor = 0;
+  }
+
+  /** Bump the cursor from a server-supplied next-sinceIdx. */
+  private advanceCursor(next: unknown): void {
+    if (typeof next === 'number' && Number.isFinite(next) && next > this.relayCursor) {
+      this.relayCursor = Math.floor(next);
+    }
   }
 
   private headers(): Record<string, string> {
@@ -225,7 +241,10 @@ export class ApiClient {
   }
 
   async getState(): Promise<StateResponse> {
-    return flattenStateEnvelope(await this.get('/api/player/state'));
+    const raw = await this.get(`/api/player/state?sinceIdx=${this.relayCursor}`);
+    const flat = flattenStateEnvelope(raw);
+    this.advanceCursor((raw as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
+    return flat;
   }
 
   /**
@@ -234,10 +253,15 @@ export class ApiClient {
    * via `player_sessions` on `/ws/player`, so the client never carries a
    * lobby or game ID here — the same "your current session" scoping as
    * `/api/player/state` and `/api/player/tool`.
+   *
+   * `sinceIdx` rides along on the WS URL purely to shrink the initial
+   * snapshot frame the server pushes on connect. The wakeup frames
+   * themselves are discarded — fresh state comes from the follow-up
+   * `getState()` which is the authoritative delta source.
    */
   async waitForUpdate(): Promise<StateResponse> {
     const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
-    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}`;
+    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}&sinceIdx=${this.relayCursor}`;
     await waitForWsWakeup(wsUrl, 25_000);
     return this.getState();
   }
@@ -265,6 +289,12 @@ export class ApiClient {
    * plugin-relay bodies) pass through unchanged.
    */
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-    return flattenStateEnvelope(await this.post('/api/player/tool', { toolName, args }));
+    const raw = await this.post('/api/player/tool', { toolName, args });
+    // Lobby tool responses carry a full state envelope with `meta.sinceIdx`;
+    // game tool responses are tiny `{success, progressCounter}` with no meta.
+    // Bumping from whichever-is-present keeps the next `getState` delta
+    // from re-delivering envelopes already consumed here.
+    this.advanceCursor((raw as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
+    return flattenStateEnvelope(raw);
   }
 }

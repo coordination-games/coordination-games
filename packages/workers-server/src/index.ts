@@ -487,7 +487,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (pathname === '/api/player/state' && method === 'GET') {
     const auth = await requireAuth(request, env);
     if (auth instanceof Response) return auth;
-    return handlePlayerState(auth, env);
+    return handlePlayerState(auth, env, request);
   }
 
   // POST /api/player/ws-ticket — trade a Bearer token for a single-use, 30s
@@ -503,7 +503,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (pathname === '/api/player/wait' && method === 'GET') {
     const auth = await requireAuth(request, env);
     if (auth instanceof Response) return auth;
-    return handlePlayerState(auth, env);
+    return handlePlayerState(auth, env, request);
   }
 
   // POST /api/player/lobby/join — join a lobby
@@ -804,7 +804,7 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 // Player-scoped handlers (auth required)
 // ---------------------------------------------------------------------------
 
-async function handlePlayerState(playerId: string, env: Env): Promise<Response> {
+async function handlePlayerState(playerId: string, env: Env, request?: Request): Promise<Response> {
   const location = await getPlayerLocation(playerId, env);
   if (!location) {
     return Response.json(
@@ -815,8 +815,11 @@ async function handlePlayerState(playerId: string, env: Env): Promise<Response> 
 
   const stub =
     location.kind === 'game' ? getGameDO(env, location.gameId) : getLobbyDO(env, location.lobbyId);
+  // Forward `?sinceIdx=N` (and any other pass-through query params) so the
+  // DO's state builder can return a relay delta instead of the full history.
+  const incoming = request ? new URL(request.url).search : '';
   return stub.fetch(
-    new Request('https://do/state', {
+    new Request(`https://do/state${incoming}`, {
       method: 'GET',
       headers: { 'X-Player-Id': playerId },
     }),
