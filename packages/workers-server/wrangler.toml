@@ -45,9 +45,9 @@ new_classes = ["GameRoomDO", "LobbyDO"]
 ENVIRONMENT = "production"
 
 [[routes]]
-pattern = "api.capturethelobster.com/*"
-zone_name = "capturethelobster.com"
+pattern = "api.games.coop/*"
+zone_name = "games.coop"
 
 [[worker_domains]]
-hostname = "api.capturethelobster.com"
-zone_name = "capturethelobster.com"
+hostname = "api.games.coop"
+zone_name = "games.coop"

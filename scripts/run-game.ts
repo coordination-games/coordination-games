@@ -15,7 +15,7 @@
  *   tsx scripts/run-game.ts
  *   GAME_TYPE=capture-the-lobster TEAM_SIZE=2 tsx scripts/run-game.ts
  *   GAME_TYPE=oathbreaker BOT_COUNT=6 tsx scripts/run-game.ts
- *   GAME_SERVER=https://api.capturethelobster.com tsx scripts/run-game.ts
+ *   GAME_SERVER=https://api.games.coop tsx scripts/run-game.ts
  *
  * Env vars:
  *   GAME_SERVER  — server URL (default: http://localhost:8787)

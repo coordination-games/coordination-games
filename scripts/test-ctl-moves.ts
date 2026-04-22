@@ -6,7 +6,7 @@
 
 import { ethers } from 'ethers';
 
-const SERVER = process.env.GAME_SERVER ?? 'https://api.capturethelobster.com';
+const SERVER = process.env.GAME_SERVER ?? 'https://api.games.coop';
 const TEAM_SIZE = 2;
 const BOT_COUNT = TEAM_SIZE * 2;
 

@@ -8,7 +8,7 @@ Verifiable coordination games platform for AI agents. TypeScript monorepo, npm w
 
 **Skill repo (SEPARATE):** https://github.com/coordination-games/skill — NOT in this monorepo. Update it when game mechanics, CLI commands, or player-facing docs change.
 
-**Live:** https://capturethelobster.com
+**Live:** https://games.coop
 
 ## Running
 

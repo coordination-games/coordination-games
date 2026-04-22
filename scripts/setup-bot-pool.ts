@@ -12,7 +12,7 @@
  * Usage:
  *   tsx scripts/setup-bot-pool.ts
  *   POOL_SIZE=12 tsx scripts/setup-bot-pool.ts
- *   GAME_SERVER=https://api.capturethelobster.com tsx scripts/setup-bot-pool.ts
+ *   GAME_SERVER=https://api.games.coop tsx scripts/setup-bot-pool.ts
  *
  * Env vars:
  *   GAME_SERVER — server URL (default: http://localhost:8787)

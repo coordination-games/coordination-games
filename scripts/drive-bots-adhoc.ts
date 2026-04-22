@@ -4,7 +4,7 @@
 import { api, authenticate, loadPool, runClaudeAgent } from './lib/bot-agent.js';
 
 async function main() {
-  const SERVER = process.env.GAME_SERVER ?? 'https://api.capturethelobster.com';
+  const SERVER = process.env.GAME_SERVER ?? 'https://api.games.coop';
   const LOBBY_ID = process.env.LOBBY_ID ?? 'd1f9e2a7-7d23-4beb-b61b-e443aefd751e';
   const bots = (await loadPool()).slice(0, 3);
   console.log(`Driving ${bots.length} bots for lobby ${LOBBY_ID.slice(0, 8)} on ${SERVER}...\n`);

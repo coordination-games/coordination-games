@@ -19,7 +19,7 @@
  * Usage:
  *   tsx scripts/fill-bots.ts <lobbyId>                # fill all empty seats
  *   tsx scripts/fill-bots.ts <lobbyId> 3              # join exactly 3 bots
- *   GAME_SERVER=https://api.capturethelobster.com tsx scripts/fill-bots.ts <id>
+ *   GAME_SERVER=https://api.games.coop tsx scripts/fill-bots.ts <id>
  *
  * Env vars:
  *   GAME_SERVER — server URL (default: http://localhost:8787)

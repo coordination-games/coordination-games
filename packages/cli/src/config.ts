@@ -5,7 +5,7 @@ import * as path from 'node:path';
 const COORD_DIR = path.join(os.homedir(), '.coordination');
 const CONFIG_PATH = path.join(COORD_DIR, 'config.json');
 
-export const DEFAULT_SERVER_URL = 'https://api.capturethelobster.com';
+export const DEFAULT_SERVER_URL = 'https://api.games.coop';
 
 export interface Config {
   serverUrl: string;

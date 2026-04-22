@@ -4,7 +4,7 @@
 import { ethers } from 'ethers';
 import { api, authenticate, faucetBot, registerBotOnChain } from './lib/bot-agent.js';
 
-const SERVER = process.env.GAME_SERVER ?? 'https://api.capturethelobster.com';
+const SERVER = process.env.GAME_SERVER ?? 'https://api.games.coop';
 // Positional args first, then env fallback, then defaults.
 // Usage: `tsx scripts/create-lobby.ts [oathbreaker|capture-the-lobster] [teamSize]`
 const GAME_TYPE = process.argv[2] ?? process.env.GAME_TYPE ?? 'capture-the-lobster';

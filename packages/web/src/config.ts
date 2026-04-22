@@ -19,8 +19,7 @@ export const GITHUB_REPO_URL =
 export const MCP_SERVER_NAME =
   (import.meta.env.VITE_MCP_SERVER_NAME as string | undefined) ?? 'capture-the-lobster';
 export const MCP_SERVER_URL =
-  (import.meta.env.VITE_MCP_SERVER_URL as string | undefined) ??
-  'https://capturethelobster.com/mcp';
+  (import.meta.env.VITE_MCP_SERVER_URL as string | undefined) ?? 'https://games.coop/mcp';
 
 export function mcpInstallCommand(): string {
   return (
