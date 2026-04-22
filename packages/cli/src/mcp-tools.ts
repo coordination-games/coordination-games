@@ -287,11 +287,16 @@ export function registerGameTools(
 
   server.tool(
     'get_state',
-    'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*.',
-    {},
-    async () => {
+    'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*. Normally the client caches state and requests only deltas from the server; pass `fresh: true` to bypass the cache and force a full re-sync (rarely needed — use only if you suspect the cache is stale).',
+    {
+      fresh: z
+        .boolean()
+        .optional()
+        .describe('Bypass client-side state cache and refetch full state'),
+    },
+    async ({ fresh }) => {
       try {
-        const result = await client.getState();
+        const result = await client.getState({ fresh });
         return jsonResult(result);
       } catch (err) {
         return jsonError(err);

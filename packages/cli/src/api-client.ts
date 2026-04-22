@@ -145,6 +145,25 @@ export class ApiClient {
    * MCP tool surface never exposes it to the agent.
    */
   private relayCursor = 0;
+  /**
+   * ETag cursor. Starts at 0 (force full state on first read), advances
+   * from each state envelope's `meta.stateVersion`. Echoed back to the
+   * server as `?knownStateVersion=N`; when it matches, the server emits
+   * `state: null` and the client splices the cached block back in below.
+   * Reset to 0 on auth change.
+   */
+  private stateVersionCursor = 0;
+  /**
+   * Last-seen state/currentPhase/gameOver bundle. Spliced back into the
+   * raw envelope on an ETag hit (server sent `state: null`) so callers
+   * downstream never know the wire payload was short. `null` = no cached
+   * state yet; the next response will be a full snapshot.
+   */
+  private stateCache: {
+    state: unknown;
+    currentPhase?: unknown;
+    gameOver?: boolean;
+  } | null = null;
 
   constructor(serverUrl?: string) {
     this.serverUrl = serverUrl || loadConfig().serverUrl;
@@ -153,7 +172,17 @@ export class ApiClient {
   setAuthToken(token: string) {
     this.authToken = token;
     // New auth = new session = no assumed history.
+    this.resetSessionCursors();
+  }
+
+  /**
+   * Reset all per-session cursors + caches. Called on auth change and
+   * exposed for the MCP `state` tool's `fresh: true` option.
+   */
+  resetSessionCursors(): void {
     this.relayCursor = 0;
+    this.stateVersionCursor = 0;
+    this.stateCache = null;
   }
 
   /** Bump the cursor from a server-supplied next-sinceIdx. */
@@ -161,6 +190,39 @@ export class ApiClient {
     if (typeof next === 'number' && Number.isFinite(next) && next > this.relayCursor) {
       this.relayCursor = Math.floor(next);
     }
+  }
+
+  /**
+   * Splice cached state back into an ETag-hit envelope (server sent
+   * `state: null` meaning "you're up-to-date; reuse your cache"), or
+   * refresh the cache from a full envelope. Mutates and returns `env`.
+   * Non-envelope bodies pass through untouched.
+   */
+  private applyStateCache(env: Record<string, unknown>): Record<string, unknown> {
+    if (env.type !== 'state_update') return env;
+    const meta = env.meta as { stateVersion?: number } | undefined;
+    if (meta && typeof meta.stateVersion === 'number') {
+      this.stateVersionCursor = meta.stateVersion;
+    }
+    if (env.state === null && this.stateCache) {
+      env.state = this.stateCache.state;
+      if (this.stateCache.currentPhase !== undefined && env.currentPhase === undefined) {
+        env.currentPhase = this.stateCache.currentPhase;
+      }
+      if (this.stateCache.gameOver !== undefined && env.gameOver === undefined) {
+        env.gameOver = this.stateCache.gameOver;
+      }
+      return env;
+    }
+    if (env.state !== null && env.state !== undefined) {
+      const entry: { state: unknown; currentPhase?: unknown; gameOver?: boolean } = {
+        state: env.state,
+      };
+      if (env.currentPhase !== undefined) entry.currentPhase = env.currentPhase;
+      if (typeof env.gameOver === 'boolean') entry.gameOver = env.gameOver;
+      this.stateCache = entry;
+    }
+    return env;
   }
 
   private headers(): Record<string, string> {
@@ -267,10 +329,15 @@ export class ApiClient {
   }
 
   async getState(): Promise<StateResponse> {
-    const raw = await this.get(`/api/player/state?sinceIdx=${this.relayCursor}`);
-    const flat = flattenStateEnvelope(raw);
-    this.advanceCursor((raw as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
-    return flat;
+    const raw = await this.get(
+      `/api/player/state?sinceIdx=${this.relayCursor}&knownStateVersion=${this.stateVersionCursor}`,
+    );
+    const hydrated =
+      raw && typeof raw === 'object'
+        ? this.applyStateCache(raw as Record<string, unknown>)
+        : (raw as Record<string, unknown>);
+    this.advanceCursor((hydrated as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
+    return flattenStateEnvelope(hydrated);
   }
 
   /**
@@ -288,7 +355,7 @@ export class ApiClient {
   async waitForUpdate(): Promise<StateResponse> {
     const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
     const sinceIdx = this.relayCursor;
-    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}&sinceIdx=${sinceIdx}`;
+    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}&sinceIdx=${sinceIdx}&knownStateVersion=${this.stateVersionCursor}`;
     await waitForWsWakeup(wsUrl, 25_000, sinceIdx);
     return this.getState();
   }
@@ -317,11 +384,17 @@ export class ApiClient {
    */
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
     const raw = await this.post('/api/player/tool', { toolName, args });
-    // Lobby tool responses carry a full state envelope with `meta.sinceIdx`;
-    // game tool responses are tiny `{success, progressCounter}` with no meta.
-    // Bumping from whichever-is-present keeps the next `getState` delta
-    // from re-delivering envelopes already consumed here.
-    this.advanceCursor((raw as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
-    return flattenStateEnvelope(raw);
+    // Lobby tool responses carry a full state envelope with `meta.sinceIdx`
+    // + `meta.stateVersion`; game tool responses are tiny
+    // `{success, progressCounter}` with no meta. Bumping from whichever-is-
+    // present keeps the next `getState` delta from re-delivering envelopes
+    // already consumed here, and keeps the ETag cache fresh for
+    // full-envelope responses.
+    const hydrated =
+      raw && typeof raw === 'object'
+        ? this.applyStateCache(raw as Record<string, unknown>)
+        : (raw as Record<string, unknown>);
+    this.advanceCursor((hydrated as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
+    return flattenStateEnvelope(hydrated);
   }
 }

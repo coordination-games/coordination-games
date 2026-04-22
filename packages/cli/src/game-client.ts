@@ -122,9 +122,17 @@ export class GameClient {
     return this.api.getGuide(game);
   }
 
-  /** Get current game/lobby state (fog-filtered, with pipeline processing). */
-  async getState(): Promise<StateResponse> {
+  /**
+   * Get current game/lobby state (fog-filtered, with pipeline processing).
+   *
+   * Pass `fresh: true` to bypass the client-side ETag cache and force a
+   * full state refetch — useful when the caller suspects drift, or when
+   * the agent explicitly asks to re-sync. The default (false) echoes the
+   * last-seen `stateVersion` and lets the server omit unchanged state.
+   */
+  async getState(options: { fresh?: boolean | undefined } = {}): Promise<StateResponse> {
     await this.ensureAuth();
+    if (options.fresh) this.api.resetSessionCursors();
     const raw = await this.api.getState();
     return this.processResponse(raw);
   }
