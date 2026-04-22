@@ -410,8 +410,13 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
     mcpServers: {
       game: {
         command: 'npx',
+        // `-y coordination-games@latest` forces npx to fetch the current npm
+        // release each run instead of falling through to a stale global
+        // `coga` binary. Bot fill runs rarely enough that the cold-fetch cost
+        // (~a few seconds) is worth not debugging version skew.
         args: [
-          'coga',
+          '-y',
+          'coordination-games@latest',
           'serve',
           '--stdio',
           '--bot-mode',
