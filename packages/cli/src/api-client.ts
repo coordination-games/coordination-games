@@ -383,13 +383,11 @@ export class ApiClient {
    * plugin-relay bodies) pass through unchanged.
    */
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-    const raw = await this.post('/api/player/tool', { toolName, args });
-    // Lobby tool responses carry a full state envelope with `meta.sinceIdx`
-    // + `meta.stateVersion`; game tool responses are tiny
-    // `{success, progressCounter}` with no meta. Bumping from whichever-is-
-    // present keeps the next `getState` delta from re-delivering envelopes
-    // already consumed here, and keeps the ETag cache fresh for
-    // full-envelope responses.
+    // Every tool call returns a full state envelope now (Option A — unified
+    // response shape across game/lobby/plugin-relay declarers). Cursors on
+    // the URL drive the ETag short-circuit so chat-only paths stay tiny.
+    const path = `/api/player/tool?sinceIdx=${this.relayCursor}&knownStateVersion=${this.stateVersionCursor}`;
+    const raw = await this.post(path, { toolName, args });
     const hydrated =
       raw && typeof raw === 'object'
         ? this.applyStateCache(raw as Record<string, unknown>)

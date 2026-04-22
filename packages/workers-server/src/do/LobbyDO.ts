@@ -440,7 +440,15 @@ export class LobbyDO extends DurableObject<Env> {
     await this.saveState();
     await this.broadcastUpdate();
 
-    return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
+    const url = new URL(request.url);
+    const rawSince = url.searchParams.get('sinceIdx');
+    const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    const rawVersion = url.searchParams.get('knownStateVersion');
+    const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+    return Response.json({
+      ok: true,
+      ...(await this.buildLobbySpectatorPayload(playerId, sinceIdx, knownStateVersion)),
+    });
   }
 
   private async handleTool(request: Request): Promise<Response> {
@@ -496,9 +504,23 @@ export class LobbyDO extends DurableObject<Env> {
       turn: null,
     });
 
-    await this.saveState();
+    // Chat/relay publish does NOT mutate meta/agents/phaseState, so we
+    // skip saveState() here — bumping stateVersion on a pure chat publish
+    // would force every other player to refetch state unnecessarily. The
+    // relay cursor (sinceIdx) carries the new envelope to clients.
     await this.broadcastUpdate();
-    return Response.json({ ok: true });
+
+    // Return the post-publish state envelope — the ETag short-circuit
+    // keeps this tiny on chat-only paths.
+    const url = new URL(request.url);
+    const rawSince = url.searchParams.get('sinceIdx');
+    const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+    const rawVersion = url.searchParams.get('knownStateVersion');
+    const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+    return Response.json({
+      ok: true,
+      ...(await this.buildLobbySpectatorPayload(playerId, sinceIdx, knownStateVersion)),
+    });
   }
 
   private async handleDisband(): Promise<Response> {

@@ -276,14 +276,39 @@ function getLobbyDO(env: Env, lobbyId: string): DurableObjectStub {
  * from X-Player-Id — never from the body — so callers pass it here.
  * Pass null for system/internal calls.
  */
-function doRequest(method: string, path: string, body: unknown, playerId: string | null): Request {
+function doRequest(
+  method: string,
+  path: string,
+  body: unknown,
+  playerId: string | null,
+  query = '',
+): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (playerId !== null) headers['X-Player-Id'] = playerId;
-  return new Request(`https://do${path}`, {
+  return new Request(`https://do${path}${query}`, {
     method,
     headers,
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Pass-through client cursors for tool responses. Every tool call returns a
+ * full state envelope; the client echoes its last-seen `sinceIdx` +
+ * `knownStateVersion` as URL query params so the response is delta-only
+ * (relay envelopes since sinceIdx; `state: null` when stateVersion matches).
+ * Missing or malformed values fall through to "full state" on the DO side.
+ */
+function forwardCursorsQuery(request: Request): string {
+  const url = new URL(request.url);
+  const sinceIdx = url.searchParams.get('sinceIdx');
+  const knownStateVersion = url.searchParams.get('knownStateVersion');
+  const parts: string[] = [];
+  if (sinceIdx !== null) parts.push(`sinceIdx=${encodeURIComponent(sinceIdx)}`);
+  if (knownStateVersion !== null) {
+    parts.push(`knownStateVersion=${encodeURIComponent(knownStateVersion)}`);
+  }
+  return parts.length > 0 ? `?${parts.join('&')}` : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -462,6 +487,7 @@ export async function dispatchToolCall(
 
   const toolName = body?.toolName;
   const args = (body?.args ?? {}) as Record<string, unknown>;
+  const cursorsQuery = forwardCursorsQuery(request);
 
   if (typeof toolName !== 'string' || toolName.length === 0) {
     return errorResponse('INVALID_ARGS', 'toolName is required and must be a string', {
@@ -523,7 +549,7 @@ export async function dispatchToolCall(
         ? getGameDO(env, location.gameId)
         : getLobbyDO(env, location.lobbyId);
     try {
-      const resp = await stub.fetch(doRequest('POST', '/tool', { relay }, playerId));
+      const resp = await stub.fetch(doRequest('POST', '/tool', { relay }, playerId, cursorsQuery));
       logToolCall({
         sessionId,
         playerId,
@@ -656,7 +682,9 @@ export async function dispatchToolCall(
       const action = { type: toolName, ...(args as Record<string, unknown>) };
 
       const stub = getGameDO(env, location.gameId);
-      const resp = await stub.fetch(doRequest('POST', '/action', { action }, playerId));
+      const resp = await stub.fetch(
+        doRequest('POST', '/action', { action }, playerId, cursorsQuery),
+      );
 
       const bodyClone = (await resp
         .clone()
@@ -737,7 +765,7 @@ export async function dispatchToolCall(
     // LobbyDO /action handler reads playerId from the X-Player-Id header
     // and forwards the rest to the phase.
     const resp = await stub.fetch(
-      doRequest('POST', '/action', { type: toolName, payload: args }, playerId),
+      doRequest('POST', '/action', { type: toolName, payload: args }, playerId, cursorsQuery),
     );
     const bodyClone = (await resp
       .clone()

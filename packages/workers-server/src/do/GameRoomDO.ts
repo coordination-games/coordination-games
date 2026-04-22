@@ -664,7 +664,22 @@ export class GameRoomDO extends DurableObject<Env> {
     if (playerId instanceof Response) return playerId;
 
     try {
-      return Response.json(await this.applyActionInternal(playerId, action));
+      const applied = await this.applyActionInternal(playerId, action);
+      if (!applied.success || playerId === null) {
+        // Validation rejection (or system action with no viewer) — preserve
+        // the small shape the dispatcher already knows how to translate.
+        return Response.json(applied);
+      }
+      // Success — return the post-action state envelope for the caller.
+      // Cursors ride along on the URL so the DO can ETag + relay-delta the
+      // response the same way /state does.
+      const url = new URL(request.url);
+      const rawSince = url.searchParams.get('sinceIdx');
+      const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+      const rawVersion = url.searchParams.get('knownStateVersion');
+      const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+      const envelope = await this.buildPlayerPayload(playerId, sinceIdx, knownStateVersion);
+      return Response.json({ ok: true, ...applied, ...envelope });
     } catch (err) {
       const stack = err instanceof Error ? err.stack : undefined;
       console.error(`[GameRoomDO] Error in applyActionInternal:`, stack ?? err);
@@ -970,7 +985,16 @@ export class GameRoomDO extends DurableObject<Env> {
       };
       this.fanRelayToPlugins(synthesized);
 
-      return Response.json({ ok: true });
+      // Return the post-publish state envelope. Cursors on the URL drive
+      // the ETag + relay delta — typical chat-only path emits `state: null`
+      // and a one-envelope relay, so responses stay tiny.
+      const url = new URL(request.url);
+      const rawSince = url.searchParams.get('sinceIdx');
+      const sinceIdx = rawSince === null ? undefined : Number(rawSince);
+      const rawVersion = url.searchParams.get('knownStateVersion');
+      const knownStateVersion = rawVersion === null ? undefined : Number(rawVersion);
+      const envelope = await this.buildPlayerPayload(playerId, sinceIdx, knownStateVersion);
+      return Response.json({ ok: true, ...envelope });
     } catch (err) {
       console.error(`[GameRoomDO] Error in handleTool:`, err);
       return Response.json(
