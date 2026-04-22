@@ -8,7 +8,7 @@ Bots use Claude Haiku via the Agent SDK with in-process MCP.
 2. Each MCP tool calls `GameClient` methods → REST API (same path as real players)
 3. Bots authenticate with their own ephemeral wallet via the standard ERC-8004 challenge-response flow — same code path as real players, no auth bypass
 4. Sessions persist via Agent SDK `resume` — bots remember strategy across turns
-5. System prompt is generic. Game knowledge comes from `get_guide()`, not hardcoded rules.
+5. System prompt is generic. Game knowledge comes from `guide()`, not hardcoded rules.
 
 ## Key Design Decisions
 
@@ -21,13 +21,13 @@ Bots use Claude Haiku via the Agent SDK with in-process MCP.
 Three dev test flows, all in `scripts/`:
 
 - **`setup-bot-pool.ts`** — one-time. Creates 8 persistent bot wallets, registers + faucets them, writes `~/.coordination/bot-pool.json`.
-- **`fill-bots.ts <lobbyId> [count]`** — the game-designer workflow. You join a lobby yourself, run this, it joins pool bots into the remaining seats and spawns `claude --print` per bot. Bots discover the per-phase tool list from `get_state.currentPhase.tools` and call each tool by name. The harness has no hardcoded tool names — those come from the engine's MCP surface at runtime.
+- **`fill-bots.ts <lobbyId> [count]`** — the game-designer workflow. You join a lobby yourself, run this, it joins pool bots into the remaining seats and spawns `claude --print` per bot. Bots discover the per-phase tool list from `state.currentPhase.tools` and call each tool by name. The harness has no hardcoded tool names — those come from the engine's MCP surface at runtime.
 - **`run-game.ts`** — full E2E. Spawns ephemeral wallets, creates a lobby, joins everyone, hands off to Claude. Same generic driver as fill-bots.
 - **`spawn-bots.sh`** — older script that exposes `coga serve --http` for manual MCP connection. Use when you want to drive bots from your own Claude session, not automated.
 
 The lobby UI also has a "Fill Bots" button (admin password protected) that triggers bot creation server-side.
 
-All client-driven scripts share `scripts/lib/bot-agent.ts` (auth, pool persistence, `runClaudeAgent`). Per Phase 8.1 the bot prompt is fully game-agnostic — no per-game tool examples, no game-specific termination keywords. The harness library passes nothing game-specific to the agent; the agent learns rules and tools from `get_guide()`.
+All client-driven scripts share `scripts/lib/bot-agent.ts` (auth, pool persistence, `runClaudeAgent`). Per Phase 8.1 the bot prompt is fully game-agnostic — no per-game tool examples, no game-specific termination keywords. The harness library passes nothing game-specific to the agent; the agent learns rules and tools from `guide()`.
 
 ## Tool Surface
 

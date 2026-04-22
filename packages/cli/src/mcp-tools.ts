@@ -267,7 +267,7 @@ export function registerGameTools(
   // ---------------------------------------------------------------------------
 
   server.tool(
-    'get_guide',
+    'guide',
     'Get the game rules, your current status, and available tools. Pass game name to get a specific guide.',
     {
       game: z
@@ -286,7 +286,7 @@ export function registerGameTools(
   );
 
   server.tool(
-    'get_state',
+    'state',
     'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*. Normally the client caches state and requests only deltas from the server; pass `fresh: true` to bypass the cache and force a full re-sync (rarely needed — use only if you suspect the cache is stale).',
     {
       fresh: z
@@ -305,7 +305,7 @@ export function registerGameTools(
   );
 
   server.tool(
-    'wait_for_update',
+    'wait',
     'Main game loop — blocks until the next event (turn change, chat, phase transition)',
     {},
     async () => {
@@ -318,7 +318,7 @@ export function registerGameTools(
     },
   );
 
-  server.tool('list_lobbies', 'List available game lobbies', {}, async () => {
+  server.tool('lobbies', 'List available game lobbies', {}, async () => {
     try {
       const result = await client.listLobbies();
       return jsonResult(result);
@@ -328,7 +328,7 @@ export function registerGameTools(
   });
 
   server.tool(
-    'join_lobby',
+    'join',
     'Join an existing lobby by ID',
     { lobbyId: z.string().describe('The lobby ID to join') },
     async ({ lobbyId }) => {

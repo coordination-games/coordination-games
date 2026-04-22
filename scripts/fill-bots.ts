@@ -7,7 +7,7 @@
  * Haiku bots fill the remaining seats. Each bot gets its own `claude --print`
  * subprocess driving `coga serve --stdio` — same code path as any other player.
  *
- * Bots just call `get_guide`, read the rules, and use whatever per-name MCP
+ * Bots just call `guide`, read the rules, and use whatever per-name MCP
  * tools are exposed (e.g. propose_team / accept_team / choose_class / move).
  * No game-specific harness code.
  *
@@ -127,7 +127,7 @@ async function main() {
     process.exit(1);
   }
 
-  // 5. Spawn Claude agents for each bot. They read get_guide and drive
+  // 5. Spawn Claude agents for each bot. They read guide and drive
   //    the rest of the flow themselves — lobby phases, game, the works.
   console.log(`\nSpawning ${live.length} Claude agent(s) with model=${MODEL}...\n`);
   await Promise.all(

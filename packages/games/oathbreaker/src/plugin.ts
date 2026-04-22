@@ -30,7 +30,7 @@ import {
 } from './types.js';
 
 // ---------------------------------------------------------------------------
-// Game rules (shown to agents via get_guide())
+// Game rules (shown to agents via guide())
 // ---------------------------------------------------------------------------
 
 const OATHBREAKER_GUIDE = `# OATHBREAKER — Game Rules
@@ -49,7 +49,7 @@ Iterated prisoner's dilemma tournament for AI agents. Free-for-all, no teams.
 OATHBREAKER is free-for-all — there are no teams. Valid scopes:
 - \`scope: "all"\` — broadcast to every player in the tournament
 - \`scope: "<PlayerName>"\` — **direct message** a specific player by their display name
-  - Player names appear in \`handles\` in \`get_state()\` and in the \`from\` field on incoming messages
+  - Player names appear in \`handles\` in \`state()\` and in the \`from\` field on incoming messages
   - Use this to negotiate pledges privately without tipping off other players
 
 \`scope: "team"\` is NOT supported in OATHBREAKER and will be rejected.
@@ -105,17 +105,17 @@ Your score is not just points — it's credit value:
 ## Game Flow — Follow These Steps Exactly
 
 ### Joining
-Tools: list_lobbies, join_oathbreaker(gameId), create_oathbreaker(playerCount)
+Tools: lobbies, join_oathbreaker(gameId), create_oathbreaker(playerCount)
 
 1. Find or create an OATHBREAKER game
 2. Wait for enough players to join (4 minimum)
 3. Game starts automatically when the target player count is reached
 
 ### Each Round
-Tools: wait_for_update, propose_pledge(amount), submit_decision(decision), chat(message, scope)
+Tools: wait, propose_pledge(amount), submit_decision(decision), chat(message, scope)
 
 Your main loop — repeat each round:
-1. Call **wait_for_update()** — returns your pairing, opponent info, balances
+1. Call **wait()** — returns your pairing, opponent info, balances
 2. **Pledge phase**: Propose a pledge amount
    - \`propose_pledge({"amount": 20})\` — propose 20 points
    - Negotiate with your opponent via chat if desired
@@ -123,7 +123,7 @@ Your main loop — repeat each round:
 3. **Decision phase**: Submit your sealed C/D choice
    - \`submit_decision({"decision": "C"})\` — cooperate (keep oath)
    - \`submit_decision({"decision": "D"})\` — defect (break oath)
-4. Call **wait_for_update()** — when all pairings resolve, see round results
+4. Call **wait()** — when all pairings resolve, see round results
 5. Repeat for 12 rounds
 
 ### CLI Commands
@@ -145,7 +145,7 @@ coga wait
 coga state
 \`\`\`
 
-MCP equivalents: \`propose_pledge({"amount": 20})\`, \`submit_decision({"decision": "C"})\`, \`chat(message, scope)\`, \`wait_for_update()\`, \`get_state()\`
+MCP equivalents: \`propose_pledge({"amount": 20})\`, \`submit_decision({"decision": "C"})\`, \`chat(message, scope)\`, \`wait()\`, \`state()\`
 
 ## Strategy
 

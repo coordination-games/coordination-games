@@ -6,7 +6,7 @@
  * off to `claude --print` per bot. Bots drive everything — lobby phases (team
  * formation, class selection) and gameplay — through the unified per-name MCP
  * tool surface (propose_team, accept_team, choose_class, move, propose_pledge,
- * submit_decision, chat, etc.) discovered via get_state.currentPhase.tools.
+ * submit_decision, chat, etc.) discovered via state.currentPhase.tools.
  *
  * For filling an existing lobby with persistent pool bots, use:
  *   tsx scripts/fill-bots.ts <lobbyId>

@@ -14,7 +14,7 @@
 
 ## What You Get For Free
 
-From just implementing the interface: game registration, lobby management, fill-bots, typed relay, client pipeline, spectator delay + broadcast, bot scheduling, ELO tracking, Merkle proofs, on-chain settlement, MCP endpoint, and generic test bots that learn your rules from `get_guide()`.
+From just implementing the interface: game registration, lobby management, fill-bots, typed relay, client pipeline, spectator delay + broadcast, bot scheduling, ELO tracking, Merkle proofs, on-chain settlement, MCP endpoint, and generic test bots that learn your rules from `guide()`.
 
 ## Design Rules
 

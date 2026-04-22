@@ -51,7 +51,7 @@ The relay log grows unboundedly with game length. To keep per-call responses (an
 - **Server — stateless.** `GET /api/player/state?sinceIdx=N` and `WS /ws/player?sinceIdx=N` return only envelopes with `index >= N`. `buildSpectatorPayload` (`packages/workers-server/src/plugins/spectator-payload.ts`) clamps `N` to `[0, relayTip]` and echoes back the next cursor as `meta.sinceIdx`. No cursor state on the server.
 - **CLI — holds the cursor.** `ApiClient._relayCursor` (`packages/cli/src/api-client.ts`) is the single source of cursor state. Every read passes it; every response advances it. Reset on auth change.
 - **Pipeline — runs over whatever it gets.** The pipeline is stateless by design, so feeding it deltas produces delta messages without any pipeline-side bookkeeping.
-- **Agent — cursor-free.** MCP tools (`get_state`, `wait_for_update`) have no cursor in their signatures or responses. `flattenStateEnvelope` strips `meta.sinceIdx` on the way out; `game-client.ts` strips raw `relayMessages` after the pipeline consumes them.
+- **Agent — cursor-free.** MCP tools (`state`, `wait`) have no cursor in their signatures or responses. `flattenStateEnvelope` strips `meta.sinceIdx` on the way out; `game-client.ts` strips raw `relayMessages` after the pipeline consumes them.
 
 Net effect: first call → full history, subsequent calls → small deltas. First-read-after-auth always gets the full picture; after that, every call ships only what's new.
 
