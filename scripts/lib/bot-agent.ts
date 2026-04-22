@@ -183,6 +183,7 @@ export async function registerBotOnChain(
   };
 
   let lastErr: unknown;
+  let lastDecoded: DecodedRevert | undefined;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) await sleep(3000);
     try {
@@ -191,31 +192,60 @@ export async function registerBotOnChain(
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      // Balance not yet credited — faucet tx still pending. Retry.
-      //   0xe450d38c = ERC20InsufficientBalance (OZ v5 custom error)
-      //   "transfer amount exceeds balance" (OZ v4 string)
-      if (
-        /transfer amount exceeds balance|insufficient balance|0xe450d38c|execution reverted/i.test(
-          msg,
-        )
-      )
-        continue;
-      // Transient RPC issues — rate limit, timeout — retry.
-      if (/rate limit|exceeds defined limit|504|502|timeout|network/i.test(msg)) continue;
-      // Already registered (from a previous run)
-      if (/already registered|name.*taken/i.test(msg)) {
+      const decoded = decodeRevert(msg);
+      lastDecoded = decoded;
+
+      // Name already claimed on a previous run — not an error, just skip.
+      if (decoded?.name === 'NameTaken' || decoded?.name === 'AlreadyRegistered') {
         return { registered: false };
       }
+      // Balance not yet credited — faucet tx still pending. Retry.
+      if (decoded?.name === 'ERC20InsufficientBalance') continue;
+      // Transient RPC issues — rate limit, timeout — retry.
+      if (/rate limit|exceeds defined limit|504|502|timeout|network/i.test(msg)) continue;
+      // Known-bad revert we can't recover from — fail fast with a clear message.
+      if (decoded) throw new Error(`register reverted: ${decoded.name}() [${decoded.selector}]`);
+      // Unknown revert — bubble up the raw error.
       throw err;
     }
   }
-  throw new Error(
-    `register failed after 8 attempts (24s total, 3s backoff). ` +
-      `Most likely the faucet tx never mined, so the registry's transferFrom ` +
-      `(REGISTRATION_FEE + INITIAL_CREDITS_USDC = 5 USDC) keeps reverting with ` +
-      `ERC20InsufficientBalance (0xe450d38c). Check the faucet tx on the ` +
-      `target RPC. Last error: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
-  );
+  const suffix = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  if (lastDecoded?.name === 'ERC20InsufficientBalance') {
+    throw new Error(
+      `register failed after 8 attempts (24s total): registry transferFrom kept ` +
+        `reverting with ERC20InsufficientBalance. The faucet tx likely never mined — ` +
+        `check it on the target RPC. Last error: ${suffix}`,
+    );
+  }
+  throw new Error(`register failed after 8 attempts (24s total). Last error: ${suffix}`);
+}
+
+// Custom-error selectors we recognize on the registration path. Keep this list
+// tight — decoding unknown selectors adds noise, not signal. Compute with
+// `keccak256(toBytes("ErrorName(argTypes)")).slice(0, 10)`.
+const KNOWN_REVERTS: Record<string, string> = {
+  '0x9e4b2685': 'NameTaken', // CoordinationRegistry
+  '0x3a81d6fc': 'AlreadyRegistered', // CoordinationRegistry
+  '0x430f13b3': 'InvalidName', // CoordinationRegistry
+  '0x390772fc': 'NotAgentOwner', // CoordinationRegistry
+  '0xe450d38c': 'ERC20InsufficientBalance', // OZ v5
+};
+
+interface DecodedRevert {
+  selector: string;
+  name: string;
+}
+
+function decodeRevert(msg: string): DecodedRevert | undefined {
+  // OZ v4 ERC20 string revert — no selector, but recognizable.
+  if (/transfer amount exceeds balance|insufficient balance/i.test(msg)) {
+    return { selector: '', name: 'ERC20InsufficientBalance' };
+  }
+  const m = msg.match(/0x[a-fA-F0-9]{8}/);
+  if (!m) return undefined;
+  const selector = m[0].toLowerCase();
+  const name = KNOWN_REVERTS[selector];
+  return name ? { selector, name } : undefined;
 }
 
 function sleep(ms: number) {
@@ -288,6 +318,78 @@ function looksFinished(output: string): boolean {
   return FINISHED_PHASE_PATTERNS.some((re) => re.test(output));
 }
 
+/**
+ * Turn one stream-json event line from `claude --print --output-format stream-json`
+ * into a concise log line. Returns `null` to skip noisy events (ping, delta
+ * fragments). Falls back to a truncated raw line when the shape is unknown.
+ */
+function summarizeStreamEvent(line: string): string | null {
+  let ev: unknown;
+  try {
+    ev = JSON.parse(line);
+  } catch {
+    return line.slice(0, 200);
+  }
+  if (!ev || typeof ev !== 'object') return null;
+  const e = ev as Record<string, unknown>;
+  const type = e.type as string | undefined;
+
+  if (type === 'system') {
+    const sub = e.subtype as string | undefined;
+    if (sub === 'init') return `system:init model=${e.model ?? '?'}`;
+    return `system:${sub ?? '?'}`;
+  }
+
+  if (type === 'assistant') {
+    const msg = e.message as { content?: unknown[] } | undefined;
+    const parts: string[] = [];
+    for (const c of msg?.content ?? []) {
+      const block = c as Record<string, unknown>;
+      if (block.type === 'text') {
+        const text = String(block.text ?? '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (text) parts.push(`text: ${text.slice(0, 180)}`);
+      } else if (block.type === 'tool_use') {
+        const name = block.name ?? '?';
+        const input = JSON.stringify(block.input ?? {});
+        parts.push(`tool_use ${name}(${input.slice(0, 120)})`);
+      } else if (block.type === 'thinking') {
+        parts.push('thinking');
+      }
+    }
+    return parts.length ? parts.join(' | ') : null;
+  }
+
+  if (type === 'user') {
+    const msg = e.message as { content?: unknown[] } | undefined;
+    for (const c of msg?.content ?? []) {
+      const block = c as Record<string, unknown>;
+      if (block.type === 'tool_result') {
+        const body = Array.isArray(block.content)
+          ? (block.content as Array<Record<string, unknown>>)
+              .map((p) => (p.type === 'text' ? String(p.text ?? '') : JSON.stringify(p)))
+              .join(' ')
+          : JSON.stringify(block.content ?? '');
+        const err = block.is_error ? ' ERR' : '';
+        return `tool_result${err}: ${body.replace(/\s+/g, ' ').slice(0, 180)}`;
+      }
+    }
+    return null;
+  }
+
+  if (type === 'result') {
+    const subtype = e.subtype ?? '?';
+    const isError = e.is_error ? ' ERR' : '';
+    const result = String(e.result ?? '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 180);
+    return `result:${subtype}${isError} ${result}`;
+  }
+
+  return `${type ?? '?'}: ${line.slice(0, 140)}`;
+}
+
 export interface RunAgentOptions {
   server: string;
   botName: string;
@@ -334,6 +436,9 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
         mcpConfig,
         '--model',
         model,
+        '--verbose',
+        '--output-format',
+        'stream-json',
         '--max-turns',
         '50',
       ];
@@ -347,15 +452,18 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
       });
 
       let output = '';
+      let stdoutBuf = '';
       proc.stdout?.on('data', (d: Buffer) => {
         const text = d.toString();
         output += text;
-        text
-          .split('\n')
-          .filter(Boolean)
-          .forEach((line) => {
-            console.log(`[${botName}] ${line.slice(0, 140)}`);
-          });
+        stdoutBuf += text;
+        const lines = stdoutBuf.split('\n');
+        stdoutBuf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line) continue;
+          const pretty = summarizeStreamEvent(line);
+          if (pretty) console.log(`[${botName}] ${pretty}`);
+        }
       });
       proc.stderr?.on('data', (d: Buffer) => {
         d.toString()
