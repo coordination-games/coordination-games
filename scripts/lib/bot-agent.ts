@@ -267,7 +267,7 @@ const INITIAL_PROMPT = (
 
 YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join_lobby — you are already in one.
 
-You have ONE MCP server named "game". Core tools are always present:
+You have ONE MCP server named "coga". Core tools are always present:
   - get_guide          — authoritative rules, win conditions, and per-phase tool catalogue for this game. READ THIS FIRST.
   - get_state          — your current lobby/game state, fog-of-war filtered. Includes \`phase\`, \`currentPhase.tools\` (the tool names callable right now), and game-specific fields described by get_guide.
   - wait_for_update    — long-poll until the next event (turn change, chat, phase transition).
@@ -408,7 +408,7 @@ export async function runClaudeAgent(opts: RunAgentOptions): Promise<void> {
   const sessionId = randomUUID();
   const mcpConfig = JSON.stringify({
     mcpServers: {
-      game: {
+      coga: {
         command: 'npx',
         // `-y coordination-games@latest` forces npx to fetch the current npm
         // release each run instead of falling through to a stale global

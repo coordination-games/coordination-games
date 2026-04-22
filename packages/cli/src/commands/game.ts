@@ -425,8 +425,7 @@ export function registerGameCommands(program: Command) {
         }
         process.stdout.write(`\n  Available tools:\n`);
         for (const d of registry) {
-          const suffix = d.source === 'plugin' ? ` [plugin:${d.pluginId}]` : '';
-          process.stdout.write(`    ${d.tool.name}${suffix} — ${d.tool.description}\n`);
+          process.stdout.write(`    ${d.tool.name} — ${d.tool.description}\n`);
         }
         process.stdout.write(`\n  Call with: coga tool <name> k=v [...]\n`);
         process.stdout.write(`  Help for one: coga tool <name> --help\n\n`);
