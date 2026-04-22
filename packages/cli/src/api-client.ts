@@ -64,13 +64,21 @@ export function flattenStateEnvelope(raw: unknown): StateResponse {
 }
 
 /**
- * Resolve once the target WS emits its first message after the initial
- * snapshot, or after `timeoutMs`. All exit paths resolve (never reject): a
- * caller that fetches state afterwards has no reason to care whether the
- * wakeup came from an actual server push or a timeout.
+ * Resolve once the server signals a state change, or after `timeoutMs`. All
+ * exit paths resolve (never reject): a caller that fetches state afterwards
+ * has no reason to care whether the wakeup came from a live push or a
+ * timeout.
  *
- * The DO sends a snapshot immediately on connect; that first frame is
- * ignored. Any subsequent frame (or a close/error) ends the wait.
+ * Frame handling:
+ *   - The DO sends a snapshot-shaped payload immediately on connect. That
+ *     first frame carries `meta.sinceIdx` — the server's relay tip after
+ *     filtering by the client-supplied `sinceIdx` query param.
+ *   - If `meta.sinceIdx > sinceIdxAtConnect`, the server already had
+ *     pending deltas when we connected — finish immediately so the caller
+ *     refetches state instead of waiting 25s for a second frame that may
+ *     never come.
+ *   - Otherwise the first frame is pure catchup-ack; discard it and wait
+ *     for the next push (or timeout).
  *
  * Uses the `ws` npm package (not Node's built-in `WebSocket`) so we can
  * `.terminate()` the socket — a force-destroy that releases the event
@@ -79,10 +87,10 @@ export function flattenStateEnvelope(raw: unknown): StateResponse {
  * blocks CLI process exit. See `wiki/architecture/data-flow.md`
  * "Change Notification" for the CF-specific rationale.
  */
-function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
+function waitForWsWakeup(url: string, timeoutMs: number, sinceIdxAtConnect: number): Promise<void> {
   return new Promise((resolve) => {
     let ws: WebSocket | null = null;
-    let frames = 0;
+    let seenInitial = false;
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -100,9 +108,19 @@ function waitForWsWakeup(url: string, timeoutMs: number): Promise<void> {
       finish();
       return;
     }
-    ws.on('message', () => {
-      frames += 1;
-      if (frames >= 2) finish();
+    ws.on('message', (data) => {
+      if (!seenInitial) {
+        seenInitial = true;
+        try {
+          const frame = JSON.parse(data.toString()) as { meta?: { sinceIdx?: unknown } };
+          const nextCursor = frame?.meta?.sinceIdx;
+          if (typeof nextCursor === 'number' && nextCursor > sinceIdxAtConnect) {
+            finish();
+          }
+        } catch {}
+        return;
+      }
+      finish();
     });
     ws.on('error', finish);
     ws.on('close', finish);
@@ -269,8 +287,9 @@ export class ApiClient {
    */
   async waitForUpdate(): Promise<StateResponse> {
     const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
-    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}&sinceIdx=${this.relayCursor}`;
-    await waitForWsWakeup(wsUrl, 25_000);
+    const sinceIdx = this.relayCursor;
+    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}&sinceIdx=${sinceIdx}`;
+    await waitForWsWakeup(wsUrl, 25_000, sinceIdx);
     return this.getState();
   }
 
