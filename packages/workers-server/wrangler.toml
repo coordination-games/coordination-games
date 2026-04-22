@@ -45,9 +45,5 @@ new_classes = ["GameRoomDO", "LobbyDO"]
 ENVIRONMENT = "production"
 
 [[routes]]
-pattern = "api.games.coop/*"
-zone_name = "games.coop"
-
-[[worker_domains]]
-hostname = "api.games.coop"
-zone_name = "games.coop"
+pattern = "api.games.coop"
+custom_domain = true
