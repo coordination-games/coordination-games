@@ -460,19 +460,24 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return forwardToGameDO(env, wsSpectatorMatch[1], '/', request);
   }
 
-  // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered)
-  const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
-  if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+  // WS /ws/player — authenticated stream for the caller's current session.
+  // The server resolves lobby vs game via `player_sessions` (the same source
+  // of truth as /api/player/state and /api/player/tool), so the client never
+  // carries a lobbyId/gameId on the wire. This keeps the "one active
+  // session" invariant on the server where it belongs.
+  if (pathname === '/ws/player' && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
     const auth = await requireWsTicket(url, env);
     if (auth instanceof Response) return auth;
     const playerId = auth;
     const location = await getPlayerLocation(playerId, env);
-    if (location?.kind !== 'game' || location.gameId !== wsPlayerMatch[1]) {
-      return Response.json({ error: 'Not a player in this game' }, { status: 403 });
+    if (!location) {
+      return Response.json({ error: 'No active lobby or game' }, { status: 404 });
     }
     const forwarded = new Request(request.url, request);
     forwarded.headers.set('X-Player-Id', playerId);
-    return forwardToGameDO(env, wsPlayerMatch[1], '/', forwarded);
+    return location.kind === 'game'
+      ? forwardToGameDO(env, location.gameId, '/', forwarded)
+      : forwardToLobbyDO(env, location.lobbyId, '/', forwarded);
   }
 
   // ------------------------------------------------------------------

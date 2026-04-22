@@ -229,36 +229,15 @@ export class ApiClient {
   }
 
   /**
-   * Block until the server reports a lobby or game state change, then return
-   * the fresh player state. Opens a WebSocket to the player's current DO
-   * (lobby spectator or authenticated game player), waits for the first
-   * post-snapshot push, closes the socket, and refetches state via HTTP.
-   *
-   * If the player isn't in a lobby or game, or the WS wakeup times out, this
-   * falls back to returning the current HTTP state — callers then decide
-   * whether to call again.
+   * Block until the server reports a state change on the caller's active
+   * session, then return the fresh state. The server resolves lobby vs game
+   * via `player_sessions` on `/ws/player`, so the client never carries a
+   * lobby or game ID here — the same "your current session" scoping as
+   * `/api/player/state` and `/api/player/tool`.
    */
   async waitForUpdate(): Promise<StateResponse> {
-    const state = await this.getState();
-    const lobbyId = state.lobbyId as string | undefined;
-    const gameId = state.gameId as string | undefined;
-    // lobbyId wins over gameId: while a game is forming, LobbyDO fills
-    // `meta.gameId` with the lobby ID as its spectator-stream identifier,
-    // which flattens into `state.gameId`. Routing to `/ws/game/...` in that
-    // case 403s. Post-spawn, `handlePlayerState` routes to the GameRoomDO,
-    // which omits lobbyId from the payload, so gameId alone is authoritative.
-    const loc: 'game' | 'lobby' | null = lobbyId ? 'lobby' : gameId ? 'game' : null;
-    if (!loc) return state;
-
-    const wsBase = this.serverUrl.replace(/^http/, 'ws');
-    let wsUrl: string;
-    if (loc === 'game') {
-      const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
-      wsUrl = `${wsBase}/ws/game/${gameId}/player?ticket=${encodeURIComponent(ticket)}`;
-    } else {
-      wsUrl = `${wsBase}/ws/lobby/${lobbyId}`;
-    }
-
+    const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
+    const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}`;
     await waitForWsWakeup(wsUrl, 25_000);
     return this.getState();
   }
