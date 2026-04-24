@@ -223,9 +223,27 @@ export class GameClient {
     return processed;
   }
 
-  /** Long-poll for next event (turn change, chat, phase change). */
-  async waitForUpdate(): Promise<StateResponse> {
+  /**
+   * Long-poll for next event (turn change, chat, phase change).
+   *
+   * Pass `fresh: true` to reset agent persistence (in-memory cursors +
+   * on-disk `(agent, scope)` entry) before the wait. Mirrors `getState`'s
+   * `fresh` semantics so shell parity with the MCP `fresh` option is
+   * maintained across both read paths.
+   */
+  async waitForUpdate(options: { fresh?: boolean | undefined } = {}): Promise<StateResponse> {
     await this.ensureAuth();
+    if (options.fresh) {
+      // Same reset as getState({ fresh: true }): clear in-memory cursors
+      // and the on-disk `(agent, scope)` entry. The subsequent
+      // api.waitForUpdate() calls loadPersistedCursor() which, with the
+      // entry gone, leaves the just-reset in-memory cursor at 0 so the
+      // follow-up getState() refetches the full envelope.
+      this.api.resetSessionCursors();
+      if (this.agentAddress && this.scopeId) {
+        agentPersistence.clear(this.agentAddress, this.scopeId);
+      }
+    }
     const raw = await this.api.waitForUpdate();
     const processed = this.processResponse(raw);
     this.maybeUpgradeScopeFromState(processed);

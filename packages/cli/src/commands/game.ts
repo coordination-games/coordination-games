@@ -354,11 +354,12 @@ export function registerGameCommands(program: Command) {
   program
     .command('state')
     .description('Get current game/lobby state (processed through your plugin pipeline)')
-    .action(async () => {
+    .option('--fresh', 'Reset agent persistence (cursor + lastSeen) before fetching')
+    .action(async (options: { fresh?: boolean }) => {
       const client = await createClient();
 
       try {
-        const result = await client.getState();
+        const result = await client.getState({ fresh: Boolean(options.fresh) });
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -383,12 +384,13 @@ export function registerGameCommands(program: Command) {
   program
     .command('wait')
     .description('Wait for the next game update (long-poll)')
-    .action(async () => {
+    .option('--fresh', 'Reset agent persistence (cursor + lastSeen) before waiting')
+    .action(async (options: { fresh?: boolean }) => {
       const client = await createClient();
 
       try {
         process.stdout.write('  Waiting for update...\n');
-        const result = await client.waitForUpdate();
+        const result = await client.waitForUpdate({ fresh: Boolean(options.fresh) });
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
