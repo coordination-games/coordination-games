@@ -53,19 +53,14 @@ export interface TurnRecord {
 export type GamePhase = 'pre_game' | 'in_progress' | 'finished';
 
 /**
- * Static per-game map data. Identical value every turn, so the agent
- * envelope's top-level diff collapses it into `_unchangedKeys` after the
- * first observation. Emitted on every call so fresh clients and rewind
- * spectators get it without any extra plumbing.
+ * Static per-game map data — same value every turn, so the agent envelope's
+ * top-level diff collapses it into `_unchangedKeys` after the first
+ * observation. Walls are NOT here because they're fog-filtered per-turn;
+ * see `visibleWalls` on `GameState`. Bases are public (CtF convention —
+ * you always know where both teams' bases are).
  */
-export interface AgentMap {
+export interface AgentMapStatic {
   radius: number;
-  /**
-   * Wall positions. Any in-radius hex NOT in `walls` and NOT a base tile is
-   * ground. Listing only walls keeps first-observation cost ~10x smaller
-   * than enumerating every hex.
-   */
-  walls: Hex[];
   bases: {
     A: { flag: Hex; spawns: Hex[] }[];
     B: { flag: Hex; spawns: Hex[] }[];
@@ -110,8 +105,14 @@ export interface GameState {
     /** Hex radius you can attack from (class-specific: rogue=1, knight=1, mage=2). */
     attackRange: number;
   };
-  /** Static terrain — dedupes via _unchangedKeys after turn 0. */
-  map: AgentMap;
+  /** Static map info (radius + bases). Dedupes via _unchangedKeys after turn 0. */
+  mapStatic: AgentMapStatic;
+  /**
+   * Walls currently within your vision. Fog-filtered per turn — walls you
+   * haven't seen yet are not revealed. A hex you can see that isn't in
+   * `visibleWalls` and isn't a base tile is walkable ground.
+   */
+  visibleWalls: Hex[];
   /** Per-turn: only visible hexes that contain a unit or flag. Tiny. */
   visibleOccupants: VisibleOccupant[];
   yourFlag: { status: 'at_base' | 'carried' | 'unknown' };
@@ -588,19 +589,19 @@ export function getStateForAgent(
     flagsForFog,
   );
 
-  // Static map — value-identical every turn, so the agent-facing diff
-  // collapses it into `_unchangedKeys` after the first observation. Only
-  // walls are listed; in-radius hexes not in `walls` and not a base are
-  // ground (derivable, not worth emitting).
-  const walls: Hex[] = [];
-  for (const [k, type] of state.mapTiles) {
-    if (type === 'wall') walls.push(stringToHex(k));
-  }
-  const map: AgentMap = {
+  // Static map info — value-identical every turn, dedupes via _unchangedKeys.
+  const mapStatic: AgentMapStatic = {
     radius: state.mapRadius,
-    walls,
     bases: state.mapBases,
   };
+
+  // Fog-filtered walls: only walls within the viewer's current LoS. Walls
+  // outside vision are NOT revealed — the agent discovers terrain by
+  // exploring, same as pre-refactor `visibleTiles` behavior.
+  const visibleWalls: Hex[] = [];
+  for (const [k, type] of state.mapTiles) {
+    if (type === 'wall' && visibleKeys.has(k)) visibleWalls.push(stringToHex(k));
+  }
 
   // Your flag status
   const yourFlags = state.flags[team];
@@ -680,7 +681,8 @@ export function getStateForAgent(
       visionRange: CLASS_VISION[unit.unitClass],
       attackRange: CLASS_RANGE[unit.unitClass],
     },
-    map,
+    mapStatic,
+    visibleWalls,
     visibleOccupants,
     yourFlag: { status: yourFlagStatus },
     enemyFlag: { status: enemyFlagStatus },

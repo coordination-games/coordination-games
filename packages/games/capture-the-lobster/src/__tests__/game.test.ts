@@ -373,14 +373,59 @@ describe('Game (pure functions)', () => {
   });
 
   describe('getStateForAgent', () => {
-    it('emits only walls + bases + radius — ground is inferred', () => {
+    it('emits mapStatic (radius + bases) unchanged across viewers', () => {
       const state = createInProgressState(map, makePlayers(1));
       const agentState = getStateForAgent(state, 'a0');
 
-      const wallCount = [...map.tiles.values()].filter((t) => t === 'wall').length;
-      expect(agentState.map.walls.length).toBe(wallCount);
-      expect(agentState.map.radius).toBe(map.radius);
-      expect(agentState.map.bases).toEqual(map.bases);
+      expect(agentState.mapStatic.radius).toBe(map.radius);
+      expect(agentState.mapStatic.bases).toEqual(map.bases);
+    });
+
+    it('fog-filters visibleWalls to LoS — subset of total walls', () => {
+      const state = createInProgressState(map, makePlayers(1));
+      const agentState = getStateForAgent(state, 'a0');
+
+      const totalWalls = [...map.tiles.values()].filter((t) => t === 'wall').length;
+      expect(agentState.visibleWalls.length).toBeLessThanOrEqual(totalWalls);
+      // Every emitted wall must actually be a wall in the source map.
+      for (const { q, r } of agentState.visibleWalls) {
+        expect(map.tiles.get(`${q},${r}`)).toBe('wall');
+      }
+    });
+
+    it('visibleWalls hides walls outside vision — knight has range 2', () => {
+      // Knight vision=2. Place a wall 5 hexes away — must be hidden.
+      const bigMap: GameMap = {
+        radius: 6,
+        tiles: new Map<string, TileType>(),
+        bases: {
+          A: [{ flag: { q: 0, r: 6 }, spawns: [{ q: 0, r: 5 }] }],
+          B: [{ flag: { q: 0, r: -6 }, spawns: [{ q: 0, r: -5 }] }],
+        },
+      };
+      // Fill with ground
+      for (let q = -6; q <= 6; q++) {
+        for (let r = Math.max(-6, -q - 6); r <= Math.min(6, -q + 6); r++) {
+          bigMap.tiles.set(hexToString({ q, r }), 'ground');
+        }
+      }
+      bigMap.tiles.set(hexToString({ q: 0, r: 6 }), 'base_a');
+      bigMap.tiles.set(hexToString({ q: 0, r: 5 }), 'base_a');
+      bigMap.tiles.set(hexToString({ q: 0, r: -6 }), 'base_b');
+      bigMap.tiles.set(hexToString({ q: 0, r: -5 }), 'base_b');
+      // Walls: one close to spawn, one far.
+      bigMap.tiles.set(hexToString({ q: 1, r: 4 }), 'wall'); // dist 1 from spawn (0,5) — visible
+      bigMap.tiles.set(hexToString({ q: 0, r: 0 }), 'wall'); // dist 5 from spawn — hidden
+
+      const state = createInProgressState(bigMap, [
+        { id: 'a0', team: 'A', unitClass: 'knight' },
+        { id: 'b0', team: 'B', unitClass: 'knight' },
+      ]);
+      const walls = getStateForAgent(state, 'a0').visibleWalls;
+      const wallKeys = new Set(walls.map((w) => `${w.q},${w.r}`));
+
+      expect(wallKeys.has('1,4')).toBe(true); // close wall shown
+      expect(wallKeys.has('0,0')).toBe(false); // far wall hidden
     });
 
     it('filters occupants by fog of war', () => {

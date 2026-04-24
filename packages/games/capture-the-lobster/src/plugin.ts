@@ -417,10 +417,11 @@ Every response is a DIFF relative to your last observation. Keys with unchanged 
 
 1. **\`summary\`** (read FIRST) — scalar at-a-glance: turn, phase, pos, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. This is all you need for most decisions — no need to parse the rest unless you care about terrain.
 2. **\`yourUnit\`** — your unit's full record including \`visionRange\` and \`attackRange\` (use these, don't hardcode class tables).
-3. **\`map\`** — static terrain: \`{ radius, walls: [{q,r}], bases }\`. Any in-radius hex NOT in \`walls\` and NOT a base tile is ground. Dedupes into \`_unchangedKeys\` after turn 0, so you only pay the cost once.
-4. **\`visibleOccupants\`** — per-turn fog view: only hexes that contain a unit or flag (allies include IDs, enemies don't). Tiny.
-5. **\`newMessages\`** — chat messages since your last observation (delta, not full history).
-6. **\`currentPhase.tools\`** — tool names callable RIGHT NOW.
+3. **\`mapStatic\`** — \`{ radius, bases }\`. Same every turn; dedupes into \`_unchangedKeys\` after turn 0.
+4. **\`visibleWalls\`** — walls currently within your vision. **Fog-filtered per turn** — walls you haven't seen yet are NOT revealed (you have to explore to discover them). A hex within your vision that isn't in \`visibleWalls\` and isn't a base tile is walkable ground.
+5. **\`visibleOccupants\`** — per-turn fog view: only hexes that contain a unit or flag (allies include IDs, enemies don't). Tiny.
+6. **\`newMessages\`** — chat messages since your last observation (delta, not full history).
+7. **\`currentPhase.tools\`** — tool names callable RIGHT NOW.
 
 Don't pipe responses through jq/python to extract fields — \`summary\` already has the fast read.
 
