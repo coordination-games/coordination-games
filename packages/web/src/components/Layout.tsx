@@ -43,7 +43,7 @@ export default function Layout() {
           className="max-w-7xl mx-auto px-4 sm:px-6 py-1.5 flex items-center justify-between text-[10px] font-mono tracking-[0.2em] uppercase"
           style={{ color: 'var(--color-ash)' }}
         >
-          <span>coop._games / v0.1</span>
+          <span>games.coop / v0.1</span>
           <span className="hidden sm:inline" style={{ color: 'var(--color-mint)' }}>
             {'// the future is shaped by the agents that coordinate best'}
           </span>
@@ -113,7 +113,7 @@ export default function Layout() {
                 className="font-mono text-[9px] tracking-[0.22em] uppercase"
                 style={{ color: 'var(--color-ash)' }}
               >
-                coop._games
+                games.coop
               </div>
             </div>
             {/* Active-game context badge */}
@@ -244,7 +244,7 @@ export default function Layout() {
             className="font-mono text-[10px] tracking-[0.2em] uppercase"
             style={{ color: 'var(--color-ash)' }}
           >
-            coop._games
+            games.coop
           </div>
         </div>
       </footer>
