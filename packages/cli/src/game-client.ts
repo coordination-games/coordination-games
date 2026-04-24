@@ -38,6 +38,21 @@ export class GameClient {
   private name: string | null = null;
   private authPromise: Promise<void> | null = null;
   private authenticated = false;
+  /**
+   * Cached wallet address derived from `privateKey`. Used as the agent
+   * identity for persisted per-scope state. Null when GameClient was
+   * constructed without a key (token-only mode) — in that case no
+   * scope-based persistence happens, which matches the plan's "scoped
+   * code paths only" rule.
+   */
+  private agentAddress: string | null = null;
+  /**
+   * Current scope ID — a game-or-lobby ID. Null for unscoped commands
+   * (`listLobbies`, `getGuide`). When set (and `agentAddress` is set),
+   * state-fetching methods propagate this to ApiClient so cursor reads
+   * and writes go through `~/.coordination/agent-state.json`.
+   */
+  private scopeId: string | null = null;
 
   constructor(serverUrl: string, options?: GameClientOptions) {
     this.api = new ApiClient(serverUrl);
@@ -48,10 +63,67 @@ export class GameClient {
     }
     if (options?.privateKey) {
       this.privateKey = options.privateKey;
+      try {
+        this.agentAddress = new ethers.Wallet(options.privateKey).address;
+      } catch {
+        // Invalid key — auth will fail later with a clearer error; leave
+        // agentAddress null so persistence is skipped.
+      }
     }
     if (options?.name) {
       this.name = options.name;
     }
+  }
+
+  /**
+   * Set the active scope (game ID or lobby ID) for persisted cursor state.
+   *
+   * Callers: game/lobby-scoped code paths ONLY. After `joinLobby`, after
+   * `createLobby` for OATHBREAKER (which auto-starts a game), and
+   * opportunistically from state responses that carry a gameId. Unscoped
+   * commands (list lobbies, balance, identity) must not call this.
+   *
+   * Calling with the same scopeId twice is a no-op; switching scopes
+   * rebinds ApiClient immediately. Passing an empty string clears the
+   * scope (equivalent to unscoped mode).
+   */
+  setScope(scopeId: string): void {
+    if (!scopeId) {
+      this.clearScope();
+      return;
+    }
+    if (this.scopeId === scopeId) return;
+    this.scopeId = scopeId;
+    // Skip persistence entirely when we have no agent identity.
+    if (!this.agentAddress) return;
+    this.api.setScope(this.agentAddress, scopeId);
+  }
+
+  /** Clear any active scope. Used by tests and by token-only flows. */
+  clearScope(): void {
+    this.scopeId = null;
+    this.api.clearScope();
+  }
+
+  /**
+   * If a state response carries a gameId or lobbyId and we don't have a
+   * scope yet (or have a coarser one), upgrade. Keeps `coga state` from a
+   * freshly-restarted shell able to pick up a persisted cursor once it
+   * learns which game it's in. Best-effort — never throws.
+   */
+  private maybeUpgradeScopeFromState(state: StateResponse): void {
+    if (!state || typeof state !== 'object') return;
+    const gameId = typeof state.gameId === 'string' ? state.gameId : undefined;
+    // LobbyDO responses may expose lobbyId; `flattenStateEnvelope` spreads
+    // `state.*` so any server-set `lobbyId` lands here.
+    const lobbyId =
+      typeof (state as { lobbyId?: unknown }).lobbyId === 'string'
+        ? ((state as { lobbyId?: string }).lobbyId as string)
+        : undefined;
+    const next = gameId ?? lobbyId;
+    if (!next) return;
+    if (this.scopeId === next) return;
+    this.setScope(next);
   }
 
   /** Get the current auth token (if any). */
@@ -134,14 +206,18 @@ export class GameClient {
     await this.ensureAuth();
     if (options.fresh) this.api.resetSessionCursors();
     const raw = await this.api.getState();
-    return this.processResponse(raw);
+    const processed = this.processResponse(raw);
+    this.maybeUpgradeScopeFromState(processed);
+    return processed;
   }
 
   /** Long-poll for next event (turn change, chat, phase change). */
   async waitForUpdate(): Promise<StateResponse> {
     await this.ensureAuth();
     const raw = await this.api.waitForUpdate();
-    return this.processResponse(raw);
+    const processed = this.processResponse(raw);
+    this.maybeUpgradeScopeFromState(processed);
+    return processed;
   }
 
   /**
@@ -163,7 +239,9 @@ export class GameClient {
   async callTool(toolName: string, args: Record<string, unknown> = {}): Promise<StateResponse> {
     await this.ensureAuth();
     const raw = (await this.api.callTool(toolName, args)) as StateResponse;
-    return this.processResponse(raw);
+    const processed = this.processResponse(raw);
+    this.maybeUpgradeScopeFromState(processed);
+    return processed;
   }
 
   /**
@@ -176,7 +254,9 @@ export class GameClient {
     await this.ensureAuth();
     try {
       const raw = (await this.api.callTool(toolName, args)) as StateResponse;
-      return { ok: true, data: this.processResponse(raw) };
+      const processed = this.processResponse(raw);
+      this.maybeUpgradeScopeFromState(processed);
+      return { ok: true, data: processed };
     } catch (err: unknown) {
       // ApiClient throws `API error <status>: <body>` — try to parse the body.
       const msg = err instanceof Error ? err.message : String(err);
@@ -215,7 +295,9 @@ export class GameClient {
     await this.ensureAuth();
     try {
       const raw = (await this.api.callTool('plugin_relay', { relay })) as StateResponse;
-      return this.processResponse(raw);
+      const processed = this.processResponse(raw);
+      this.maybeUpgradeScopeFromState(processed);
+      return processed;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // 5xx = relay unreachable; parse status from "API error <status>: ..."
@@ -244,22 +326,45 @@ export class GameClient {
     return this.api.listLobbies();
   }
 
-  /** Join an existing lobby or OATHBREAKER waiting room. */
+  /**
+   * Join an existing lobby or OATHBREAKER waiting room. Sets this
+   * GameClient's scope to the lobbyId so subsequent `getState`/`wait`
+   * calls persist their cursor under `(agent, lobbyId)`. A later state
+   * response carrying `gameId` will upgrade the scope automatically.
+   */
   async joinLobby(lobbyId: string): Promise<JoinLobbyResponse> {
     await this.ensureAuth();
-    return this.api.joinLobby(lobbyId);
+    const result = await this.api.joinLobby(lobbyId);
+    // Only scope on success — a failed join shouldn't pin us to a lobby we
+    // aren't in. `result.error` is the server's error envelope; absent =
+    // success per `ErrorEnvelope`.
+    if (!result.error) {
+      this.setScope(lobbyId);
+    }
+    return result;
   }
 
-  /** Create a new lobby (auto-joins the creator). */
+  /**
+   * Create a new lobby (auto-joins the creator). Scopes the GameClient
+   * to the returned lobbyId (CtL) or gameId (OATHBREAKER, which skips the
+   * lobby phase).
+   */
   async createLobby(gameType?: string, size?: number): Promise<CreateLobbyResponse> {
     await this.ensureAuth();
+    let result: CreateLobbyResponse;
     if (gameType === OATH_GAME_ID) {
       // For OATHBREAKER, teamSize is the total player count to auto-start (4-20)
       const teamSize = Math.min(20, Math.max(4, size || 4));
-      return this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
+      result = await this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
+    } else {
+      const teamSize = Math.min(6, Math.max(2, size || 2));
+      result = await this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
     }
-    const teamSize = Math.min(6, Math.max(2, size || 2));
-    return this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
+    if (!result.error) {
+      const scope = result.gameId ?? result.lobbyId;
+      if (scope) this.setScope(scope);
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import * as agentPersistence from './agent-persistence.js';
 import { loadConfig } from './config.js';
 import type {
   AuthChallengeResponse,
@@ -143,8 +144,25 @@ export class ApiClient {
    * from each state envelope's `meta.sinceIdx`. The server clamps; we just
    * echo what it returns. Reset to 0 on auth change. Pure plumbing — the
    * MCP tool surface never exposes it to the agent.
+   *
+   * When a scope is set via `setScope(agent, scopeId)`, every state fetch
+   * re-hydrates this from `~/.coordination/agent-state.json` on entry and
+   * persists it back on success. That's what lets `coga state` called
+   * from separate shell processes reuse deltas — in-memory-only would be
+   * a no-op for the primary agent path.
    */
   private relayCursor = 0;
+  /**
+   * Active (agentAddress, scopeId) for persistence. Both-or-neither:
+   * `setScope` sets both together, `clearScope` wipes both. When unset,
+   * state fetches behave exactly as before — pure in-memory cursor,
+   * no persistence touch. Only game/lobby-scoped code paths call
+   * `setScope`; unscoped commands (`coga lobbies`, `coga wallet`, etc.)
+   * must leave it null so they don't poison the persisted cursor of
+   * whatever game the agent is mid-way through.
+   */
+  private agentAddress: string | null = null;
+  private scopeId: string | null = null;
   /**
    * ETag cursor. Starts at 0 (force full state on first read), advances
    * from each state envelope's `meta.stateVersion`. Echoed back to the
@@ -176,13 +194,89 @@ export class ApiClient {
   }
 
   /**
+   * Bind this ApiClient to an (agent, scope) pair for persistence. Once
+   * set, `getState`/`waitForUpdate`/`callTool` hydrate `relayCursor` from
+   * disk on entry and persist the new cursor after a successful fetch.
+   *
+   * `setScope` must only be called from game/lobby-scoped code paths —
+   * commands that span games (listing lobbies, wallet balance, identity
+   * flows) must leave the scope unset so their cursor moves don't
+   * clobber the persisted cursor of the active game.
+   */
+  setScope(agentAddress: string, scopeId: string): void {
+    this.agentAddress = agentAddress;
+    this.scopeId = scopeId;
+  }
+
+  /**
+   * Clear any active scope. Subsequent calls behave as they did before
+   * Phase 1 — in-memory cursor only, no persistence. Usually not needed
+   * in practice (one GameClient per process, one active game at a time),
+   * but exposed for symmetry and tests.
+   */
+  clearScope(): void {
+    this.agentAddress = null;
+    this.scopeId = null;
+  }
+
+  /**
    * Reset all per-session cursors + caches. Called on auth change and
    * exposed for the MCP `state` tool's `fresh: true` option.
+   *
+   * Deliberately does NOT touch persistence — that's `--fresh`'s job (see
+   * `agent-persistence.clear(...)` in the shared GameClient.getState
+   * path). Callers that want a full reset (memory + disk) should call
+   * `agent-persistence.clear(...)` alongside this.
    */
   resetSessionCursors(): void {
     this.relayCursor = 0;
     this.stateVersionCursor = 0;
     this.stateCache = null;
+  }
+
+  /**
+   * If a scope is active, replace the in-memory cursor with the
+   * persisted one before the next fetch. No-op when unscoped. Callers
+   * must invoke this as the first thing in any state-fetching method so
+   * a freshly-spawned `coga state` process picks up where the last one
+   * left off.
+   */
+  private loadPersistedCursor(): void {
+    if (!this.agentAddress || !this.scopeId) return;
+    const entry = agentPersistence.read(this.agentAddress, this.scopeId);
+    if (entry && typeof entry.relayCursor === 'number') {
+      this.relayCursor = entry.relayCursor;
+    } else {
+      // No persisted entry yet — start from the in-memory default (0 after
+      // auth, possibly already advanced this process). Don't zero it: a
+      // long-lived `coga serve` process with a freshly-created scope has
+      // an authoritative in-memory cursor already.
+    }
+  }
+
+  /**
+   * Persist the current cursor for the active scope. No-op when unscoped.
+   * Called after every successful state-fetching call.
+   */
+  private persistCursor(): void {
+    if (!this.agentAddress || !this.scopeId) return;
+    try {
+      agentPersistence.write(this.agentAddress, this.scopeId, {
+        relayCursor: this.relayCursor,
+        // Phase 2 will populate this with the flattened state snapshot the
+        // differ's `lastSeen` baseline is drawn from. Phase 1 leaves it
+        // null — no consumer reads it yet.
+        lastSeen: null,
+      });
+    } catch (err) {
+      // Persistence is best-effort. A disk error must not fail the user's
+      // state fetch — worst case they get a cold cursor next call.
+      process.stderr.write(
+        `agent-persistence: failed to write cursor (${
+          err instanceof Error ? err.message : String(err)
+        })\n`,
+      );
+    }
   }
 
   /** Bump the cursor from a server-supplied next-sinceIdx. */
@@ -329,6 +423,7 @@ export class ApiClient {
   }
 
   async getState(): Promise<StateResponse> {
+    this.loadPersistedCursor();
     const raw = await this.get(
       `/api/player/state?sinceIdx=${this.relayCursor}&knownStateVersion=${this.stateVersionCursor}`,
     );
@@ -337,6 +432,7 @@ export class ApiClient {
         ? this.applyStateCache(raw as Record<string, unknown>)
         : (raw as Record<string, unknown>);
     this.advanceCursor((hydrated as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
+    this.persistCursor();
     return flattenStateEnvelope(hydrated);
   }
 
@@ -353,10 +449,12 @@ export class ApiClient {
    * `getState()` which is the authoritative delta source.
    */
   async waitForUpdate(): Promise<StateResponse> {
+    this.loadPersistedCursor();
     const { ticket } = (await this.post('/api/player/ws-ticket')) as { ticket: string };
     const sinceIdx = this.relayCursor;
     const wsUrl = `${this.serverUrl.replace(/^http/, 'ws')}/ws/player?ticket=${encodeURIComponent(ticket)}&sinceIdx=${sinceIdx}&knownStateVersion=${this.stateVersionCursor}`;
     await waitForWsWakeup(wsUrl, 25_000, sinceIdx);
+    // `getState` will re-load and then persist; no double-persist needed.
     return this.getState();
   }
 
@@ -383,6 +481,7 @@ export class ApiClient {
    * plugin-relay bodies) pass through unchanged.
    */
   async callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
+    this.loadPersistedCursor();
     // Every tool call returns a full state envelope now (Option A — unified
     // response shape across game/lobby/plugin-relay declarers). Cursors on
     // the URL drive the ETag short-circuit so chat-only paths stay tiny.
@@ -393,6 +492,7 @@ export class ApiClient {
         ? this.applyStateCache(raw as Record<string, unknown>)
         : (raw as Record<string, unknown>);
     this.advanceCursor((hydrated as { meta?: { sinceIdx?: unknown } } | undefined)?.meta?.sinceIdx);
+    this.persistCursor();
     return flattenStateEnvelope(hydrated);
   }
 }
