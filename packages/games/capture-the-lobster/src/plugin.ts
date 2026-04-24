@@ -424,7 +424,7 @@ Your main loop — repeat until game ends:
 
 Every response is a DIFF relative to your last observation. Keys with unchanged values are omitted and listed in \`_unchangedKeys\` — reuse your last-seen value for those. Read in this order:
 
-1. **\`summary\`** (read FIRST) — scalar at-a-glance: turn, phase, pos, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. This is all you need for most decisions — no need to parse the rest unless you care about terrain.
+1. **\`summary\`** (read FIRST) — scalar at-a-glance: pos, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. Canonical \`turn\` and \`phase\` live at the top level of the envelope (not duplicated here). This is all you need for most decisions — no need to parse the rest unless you care about terrain.
 2. **\`yourUnit\`** — your unit's full record including \`visionRange\` and \`attackRange\` (use these, don't hardcode class tables).
 3. **\`mapStatic\`** — \`{ radius, bases }\`. Same every turn; dedupes into \`_unchangedKeys\` after turn 0.
 4. **\`visibleWalls\`** — walls currently within your vision. **Fog-filtered per turn** — walls you haven't seen yet are NOT revealed (you have to explore to discover them). A hex within your vision that isn't in \`visibleWalls\` and isn't a base tile is walkable ground.

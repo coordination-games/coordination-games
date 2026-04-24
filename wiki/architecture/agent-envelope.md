@@ -41,7 +41,7 @@ CtL example:
 - `mapStatic: { radius, bases }` — identical every turn, dedupes forever after turn 0.
 - `visibleWalls: Hex[]` — fog-filtered per turn, changes when the viewer moves.
 - `visibleOccupants: VisibleOccupant[]` — per-turn fog view of units/flags.
-- `summary: { turn, phase, pos, carrying, score, enemies, flags }` — scalar at-a-glance; diff-friendly because small changes invalidate only this key.
+- `summary: { pos, carrying, alive, moveSubmitted, score, yourFlag, enemyFlag, enemies, flags }` — scalar at-a-glance; diff-friendly because small changes invalidate only this key. Canonical `turn` and `phase` live at the top level of the envelope (not duplicated here) so they dedup independently of the richer summary payload.
 - `yourUnit: { ..., visionRange, attackRange }` — player-specific per-turn state; includes static scalars so the agent doesn't need to hardcode class tables.
 
 Rule of thumb: every top-level key should have a single "change cadence". Static info per game, per phase, per turn, per tick — each gets its own key.

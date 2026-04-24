@@ -76,8 +76,6 @@ export type YourFlagStatus = 'at_base' | 'carried' | 'unknown';
 export type EnemyFlagStatus = 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
 
 export interface AgentSummary {
-  turn: number;
-  phase: GamePhase;
   pos: Hex;
   carrying: boolean;
   alive: boolean;
@@ -621,8 +619,6 @@ export function getStateForAgent(
   }
 
   const summary: AgentSummary = {
-    turn: state.turn,
-    phase: state.phase,
     pos: { ...unit.position },
     carrying: unit.carryingFlag,
     alive: unit.alive,
