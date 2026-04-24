@@ -133,31 +133,57 @@ export default function LobbiesPage() {
 
   return (
     <div className="space-y-12">
+      {/* Page eyebrow + headline */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <span
+            className="font-mono text-[11px] tracking-[0.22em] uppercase"
+            style={{ color: 'var(--color-ash)' }}
+          >
+            01
+          </span>
+          <span
+            className="font-mono text-[11px] tracking-[0.22em] uppercase"
+            style={{ color: 'var(--color-warm-black)' }}
+          >
+            Lobbies
+          </span>
+          <div className="flex-1 hairline" />
+        </div>
+        <h1
+          className="font-display text-4xl sm:text-5xl font-medium tracking-tight leading-tight"
+          style={{ color: 'var(--color-warm-black)' }}
+        >
+          Find a team.
+          <br />
+          <span style={{ color: 'var(--color-mint-deep)' }}>Open a match.</span>
+        </h1>
+      </div>
+
       {/* Game type tabs + create controls */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4">
         {/* Tab selector — one tab per registered spectator plugin. Each
             plugin contributes its own brand color for the active state. */}
         <div className="flex items-center gap-2">
           {getAllPlugins().map((plugin) => {
             const active = gameTab === plugin.gameType;
-            const color = plugin.branding.primaryColor;
             return (
               <button
                 type="button"
                 key={plugin.gameType}
                 onClick={() => setGameTab(plugin.gameType)}
-                className="cursor-pointer rounded-lg px-4 py-2 text-sm font-heading font-semibold tracking-wide transition-all"
+                className="cursor-pointer px-4 h-10 font-mono text-[11px] tracking-[0.18em] uppercase font-medium transition-colors"
                 style={
                   active
                     ? {
-                        background: `color-mix(in srgb, ${color} 15%, transparent)`,
-                        color,
-                        border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
+                        background: 'var(--color-warm-black)',
+                        color: 'var(--color-mint)',
+                        border: '1px solid var(--color-warm-black)',
                       }
                     : {
                         background: 'transparent',
-                        color: 'var(--color-ink-faint)',
-                        border: '1px solid rgba(42, 31, 14, 0.15)',
+                        color: 'var(--color-graphite)',
+                        border: '1px solid var(--color-graphite)',
                       }
                 }
               >
@@ -170,25 +196,35 @@ export default function LobbiesPage() {
         {/* Create controls — per-game form still lives here (follow-up task
             promotes it to a `lobby:create-form` slot); the tab id governs
             which widget shows. */}
-        <div className="flex items-center justify-end gap-3">
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 p-4"
+          style={{ background: 'var(--color-bone)', border: '1px solid rgba(28,26,23,0.1)' }}
+        >
           {gameTab === CTL_ID ? (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <span
+                className="font-mono text-[10px] tracking-[0.22em] uppercase mr-1"
+                style={{ color: 'var(--color-ash)' }}
+              >
+                Size
+              </span>
               {[2, 3, 4, 5, 6].map((size) => (
                 <button
                   type="button"
                   key={size}
                   onClick={() => setTeamSize(size)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
+                  className="cursor-pointer w-9 h-9 font-mono text-[11px] font-medium transition-colors"
                   style={
                     teamSize === size
                       ? {
-                          background: 'rgba(212, 162, 78, 0.15)',
-                          color: 'var(--color-amber-glow)',
-                          border: '1px solid rgba(212, 162, 78, 0.4)',
+                          background: 'var(--color-mint)',
+                          color: 'var(--color-warm-black)',
+                          border: '1px solid var(--color-mint-deep)',
                         }
                       : {
-                          color: 'var(--color-ink-faint)',
-                          border: '1px solid rgba(42, 31, 14, 0.15)',
+                          color: 'var(--color-graphite)',
+                          border: '1px solid var(--color-stone)',
+                          background: 'transparent',
                         }
                   }
                 >
@@ -197,26 +233,30 @@ export default function LobbiesPage() {
               ))}
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono" style={{ color: 'var(--color-ink-faint)' }}>
-                Players:
+            <div className="flex items-center gap-1.5">
+              <span
+                className="font-mono text-[10px] tracking-[0.22em] uppercase mr-1"
+                style={{ color: 'var(--color-ash)' }}
+              >
+                Players
               </span>
               {[4, 6, 8, 10, 12, 16, 20].map((count) => (
                 <button
                   type="button"
                   key={count}
                   onClick={() => setOathPlayerCount(count)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-mono font-medium transition-colors`}
+                  className="cursor-pointer w-9 h-9 font-mono text-[11px] font-medium transition-colors"
                   style={
                     oathPlayerCount === count
                       ? {
-                          background: 'rgba(139, 32, 32, 0.15)',
-                          color: 'var(--color-blood-light, #c55)',
-                          border: '1px solid rgba(139, 32, 32, 0.4)',
+                          background: 'var(--color-hot)',
+                          color: 'var(--color-warm-black)',
+                          border: '1px solid var(--color-hot-deep)',
                         }
                       : {
-                          color: 'var(--color-ink-faint)',
-                          border: '1px solid rgba(42, 31, 14, 0.15)',
+                          color: 'var(--color-graphite)',
+                          border: '1px solid var(--color-stone)',
+                          background: 'transparent',
                         }
                   }
                 >
@@ -228,16 +268,10 @@ export default function LobbiesPage() {
           <motion.button
             onClick={handleCreateLobby}
             disabled={creating}
-            className="cursor-pointer font-heading rounded-lg px-5 py-2 text-sm font-semibold tracking-wider uppercase disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:brightness-110"
-            style={{
-              border: '1px solid rgba(184, 134, 11, 0.3)',
-              background: 'rgba(184, 134, 11, 0.08)',
-              color: 'var(--color-amber)',
-            }}
-            whileHover={{ scale: 1.02 }}
+            className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
             whileTap={{ scale: 0.98 }}
           >
-            {creating ? 'Creating...' : 'Create Lobby'}
+            {creating ? 'Creating…' : 'Open Lobby →'}
           </motion.button>
         </div>
       </div>
@@ -282,12 +316,19 @@ export default function LobbiesPage() {
           count={activeGames.length > 0 ? activeGames.length : undefined}
         />
         {activeGames.length === 0 ? (
-          <div className="rounded-xl py-12 text-center parchment" style={{ borderStyle: 'dashed' }}>
-            <p className="text-sm" style={{ color: 'var(--color-ink-faint)' }}>
-              No active games right now.
+          <div className="py-16 text-center" style={{ border: '1px dashed var(--color-stone)' }}>
+            <p
+              className="font-mono text-[11px] tracking-[0.22em] uppercase"
+              style={{ color: 'var(--color-ash)' }}
+            >
+              <span style={{ color: 'var(--color-mint-deep)' }}>{'// '}</span>
+              No active games
             </p>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)', opacity: 0.6 }}>
-              Create a lobby to begin.
+            <p
+              className="font-editorial italic text-sm mt-3"
+              style={{ color: 'var(--color-graphite)' }}
+            >
+              Create a lobby to open the next match.
             </p>
           </div>
         ) : (
@@ -381,28 +422,24 @@ function SlotHostOrFallback(props: {
 function SectionHeader({ title, count }: { title: string; count?: number | undefined }) {
   return (
     <div className="mb-5 flex items-center gap-3">
-      <h2
-        className="font-heading text-lg font-bold tracking-wide"
-        style={{ color: 'var(--color-ink)' }}
+      <span
+        className="font-mono text-[11px] tracking-[0.22em] uppercase"
+        style={{ color: 'var(--color-warm-black)' }}
       >
         {title}
-      </h2>
+      </span>
       {count !== undefined && (
         <span
-          className="text-xs font-mono font-medium rounded-full px-2.5 py-0.5"
+          className="font-mono text-[10px] tracking-[0.18em] uppercase px-1.5 py-0.5"
           style={{
-            background: 'rgba(184, 134, 11, 0.1)',
-            color: 'var(--color-amber)',
-            border: '1px solid rgba(184, 134, 11, 0.2)',
+            background: 'var(--color-warm-black)',
+            color: 'var(--color-mint)',
           }}
         >
-          {count}
+          {String(count).padStart(2, '0')}
         </span>
       )}
-      <div
-        className="flex-1 h-px"
-        style={{ background: 'linear-gradient(to right, rgba(42, 31, 14, 0.15), transparent)' }}
-      />
+      <div className="flex-1 hairline" />
     </div>
   );
 }
