@@ -14,6 +14,24 @@
 export type Address = string;
 
 // ---------------------------------------------------------------------------
+// Hex-grid coord shorthand (shared across hex-grid games)
+// ---------------------------------------------------------------------------
+
+/**
+ * Two-tuple axial hex coordinate `[q, r]` — the compact wire form used in
+ * agent envelopes where we emit many coords and bytes matter. Internal game
+ * state (maps, unit positions, combat, fog, spectator views) stays on the
+ * richer `{ q, r }` object form. The only place tuples appear is the envelope
+ * emit boundary in `getVisibleState` for hex-grid games (e.g. Capture the
+ * Lobster's `visibleWalls`, `mapStatic.bases[*].spawns`).
+ *
+ * Kept here (not in a game package) so other hex-grid games adopt the same
+ * convention without re-inventing the alias. Games with non-hex coords (OB,
+ * OathBreaker-style FFA) don't import it.
+ */
+export type HexTuple = [number, number];
+
+// ---------------------------------------------------------------------------
 // Relay envelope — the canonical wire/storage shape for relay messages
 // ---------------------------------------------------------------------------
 
