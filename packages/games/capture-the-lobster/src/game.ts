@@ -6,7 +6,7 @@
  * and passes it to these functions each turn.
  */
 
-import { mustFind } from '@coordination-games/engine';
+import { type HexTuple, mustFind } from '@coordination-games/engine';
 import { CLASS_RANGE, CLASS_VISION, type CombatUnit, resolveCombat } from './combat.js';
 import { buildVisibleOccupants, type FogUnit, type VisibleOccupant } from './fog.js';
 import { type Direction, type Hex, hexEquals, hexToString } from './hex.js';
@@ -58,12 +58,17 @@ export type GamePhase = 'pre_game' | 'in_progress' | 'finished';
  * observation. Walls are NOT here because they're fog-filtered per-turn;
  * see `visibleWalls` on `GameState`. Bases are public (CtF convention —
  * you always know where both teams' bases are).
+ *
+ * Emit shape: `flag` is a single coord carried alongside its spawns list on
+ * a per-base object — keep as a tuple for consistency with the adjacent
+ * `spawns: HexTuple[]` (pure-coord array). The base object itself is the
+ * metadata container.
  */
 export interface AgentMapStatic {
   radius: number;
   bases: {
-    A: { flag: Hex; spawns: Hex[] }[];
-    B: { flag: Hex; spawns: Hex[] }[];
+    A: { flag: HexTuple; spawns: HexTuple[] }[];
+    B: { flag: HexTuple; spawns: HexTuple[] }[];
   };
 }
 
@@ -76,17 +81,18 @@ export type YourFlagStatus = 'at_base' | 'carried' | 'unknown';
 export type EnemyFlagStatus = 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
 
 export interface AgentSummary {
-  pos: Hex;
+  /** Your unit's position as `[q, r]` — the summary itself is the metadata container. */
+  pos: HexTuple;
   carrying: boolean;
   alive: boolean;
   moveSubmitted: boolean;
   score: { yourTeam: number; enemyTeam: number };
   yourFlag: YourFlagStatus;
   enemyFlag: EnemyFlagStatus;
-  /** Visible enemy units this turn (no ID for fog reasons). */
-  enemies: { q: number; r: number; unitClass: UnitClass }[];
-  /** Visible loose/carried flags this turn. */
-  flags: { q: number; r: number; team: 'A' | 'B' }[];
+  /** Visible enemy units this turn (no ID for fog reasons). `pos` is a `[q, r]` tuple, metadata follows. */
+  enemies: { pos: HexTuple; unitClass: UnitClass }[];
+  /** Visible loose/carried flags this turn. `pos` is a `[q, r]` tuple, `team` follows. */
+  flags: { pos: HexTuple; team: 'A' | 'B' }[];
 }
 
 export interface GameState {
@@ -97,7 +103,8 @@ export interface GameState {
   yourUnit: {
     id: string;
     unitClass: UnitClass;
-    position: Hex;
+    /** Your unit's position as `[q, r]` — yourUnit is the metadata container, coord stays lean. */
+    position: HexTuple;
     carryingFlag: boolean;
     alive: boolean;
     respawnTurn?: number;
@@ -111,9 +118,10 @@ export interface GameState {
   /**
    * Walls currently within your vision. Fog-filtered per turn — walls you
    * haven't seen yet are not revealed. A hex you can see that isn't in
-   * `visibleWalls` and isn't a base tile is walkable ground.
+   * `visibleWalls` and isn't a base tile is walkable ground. Pure-coord
+   * array → `HexTuple` entries (`[q, r]`), not objects.
    */
-  visibleWalls: Hex[];
+  visibleWalls: HexTuple[];
   /** Per-turn: only visible hexes that contain a unit or flag. Tiny. */
   visibleOccupants: VisibleOccupant[];
   yourFlag: { status: YourFlagStatus };
@@ -173,6 +181,18 @@ const DEFAULT_CONFIG: Required<GameConfig> = {
   turnTimerSeconds: 30,
   teamSize: 4,
 };
+
+// ---------------------------------------------------------------------------
+// Envelope-boundary coord helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert internal `{ q, r }` to the envelope tuple form. Only called from
+ * `getStateForAgent` — the internal state never sees tuples.
+ */
+function toTuple(h: Hex): HexTuple {
+  return [h.q, h.r];
+}
 
 // ---------------------------------------------------------------------------
 // Helper: compute wall/valid tile sets from map data
@@ -577,9 +597,21 @@ export function getStateForAgent(
     state.flags,
   );
 
+  // Convert internal {q, r} base coords into envelope tuple form. Static
+  // after turn 0 so the diff collapses this forever — the per-call cost of
+  // the map is paid once per game per agent.
   const mapStatic: AgentMapStatic = {
     radius: state.mapRadius,
-    bases: state.mapBases,
+    bases: {
+      A: state.mapBases.A.map((b) => ({
+        flag: toTuple(b.flag),
+        spawns: b.spawns.map(toTuple),
+      })),
+      B: state.mapBases.B.map((b) => ({
+        flag: toTuple(b.flag),
+        spawns: b.spawns.map(toTuple),
+      })),
+    },
   };
 
   let yourFlagStatus: YourFlagStatus = 'at_base';
@@ -609,17 +641,19 @@ export function getStateForAgent(
 
   const score = { yourTeam: state.score[team], enemyTeam: state.score[enemyTeam] };
 
+  // visibleOccupants already carries `pos: [q, r]` tuples — reuse directly
+  // so summary entries and the top-level `visibleOccupants` key agree.
   const enemies: AgentSummary['enemies'] = [];
-  const flags: AgentSummary['flags'] = [];
+  const flagEntries: AgentSummary['flags'] = [];
   for (const o of visibleOccupants) {
     if (o.unit && o.unit.team !== team) {
-      enemies.push({ q: o.q, r: o.r, unitClass: o.unit.unitClass });
+      enemies.push({ pos: o.pos, unitClass: o.unit.unitClass });
     }
-    if (o.flag) flags.push({ q: o.q, r: o.r, team: o.flag.team });
+    if (o.flag) flagEntries.push({ pos: o.pos, team: o.flag.team });
   }
 
   const summary: AgentSummary = {
-    pos: { ...unit.position },
+    pos: toTuple(unit.position),
     carrying: unit.carryingFlag,
     alive: unit.alive,
     moveSubmitted,
@@ -627,18 +661,18 @@ export function getStateForAgent(
     yourFlag: yourFlagStatus,
     enemyFlag: enemyFlagStatus,
     enemies,
-    flags,
+    flags: flagEntries,
   };
 
   return {
     summary,
     turn: state.turn,
     phase: state.phase,
-    // @ts-expect-error TS2375: Type '{ id: string; unitClass: UnitClass; position: { q: number; r: number; }; c — TODO(2.3-followup)
+    // @ts-expect-error TS2375: Type '{ id: string; unitClass: UnitClass; position: HexTuple; c — TODO(2.3-followup)
     yourUnit: {
       id: unit.id,
       unitClass: unit.unitClass,
-      position: { ...unit.position },
+      position: toTuple(unit.position),
       carryingFlag: unit.carryingFlag,
       alive: unit.alive,
       respawnTurn: unit.respawnTurn,

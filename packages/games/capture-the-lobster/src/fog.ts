@@ -1,3 +1,4 @@
+import type { HexTuple } from '@coordination-games/engine';
 import { CLASS_VISION } from './combat.js';
 import { type Hex, hexToString, stringToHex } from './hex.js';
 import { getVisibleHexes } from './los.js';
@@ -11,10 +12,16 @@ export interface FogUnit {
   alive: boolean;
 }
 
-/** Occupant bits (unit/flag) on a single hex the viewer can see. */
+/**
+ * Occupant bits (unit/flag) on a single hex the viewer can see.
+ *
+ * Emit shape (agent envelope): `pos: [q, r]` tuple — this entry carries
+ * optional `unit`/`flag` metadata alongside the coord, so we keep it as an
+ * object (the "thing at a position" idiom). Pure-coord arrays like
+ * `visibleWalls` skip the wrapper and go straight to `HexTuple[]`.
+ */
 export interface VisibleOccupant {
-  q: number;
-  r: number;
+  pos: HexTuple;
   unit?: {
     id?: string; // only included for allies
     team: 'A' | 'B';
@@ -57,7 +64,7 @@ export function buildVisibleOccupants(
     A: { position: Hex; carried: boolean; carrierId?: string }[];
     B: { position: Hex; carried: boolean; carrierId?: string }[];
   },
-): { occupants: VisibleOccupant[]; visibleKeys: Set<string>; walls: Hex[] } {
+): { occupants: VisibleOccupant[]; visibleKeys: Set<string>; walls: HexTuple[] } {
   const visibleKeys = getUnitVision(viewer, wallSet, allHexes);
 
   const unitsById = new Map<string, FogUnit>();
@@ -81,17 +88,22 @@ export function buildVisibleOccupants(
     }
   }
 
+  // Envelope-boundary coord conversion: walls and occupant `pos` go out as
+  // tuples. `visibleKeys` stays as string keys (internal set semantics).
   const occupants: VisibleOccupant[] = [];
-  const walls: Hex[] = [];
+  const walls: HexTuple[] = [];
   for (const key of visibleKeys) {
-    if (wallSet.has(key)) walls.push(stringToHex(key));
+    if (wallSet.has(key)) {
+      const hex = stringToHex(key);
+      walls.push([hex.q, hex.r]);
+    }
 
     const u = unitsByHex.get(key);
     const flagTeam = flagsByHex.get(key);
     if (!u && flagTeam === undefined) continue;
 
     const hex = stringToHex(key);
-    const occ: VisibleOccupant = { q: hex.q, r: hex.r };
+    const occ: VisibleOccupant = { pos: [hex.q, hex.r] };
     if (u) {
       const isAlly = u.team === viewer.team;
       occ.unit = {
