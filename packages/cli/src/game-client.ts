@@ -12,6 +12,7 @@
 
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { ethers } from 'ethers';
+import * as agentPersistence from './agent-persistence.js';
 import { ApiClient } from './api-client.js';
 import { processState } from './pipeline.js';
 import type {
@@ -204,7 +205,18 @@ export class GameClient {
    */
   async getState(options: { fresh?: boolean | undefined } = {}): Promise<StateResponse> {
     await this.ensureAuth();
-    if (options.fresh) this.api.resetSessionCursors();
+    if (options.fresh) {
+      // Clear BOTH in-memory cursors and the on-disk `(agent, scope)`
+      // entry before the fetch. Without the on-disk clear, a fresh
+      // process would immediately hydrate the old cursor back in
+      // `ApiClient.loadPersistedCursor` and the fetch would still be
+      // a delta. The disk clear is a no-op when we have no scope yet
+      // (which matches pre-Phase-1 behaviour for unscoped callers).
+      this.api.resetSessionCursors();
+      if (this.agentAddress && this.scopeId) {
+        agentPersistence.clear(this.agentAddress, this.scopeId);
+      }
+    }
     const raw = await this.api.getState();
     const processed = this.processResponse(raw);
     this.maybeUpgradeScopeFromState(processed);

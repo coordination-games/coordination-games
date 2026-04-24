@@ -134,8 +134,9 @@ const LOCK_BACKOFF_MS = 25;
 
 function sleepSyncMs(ms: number): void {
   const end = Date.now() + ms;
-  // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional spin-wait
-  while (Date.now() < end) {}
+  while (Date.now() < end) {
+    // intentional spin-wait on rare cross-process lock contention
+  }
 }
 
 function withLock<T>(fn: (file: PersistedFile) => { file: PersistedFile; result: T }): T {
