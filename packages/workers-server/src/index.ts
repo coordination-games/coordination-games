@@ -376,8 +376,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   if (pathname === '/api/lobbies/create' && method === 'POST') {
-    const auth = await requireAuth(request, env);
-    if (auth instanceof Response) return auth;
+    // Public lobby creation is intentional: web spectators can open a room,
+    // but joining and acting still require Bearer auth below. The creator is
+    // not added as a player here, so requiring auth only breaks the web shell.
     return handleCreateLobby(request, env);
   }
 

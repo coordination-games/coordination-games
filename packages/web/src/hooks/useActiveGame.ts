@@ -3,6 +3,16 @@ import { useMatch } from 'react-router-dom';
 import { fetchGame, fetchLobby, fetchReplay } from '../api';
 import { getDefaultPlugin, getSpectatorPlugin, type SpectatorPlugin } from '../games';
 
+function extractLobbyGameType(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const direct = (payload as { gameType?: unknown }).gameType;
+  if (typeof direct === 'string') return direct;
+  const state = (payload as { state?: unknown }).state;
+  if (!state || typeof state !== 'object') return undefined;
+  const nested = (state as { gameType?: unknown }).gameType;
+  return typeof nested === 'string' ? nested : undefined;
+}
+
 /**
  * Resolve the active game's `SpectatorPlugin` from the current URL so the
  * shell (Layout, etc.) can render branding without hardcoding a game type.
@@ -37,7 +47,7 @@ export function useActiveGame(): SpectatorPlugin {
     let cancelled = false;
     const fetcher =
       scope === 'lobby'
-        ? fetchLobby(id).then((d) => d.gameType)
+        ? fetchLobby(id).then(extractLobbyGameType)
         : scope === 'game'
           ? fetchGame(id).then((d) => (d as { gameType?: string } | null)?.gameType)
           : fetchReplay(id).then((d) => d.gameType);

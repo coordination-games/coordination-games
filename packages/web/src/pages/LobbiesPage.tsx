@@ -6,6 +6,7 @@ import { API_BASE } from '../config.js';
 import { CaptureTheLobsterSpectator } from '../games/capture-the-lobster';
 import { OathbreakerSpectator } from '../games/oathbreaker';
 import { getAllPlugins, getDefaultPlugin } from '../games/registry';
+import { TragedyOfTheCommonsSpectator } from '../games/tragedy-of-the-commons';
 import { getRegisteredWebPlugins, SlotHost } from '../plugins';
 import type { GameSummaryView, LobbySummaryView } from '../plugins/types';
 
@@ -16,6 +17,7 @@ import type { GameSummaryView, LobbySummaryView } from '../plugins/types';
 // these constants go away.
 const CTL_ID = CaptureTheLobsterSpectator.gameType;
 const OATH_ID = OathbreakerSpectator.gameType;
+const TRAGEDY_ID = TragedyOfTheCommonsSpectator.gameType;
 
 function FallbackCard({
   id,
@@ -102,13 +104,15 @@ export default function LobbiesPage() {
   async function handleCreateLobby() {
     setCreating(true);
     try {
-      // Each game's create payload is currently game-specific (CtL: `teamSize`,
-      // OATH: `playerCount`). Once `lobby:create-form` becomes a slot the
-      // payload move into the per-game web plugin and this branch goes away.
+      // Each game's create payload is currently game-specific. The Worker
+      // accepts `teamSize` for every game; for FFA games it represents the
+      // target player count displayed in the UI.
       const body =
         gameTab === OATH_ID
-          ? { gameType: OATH_ID, playerCount: oathPlayerCount }
-          : { gameType: gameTab, teamSize };
+          ? { gameType: OATH_ID, teamSize: oathPlayerCount }
+          : gameTab === TRAGEDY_ID
+            ? { gameType: TRAGEDY_ID, teamSize: oathPlayerCount }
+            : { gameType: gameTab, teamSize };
       const res = await fetch(`${API_BASE}/lobbies/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
