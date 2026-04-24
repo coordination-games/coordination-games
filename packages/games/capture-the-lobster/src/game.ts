@@ -60,8 +60,12 @@ export type GamePhase = 'pre_game' | 'in_progress' | 'finished';
  */
 export interface AgentMap {
   radius: number;
-  /** Every hex in the map, keyed by coord + terrain type. */
-  tiles: { q: number; r: number; type: 'ground' | 'wall' | 'base_a' | 'base_b' }[];
+  /**
+   * Wall positions. Any in-radius hex NOT in `walls` and NOT a base tile is
+   * ground. Listing only walls keeps first-observation cost ~10x smaller
+   * than enumerating every hex.
+   */
+  walls: Hex[];
   bases: {
     A: { flag: Hex; spawns: Hex[] }[];
     B: { flag: Hex; spawns: Hex[] }[];
@@ -581,17 +585,16 @@ export function getStateForAgent(
   );
 
   // Static map — value-identical every turn, so the agent-facing diff
-  // collapses it into `_unchangedKeys` after the first observation.
+  // collapses it into `_unchangedKeys` after the first observation. Only
+  // walls are listed; in-radius hexes not in `walls` and not a base are
+  // ground (derivable, not worth emitting).
+  const walls: Hex[] = [];
+  for (const [k, type] of state.mapTiles) {
+    if (type === 'wall') walls.push(stringToHex(k));
+  }
   const map: AgentMap = {
     radius: state.mapRadius,
-    tiles: state.mapTiles.map(([k, type]) => {
-      const hex = stringToHex(k);
-      return {
-        q: hex.q,
-        r: hex.r,
-        type: type as 'ground' | 'wall' | 'base_a' | 'base_b',
-      };
-    }),
+    walls,
     bases: state.mapBases,
   };
 

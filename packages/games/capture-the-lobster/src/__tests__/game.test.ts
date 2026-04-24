@@ -373,12 +373,14 @@ describe('Game (pure functions)', () => {
   });
 
   describe('getStateForAgent', () => {
-    it('emits the full static map for terrain context', () => {
+    it('emits only walls + bases + radius — ground is inferred', () => {
       const state = createInProgressState(map, makePlayers(1));
       const agentState = getStateForAgent(state, 'a0');
 
-      expect(agentState.map.tiles.length).toBe(map.tiles.size);
+      const wallCount = [...map.tiles.values()].filter((t) => t === 'wall').length;
+      expect(agentState.map.walls.length).toBe(wallCount);
       expect(agentState.map.radius).toBe(map.radius);
+      expect(agentState.map.bases).toEqual(map.bases);
     });
 
     it('filters occupants by fog of war', () => {
