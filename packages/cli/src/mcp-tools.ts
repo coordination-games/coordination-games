@@ -45,6 +45,7 @@ import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { AgentStateDiffer } from './agent-state-differ.js';
 import type { GameClient } from './game-client.js';
 import type { JsonSchema, PluginCallResult } from './types.js';
 
@@ -480,83 +481,6 @@ function jsonResult(data: unknown) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(data) }],
   };
-}
-
-/**
- * Top-level-key diff for agent-facing state output. Keeps context lean:
- * when a key's value is deep-equal to the last-seen value, omit it and
- * list its name in `_unchangedKeys` so the agent reuses its previous
- * observation. Changed keys pass through verbatim; removed keys surface
- * as an explicit `_removedKeys` list (rare, but avoids "did this vanish
- * or stay the same?" ambiguity).
- *
- * `meta`/internal fields (`_unchangedKeys`, `_removedKeys`) are excluded
- * from the diff itself — they're presentation, not content.
- *
- * Stateful: holds one `lastSeen` per client so chat/state/wait all share
- * a single running baseline. Reset via `reset()` (called by `fresh: true`).
- */
-class AgentStateDiffer {
-  private lastSeen: Record<string, unknown> | null = null;
-
-  reset(): void {
-    this.lastSeen = null;
-  }
-
-  /**
-   * Take a flattened `StateResponse` (the shape downstream of
-   * `flattenStateEnvelope` + `processState`) and return an agent-facing
-   * projection with unchanged keys elided. Always updates `lastSeen`.
-   */
-  diff(result: unknown): unknown {
-    if (!result || typeof result !== 'object' || Array.isArray(result)) {
-      // Non-object payloads (lobby lists, guide strings) don't diff.
-      return result;
-    }
-    const curr = result as Record<string, unknown>;
-    const prev = this.lastSeen;
-    // First observation — pass through in full and cache.
-    if (!prev) {
-      this.lastSeen = { ...curr };
-      return result;
-    }
-    const changed: Record<string, unknown> = {};
-    const unchanged: string[] = [];
-    const removed: string[] = [];
-    for (const [key, value] of Object.entries(curr)) {
-      if (!(key in prev)) {
-        changed[key] = value;
-        continue;
-      }
-      if (deepEqualJson(value, prev[key])) {
-        unchanged.push(key);
-      } else {
-        changed[key] = value;
-      }
-    }
-    for (const key of Object.keys(prev)) {
-      if (!(key in curr)) removed.push(key);
-    }
-    this.lastSeen = { ...curr };
-    if (unchanged.length === 0 && removed.length === 0) return result;
-    const projected: Record<string, unknown> = { ...changed };
-    if (unchanged.length > 0) projected._unchangedKeys = unchanged;
-    if (removed.length > 0) projected._removedKeys = removed;
-    return projected;
-  }
-}
-
-function deepEqualJson(a: unknown, b: unknown): boolean {
-  // JSON.stringify is sufficient: state is already a plain-JSON shape
-  // (no functions, no cycles, no Dates that matter for equality). Stable
-  // stringification isn't required because the server produces the same
-  // shape on each call for identical state.
-  if (a === b) return true;
-  try {
-    return JSON.stringify(a) === JSON.stringify(b);
-  } catch {
-    return false;
-  }
 }
 
 function jsonError(err: unknown) {
