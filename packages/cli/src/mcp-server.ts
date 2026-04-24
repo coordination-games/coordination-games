@@ -13,6 +13,7 @@
 
 import { CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { OathbreakerPlugin } from '@coordination-games/game-oathbreaker';
+import { TragedyOfTheCommonsPlugin } from '@coordination-games/game-tragedy-of-the-commons';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -42,7 +43,7 @@ function createMcpServerWithClient(options?: ServeOptions): {
   });
   registerGameTools(server, client, {
     plugins: [BasicChatPlugin],
-    games: [CaptureTheLobsterPlugin, OathbreakerPlugin],
+    games: [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsPlugin],
   });
   return { server, client };
 }

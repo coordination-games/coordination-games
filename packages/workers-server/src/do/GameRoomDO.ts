@@ -53,6 +53,7 @@ import { computePublicSnapshotIndex } from './spectator-delay.js';
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
+import '@coordination-games/game-tragedy-of-the-commons';
 // Phase 4.2 + 5.1: importing basic-chat (a) self-registers the chat relay
 // schema in the engine's relay-registry so `DOStorageRelayClient.publish`
 // accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO

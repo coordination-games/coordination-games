@@ -39,6 +39,11 @@ import {
   OATHBREAKER_SYSTEM_ACTION_TYPES,
   OathbreakerPlugin,
 } from '@coordination-games/game-oathbreaker';
+import {
+  TRAGEDY_GAME_ID,
+  TRAGEDY_SYSTEM_ACTION_TYPES,
+  TragedyOfTheCommonsPlugin,
+} from '@coordination-games/game-tragedy-of-the-commons';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import Ajv from 'ajv';
 import { describe, expect, it } from 'vitest';
@@ -61,13 +66,14 @@ const ajv = new AjvCtor({ allErrors: true, strict: false });
 /** Opaque CoordinationGame — the drift harness walks plugin internals by name. */
 type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
 
-const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin];
+const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsPlugin];
 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
 const SYSTEM_ACTIONS: Record<string, readonly string[]> = {
   [CTL_GAME_ID]: CTL_SYSTEM_ACTION_TYPES,
   [OATH_GAME_ID]: OATHBREAKER_SYSTEM_ACTION_TYPES,
+  [TRAGEDY_GAME_ID]: TRAGEDY_SYSTEM_ACTION_TYPES,
 };
 
 // ---------------------------------------------------------------------------
@@ -169,6 +175,34 @@ function buildOathWaitingState(): unknown {
   );
   if (!setup) throw new Error('drift fixture: OathbreakerPlugin.createConfig is missing');
   return OathbreakerPlugin.createInitialState(setup.config);
+}
+
+const TRAGEDY_PLAYERS: { id: string; handle: string }[] = [
+  { id: 'tp1', handle: 'alice' },
+  { id: 'tp2', handle: 'bob' },
+  { id: 'tp3', handle: 'carol' },
+  { id: 'tp4', handle: 'dave' },
+];
+
+function buildTragedyWaitingState(): unknown {
+  const setup = TragedyOfTheCommonsPlugin.createConfig?.(
+    TRAGEDY_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
+    'drift-test-seed',
+  );
+  if (!setup) throw new Error('drift fixture: TragedyOfTheCommonsPlugin.createConfig is missing');
+  return TragedyOfTheCommonsPlugin.createInitialState(setup.config);
+}
+
+function buildTragedyPlayingState(): { state: unknown; playerId: string } {
+  const initial = buildTragedyWaitingState();
+  const result = (
+    TragedyOfTheCommonsPlugin.applyAction as (
+      s: unknown,
+      p: string | null,
+      a: { type: string },
+    ) => { state: unknown }
+  )(initial, null, { type: 'game_start' });
+  return { state: result.state, playerId: 'tp1' };
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +356,45 @@ const DRIFT_FIXTURES: Record<string, Fixture> = {
   },
 
   // -----------------------------------------------------------------
+  // Tragedy of the Commons game tools
+  // -----------------------------------------------------------------
+  'tragedy-of-the-commons.game:offer_trade': {
+    kind: 'game',
+    fixture: {
+      validSample: { to: 'tp2', give: { grain: 1 }, receive: { timber: 1 } },
+      buildState: () => buildTragedyPlayingState(),
+      game: TragedyOfTheCommonsPlugin,
+    },
+  },
+
+  'tragedy-of-the-commons.game:extract_commons': {
+    kind: 'game',
+    fixture: {
+      validSample: { ecosystemId: 'old-growth-ring', level: 'low' },
+      buildState: () => buildTragedyPlayingState(),
+      game: TragedyOfTheCommonsPlugin,
+    },
+  },
+
+  'tragedy-of-the-commons.game:build_settlement': {
+    kind: 'game',
+    fixture: {
+      validSample: { regionId: 'ironcrest' },
+      buildState: () => buildTragedyPlayingState(),
+      game: TragedyOfTheCommonsPlugin,
+    },
+  },
+
+  'tragedy-of-the-commons.game:pass': {
+    kind: 'game',
+    fixture: {
+      validSample: {},
+      buildState: () => buildTragedyPlayingState(),
+      game: TragedyOfTheCommonsPlugin,
+    },
+  },
+
+  // -----------------------------------------------------------------
   // Plugin tools — no server-side validator (invariant 1 does not apply).
   // Still fixture'd for invariant 2 (AJV shape-rejection).
   // -----------------------------------------------------------------
@@ -407,10 +480,10 @@ describe('Tool drift — fixture coverage', () => {
     expect(dead, `Dead DRIFT_FIXTURES entries (no matching tool): ${dead.join(', ')}`).toEqual([]);
   });
 
-  it('discovered surface matches the expected 8-tool count', () => {
+  it('discovered surface matches the expected 12-tool count', () => {
     // If this breaks, either a tool was added (update the constant + fixtures)
     // or the existing surface shrank. Either change the constant intentionally.
-    expect(DISCOVERED).toHaveLength(8);
+    expect(DISCOVERED).toHaveLength(12);
   });
 });
 
@@ -634,10 +707,12 @@ describe('Invariant 3 — system-action isolation', () => {
       it(`${game.gameType}:${type}: validateAction rejects non-null playerId`, () => {
         // Build a state where the system action *would* be valid with null
         // playerId — so the ONLY way it rejects below is the null-gate.
-        const state =
-          game.gameType === CTL_GAME_ID
-            ? buildCtlPreGameState() // pre_game → game_start valid with null
-            : buildOathWaitingState(); // waiting → game_start valid with null
+        const state = (() => {
+          if (game.gameType === CTL_GAME_ID) return buildCtlPreGameState(); // pre_game → game_start valid with null
+          if (game.gameType === OATH_GAME_ID) return buildOathWaitingState(); // waiting → game_start valid with null
+          if (game.gameType === TRAGEDY_GAME_ID) return buildTragedyWaitingState();
+          throw new Error(`drift fixture: no waiting-state builder for ${game.gameType}`);
+        })();
         // For 'turn_timeout' / 'round_timeout' we need the in-progress/playing
         // phase. Swap to a state where each system action could plausibly fire.
         const stateForType = (() => {
@@ -649,6 +724,15 @@ describe('Invariant 3 — system-action isolation', () => {
             // state type; pass opaque and let the runtime do the work.
             return (
               OathbreakerPlugin.applyAction as (
+                s: unknown,
+                p: string | null,
+                a: { type: string },
+              ) => { state: unknown }
+            )(state, null, { type: 'game_start' }).state;
+          }
+          if (game.gameType === TRAGEDY_GAME_ID && type === 'round_timeout') {
+            return (
+              TragedyOfTheCommonsPlugin.applyAction as (
                 s: unknown,
                 p: string | null,
                 a: { type: string },

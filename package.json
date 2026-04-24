@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
-    "build": "npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker && npm run build -w packages/web -w packages/cli",
+    "build": "npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons && npm run build -w packages/web -w packages/cli",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/workers-server",
     "dev:web": "npm run dev --workspace=packages/web",

@@ -1,5 +1,6 @@
 import { CaptureTheLobsterSpectator } from './capture-the-lobster';
 import { OathbreakerSpectator } from './oathbreaker';
+import { TragedyOfTheCommonsSpectator } from './tragedy-of-the-commons';
 import type { SpectatorPlugin } from './types';
 
 /**
@@ -7,7 +8,11 @@ import type { SpectatorPlugin } from './types';
  * — the registry derives keys from `plugin.gameType` so the IDs aren't
  * inlined twice.
  */
-const REGISTERED_PLUGINS: SpectatorPlugin[] = [CaptureTheLobsterSpectator, OathbreakerSpectator];
+const REGISTERED_PLUGINS: SpectatorPlugin[] = [
+  CaptureTheLobsterSpectator,
+  OathbreakerSpectator,
+  TragedyOfTheCommonsSpectator,
+];
 
 const SPECTATOR_PLUGINS: Record<string, SpectatorPlugin> = Object.fromEntries(
   REGISTERED_PLUGINS.map((p) => [p.gameType, p]),

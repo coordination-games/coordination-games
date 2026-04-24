@@ -45,6 +45,10 @@ jobs:
         run: npx tsc --skipLibCheck
         working-directory: packages/games/oathbreaker
 
+      - name: Build tragedy plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/games/tragedy-of-the-commons
+
       - name: Build CLI
         run: npm run build
 

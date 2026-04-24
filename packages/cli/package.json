@@ -44,6 +44,7 @@
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
     "@coordination-games/game-oathbreaker": "*",
+    "@coordination-games/game-tragedy-of-the-commons": "*",
     "@coordination-games/plugin-chat": "*",
     "@types/node": "^22.19.15",
     "@types/proper-lockfile": "^4.1.4",
