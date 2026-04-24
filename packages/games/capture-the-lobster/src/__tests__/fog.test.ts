@@ -107,11 +107,11 @@ describe('buildVisibleOccupants', () => {
       noFlags,
     );
 
-    const allyOcc = occupants.find((o) => o.q === 1 && o.r === 0);
+    const allyOcc = occupants.find((o) => o.pos[0] === 1 && o.pos[1] === 0);
     expect(allyOcc?.unit?.id).toBe('a2');
     expect(allyOcc?.unit?.team).toBe('A');
 
-    const enemyOcc = occupants.find((o) => o.q === 0 && o.r === -1);
+    const enemyOcc = occupants.find((o) => o.pos[0] === 0 && o.pos[1] === -1);
     expect(enemyOcc?.unit?.id).toBeUndefined();
     expect(enemyOcc?.unit?.team).toBe('B');
   });
@@ -140,7 +140,7 @@ describe('buildVisibleOccupants', () => {
       noFlags,
     );
 
-    expect(occupants.find((o) => o.q === 1 && o.r === 0)).toBeUndefined();
+    expect(occupants.find((o) => o.pos[0] === 1 && o.pos[1] === 0)).toBeUndefined();
   });
 
   it('loose flag on a visible hex shows up as occupant', () => {
@@ -158,8 +158,8 @@ describe('buildVisibleOccupants', () => {
 
     const { occupants } = buildVisibleOccupants(viewer, [viewer], new Set(), validTiles, flags);
 
-    expect(occupants.find((o) => o.q === -2 && o.r === 0)?.flag).toEqual({ team: 'A' });
-    expect(occupants.find((o) => o.q === 2 && o.r === 0)?.flag).toEqual({ team: 'B' });
+    expect(occupants.find((o) => o.pos[0] === -2 && o.pos[1] === 0)?.flag).toEqual({ team: 'A' });
+    expect(occupants.find((o) => o.pos[0] === 2 && o.pos[1] === 0)?.flag).toEqual({ team: 'B' });
   });
 
   it('carried flag rides on the carrier hex with carryingFlag:true', () => {
@@ -190,7 +190,7 @@ describe('buildVisibleOccupants', () => {
       flags,
     );
 
-    const carrierOcc = occupants.find((o) => o.q === 1 && o.r === 0);
+    const carrierOcc = occupants.find((o) => o.pos[0] === 1 && o.pos[1] === 0);
     expect(carrierOcc?.unit?.carryingFlag).toBe(true);
     expect(carrierOcc?.flag).toEqual({ team: 'B' });
   });
@@ -230,7 +230,8 @@ describe('buildVisibleOccupants', () => {
       noFlags,
     );
 
-    expect(emittedWalls).toContainEqual({ q: 1, r: 0 });
+    // Walls are emitted as `[q, r]` tuples on the agent envelope.
+    expect(emittedWalls).toContainEqual([1, 0]);
     expect(visibleKeys.has(hexToString({ q: 1, r: 0 }))).toBe(true);
     expect(visibleKeys.has(hexToString({ q: 2, r: 0 }))).toBe(false);
   });
@@ -247,7 +248,7 @@ describe('buildVisibleOccupants', () => {
 
     const { occupants } = buildVisibleOccupants(viewer, [viewer], new Set(), allTiles, noFlags);
 
-    const self = occupants.find((o) => o.q === 3 && o.r === 2);
+    const self = occupants.find((o) => o.pos[0] === 3 && o.pos[1] === 2);
     expect(self?.unit?.id).toBe('a1');
     expect(self?.unit?.team).toBe('A');
   });

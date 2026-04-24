@@ -373,12 +373,23 @@ describe('Game (pure functions)', () => {
   });
 
   describe('getStateForAgent', () => {
-    it('emits mapStatic (radius + bases) unchanged across viewers', () => {
+    it('emits mapStatic (radius + bases) with tuple coord shape', () => {
       const state = createInProgressState(map, makePlayers(1));
       const agentState = getStateForAgent(state, 'a0');
 
       expect(agentState.mapStatic.radius).toBe(map.radius);
-      expect(agentState.mapStatic.bases).toEqual(map.bases);
+      // Base flag + spawns are emitted as `[q, r]` tuples on the envelope.
+      // Internal map.bases stays `{q, r}` — assert the conversion point here.
+      expect(agentState.mapStatic.bases).toEqual({
+        A: map.bases.A.map((b) => ({
+          flag: [b.flag.q, b.flag.r],
+          spawns: b.spawns.map((s) => [s.q, s.r]),
+        })),
+        B: map.bases.B.map((b) => ({
+          flag: [b.flag.q, b.flag.r],
+          spawns: b.spawns.map((s) => [s.q, s.r]),
+        })),
+      });
     });
 
     it('fog-filters visibleWalls to LoS — subset of total walls', () => {
@@ -387,8 +398,9 @@ describe('Game (pure functions)', () => {
 
       const totalWalls = [...map.tiles.values()].filter((t) => t === 'wall').length;
       expect(agentState.visibleWalls.length).toBeLessThanOrEqual(totalWalls);
+      // visibleWalls emits `[q, r]` tuples on the envelope.
       // Every emitted wall must actually be a wall in the source map.
-      for (const { q, r } of agentState.visibleWalls) {
+      for (const [q, r] of agentState.visibleWalls) {
         expect(map.tiles.get(`${q},${r}`)).toBe('wall');
       }
     });
@@ -422,7 +434,7 @@ describe('Game (pure functions)', () => {
         { id: 'b0', team: 'B', unitClass: 'knight' },
       ]);
       const walls = getStateForAgent(state, 'a0').visibleWalls;
-      const wallKeys = new Set(walls.map((w) => `${w.q},${w.r}`));
+      const wallKeys = new Set(walls.map(([q, r]) => `${q},${r}`));
 
       expect(wallKeys.has('1,4')).toBe(true); // close wall shown
       expect(wallKeys.has('0,0')).toBe(false); // far wall hidden
@@ -539,6 +551,85 @@ describe('Game (pure functions)', () => {
       const agentState = getStateForAgent(withDeadline, 'a0');
       expect(agentState.timeRemainingSeconds).toBeGreaterThanOrEqual(0);
       expect(agentState.timeRemainingSeconds).toBeLessThanOrEqual(seconds);
+    });
+
+    it('envelope coord shapes: tuples for pure-coord arrays, pos-object for metadata entries', () => {
+      // Populate visible occupants + enemies + flags so every shape gets covered.
+      const players = [
+        { id: 'a0', team: 'A' as const, unitClass: 'rogue' as UnitClass },
+        { id: 'b0', team: 'B' as const, unitClass: 'mage' as UnitClass },
+      ];
+      let state = createInProgressState(map, players);
+      state = {
+        ...state,
+        units: state.units.map((u) => {
+          if (u.id === 'a0') return { ...u, position: { q: 0, r: 0 } };
+          if (u.id === 'b0') return { ...u, position: { q: 0, r: 1 } };
+          return u;
+        }),
+      };
+
+      const agentState = getStateForAgent(state, 'a0');
+
+      // summary.pos — direct tuple on the summary metadata container
+      expect(Array.isArray(agentState.summary.pos)).toBe(true);
+      expect(agentState.summary.pos).toHaveLength(2);
+      expect(agentState.summary.pos).toEqual([0, 0]);
+
+      // yourUnit.position — direct tuple (yourUnit is the metadata container)
+      expect(Array.isArray(agentState.yourUnit.position)).toBe(true);
+      expect(agentState.yourUnit.position).toEqual([0, 0]);
+
+      // visibleWalls — pure-coord list, HexTuple entries
+      for (const entry of agentState.visibleWalls) {
+        expect(Array.isArray(entry)).toBe(true);
+        expect(entry).toHaveLength(2);
+      }
+
+      // visibleOccupants — pos-object (carries optional unit/flag metadata)
+      for (const occ of agentState.visibleOccupants) {
+        expect(Array.isArray(occ.pos)).toBe(true);
+        expect(occ.pos).toHaveLength(2);
+        expect((occ as unknown as Record<string, unknown>).q).toBeUndefined();
+        expect((occ as unknown as Record<string, unknown>).r).toBeUndefined();
+      }
+
+      // summary.enemies — pos-object (metadata: unitClass)
+      expect(agentState.summary.enemies.length).toBeGreaterThan(0);
+      for (const e of agentState.summary.enemies) {
+        expect(Array.isArray(e.pos)).toBe(true);
+        expect(e.pos).toHaveLength(2);
+        expect(typeof e.unitClass).toBe('string');
+      }
+
+      // mapStatic.bases — flag is a tuple, spawns are a tuple list
+      for (const b of agentState.mapStatic.bases.A) {
+        expect(Array.isArray(b.flag)).toBe(true);
+        expect(b.flag).toHaveLength(2);
+        for (const s of b.spawns) {
+          expect(Array.isArray(s)).toBe(true);
+          expect(s).toHaveLength(2);
+        }
+      }
+    });
+
+    it('summary.flags emits as pos-object with team metadata when a loose flag is visible', () => {
+      // Place viewer next to own flag so it shows up in visibleOccupants
+      // (and, by extension, summary.flags).
+      const players = [{ id: 'a0', team: 'A' as const, unitClass: 'rogue' as UnitClass }];
+      let state = createInProgressState(map, players);
+      state = {
+        ...state,
+        units: state.units.map((u) => (u.id === 'a0' ? { ...u, position: { q: 0, r: 2 } } : u)),
+      };
+
+      const agentState = getStateForAgent(state, 'a0');
+      expect(agentState.summary.flags.length).toBeGreaterThan(0);
+      for (const f of agentState.summary.flags) {
+        expect(Array.isArray(f.pos)).toBe(true);
+        expect(f.pos).toHaveLength(2);
+        expect(['A', 'B']).toContain(f.team);
+      }
     });
 
     it('timeRemainingSeconds clamps to 0 when the deadline has already passed', () => {
