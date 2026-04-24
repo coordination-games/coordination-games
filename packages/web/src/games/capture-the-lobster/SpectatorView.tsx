@@ -275,6 +275,9 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>('all');
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [liveState, setLiveState] = useState<SpectatorGameState | null>(null);
+  // Previous live snapshot — kept so useHexAnimations can diff turn→turn in live
+  // mode the same way replay does. Advances only when progressCounter increments.
+  const [prevLiveState, setPrevLiveState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
   // Server reported { type: 'spectator_pending' } — delay hasn't elapsed.
   const [pendingWindow, setPendingWindow] = useState(false);
@@ -353,7 +356,13 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
     };
     const mapped = mapServerState(raw);
     if (!mapped) return;
-    setLiveState(mapped);
+    setLiveState((prev) => {
+      // Advance prevLiveState only when the turn actually advances. Same-turn
+      // updates (chat, envelope-only deltas) must NOT shift the animation
+      // baseline — that would re-animate the current turn from a stale anchor.
+      if (prev && mapped.turn > prev.turn) setPrevLiveState(prev);
+      return mapped;
+    });
     snapshotCacheRef.current.set(idx, raw);
     setLatestProgress((prev) => (prev === null || idx > prev ? idx : prev));
     if (mapped.kills.length > 0) {
@@ -469,13 +478,16 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   );
 
   const gameState = isReplay ? replayState : (rewindDisplayState ?? liveState);
-  const prevGameState = isReplay ? prevReplayState : null;
+  const prevGameState = isReplay ? prevReplayState : prevLiveState;
   const displayKills = isReplay
     ? (replayState?.kills ?? [])
     : rewind.mode === 'active'
       ? (rewindDisplayState?.kills ?? [])
       : allKills;
-  const effectiveAnimate = rewind.mode === 'active' ? false : (animate ?? false);
+  // Live mode: animate on every turn transition by default. useHexAnimations
+  // dedupes via animKeyRef (same tile positions → no re-trigger), so leaving
+  // this on for same-turn updates is cheap. Rewind = instant snap per scrub.
+  const effectiveAnimate = rewind.mode === 'active' ? false : isReplay ? (animate ?? false) : true;
 
   // Animation — disabled in rewind (instant snap per scrub)
   const animState = useHexAnimations(
