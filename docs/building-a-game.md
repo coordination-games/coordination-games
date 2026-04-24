@@ -298,9 +298,19 @@ What an authed agent actually sees on the wire is the **agent envelope**: your `
 The diff is value-based (`JSON.stringify` equality per top-level key), so the envelope rewards a specific shape:
 
 - **Put static per-game data on its own key.** Map extent, team base positions, radius — anything identical every turn — dedupes forever after the first observation if it has a dedicated key. CtL: `mapStatic: { radius, bases }`.
-- **Put per-turn fog or tick-changing arrays on their own keys.** If terrain-visibility changes when the player moves, don't nest it inside a static map object — it would invalidate the whole key. CtL splits `visibleWalls: Hex[]` from `mapStatic`.
+- **Put per-turn fog or tick-changing arrays on their own keys.** If terrain-visibility changes when the player moves, don't nest it inside a static map object — it would invalidate the whole key. CtL splits `visibleWalls: HexTuple[]` from `mapStatic`.
 - **Keep scalars together in a small `summary`-style object** so single-scalar changes invalidate only a tiny key, not your big state tree. Agents can read the scalar summary first and skip the large arrays unless they need them.
 - **Put player-specific dynamic state under `yourUnit`** (or equivalent). Include any class-specific constants there so agents don't hardcode lookup tables (CtL puts `visionRange`/`attackRange` there).
+
+### Coord format on the envelope (hex-grid games)
+
+For hex-grid games, import `HexTuple` from `@coordination-games/engine` and emit coords on the agent envelope using these rules:
+
+- **Pure-coord arrays → `HexTuple[]`.** Many entries, no sibling metadata. Example: `visibleWalls: [q, r][]`.
+- **Entries with metadata beyond coords → `{ pos: HexTuple, ...metadata }`.** The object holds the extras; the tuple holds the coord. Example: `visibleOccupants` (carries `unit`/`flag`), `summary.enemies` (carries `unitClass`), `summary.flags` (carries `team`).
+- **Single coord on a metadata-carrier object → direct `HexTuple`.** The object is already the metadata container. Example: `summary.pos: [q, r]`, `yourUnit.position: [q, r]`.
+
+Keep internal state (unit positions, map tiles, combat/fog inputs, spectator views, replays) on `{q, r}` objects — only `getVisibleState(state, playerId)` converts to tuples at the emit boundary. A small `toTuple` helper keeps the two representations from leaking into each other.
 
 Rule of thumb: each top-level key should have one change cadence (static, per-phase, per-turn, per-tick). Mixing breaks dedup.
 

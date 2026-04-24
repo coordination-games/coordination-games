@@ -38,11 +38,22 @@ The top-level diff only helps if unchanging data lives on its own key. Mixing "s
 
 CtL example:
 
-- `mapStatic: { radius, bases }` — identical every turn, dedupes forever after turn 0.
-- `visibleWalls: Hex[]` — fog-filtered per turn, changes when the viewer moves.
-- `visibleOccupants: VisibleOccupant[]` — per-turn fog view of units/flags.
-- `summary: { pos, carrying, alive, moveSubmitted, score, yourFlag, enemyFlag, enemies, flags }` — scalar at-a-glance; diff-friendly because small changes invalidate only this key. Canonical `turn` and `phase` live at the top level of the envelope (not duplicated here) so they dedup independently of the richer summary payload.
-- `yourUnit: { ..., visionRange, attackRange }` — player-specific per-turn state; includes static scalars so the agent doesn't need to hardcode class tables.
+- `mapStatic: { radius, bases }` — identical every turn, dedupes forever after turn 0. Bases carry coords as `HexTuple` (`[q, r]`): `{ flag: [q, r], spawns: [q, r][] }`.
+- `visibleWalls: HexTuple[]` — fog-filtered per turn, changes when the viewer moves. Pure-coord list, so tuples (no object wrapper).
+- `visibleOccupants: VisibleOccupant[]` — per-turn fog view of units/flags. Each entry is `{ pos: [q, r], unit?, flag? }` — the coord is a tuple, metadata stays nested.
+- `summary: { pos: [q, r], carrying, alive, moveSubmitted, score, yourFlag, enemyFlag, enemies, flags }` — scalar at-a-glance; diff-friendly because small changes invalidate only this key. `enemies` and `flags` are `{ pos: [q, r], ...metadata }[]`. Canonical `turn` and `phase` live at the top level of the envelope (not duplicated here) so they dedup independently of the richer summary payload.
+- `yourUnit: { position: [q, r], ..., visionRange, attackRange }` — player-specific per-turn state; includes static scalars so the agent doesn't need to hardcode class tables.
+
+**Coord format rule of thumb** (used across hex-grid games via `HexTuple`
+from `@coordination-games/engine`):
+- Pure-coord arrays → `HexTuple[]` (tuples). Example: `visibleWalls`.
+- Entries with metadata beyond coords → `{ pos: HexTuple, ...rest }`.
+  Example: `visibleOccupants`, `summary.enemies`, `summary.flags`.
+- Single coord on a metadata-carrier object → direct `HexTuple`. Example:
+  `summary.pos`, `yourUnit.position`.
+- Internal game state (unit/flag positions, map tiles, combat/fog/LoS
+  input, spectator view, replay, web UI) stays on `{q, r}` objects. Only
+  the agent-envelope emit boundary converts.
 
 Rule of thumb: every top-level key should have a single "change cadence". Static info per game, per phase, per turn, per tick — each gets its own key.
 

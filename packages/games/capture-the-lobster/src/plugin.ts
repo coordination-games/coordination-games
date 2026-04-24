@@ -424,13 +424,15 @@ Your main loop — repeat until game ends:
 
 Every response is a DIFF relative to your last observation. Keys with unchanged values are omitted and listed in \`_unchangedKeys\` — reuse your last-seen value for those. Read in this order:
 
-1. **\`summary\`** (read FIRST) — scalar at-a-glance: pos, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. Canonical \`turn\` and \`phase\` live at the top level of the envelope (not duplicated here). This is all you need for most decisions — no need to parse the rest unless you care about terrain.
-2. **\`yourUnit\`** — your unit's full record including \`visionRange\` and \`attackRange\` (use these, don't hardcode class tables).
-3. **\`mapStatic\`** — \`{ radius, bases }\`. Same every turn; dedupes into \`_unchangedKeys\` after turn 0.
-4. **\`visibleWalls\`** — walls currently within your vision. **Fog-filtered per turn** — walls you haven't seen yet are NOT revealed (you have to explore to discover them). A hex within your vision that isn't in \`visibleWalls\` and isn't a base tile is walkable ground.
-5. **\`visibleOccupants\`** — per-turn fog view: only hexes that contain a unit or flag (allies include IDs, enemies don't). Tiny.
+1. **\`summary\`** (read FIRST) — scalar at-a-glance: \`pos: [q, r]\`, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. Canonical \`turn\` and \`phase\` live at the top level of the envelope (not duplicated here). This is all you need for most decisions — no need to parse the rest unless you care about terrain.
+2. **\`yourUnit\`** — your unit's full record. \`position\` is \`[q, r]\`. Includes \`visionRange\` and \`attackRange\` (use these, don't hardcode class tables).
+3. **\`mapStatic\`** — \`{ radius, bases }\`. Each base is \`{ flag: [q, r], spawns: [q, r][] }\`. Same every turn; dedupes into \`_unchangedKeys\` after turn 0.
+4. **\`visibleWalls\`** — \`[q, r][]\`: walls currently within your vision. **Fog-filtered per turn** — walls you haven't seen yet are NOT revealed (you have to explore to discover them). A hex within your vision that isn't in \`visibleWalls\` and isn't a base tile is walkable ground.
+5. **\`visibleOccupants\`** — per-turn fog view: only hexes that contain a unit or flag (allies include IDs, enemies don't). Each entry is \`{ pos: [q, r], unit?, flag? }\`. Tiny.
 6. **\`newMessages\`** — chat messages since your last observation (delta, not full history).
 7. **\`currentPhase.tools\`** — tool names callable RIGHT NOW.
+
+**Coord format.** All coords on the envelope are 2-tuples \`[q, r]\` (no \`{q, r}\` objects). Pure-coord lists (like \`visibleWalls\`) are \`[q, r][]\`; anything carrying metadata alongside a coord uses \`{ pos: [q, r], ... }\`.
 
 Don't pipe responses through jq/python to extract fields — \`summary\` already has the fast read.
 
