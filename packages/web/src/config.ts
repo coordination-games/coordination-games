@@ -8,24 +8,19 @@ export const API_BASE = apiOrigin ? `${apiOrigin}/api` : '/api';
 // the link points at the platform monorepo, not at any individual game.
 export const GITHUB_REPO_URL =
   (import.meta.env.VITE_GITHUB_REPO_URL as string | undefined) ??
-  'https://github.com/lucianHymer/capture-the-lobster';
+  'https://github.com/coordination-games/coordination-games';
 
 /**
- * MCP server identity for the platform. The MCP server hosts every
- * registered game (one server, many `gameType` tools), so this is shell-
- * level config rather than per-game branding. Keep these literals in one
- * place so install snippets in HomePage / JoinInstructions stay in sync.
+ * Skill identity for the platform. Players install one skill that knows
+ * about every registered game; the agent picks the right tool by name.
+ * Keep this literal in one place so install snippets in HomePage /
+ * JoinInstructions stay in sync.
  */
-export const MCP_SERVER_NAME =
-  (import.meta.env.VITE_MCP_SERVER_NAME as string | undefined) ?? 'capture-the-lobster';
-export const MCP_SERVER_URL =
-  (import.meta.env.VITE_MCP_SERVER_URL as string | undefined) ?? 'https://games.coop/mcp';
+export const SKILL_NAME =
+  (import.meta.env.VITE_SKILL_NAME as string | undefined) ?? 'coordination-games/skill';
 
 export function mcpInstallCommand(): string {
-  return (
-    `claude mcp add --scope user --transport http ${MCP_SERVER_NAME} ${MCP_SERVER_URL}` +
-    ` && npx -y allow-mcp ${MCP_SERVER_NAME}`
-  );
+  return `npx skills add -g ${SKILL_NAME}`;
 }
 
 export function getWsUrl(path: string): string {

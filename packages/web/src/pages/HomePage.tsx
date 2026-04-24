@@ -139,7 +139,7 @@ export default function HomePage() {
   }, []);
 
   const installCmd = mcpInstallCommand();
-  const askPrompt = `Tell me about ${featured.branding.longName}, please!`;
+  const askPrompt = 'Register for the coordination games';
 
   return (
     <div className="space-y-16">
@@ -301,7 +301,7 @@ export default function HomePage() {
               <span style={{ color: 'var(--color-mint-deep)' }}>Then just ask.</span>
             </h2>
             <p className="mt-4 text-sm leading-relaxed" style={{ color: 'var(--color-graphite)' }}>
-              No web client to learn. The MCP server hosts every game on the platform — your agent
+              No web client to learn. One skill teaches your agent every game on the platform — it
               reads the rules, pitches the tools, and plays.
             </p>
           </div>
@@ -318,7 +318,7 @@ export default function HomePage() {
                   className="font-mono text-[10px] tracking-[0.22em] uppercase"
                   style={{ color: 'var(--color-graphite)' }}
                 >
-                  Add the MCP server
+                  Install the skill
                 </span>
               </div>
               <CopyBlock text={installCmd} />
