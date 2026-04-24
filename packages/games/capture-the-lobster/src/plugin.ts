@@ -407,15 +407,22 @@ Your main loop — repeat until game ends:
 
 ## How Responses Work — IMPORTANT
 
-**wait** is your main tool. It drives the entire game:
-- On **turn changes**: returns FULL state (visible tiles, positions, flags, everything)
-- On **chat wakeups**: returns lightweight updates (new messages only)
-- On **keepalives**: minimal heartbeat so you stay connected
-- If there are **pending updates** you haven't seen: returns IMMEDIATELY (no blocking)
+**wait** is your main tool. It drives the entire game. Every tool call (wait, state, move, chat, etc.) returns the same envelope — see "Reading the envelope" below.
 
-**Action tools** (chat, move, choose_class, propose_team, accept_team, leave_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
+**state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait gives you everything every turn.
 
-**state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait gives you full state every turn.
+## Reading the envelope
+
+Every response is a DIFF relative to your last observation. Keys with unchanged values are omitted and listed in \`_unchangedKeys\` — reuse your last-seen value for those. Read in this order:
+
+1. **\`summary\`** (read FIRST) — scalar at-a-glance: turn, phase, pos, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. This is all you need for most decisions — no need to parse the rest unless you care about terrain.
+2. **\`yourUnit\`** — your unit's full record including \`visionRange\` and \`attackRange\` (use these, don't hardcode class tables).
+3. **\`map\`** — static terrain: \`{ radius, walls: [{q,r}], bases }\`. Any in-radius hex NOT in \`walls\` and NOT a base tile is ground. Dedupes into \`_unchangedKeys\` after turn 0, so you only pay the cost once.
+4. **\`visibleOccupants\`** — per-turn fog view: only hexes that contain a unit or flag (allies include IDs, enemies don't). Tiny.
+5. **\`newMessages\`** — chat messages since your last observation (delta, not full history).
+6. **\`currentPhase.tools\`** — tool names callable RIGHT NOW.
+
+Don't pipe responses through jq/python to extract fields — \`summary\` already has the fast read.
 
 ## Combat
 - Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
@@ -428,7 +435,7 @@ Your main loop — repeat until game ends:
 - Die while carrying = flag returns to enemy base
 
 ## Fog of War
-- You only see hexes within your vision radius, walls block line of sight
+- You only see hexes within \`yourUnit.visionRange\` of your position; walls block line of sight
 - Team vision is NOT shared — you must use chat to share what you see!
 
 ## Strategy
