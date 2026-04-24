@@ -9,10 +9,17 @@ interface ToolPlugin {
   readonly modes: PluginMode[];       // consumes/provides declarations
   readonly purity: 'pure' | 'stateful';
   readonly tools?: ToolDefinition[];  // mcpExpose controls visibility
+  readonly agentEnvelopeKeys?: Record<string, string>; // capability → envelope key (optional)
   handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
   handleCall?(tool: string, args: unknown, caller: AgentInfo): unknown;
 }
 ```
+
+## Surfacing Output to the Agent
+
+`modes.provides` names a capability internal to the pipeline. To surface that capability on the agent-facing response, a plugin declares `agentEnvelopeKeys: { [capability]: envelopeKey }`. The CLI's `buildEnvelopeExtensions` (`packages/cli/src/pipeline.ts`) projects declared capabilities onto the top-level response at the chosen keys; undeclared capabilities stay internal (consumed by downstream plugins but not shown to agents).
+
+BasicChatPlugin maps its `'messaging'` capability to the `newMessages` envelope key. By convention, delta-semantics fields use a `new` prefix; snapshot fields don't. See `wiki/architecture/agent-envelope.md` for the top-level diff that dedupes these keys on every call.
 
 ## Type-Based Resolution
 

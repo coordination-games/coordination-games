@@ -291,6 +291,21 @@ The spectator view deliberately hides `decision1`/`decision2` from pairings, onl
 
 Design principle: return exactly what each viewer should know. The framework trusts your visibility function completely.
 
+### Shaping `getVisibleState` for the Agent Envelope
+
+What an authed agent actually sees on the wire is the **agent envelope**: your `getVisibleState` output, plus any plugin contributions (like chat's `newMessages`), run through a **top-level diff**. Keys whose value didn't change since the agent's last call are omitted and listed in `_unchangedKeys`; the agent is expected to reuse its last-seen value for those.
+
+The diff is value-based (`JSON.stringify` equality per top-level key), so the envelope rewards a specific shape:
+
+- **Put static per-game data on its own key.** Map extent, team base positions, radius — anything identical every turn — dedupes forever after the first observation if it has a dedicated key. CtL: `mapStatic: { radius, bases }`.
+- **Put per-turn fog or tick-changing arrays on their own keys.** If terrain-visibility changes when the player moves, don't nest it inside a static map object — it would invalidate the whole key. CtL splits `visibleWalls: Hex[]` from `mapStatic`.
+- **Keep scalars together in a small `summary`-style object** so single-scalar changes invalidate only a tiny key, not your big state tree. Agents can read the scalar summary first and skip the large arrays unless they need them.
+- **Put player-specific dynamic state under `yourUnit`** (or equivalent). Include any class-specific constants there so agents don't hardcode lookup tables (CtL puts `visionRange`/`attackRange` there).
+
+Rule of thumb: each top-level key should have one change cadence (static, per-phase, per-turn, per-tick). Mixing breaks dedup.
+
+For delta-semantics fields produced by plugins (like chat's `newMessages`), use the plugin's `agentEnvelopeKeys` declaration — never rename in CLI. See `wiki/architecture/agent-envelope.md` for the full contract and `wiki/architecture/plugin-pipeline.md` for plugin output routing.
+
 ## Lobby Configuration
 
 Games declare their lobby requirements via `GameLobbyConfig`:
