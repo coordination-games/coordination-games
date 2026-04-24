@@ -104,14 +104,18 @@ export class GameClient {
       return;
     }
     if (this.scopeId === scopeId) return;
-    // Scope change — reset every per-scope piece of state so the old
-    // game's cursor/baseline can't contaminate the new scope's first
-    // fetch. `ApiClient.setScope` below then hydrates the new scope's
-    // persisted cursor (if any) via `loadPersistedCursor` on the next
-    // state call; same goes for the differ, which reloads from the
-    // new scope's persisted `lastSeen` at entry.
-    this.api.resetSessionCursors();
-    this.differ.reset();
+    // Scope *change* (A → B, where A is a real prior scope) — reset every
+    // per-scope piece of state so the old scope's cursor/baseline can't
+    // contaminate the new scope's first fetch. Null → A is a "set", not
+    // a "change" — there's no prior baseline to poison, so skip the reset
+    // (the client was just-constructed with cursor=0 and differ empty).
+    // After the reset, `ApiClient.setScope` + `loadPersistedCursor` +
+    // `loadPersistedLastSeen` on the next state call re-hydrate from the
+    // new scope's persisted entry, if any.
+    if (this.scopeId !== null) {
+      this.api.resetSessionCursors();
+      this.differ.reset();
+    }
     this.scopeId = scopeId;
     // Skip persistence entirely when we have no agent identity.
     if (!this.agentAddress) return;
