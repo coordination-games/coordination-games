@@ -503,6 +503,54 @@ describe('Game (pure functions)', () => {
       agentState = getStateForAgent(state, 'a0');
       expect(agentState.moveSubmitted).toBe(true);
     });
+
+    it('keeps turn and phase canonical at top level, not duplicated in summary', () => {
+      const state = createInProgressState(map, makePlayers(1));
+      const agentState = getStateForAgent(state, 'a0');
+
+      // Canonical copies live at the top level.
+      expect(agentState.turn).toBe(state.turn);
+      expect(agentState.phase).toBe(state.phase);
+
+      // Summary must NOT carry turn/phase — they'd double bytes and
+      // pollute the summary diff on every scalar change.
+      expect((agentState.summary as Record<string, unknown>).turn).toBeUndefined();
+      expect((agentState.summary as Record<string, unknown>).phase).toBeUndefined();
+    });
+
+    it('timeRemainingSeconds is 0 before the game is in progress (no deadline set)', () => {
+      // createInProgressState only flips the phase; it does NOT set
+      // turnDeadlineMs — that's the plugin's job in response to game_start.
+      // The pure helper must emit 0 when there's no deadline yet.
+      const state = createInProgressState(map, makePlayers(1));
+      const agentState = getStateForAgent(state, 'a0');
+      expect(agentState.timeRemainingSeconds).toBe(0);
+    });
+
+    it('timeRemainingSeconds ticks down from turnDeadlineMs (in [0, turnTimerSeconds])', () => {
+      const state = createInProgressState(map, makePlayers(1));
+      // Simulate what the plugin's scheduleNextTurn would do.
+      const seconds = state.config.turnTimerSeconds;
+      const withDeadline: CtlGameState = {
+        ...state,
+        turnDeadlineMs: Date.now() + seconds * 1000,
+      };
+
+      const agentState = getStateForAgent(withDeadline, 'a0');
+      expect(agentState.timeRemainingSeconds).toBeGreaterThanOrEqual(0);
+      expect(agentState.timeRemainingSeconds).toBeLessThanOrEqual(seconds);
+    });
+
+    it('timeRemainingSeconds clamps to 0 when the deadline has already passed', () => {
+      const state = createInProgressState(map, makePlayers(1));
+      const withPastDeadline: CtlGameState = {
+        ...state,
+        turnDeadlineMs: Date.now() - 5_000,
+      };
+
+      const agentState = getStateForAgent(withPastDeadline, 'a0');
+      expect(agentState.timeRemainingSeconds).toBe(0);
+    });
   });
 
   describe('allMovesSubmitted', () => {
