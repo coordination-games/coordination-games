@@ -3,10 +3,15 @@ import { useMatch } from 'react-router-dom';
 import { fetchGame, fetchLobby, fetchReplay } from '../api';
 import { getDefaultPlugin, getSpectatorPlugin, type SpectatorPlugin } from '../games';
 
-function extractLobbyGameType(payload: unknown): string | undefined {
+function extractScopedGameType(payload: unknown): string | undefined {
   if (!payload || typeof payload !== 'object') return undefined;
   const direct = (payload as { gameType?: unknown }).gameType;
   if (typeof direct === 'string') return direct;
+  const meta = (payload as { meta?: unknown }).meta;
+  if (meta && typeof meta === 'object') {
+    const metaGameType = (meta as { gameType?: unknown }).gameType;
+    if (typeof metaGameType === 'string') return metaGameType;
+  }
   const state = (payload as { state?: unknown }).state;
   if (!state || typeof state !== 'object') return undefined;
   const nested = (state as { gameType?: unknown }).gameType;
@@ -47,9 +52,9 @@ export function useActiveGame(): SpectatorPlugin {
     let cancelled = false;
     const fetcher =
       scope === 'lobby'
-        ? fetchLobby(id).then(extractLobbyGameType)
+        ? fetchLobby(id).then(extractScopedGameType)
         : scope === 'game'
-          ? fetchGame(id).then((d) => (d as { gameType?: string } | null)?.gameType)
+          ? fetchGame(id).then(extractScopedGameType)
           : fetchReplay(id).then((d) => d.gameType);
     fetcher
       .then((gt) => {
