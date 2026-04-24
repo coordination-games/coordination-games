@@ -1,17 +1,40 @@
 /**
  * MCP tool registration for the Coordination Games CLI.
  *
- * Single source of truth for the agent-facing tool surface. Post unified-tool-surface
- * cutover, tools are registered dynamically by name — one MCP tool per entry in:
+ * ============================================================================
+ * ⚠️  THIS FILE IS A BARE WRAPPER AROUND THE CLI. DO NOT ADD LOGIC HERE.
+ * ============================================================================
+ *
+ * The shell CLI (`coga`) is the primary agent path. Real agents invoke
+ * `Bash(coga state)`, `Bash(coga wait)`, etc. — MCP is secondary. Every
+ * agent-facing feature (diff/dedup, envelope assembly, compact formatting,
+ * delta semantics, plugin output routing, error taxonomy, ...) MUST live
+ * in `GameClient` (or lower) so shell and MCP share one path.
+ *
+ * MCP handlers in this file should only:
+ *   1. translate the MCP `(name, args)` call into the equivalent
+ *      `GameClient.<method>(...)` call;
+ *   2. return the result verbatim as `jsonResult()`.
+ *
+ * If you find yourself writing logic here — stop. Move it down one layer.
+ * See `wiki/architecture/mcp-not-on-server.md` and the top-of-file rule
+ * in `CLAUDE.md`.
+ *
+ * Historical incident: `AgentStateDiffer` was once instantiated here.
+ * Shell `coga state` bypassed it; real agents got zero dedup for months
+ * before anyone noticed. Don't reprise.
+ *
+ * ============================================================================
+ *
+ * Tool surface is registered at startup — one MCP tool per entry in:
  *
  *   - game.gameTools                 (every registered game)
  *   - game.lobby.phases[*].tools     (every registered game)
  *   - pluginTools with mcpExpose     (client-side ToolPlugin.tools)
  *
- * The full surface is registered at startup (the superset across all phases).
- * Tools that aren't callable in the current phase return a structured
- * WRONG_PHASE error from the server dispatcher — we do NOT dynamically
- * re-register MCP tools when phases change (MCP protocol can't do that cleanly).
+ * Tools not callable in the current phase return a structured WRONG_PHASE
+ * error from the server dispatcher. We do NOT dynamically re-register MCP
+ * tools when phases change (MCP protocol can't do that cleanly).
  *
  * Auth is handled transparently by GameClient (wallet-based challenge-response).
  * No auth tools are exposed to agents.

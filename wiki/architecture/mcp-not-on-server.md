@@ -1,6 +1,18 @@
-# Why MCP Is Client-Side Only
+# Why MCP Is Client-Side Only (and a thin wrapper)
 
 The server exposes REST. The CLI (`coga serve`) is the MCP server.
+
+## Inviolable Rule: MCP Is the Barest Wrapper Around CLI
+
+**All logic lives in the CLI. MCP handlers are trivial adapters.** If a feature exists only in MCP, it's broken — real agents use `Bash(coga <cmd>)` as their primary interface, so MCP-only features silently skip the primary user.
+
+Concrete tests to apply every time you touch `packages/cli/src/mcp-tools.ts`:
+- Does the equivalent shell command (`coga state`, `coga wait`, `coga tool X`) produce the same output byte-for-byte (modulo `--pretty`)? If no, the logic is in the wrong layer.
+- Is there any `*.ts` code reachable from an MCP handler that is NOT reachable from the corresponding shell command? If yes, move it down.
+
+Every agent-facing concern — diff/dedup, envelope assembly, compact formatting, delta semantics, plugin output routing — belongs in `game-client.ts` (or lower). MCP handlers call into that. Never duplicate.
+
+**History:** `AgentStateDiffer` was once instantiated inside `mcp-tools.ts`. Shell `coga state` bypassed it and every real agent session (all Bash-based) got zero dedup. It took a full measurement cycle to catch. Don't repeat.
 
 ## Reasons
 

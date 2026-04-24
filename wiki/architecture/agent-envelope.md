@@ -1,6 +1,8 @@
 # Agent Envelope
 
-What an agent sees when it calls an MCP tool (`state`, `wait`, or any tool) is the **agent envelope**: the game's visible state plus any plugin contributions, run through a top-level diff so unchanged keys drop off the wire.
+> **Architectural rule:** every piece of envelope assembly described here lives in the shared CLI layer (`GameClient` and below). MCP is a bare wrapper that calls into these methods and returns the result. There is one path, not two. If you're tempted to add envelope logic to `mcp-tools.ts`, stop — it belongs in `game-client.ts`. See `CLAUDE.md` and `wiki/architecture/mcp-not-on-server.md`.
+
+What an agent sees when it runs `coga state` (shell) or calls the equivalent MCP tool is the **agent envelope**: the game's visible state plus any plugin contributions, run through a top-level diff so unchanged keys drop off the wire.
 
 ## Layers
 

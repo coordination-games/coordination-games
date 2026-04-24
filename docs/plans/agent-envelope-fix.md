@@ -1,5 +1,11 @@
 # Agent Envelope Fix — Handoff Plan (v2, critique-reconciled)
 
+## THE ONE RULE (read first)
+
+**MCP is the barest possible wrapper around the CLI. All logic lives in the CLI.** The shell `coga` command is the primary agent path — MCP handlers just delegate to `GameClient` methods and return results verbatim. There is ONE path, not two. The wrapper inherits everything from the CLI because it IS a wrapper.
+
+This plan exists because we violated this rule. Don't violate it while fixing it. Every change in this plan happens in the shared CLI layer; MCP handlers become thinner as a side effect.
+
 ## Context
 
 One session tried to make the agent envelope lean and diff-efficient.
