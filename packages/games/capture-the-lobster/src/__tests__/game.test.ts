@@ -373,12 +373,22 @@ describe('Game (pure functions)', () => {
   });
 
   describe('getStateForAgent', () => {
-    it('returns fog of war — only visible tiles', () => {
+    it('emits the full static map for terrain context', () => {
       const state = createInProgressState(map, makePlayers(1));
       const agentState = getStateForAgent(state, 'a0');
 
-      expect(agentState.visibleTiles.length).toBeGreaterThan(0);
-      expect(agentState.visibleTiles.length).toBeLessThan(map.tiles.size);
+      expect(agentState.map.tiles.length).toBe(map.tiles.size);
+      expect(agentState.map.radius).toBe(map.radius);
+    });
+
+    it('filters occupants by fog of war', () => {
+      const state = createInProgressState(map, makePlayers(1));
+      const agentState = getStateForAgent(state, 'a0');
+
+      // At minimum the viewer themself should show up.
+      expect(agentState.visibleOccupants.length).toBeGreaterThan(0);
+      // Most hexes are empty, so occupants is much smaller than full map.
+      expect(agentState.visibleOccupants.length).toBeLessThan(map.tiles.size);
     });
 
     it('includes ally unit IDs but not enemy IDs', () => {
@@ -401,13 +411,13 @@ describe('Game (pure functions)', () => {
 
       const agentState = getStateForAgent(state, 'a0');
 
-      const allyTile = agentState.visibleTiles.find(
+      const allyTile = agentState.visibleOccupants.find(
         (t) => t.unit && t.unit.team === 'A' && t.unit.id === 'a1',
       );
       expect(allyTile).toBeDefined();
       expect(allyTile?.unit?.id).toBe('a1');
 
-      const enemyTile = agentState.visibleTiles.find((t) => t.unit && t.unit.team === 'B');
+      const enemyTile = agentState.visibleOccupants.find((t) => t.unit && t.unit.team === 'B');
       expect(enemyTile).toBeDefined();
       expect(enemyTile?.unit?.id).toBeUndefined();
     });

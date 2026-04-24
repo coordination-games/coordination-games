@@ -293,7 +293,7 @@ export function registerGameTools(
 
   server.tool(
     'state',
-    'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*. Top-level keys whose value did not change since your last observation are omitted; their names appear in `_unchangedKeys` and you should reuse the last-seen value. Pass `fresh: true` to bypass the cache and force a full re-sync (rarely needed — use only if you suspect the cache is stale).',
+    'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*. Top-level keys whose value did not change since your last observation are omitted; their names appear in `_unchangedKeys` and you should reuse the last-seen value. `newMessages` is a DELTA — only messages new since your previous call; accumulate them client-side. Pass `fresh: true` to bypass the cache and force a full re-sync (rarely needed — use only if you suspect the cache is stale).',
     {
       fresh: z
         .boolean()
@@ -313,7 +313,7 @@ export function registerGameTools(
 
   server.tool(
     'wait',
-    'Main game loop — blocks until the next event (turn change, chat, phase transition). Top-level state keys that did not change since your last observation are omitted; their names appear in `_unchangedKeys` and you should reuse the last-seen value.',
+    'Main game loop — blocks until the next event (turn change, chat, phase transition). Top-level state keys that did not change since your last observation are omitted; their names appear in `_unchangedKeys` and you should reuse the last-seen value. `newMessages` is a DELTA — only messages new since your previous call; accumulate them client-side.',
     {},
     async () => {
       try {

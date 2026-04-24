@@ -8,8 +8,8 @@
 
 import { mustFind } from '@coordination-games/engine';
 import { type CombatUnit, resolveCombat } from './combat.js';
-import { buildVisibleState, type FogUnit, type VisibleTile } from './fog.js';
-import { type Direction, type Hex, hexEquals, hexToString } from './hex.js';
+import { buildVisibleOccupants, type FogUnit, type VisibleOccupant } from './fog.js';
+import { type Direction, type Hex, hexEquals, hexToString, stringToHex } from './hex.js';
 import type { GameMap } from './map.js';
 import {
   type MoveSubmission,
@@ -52,7 +52,46 @@ export interface TurnRecord {
 
 export type GamePhase = 'pre_game' | 'in_progress' | 'finished';
 
+/**
+ * Static per-game map data. Identical value every turn, so the agent
+ * envelope's top-level diff collapses it into `_unchangedKeys` after the
+ * first observation. Emitted on every call so fresh clients and rewind
+ * spectators get it without any extra plumbing.
+ */
+export interface AgentMap {
+  radius: number;
+  /** Every hex in the map, keyed by coord + terrain type. */
+  tiles: { q: number; r: number; type: 'ground' | 'wall' | 'base_a' | 'base_b' }[];
+  bases: {
+    A: { flag: Hex; spawns: Hex[] }[];
+    B: { flag: Hex; spawns: Hex[] }[];
+  };
+}
+
+/**
+ * Condensed at-a-glance read for the agent — everything you need to make
+ * a decision this turn, without parsing `map`/`visibleOccupants`. Dedupes
+ * via the top-level `_unchangedKeys` diff when nothing actionable changed.
+ */
+export interface AgentSummary {
+  turn: number;
+  phase: GamePhase;
+  pos: Hex;
+  carrying: boolean;
+  alive: boolean;
+  moveSubmitted: boolean;
+  score: { yourTeam: number; enemyTeam: number };
+  yourFlag: 'at_base' | 'carried' | 'unknown';
+  enemyFlag: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
+  /** Visible enemy units this turn (no ID for fog reasons). */
+  enemies: { q: number; r: number; unitClass: UnitClass }[];
+  /** Visible loose/carried flags this turn. */
+  flags: { q: number; r: number; team: 'A' | 'B' }[];
+}
+
 export interface GameState {
+  /** Lean at-a-glance summary — read this first; parse `map`/`visibleOccupants` only if you need terrain or positions. */
+  summary: AgentSummary;
   turn: number;
   phase: GamePhase;
   yourUnit: {
@@ -63,7 +102,10 @@ export interface GameState {
     alive: boolean;
     respawnTurn?: number;
   };
-  visibleTiles: VisibleTile[];
+  /** Static terrain — dedupes via _unchangedKeys after turn 0. */
+  map: AgentMap;
+  /** Per-turn: only visible hexes that contain a unit or flag. Tiny. */
+  visibleOccupants: VisibleOccupant[];
   yourFlag: { status: 'at_base' | 'carried' | 'unknown' };
   enemyFlag: { status: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' };
   timeRemainingSeconds: number;
@@ -529,8 +571,29 @@ export function getStateForAgent(
     })),
   };
 
-  // @ts-expect-error TS2345: Argument of type '{ A: { position: Hex; carried: boolean; carrierId: string | un — TODO(2.3-followup)
-  const visibleTiles = buildVisibleState(viewer, fogUnits, wallSet, tiles, flagsForFog);
+  const { occupants: visibleOccupants, visibleKeys } = buildVisibleOccupants(
+    viewer,
+    fogUnits,
+    wallSet,
+    tiles,
+    // @ts-expect-error TS2345: carrierId: string | undefined vs carrierId?: string — TODO(2.3-followup)
+    flagsForFog,
+  );
+
+  // Static map — value-identical every turn, so the agent-facing diff
+  // collapses it into `_unchangedKeys` after the first observation.
+  const map: AgentMap = {
+    radius: state.mapRadius,
+    tiles: state.mapTiles.map(([k, type]) => {
+      const hex = stringToHex(k);
+      return {
+        q: hex.q,
+        r: hex.r,
+        type: type as 'ground' | 'wall' | 'base_a' | 'base_b',
+      };
+    }),
+    bases: state.mapBases,
+  };
 
   // Your flag status
   const yourFlags = state.flags[team];
@@ -556,8 +619,7 @@ export function getStateForAgent(
       }
     } else if (!ef.carried) {
       const enemyFlagKey = hexToString(ef.position);
-      const isVisible = visibleTiles.some((t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey);
-      if (isVisible && enemyFlagStatus === 'unknown') {
+      if (visibleKeys.has(enemyFlagKey) && enemyFlagStatus === 'unknown') {
         enemyFlagStatus = 'at_base';
       }
     }
@@ -568,7 +630,36 @@ export function getStateForAgent(
     ? submittedMoves.has(agentId)
     : new Map(state.moveSubmissions).has(agentId);
 
+  const score = {
+    yourTeam: state.score[team],
+    enemyTeam: state.score[enemyTeam],
+  };
+
+  // Lean summary — everything you need at a glance, without parsing
+  // `map`/`visibleOccupants`. Dedupes via top-level diff when nothing
+  // actionable changed (e.g. after chat-only turns).
+  const summary: AgentSummary = {
+    turn: state.turn,
+    phase: state.phase,
+    pos: { ...unit.position },
+    carrying: unit.carryingFlag,
+    alive: unit.alive,
+    moveSubmitted,
+    score,
+    yourFlag: yourFlagStatus,
+    enemyFlag: enemyFlagStatus,
+    enemies: visibleOccupants
+      .filter((o) => o.unit && o.unit.team !== team)
+      // biome-ignore lint/style/noNonNullAssertion: filtered above
+      .map((o) => ({ q: o.q, r: o.r, unitClass: o.unit!.unitClass })),
+    flags: visibleOccupants
+      .filter((o) => o.flag)
+      // biome-ignore lint/style/noNonNullAssertion: filtered above
+      .map((o) => ({ q: o.q, r: o.r, team: o.flag!.team })),
+  };
+
   return {
+    summary,
     turn: state.turn,
     phase: state.phase,
     // @ts-expect-error TS2375: Type '{ id: string; unitClass: UnitClass; position: { q: number; r: number; }; c — TODO(2.3-followup)
@@ -580,15 +671,13 @@ export function getStateForAgent(
       alive: unit.alive,
       respawnTurn: unit.respawnTurn,
     },
-    visibleTiles,
+    map,
+    visibleOccupants,
     yourFlag: { status: yourFlagStatus },
     enemyFlag: { status: enemyFlagStatus },
     timeRemainingSeconds: state.config.turnTimerSeconds,
     moveSubmitted,
-    score: {
-      yourTeam: state.score[team],
-      enemyTeam: state.score[enemyTeam],
-    },
+    score,
   };
 }
 

@@ -268,14 +268,15 @@ export class GameClient {
 
   /**
    * Run the client-side plugin pipeline over relay messages in a response.
-   * If the response contains relayMessages, processes them and merges
-   * pipeline output back into the response.
+   * The server filters relay envelopes by the client's `sinceIdx` cursor,
+   * so `raw.relayMessages` only contains entries NEW since the last call.
+   * We surface that as `newMessages` (explicit delta semantics — agents
+   * accumulate their own history; empty/absent means "nothing new").
    */
   private processResponse(raw: StateResponse): StateResponse {
     if (!raw || typeof raw !== 'object') return raw;
     const hasRelay = Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0;
     if (!hasRelay) {
-      // Strip empty relay scaffolding so the agent never sees noise
       if ('relayMessages' in raw) {
         const { relayMessages: _r, ...rest } = raw;
         return rest;
@@ -283,8 +284,7 @@ export class GameClient {
       return raw;
     }
     const output = processState(raw);
-    // Drop the raw relay log + the pipelineOutput map (they duplicate `messages`)
     const { relayMessages: _r, ...rest } = raw;
-    return { ...rest, messages: output.messages } as StateResponse;
+    return { ...rest, newMessages: output.messages } as StateResponse;
   }
 }
