@@ -267,24 +267,18 @@ export class GameClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * Run the client-side plugin pipeline over relay messages in a response.
-   * The server filters relay envelopes by the client's `sinceIdx` cursor,
-   * so `raw.relayMessages` only contains entries NEW since the last call.
-   * We surface that as `newMessages` (explicit delta semantics — agents
-   * accumulate their own history; empty/absent means "nothing new").
+   * Run the client-side plugin pipeline over relay messages in a response
+   * and splice each plugin's declared envelope extensions (see
+   * `ToolPlugin.agentEnvelopeKeys`) onto the top-level response. The server
+   * filters relay envelopes by the client's `sinceIdx` cursor, so plugin
+   * outputs carry only items new since the last observation.
    */
   private processResponse(raw: StateResponse): StateResponse {
     if (!raw || typeof raw !== 'object') return raw;
-    const hasRelay = Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0;
-    if (!hasRelay) {
-      if ('relayMessages' in raw) {
-        const { relayMessages: _r, ...rest } = raw;
-        return rest;
-      }
-      return raw;
-    }
-    const output = processState(raw);
     const { relayMessages: _r, ...rest } = raw;
-    return { ...rest, newMessages: output.messages } as StateResponse;
+    const hasRelay = Array.isArray(raw.relayMessages) && raw.relayMessages.length > 0;
+    if (!hasRelay) return rest;
+    const { envelopeExtensions } = processState(raw);
+    return { ...rest, ...envelopeExtensions } as StateResponse;
   }
 }

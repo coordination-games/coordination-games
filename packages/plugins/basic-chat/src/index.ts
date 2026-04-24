@@ -125,6 +125,7 @@ export const BasicChatPlugin: ToolPlugin = {
   modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
   purity: 'pure',
   relayTypes: { [CHAT_RELAY_TYPE]: ChatMessageSchema },
+  agentEnvelopeKeys: { messaging: 'newMessages' },
 
   /** MCP tool: send a chat message */
   tools: [

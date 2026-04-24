@@ -453,6 +453,20 @@ export interface ToolPlugin {
    */
   readonly relayTypes?: Record<string, import('zod').ZodTypeAny>;
 
+  /**
+   * Map from pipeline capability name → agent-envelope key. Capabilities
+   * that appear here are exposed to the agent at the declared top-level
+   * key in the tool response; capabilities absent from this map stay
+   * internal to the pipeline. The CLI's top-level diff then dedupes them
+   * alongside server-built keys.
+   *
+   * Example: BasicChatPlugin declares `{ messaging: 'newMessages' }` — the
+   * relay cursor already means the `messaging` capability carries only
+   * items since the last observation, so the `new`-prefixed name is
+   * honest about delta semantics.
+   */
+  readonly agentEnvelopeKeys?: Record<string, string>;
+
   /** Initialize plugin with game context */
   init?(ctx: PluginContext): void;
 
