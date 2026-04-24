@@ -7,7 +7,7 @@
  */
 
 import { mustFind } from '@coordination-games/engine';
-import { type CombatUnit, resolveCombat } from './combat.js';
+import { CLASS_RANGE, CLASS_VISION, type CombatUnit, resolveCombat } from './combat.js';
 import { buildVisibleOccupants, type FogUnit, type VisibleOccupant } from './fog.js';
 import { type Direction, type Hex, hexEquals, hexToString, stringToHex } from './hex.js';
 import type { GameMap } from './map.js';
@@ -105,6 +105,10 @@ export interface GameState {
     carryingFlag: boolean;
     alive: boolean;
     respawnTurn?: number;
+    /** Hex radius you can see (class-specific: rogue=4, knight=2, mage=3). */
+    visionRange: number;
+    /** Hex radius you can attack from (class-specific: rogue=1, knight=1, mage=2). */
+    attackRange: number;
   };
   /** Static terrain — dedupes via _unchangedKeys after turn 0. */
   map: AgentMap;
@@ -673,6 +677,8 @@ export function getStateForAgent(
       carryingFlag: unit.carryingFlag,
       alive: unit.alive,
       respawnTurn: unit.respawnTurn,
+      visionRange: CLASS_VISION[unit.unitClass],
+      attackRange: CLASS_RANGE[unit.unitClass],
     },
     map,
     visibleOccupants,
