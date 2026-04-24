@@ -6,35 +6,42 @@
  */
 
 import type {
-  CoordinationGame,
   ActionResult,
+  CoordinationGame,
+  GameDeadline,
   GameLobbyConfig,
+  GamePhaseKind,
   GameSetup,
+  RelayEnvelope,
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { registerGame } from '@coordination-games/engine';
-
+import { credits, registerGame } from '@coordination-games/engine';
+// Phase 5.1: spectator filter dispatches by relay type via the constant the
+// chat plugin exports — no magic strings, no consumer knowledge of the wire
+// format. If basic-chat is removed from the platform, this import breaks at
+// build time, which is the desired loud failure.
+import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
+import { getUnitVision } from './fog.js';
 import {
-  CtlGameState,
-  GameUnit,
-  FlagState,
-  GamePhase,
-  createGameState,
-  validateMoveForPlayer,
-  submitMove as gameSubmitMove,
-  resolveTurn,
-  isGameOver,
   allMovesSubmitted,
+  type CtlGameState,
+  createGameState,
+  type FlagState,
+  type GamePhase,
+  type GameUnit,
+  submitMove as gameSubmitMove,
   getStateForAgent,
   getTurnLimitForRadius,
+  isGameOver,
+  resolveTurn,
+  validateMoveForPlayer,
 } from './game.js';
-import { generateMap, getMapRadiusForTeamSize, MapConfig, TileType } from './map.js';
-import { Hex, Direction } from './hex.js';
-import { UnitClass } from './movement.js';
-import { getUnitVision } from './fog.js';
-import { TeamFormationPhase } from './phases/team-formation.js';
+import type { Direction, Hex } from './hex.js';
+import { generateMap, getMapRadiusForTeamSize, type MapConfig, type TileType } from './map.js';
+import type { UnitClass } from './movement.js';
 import { ClassSelectionPhase } from './phases/class-selection.js';
+import { TeamFormationPhase } from './phases/team-formation.js';
 
 // ---------------------------------------------------------------------------
 // CtL-specific types
@@ -62,18 +69,21 @@ export interface CtlMove {
   path: Direction[];
 }
 
-/** CtL game outcome. */
+/** Per-player stats recorded at game end. Keyed by playerId. */
+export interface CtlPlayerStats {
+  team: 'A' | 'B';
+  kills: number;
+  deaths: number;
+  flagCarries: number;
+  flagCaptures: number;
+}
+
+/** CtL game outcome. POJO — Maps don't survive JSON-based canonical encoding. */
 export interface CtlOutcome {
   winner: 'A' | 'B' | null;
   score: { A: number; B: number };
   turnCount: number;
-  playerStats: Map<string, {
-    team: 'A' | 'B';
-    kills: number;
-    deaths: number;
-    flagCarries: number;
-    flagCaptures: number;
-  }>;
+  playerStats: Record<string, CtlPlayerStats>;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +95,24 @@ export type CtlAction =
   | { type: 'game_start' }
   | { type: 'move'; path: Direction[] }
   | { type: 'turn_timeout' };
+
+/**
+ * Schedule the next turn-timeout `seconds` from now. Returns both the
+ * engine-facing `GameDeadline` (used to set the DO alarm) and the updated
+ * state with `turnDeadlineMs` pinned to the same `at` timestamp — so
+ * `getStateForAgent` can derive real `timeRemainingSeconds` without drift
+ * between what the engine knows and what the agent sees.
+ */
+function scheduleNextTurn(
+  state: CtlGameState,
+  seconds: number,
+): { state: CtlGameState; deadline: GameDeadline<CtlAction> } {
+  const at = Date.now() + seconds * 1000;
+  return {
+    state: { ...state, turnDeadlineMs: at },
+    deadline: { kind: 'absolute', at, action: { type: 'turn_timeout' } },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Spectator view types (consumed by the frontend)
@@ -139,7 +167,7 @@ export interface SpectatorState {
   visibleB: string[];
   visibleByUnit: Record<string, string[]>;
   handles: Record<string, string>;
-  relayMessages?: any[];
+  relayMessages?: RelayEnvelope[];
   /** Post-move positions for units killed this turn (for replay animation) */
   deathPositions?: Record<string, { q: number; r: number }>;
 }
@@ -150,10 +178,14 @@ export interface SpectatorState {
 
 function buildCtlSpectatorView(
   state: CtlGameState,
-  prevState: CtlGameState | null,
+  _prevState: CtlGameState | null,
   context: SpectatorContext,
 ): SpectatorState {
-  const map = { tiles: new Map<string, string>(state.mapTiles), radius: state.mapRadius, bases: state.mapBases };
+  const map = {
+    tiles: new Map<string, string>(state.mapTiles),
+    radius: state.mapRadius,
+    bases: state.mapBases,
+  };
   const { units, flags, turn, phase, config, score } = state;
 
   // Build full tile array (no fog -- spectators see everything)
@@ -183,15 +215,23 @@ function buildCtlSpectatorView(
     const unitsHere = unitsByHex.get(key);
     if (unitsHere && unitsHere.length > 0) {
       const primary = unitsHere[0];
+      // @ts-expect-error TS2375: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; carryingFlag: true |  — TODO(2.3-followup)
       tile.unit = {
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         id: primary.id,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         team: primary.team,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         unitClass: primary.unitClass,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         carryingFlag: primary.carryingFlag || undefined,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         alive: primary.alive,
+        // @ts-expect-error TS18048: 'primary' is possibly 'undefined'. — TODO(2.3-followup)
         respawnTurn: primary.respawnTurn,
       };
       if (unitsHere.length > 1) {
+        // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; carryingFlag: true |  — TODO(2.3-followup)
         tile.units = unitsHere.map((u) => ({
           id: u.id,
           team: u.team,
@@ -212,7 +252,7 @@ function buildCtlSpectatorView(
   }
 
   // All kills up to this point (cumulative — snapshot is self-contained)
-  const kills = (state.allKills ?? []).map(k => ({
+  const kills = (state.allKills ?? []).map((k) => ({
     killerId: k.killerId,
     victimId: k.victimId,
     reason: k.reason,
@@ -256,18 +296,31 @@ function buildCtlSpectatorView(
 
   // Extract chat from relay messages
   const relayMessages = context.relayMessages ?? [];
+  const isTeamMsgFromTeam = (m: RelayEnvelope, team: 'A' | 'B'): boolean =>
+    m.type === CHAT_RELAY_TYPE &&
+    m.scope.kind === 'team' &&
+    units.some((u) => u.id === m.sender && u.team === team);
   const chatA = relayMessages
-    .filter((m: any) => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'A'))
-    .map((m: any) => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn }));
+    .filter((m) => isTeamMsgFromTeam(m, 'A'))
+    .map((m) => ({
+      from: m.sender,
+      message: (m.data as { body?: string } | null)?.body ?? '',
+      turn: m.turn ?? 0,
+    }));
   const chatB = relayMessages
-    .filter((m: any) => m.type === 'messaging' && m.scope === 'team' && units.some(u => u.id === m.sender && u.team === 'B'))
-    .map((m: any) => ({ from: m.sender, message: (m.data as { body?: string })?.body ?? '', turn: m.turn }));
+    .filter((m) => isTeamMsgFromTeam(m, 'B'))
+    .map((m) => ({
+      from: m.sender,
+      message: (m.data as { body?: string } | null)?.body ?? '',
+      turn: m.turn ?? 0,
+    }));
 
   return {
     turn,
     maxTurns: config.turnLimit,
     phase,
     tiles,
+    // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; position: { q: number — TODO(2.3-followup)
     units: units.map((u) => ({
       id: u.id,
       team: u.team,
@@ -295,7 +348,7 @@ function buildCtlSpectatorView(
 }
 
 // ---------------------------------------------------------------------------
-// Game rules (shown to agents via get_guide())
+// Game rules (shown to agents via guide())
 // ---------------------------------------------------------------------------
 
 const CTL_GUIDE = `# Capture the Lobster — Game Rules
@@ -326,52 +379,62 @@ Agents are identified by their **display name** (handle). In the lobby state, ea
 ## Game Flow — Follow These Steps Exactly
 
 ### Phase 1: Lobby (finding a team)
-Tools: join_lobby, chat(message, scope), propose_team(name), accept_team(teamId), leave_team, wait_for_update
+Tools: join, chat(message, scope), propose_team(name), accept_team(teamId), leave_team, wait
 
 Auth is handled automatically by the CLI — you do not need to sign in.
 
-1. Call **join_lobby(lobbyId)** to enter a lobby
+1. Call **join(lobbyId)** to enter a lobby
 2. Use **chat(message, scope:"all")** to introduce yourself — pitch your skills! (visible to all in lobby)
 3. To form a team:
    - **propose_team(name)** — invites another agent by their display name. Creates a team with you on it and them invited.
    - **accept_team(teamId)** — accepts a pending invitation. Check your **pendingInvites** in the lobby state!
    - **leave_team** — leave your current team if you want to join a different one
-4. Call **wait_for_update()** after each action — it returns immediately if anything happened, or waits for the next event
-5. **IMPORTANT**: After calling wait_for_update, check the lobby state carefully:
+4. Call **wait()** after each action — it returns immediately if anything happened, or waits for the next event
+5. **IMPORTANT**: After calling wait, check the lobby state carefully:
    - Look at your agent's **pendingInvites** array — these are team IDs you can accept
    - Look at **teams** to see which teams exist and who's on them
    - The lobby needs 2 full teams (team size varies per lobby: 2-6 players) to advance
 
 ### Phase 2: Class Selection (coordinating with your team)
-Tools: chat(message, scope:"team"), choose_class, wait_for_update
+Tools: chat(message, scope:"team"), choose_class, wait
 
 1. Use **chat(message, scope:"team")** to discuss strategy (now only visible to your team)
 2. Use **choose_class("rogue" | "knight" | "mage")** to lock in your pick
-3. Call **wait_for_update()** after each action to see teammate responses
+3. Call **wait()** after each action to see teammate responses
 
 ### Phase 3: Game (30 turns of play)
-Tools: wait_for_update, move(path), chat(message, scope:"team")
+Tools: wait, move(path), chat(message, scope:"team")
 
 **IMPORTANT: Move format.** Via MCP: \`move({"path":["N","NE"]})\`. Via CLI: \`coga tool move path=N,NE\` (or \`coga tool move --json '{"path":["N","NE"]}'\`). The path is an array of directions up to your speed. To stay put: \`move({"path":[]})\`.
 
 Your main loop — repeat until game ends:
-1. Call **wait_for_update()** — returns FULL board state on new turns
+1. Call **wait()** — returns FULL board state on new turns
 2. Analyze the board: your position, visible enemies, flag locations
 3. Use **chat(message, scope:"team")** to share intel with your teammate (team-only). Check the updates envelope in the response for new messages.
 4. Use **move({path})** to move — directions up to your speed, \`[]\` to stay put. Check the updates envelope.
-5. Call **wait_for_update()** again — if teammate chatted since your last response, returns immediately. Otherwise waits for the next turn.
+5. Call **wait()** again — if teammate chatted since your last response, returns immediately. Otherwise waits for the next turn.
 
 ## How Responses Work — IMPORTANT
 
-**wait_for_update** is your main tool. It drives the entire game:
-- On **turn changes**: returns FULL state (visible tiles, positions, flags, everything)
-- On **chat wakeups**: returns lightweight updates (new messages only)
-- On **keepalives**: minimal heartbeat so you stay connected
-- If there are **pending updates** you haven't seen: returns IMMEDIATELY (no blocking)
+**wait** is your main tool. It drives the entire game. Every tool call (wait, state, move, chat, etc.) returns the same envelope — see "Reading the envelope" below.
 
-**Action tools** (chat, move, choose_class, propose_team, accept_team, leave_team) return a lightweight **updates envelope**: phase, new messages since your last response, move status. Check this envelope — if a teammate messaged, you'll see it immediately without needing another call.
+**state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait gives you everything every turn.
 
-**get_state** exists for bootstrap/recovery ONLY (first connect, reconnect after crash). During normal play you should NEVER need it — wait_for_update gives you full state every turn.
+## Reading the envelope
+
+Every response is a DIFF relative to your last observation. Keys with unchanged values are omitted and listed in \`_unchangedKeys\` — reuse your last-seen value for those. Read in this order:
+
+1. **\`summary\`** (read FIRST) — scalar at-a-glance: \`pos: [q, r]\`, carrying, alive, moveSubmitted, score, yourFlag status, enemyFlag status, visible enemies, visible flags. Canonical \`turn\` and \`phase\` live at the top level of the envelope (not duplicated here). This is all you need for most decisions — no need to parse the rest unless you care about terrain.
+2. **\`yourUnit\`** — your unit's full record. \`position\` is \`[q, r]\`. Includes \`visionRange\` and \`attackRange\` (use these, don't hardcode class tables).
+3. **\`mapStatic\`** — \`{ radius, bases }\`. Each base is \`{ flag: [q, r], spawns: [q, r][] }\`. Same every turn; dedupes into \`_unchangedKeys\` after turn 0.
+4. **\`visibleWalls\`** — \`[q, r][]\`: walls currently within your vision. **Fog-filtered per turn** — walls you haven't seen yet are NOT revealed (you have to explore to discover them). A hex within your vision that isn't in \`visibleWalls\` and isn't a base tile is walkable ground.
+5. **\`visibleOccupants\`** — per-turn fog view: only hexes that contain a unit or flag (allies include IDs, enemies don't). Each entry is \`{ pos: [q, r], unit?, flag? }\`. Tiny.
+6. **\`newMessages\`** — chat messages since your last observation (delta, not full history).
+7. **\`currentPhase.tools\`** — tool names callable RIGHT NOW.
+
+**Coord format.** All coords on the envelope are 2-tuples \`[q, r]\` (no \`{q, r}\` objects). Pure-coord lists (like \`visibleWalls\`) are \`[q, r][]\`; anything carrying metadata alongside a coord uses \`{ pos: [q, r], ... }\`.
+
+Don't pipe responses through jq/python to extract fields — \`summary\` already has the fast read.
 
 ## Combat
 - Rogue beats Mage, Knight beats Rogue, Mage beats Knight (ranged, distance 2)
@@ -384,7 +447,7 @@ Your main loop — repeat until game ends:
 - Die while carrying = flag returns to enemy base
 
 ## Fog of War
-- You only see hexes within your vision radius, walls block line of sight
+- You only see hexes within \`yourUnit.visionRange\` of your position; walls block line of sight
 - Team vision is NOT shared — you must use chat to share what you see!
 
 ## Strategy
@@ -392,7 +455,7 @@ Your main loop — repeat until game ends:
 - Knights: defend your flag, chase enemy rogues
 - Mages: ranged area control, stay away from rogues
 - COMMUNICATE every turn: share your position, what enemies you see, and your plan
-- Call wait_for_update() between chat messages to read your teammate's replies
+- Call wait() between chat messages to read your teammate's replies
 
 ## The Metagame — Read This Carefully
 
@@ -437,7 +500,8 @@ export const CTL_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
 const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'move',
-    description: 'Submit your unit\'s move for the current turn. `path` is an ordered list of hex directions (N, NE, SE, S, SW, NW) up to your class\'s speed. Pass an empty path to stay put. All moves resolve simultaneously when every alive unit has submitted (or the turn timer expires).',
+    description:
+      "Submit your unit's move for the current turn. `path` is an ordered list of hex directions (N, NE, SE, S, SW, NW) up to your class's speed. Pass an empty path to stay put. All moves resolve simultaneously when every alive unit has submitted (or the turn timer expires).",
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -446,7 +510,8 @@ const GAME_TOOLS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string', enum: ['N', 'NE', 'SE', 'S', 'SW', 'NW'] },
           minItems: 0,
-          description: 'Ordered hex directions. Length capped by your class speed (rogue 3, knight 2, mage 1). Empty array means stay put this turn.',
+          description:
+            'Ordered hex directions. Length capped by your class speed (rogue 3, knight 2, mage 1). Empty array means stay put this turn.',
         },
       },
       required: ['path'],
@@ -459,16 +524,25 @@ const GAME_TOOLS: ToolDefinition[] = [
 // The plugin
 // ---------------------------------------------------------------------------
 
+/**
+ * Canonical CtL game ID. Re-exported so test fixtures, registries, and other
+ * call sites import this constant instead of inlining the string literal —
+ * eliminates typos and centralizes the change point if the ID is ever
+ * renamed.
+ */
+export const CTL_GAME_ID = 'capture-the-lobster' as const;
+
 export const CaptureTheLobsterPlugin: CoordinationGame<
   CtlConfig,
   CtlGameState,
   CtlAction,
   CtlOutcome
 > = {
-  gameType: 'capture-the-lobster',
+  gameType: CTL_GAME_ID,
   version: '0.2.0',
 
   createInitialState(config: CtlConfig): CtlGameState {
+    // @ts-expect-error TS2375: Type '{ seed: string; radius: number | undefined; wallDensity: number | undefine — TODO(2.3-followup)
     const mapConfig: MapConfig = {
       seed: config.mapSeed,
       radius: config.mapRadius,
@@ -483,6 +557,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
         team: p.team,
         unitClass: p.unitClass,
       })),
+      // @ts-expect-error TS2379: Argument of type '{ teamSize: number; turnLimit: number | undefined; turnTimerSe — TODO(2.3-followup)
       {
         teamSize: config.teamSize,
         turnLimit: config.turnLimit,
@@ -505,14 +580,15 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return false;
   },
 
-  applyAction(state: CtlGameState, playerId: string | null, action: CtlAction): ActionResult<CtlGameState, CtlAction> {
+  applyAction(
+    state: CtlGameState,
+    playerId: string | null,
+    action: CtlAction,
+  ): ActionResult<CtlGameState, CtlAction> {
     // game_start: set phase to in_progress, return deadline for first turn
     if (action.type === 'game_start') {
       const started: CtlGameState = { ...state, phase: 'in_progress' as const };
-      return {
-        state: started,
-        deadline: { seconds: state.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
-      };
+      return scheduleNextTurn(started, state.config.turnTimerSeconds ?? 30);
     }
 
     // turn_timeout: fill empty moves for alive units, resolve turn
@@ -529,13 +605,9 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       // Resolve
       const { state: resolved } = resolveTurn(current);
       if (isGameOver(resolved)) {
-        return { state: resolved, deadline: null, progressIncrement: true };
+        return { state: resolved, deadline: { kind: 'none' } };
       }
-      return {
-        state: resolved,
-        deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
-        progressIncrement: true,
-      };
+      return scheduleNextTurn(resolved, resolved.config.turnTimerSeconds ?? 30);
     }
 
     // move: submit move, check if all submitted, maybe resolve
@@ -543,19 +615,15 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       const result = gameSubmitMove(state, playerId, action.path);
       if (!result.success) return { state }; // invalid move, no state change
 
-      let current = result.state;
+      const current = result.state;
 
       // Check if all alive units have submitted
       if (allMovesSubmitted(current)) {
         const { state: resolved } = resolveTurn(current);
         if (isGameOver(resolved)) {
-          return { state: resolved, deadline: null, progressIncrement: true };
+          return { state: resolved, deadline: { kind: 'none' } };
         }
-        return {
-          state: resolved,
-          deadline: { seconds: resolved.config.turnTimerSeconds ?? 30, action: { type: 'turn_timeout' } },
-          progressIncrement: true,
-        };
+        return scheduleNextTurn(resolved, resolved.config.turnTimerSeconds ?? 30);
       }
 
       return { state: current }; // no deadline change — timer keeps ticking
@@ -574,7 +642,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return getStateForAgent(state, playerId, submitted);
   },
 
-  buildSpectatorView(state: CtlGameState, prevState: CtlGameState | null, context: SpectatorContext): SpectatorState {
+  buildSpectatorView(
+    state: CtlGameState,
+    prevState: CtlGameState | null,
+    context: SpectatorContext,
+  ): SpectatorState {
     return buildCtlSpectatorView(state, prevState, context);
   },
 
@@ -582,23 +654,40 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return isGameOver(state);
   },
 
+  getCurrentPhaseKind(state: CtlGameState): GamePhaseKind {
+    if (state.phase === 'finished') return 'finished';
+    if (state.phase === 'in_progress') return 'in_progress';
+    return 'lobby';
+  },
+
+  /**
+   * In CtL every unit is on team A or B. Players are GameUnit ids, so resolve
+   * via the unit list. If the player isn't on the board (lobby/pre_game), we
+   * have nothing better than the playerId itself — relay routing then
+   * degenerates to per-player, which matches the FFA convention.
+   */
+  getTeamForPlayer(state: CtlGameState, playerId: string): string {
+    const unit = state.units.find((u) => u.id === playerId);
+    return unit?.team ?? playerId;
+  },
+
+  getProgressCounter(state: CtlGameState): number {
+    return state.turn;
+  },
+
+  progressUnit: 'turn',
+
   getOutcome(state: CtlGameState): CtlOutcome {
-    const playerStats = new Map<string, {
-      team: 'A' | 'B';
-      kills: number;
-      deaths: number;
-      flagCarries: number;
-      flagCaptures: number;
-    }>();
+    const playerStats: Record<string, CtlPlayerStats> = {};
 
     for (const unit of state.units) {
-      playerStats.set(unit.id, {
+      playerStats[unit.id] = {
         team: unit.team,
         kills: 0,
         deaths: 0,
         flagCarries: 0,
         flagCaptures: 0,
-      });
+      };
     }
 
     return {
@@ -625,7 +714,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     return status;
   },
 
-  getSummary(state: CtlGameState): Record<string, any> {
+  getSummary(state: CtlGameState): Record<string, unknown> {
     return {
       turn: state.turn,
       maxTurns: state.config.turnLimit,
@@ -643,7 +732,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
    * this on every progress tick to update /api/games. Uses snapshot-only
    * fields so `winner`, `turn`, etc. never leak ahead of the delayed view.
    */
-  getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
+  getSummaryFromSpectator(snapshot: unknown): Record<string, unknown> {
     const s = snapshot as SpectatorState;
     return {
       turn: s.turn,
@@ -651,10 +740,30 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       phase: s.phase,
       winner: s.winner,
       teams: {
-        A: s.units.filter(u => u.team === 'A').map(u => u.id),
-        B: s.units.filter(u => u.team === 'B').map(u => u.id),
+        A: s.units.filter((u) => u.team === 'A').map((u) => u.id),
+        B: s.units.filter((u) => u.team === 'B').map((u) => u.id),
       },
     };
+  },
+
+  /**
+   * Replay/finish chrome for CtL. Uses the explicit `winner` field on the
+   * spectator snapshot (set by the engine when a flag is captured or the
+   * turn cap is reached). Null winner on a finished snapshot = draw on
+   * timeout.
+   */
+  getReplayChrome(snapshot: unknown): {
+    isFinished: boolean;
+    winnerLabel?: string;
+    statusVariant: 'in_progress' | 'win' | 'draw';
+  } {
+    const s = snapshot as SpectatorState;
+    const isFinished = s.phase === 'finished';
+    if (!isFinished) return { isFinished: false, statusVariant: 'in_progress' };
+    if (s.winner === 'A' || s.winner === 'B') {
+      return { isFinished: true, winnerLabel: `Team ${s.winner}`, statusVariant: 'win' };
+    }
+    return { isFinished: true, statusVariant: 'draw' };
   },
 
   spectatorDelay: 2,
@@ -664,12 +773,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   getPlayersNeedingAction(state: CtlGameState): string[] {
     if (state.phase !== 'in_progress') return [];
     const submitted = new Set(new Map(state.moveSubmissions).keys());
-    return state.units
-      .filter(u => u.alive && !submitted.has(u.id))
-      .map(u => u.id);
+    return state.units.filter((u) => u.alive && !submitted.has(u.id)).map((u) => u.id);
   },
 
-  entryCost: 10,
+  entryCost: credits(10),
 
   lobby: {
     queueType: 'open',
@@ -691,17 +798,20 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['elo'],
 
-  computePayouts(outcome: CtlOutcome, playerIds: string[], entryCost: number): Map<string, number> {
-    const payouts = new Map<string, number>();
+  computePayouts(outcome: CtlOutcome, playerIds: string[], entryCost: bigint): Map<string, bigint> {
+    const payouts = new Map<string, bigint>();
 
     if (!outcome.winner) {
-      for (const id of playerIds) payouts.set(id, 0);
+      for (const id of playerIds) payouts.set(id, 0n);
       return payouts;
     }
 
     for (const id of playerIds) {
-      const stats = outcome.playerStats.get(id);
-      if (!stats) { payouts.set(id, 0); continue; }
+      const stats = outcome.playerStats[id];
+      if (!stats) {
+        payouts.set(id, 0n);
+        continue;
+      }
       payouts.set(id, stats.team === outcome.winner ? entryCost : -entryCost);
     }
 
@@ -711,7 +821,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   createConfig(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
-    options?: Record<string, any>,
+    options?: Record<string, unknown>,
   ): GameSetup<CtlConfig> {
     const classes: UnitClass[] = ['rogue', 'knight', 'mage'];
 
@@ -721,11 +831,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     const teams = options?.teams as Array<{ id: string; members: string[] }> | undefined;
     const classPicks = options?.classPicks as Record<string, string> | undefined;
 
-    const enrichedPlayers = players.map(p => {
+    const enrichedPlayers = players.map((p) => {
       let team = p.team;
       let role = p.role;
       if (!team && teams) {
-        const found = teams.find(t => t.members.includes(p.id));
+        const found = teams.find((t) => t.members.includes(p.id));
         if (found) team = found.id;
       }
       if (!role && classPicks) {
@@ -734,22 +844,31 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       return { ...p, team, role };
     });
 
-    const hasTeams = enrichedPlayers.some(p => p.team);
+    const hasTeams = enrichedPlayers.some((p) => p.team);
     let ctlPlayers: CtlPlayerConfig[];
 
     if (hasTeams) {
       // Map lobby team IDs (e.g. 'team_1', 'team_2') to CtL teams ('A', 'B')
-      const uniqueTeamIds = [...new Set(enrichedPlayers.map(p => p.team).filter(Boolean))];
+      const uniqueTeamIds = [
+        ...new Set(
+          enrichedPlayers
+            .map((p) => p.team)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0),
+        ),
+      ];
       const teamIdMap: Record<string, 'A' | 'B'> = {};
-      uniqueTeamIds.forEach((id, i) => { teamIdMap[id!] = i === 0 ? 'A' : 'B'; });
+      uniqueTeamIds.forEach((id, i) => {
+        teamIdMap[id] = i === 0 ? 'A' : 'B';
+      });
 
-      ctlPlayers = enrichedPlayers.map(p => ({
+      ctlPlayers = enrichedPlayers.map((p) => ({
         id: p.id,
         team: (p.team ? teamIdMap[p.team] : 'A') as 'A' | 'B',
         unitClass: (p.role as UnitClass) ?? classes[0],
       }));
     } else {
       // Auto-assign: alternate A/B, cycle through classes
+      // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass | undefined; }[]' is n — TODO(2.3-followup)
       ctlPlayers = enrichedPlayers.map((p, i) => ({
         id: p.id,
         team: (i % 2 === 0 ? 'A' : 'B') as 'A' | 'B',
@@ -757,10 +876,14 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       }));
     }
 
-    const teamSize = options?.teamSize ?? Math.max(
-      ctlPlayers.filter(p => p.team === 'A').length,
-      ctlPlayers.filter(p => p.team === 'B').length,
-    );
+    const teamSizeOpt = options?.teamSize;
+    const turnTimerOpt = options?.turnTimerSeconds;
+    const teamSize =
+      (typeof teamSizeOpt === 'number' ? teamSizeOpt : undefined) ??
+      Math.max(
+        ctlPlayers.filter((p) => p.team === 'A').length,
+        ctlPlayers.filter((p) => p.team === 'B').length,
+      );
     const radius = getMapRadiusForTeamSize(teamSize);
     const turnLimit = getTurnLimitForRadius(radius);
 
@@ -769,13 +892,13 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       mapRadius: radius,
       teamSize,
       turnLimit,
-      turnTimerSeconds: options?.turnTimerSeconds ?? 30,
+      turnTimerSeconds: typeof turnTimerOpt === 'number' ? turnTimerOpt : 30,
       players: ctlPlayers,
     };
 
     return {
       config,
-      players: ctlPlayers.map(p => ({ id: p.id, team: p.team })),
+      players: ctlPlayers.map((p) => ({ id: p.id, team: p.team })),
     };
   },
 };

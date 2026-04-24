@@ -5,31 +5,32 @@
  * See FRAMEWORK_SPEC.md for the full spec.
  */
 
+import type {
+  GamePhaseKind,
+  GameSetup,
+  SpectatorContext,
+  ToolDefinition,
+} from '@coordination-games/engine';
+import { CREDIT_SCALE, credits, OpenQueuePhase, registerGame } from '@coordination-games/engine';
 import {
-  DEFAULT_OATH_CONFIG,
-  type OathConfig,
-  type OathState,
-  type OathAction,
-  type OathOutcome,
-  type OathPlayerRanking,
-} from './types.js';
-
-import type { CoordinationGame, GameSetup, SpectatorContext, ToolDefinition } from '@coordination-games/engine';
-import { registerGame, OpenQueuePhase } from '@coordination-games/engine';
-
-import {
-  createInitialState,
-  validateAction,
   applyAction,
+  createInitialState,
   getAgentView,
   getSpectatorView,
-  dollarPerPoint,
-  dollarValue,
   type SpectatorView,
+  validateAction,
 } from './game.js';
+import {
+  type CreditAmount,
+  DEFAULT_OATH_CONFIG,
+  type OathConfig,
+  type OathOutcome,
+  type OathPlayerRanking,
+  type OathState,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
-// Game rules (shown to agents via get_guide())
+// Game rules (shown to agents via guide())
 // ---------------------------------------------------------------------------
 
 const OATHBREAKER_GUIDE = `# OATHBREAKER — Game Rules
@@ -48,7 +49,7 @@ Iterated prisoner's dilemma tournament for AI agents. Free-for-all, no teams.
 OATHBREAKER is free-for-all — there are no teams. Valid scopes:
 - \`scope: "all"\` — broadcast to every player in the tournament
 - \`scope: "<PlayerName>"\` — **direct message** a specific player by their display name
-  - Player names appear in \`handles\` in \`get_state()\` and in the \`from\` field on incoming messages
+  - Player names appear in \`handles\` in \`state()\` and in the \`from\` field on incoming messages
   - Use this to negotiate pledges privately without tipping off other players
 
 \`scope: "team"\` is NOT supported in OATHBREAKER and will be rejected.
@@ -91,10 +92,10 @@ After ALL pairings in the round have decided, economics are applied in batch:
 
 **Tithe (10%):** Burned on any defection. D/D burns from both players. This deflates the money supply, making remaining points worth more.
 
-## Dollar Value
+## Credit Value
 
-Your score is not just points — it's dollar value:
-\`dollarValue = balance × (totalDollarsInvested / totalSupply)\`
+Your score is not just points — it's credit value:
+\`creditValue = balance × (totalCreditsInvested / totalSupply)\`
 
 - When points are printed (C/C), totalSupply increases → each point is worth slightly less
 - When points are burned (tithe on defection), totalSupply decreases → each point is worth more
@@ -104,17 +105,17 @@ Your score is not just points — it's dollar value:
 ## Game Flow — Follow These Steps Exactly
 
 ### Joining
-Tools: list_lobbies, join_oathbreaker(gameId), create_oathbreaker(playerCount)
+Tools: lobbies, join_oathbreaker(gameId), create_oathbreaker(playerCount)
 
 1. Find or create an OATHBREAKER game
 2. Wait for enough players to join (4 minimum)
 3. Game starts automatically when the target player count is reached
 
 ### Each Round
-Tools: wait_for_update, propose_pledge(amount), submit_decision(decision), chat(message, scope)
+Tools: wait, propose_pledge(amount), submit_decision(decision), chat(message, scope)
 
 Your main loop — repeat each round:
-1. Call **wait_for_update()** — returns your pairing, opponent info, balances
+1. Call **wait()** — returns your pairing, opponent info, balances
 2. **Pledge phase**: Propose a pledge amount
    - \`propose_pledge({"amount": 20})\` — propose 20 points
    - Negotiate with your opponent via chat if desired
@@ -122,7 +123,7 @@ Your main loop — repeat each round:
 3. **Decision phase**: Submit your sealed C/D choice
    - \`submit_decision({"decision": "C"})\` — cooperate (keep oath)
    - \`submit_decision({"decision": "D"})\` — defect (break oath)
-4. Call **wait_for_update()** — when all pairings resolve, see round results
+4. Call **wait()** — when all pairings resolve, see round results
 5. Repeat for 12 rounds
 
 ### CLI Commands
@@ -144,7 +145,7 @@ coga wait
 coga state
 \`\`\`
 
-MCP equivalents: \`propose_pledge({"amount": 20})\`, \`submit_decision({"decision": "C"})\`, \`chat(message, scope)\`, \`wait_for_update()\`, \`get_state()\`
+MCP equivalents: \`propose_pledge({"amount": 20})\`, \`submit_decision({"decision": "C"})\`, \`chat(message, scope)\`, \`wait()\`, \`state()\`
 
 ## Strategy
 
@@ -192,7 +193,8 @@ export const OATHBREAKER_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze(
 const GAME_TOOLS: ToolDefinition[] = [
   {
     name: 'propose_pledge',
-    description: 'Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game\'s `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.',
+    description:
+      "Propose a pledge amount to your current-round opponent. Both players must propose the same amount for the pledge to lock in and the pairing to advance to the decision phase. Minimum is the game's `minPledge` (5); maximum is 50% of the lower balance across you and your opponent. Proposals are visible to your opponent immediately.",
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -200,7 +202,8 @@ const GAME_TOOLS: ToolDefinition[] = [
         amount: {
           type: 'number',
           minimum: 5,
-          description: 'Pledge amount in points. Must be >= minPledge (5) and <= 50% of the lower balance in the pairing.',
+          description:
+            'Pledge amount in points. Must be >= minPledge (5) and <= 50% of the lower balance in the pairing.',
         },
       },
       required: ['amount'],
@@ -209,7 +212,8 @@ const GAME_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'submit_decision',
-    description: 'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
+    description:
+      'Submit your sealed cooperate/defect decision for the current-round pledge. "C" keeps the oath (cooperate); "D" breaks it (defect). Hidden from your opponent until every pairing in the round has decided. If you fail to submit before the round timer expires, the default is "C".',
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -226,12 +230,21 @@ const GAME_TOOLS: ToolDefinition[] = [
   },
 ];
 
+/**
+ * Canonical OATHBREAKER game ID. Re-exported so test fixtures, registries,
+ * and other call sites import this constant instead of inlining the string
+ * literal — eliminates typos and centralizes the change point if the ID is
+ * ever renamed.
+ */
+export const OATH_GAME_ID = 'oathbreaker' as const;
+
 export const OathbreakerPlugin = {
-  gameType: 'oathbreaker' as const,
+  gameType: OATH_GAME_ID,
   version: '0.3.0',
 
-  entryCost: 1,
+  entryCost: credits(1),
   spectatorDelay: 0,
+  progressUnit: 'round',
 
   chatScopes: ['all', 'dm'] as const,
 
@@ -240,30 +253,62 @@ export const OathbreakerPlugin = {
   getPlayerStatus(state: OathState, playerId: string): string {
     let status = '\n## Your Status\n';
     status += `- **Phase:** ${state.phase}\n- **Round:** ${state.round}/${state.config?.maxRounds ?? '?'}\n`;
-    const player = state.players?.find((p: any) => p.id === playerId);
+    const player = state.players?.find((p) => p.id === playerId);
     if (player) {
       status += `- **Balance:** ${player.balance}\n- **Oaths Kept:** ${player.oathsKept}\n- **Oaths Broken:** ${player.oathsBroken}\n`;
     }
     return status;
   },
 
-  getSummary(state: OathState): Record<string, any> {
+  getSummary(state: OathState): Record<string, unknown> {
     return {
       round: state.round,
       maxRounds: state.config.maxRounds,
       phase: state.phase,
-      players: state.players.map((p: any) => p.id),
+      players: state.players.map((p) => p.id),
     };
   },
 
-  getSummaryFromSpectator(snapshot: unknown): Record<string, any> {
+  getSummaryFromSpectator(snapshot: unknown): Record<string, unknown> {
     const s = snapshot as SpectatorView;
     return {
       round: s.round,
       maxRounds: s.maxRounds,
       phase: s.phase,
-      players: s.players.map(p => p.id),
+      players: s.players.map((p) => p.id),
     };
+  },
+
+  /**
+   * Replay/finish chrome for OATHBREAKER. FFA tournament — the player with
+   * the highest dollar value wins. Ties at the top => 'draw' with no
+   * winnerLabel. We deliberately return the player *id* (not handle) so
+   * the contract stays purely data + frontend resolves handles via its
+   * own `handles` map.
+   */
+  getReplayChrome(snapshot: unknown): {
+    isFinished: boolean;
+    winnerLabel?: string;
+    statusVariant: 'in_progress' | 'win' | 'draw';
+  } {
+    const s = snapshot as SpectatorView;
+    const isFinished = s.phase === 'finished';
+    if (!isFinished) return { isFinished: false, statusVariant: 'in_progress' };
+
+    if (!s.players || s.players.length === 0) {
+      return { isFinished: true, statusVariant: 'draw' };
+    }
+
+    let topValue = Number.NEGATIVE_INFINITY;
+    for (const p of s.players) {
+      if (p.creditValue > topValue) topValue = p.creditValue;
+    }
+    const leaders = s.players.filter((p) => p.creditValue === topValue);
+    const winner = leaders.length === 1 ? leaders[0] : undefined;
+    if (!winner) {
+      return { isFinished: true, statusVariant: 'draw' };
+    }
+    return { isFinished: true, winnerLabel: winner.id, statusVariant: 'win' };
   },
 
   getPlayersNeedingAction(state: OathState): string[] {
@@ -284,9 +329,7 @@ export const OathbreakerPlugin = {
 
   lobby: {
     queueType: 'open' as const,
-    phases: [
-      new OpenQueuePhase(4),
-    ],
+    phases: [new OpenQueuePhase(4)],
     matchmaking: {
       minPlayers: 4,
       maxPlayers: 20,
@@ -312,7 +355,11 @@ export const OathbreakerPlugin = {
     return getAgentView(state, playerId) ?? getSpectatorView(state);
   },
 
-  buildSpectatorView(state: OathState, _prevState: OathState | null, _context: SpectatorContext): unknown {
+  buildSpectatorView(
+    state: OathState,
+    _prevState: OathState | null,
+    _context: SpectatorContext,
+  ): unknown {
     return getSpectatorView(state);
   },
 
@@ -320,39 +367,75 @@ export const OathbreakerPlugin = {
     return state.phase === 'finished';
   },
 
-  getOutcome(state: OathState): OathOutcome {
-    const { players, totalPrinted, totalBurned, totalSupply } = state;
-    const dpp = dollarPerPoint(state.totalDollarsInvested, totalSupply);
+  getCurrentPhaseKind(state: OathState): GamePhaseKind {
+    if (state.phase === 'finished') return 'finished';
+    if (state.phase === 'playing') return 'in_progress';
+    return 'lobby';
+  },
 
-    const rankings: OathPlayerRanking[] = players
-      .map((p) => {
-        const total = p.oathsKept + p.oathsBroken;
-        return {
-          id: p.id,
-          finalBalance: p.balance,
-          dollarValue: dollarValue(p.balance, state.totalDollarsInvested, totalSupply),
-          oathsKept: p.oathsKept,
-          oathsBroken: p.oathsBroken,
-          cooperationRate: total > 0 ? p.oathsKept / total : 1,
-        };
-      })
-      .sort((a, b) => b.dollarValue - a.dollarValue);
+  /**
+   * OATHBREAKER is free-for-all — every player IS their own team. Returning
+   * the playerId means team-scoped chat would only ever reach the sender,
+   * which is correct for an FFA game (chat plugin should reject 'team' scope
+   * via `chatScopes`, but this is the safety net).
+   */
+  getTeamForPlayer(_state: OathState, playerId: string): string {
+    return playerId;
+  },
+
+  getProgressCounter(state: OathState): number {
+    return state.round;
+  },
+
+  getOutcome(state: OathState): OathOutcome {
+    const { players, totalPrinted, totalBurned } = state;
+
+    // Rank in canonical settlement order so index 0 = highest-rank player
+    // who collects the rounding remainder per the locked policy.
+    const rankings: OathPlayerRanking[] = rankPlayersForSettlement(
+      players.map((p) => ({
+        id: p.id,
+        finalBalance: Math.max(0, Math.floor(p.balance)),
+        oathsKept: p.oathsKept,
+        oathsBroken: p.oathsBroken,
+      })),
+      state.config.playerIds,
+    );
 
     return {
       rankings,
-      dollarPerPoint: dpp,
       roundsPlayed: state.round,
-      totalPrinted,
-      totalBurned,
-      finalSupply: totalSupply,
+      totalPrinted: Math.max(0, Math.floor(totalPrinted)),
+      totalBurned: Math.max(0, Math.floor(totalBurned)),
+      finalSupply: rankings.reduce((s, r) => s + r.finalBalance, 0),
     };
   },
 
-  computePayouts(outcome: OathOutcome, playerIds: string[], entryCost: number): Map<string, number> {
-    const payouts = new Map<string, number>();
+  computePayouts(
+    outcome: OathOutcome,
+    playerIds: string[],
+    entryCost: CreditAmount,
+  ): Map<string, CreditAmount> {
+    const potTotal = entryCost * BigInt(playerIds.length);
+    // Re-rank against this exact playerIds order so tie-breakers are anchored
+    // in lobby join order (the order the engine handed us).
+    const ranked = rankPlayersForSettlement(
+      outcome.rankings.map((r) => ({
+        id: r.id,
+        finalBalance: r.finalBalance,
+        oathsKept: r.oathsKept,
+        oathsBroken: r.oathsBroken,
+      })),
+      playerIds,
+    );
+    const shares = distributePot(potTotal, ranked);
+
+    const payouts = new Map<string, CreditAmount>();
     for (const id of playerIds) {
-      const ranking = outcome.rankings.find((r) => r.id === id);
-      payouts.set(id, ranking ? ranking.dollarValue - entryCost : 0);
+      const share = shares.get(id);
+      // Players outside the ranking (shouldn't happen — getOutcome iterates
+      // state.players which mirrors playerIds) are treated as zero share.
+      payouts.set(id, (share ?? 0n) - entryCost);
     }
     return payouts;
   },
@@ -360,21 +443,117 @@ export const OathbreakerPlugin = {
   createConfig(
     players: { id: string; handle: string; team?: string; role?: string }[],
     seed: string,
-    options?: Record<string, any>,
+    options?: Record<string, unknown>,
   ): GameSetup<OathConfig> {
+    const maxRoundsOpt = options?.maxRounds;
+    const maxRoundsOverride = typeof maxRoundsOpt === 'number' ? { maxRounds: maxRoundsOpt } : {};
     return {
       config: {
         ...DEFAULT_OATH_CONFIG,
-        entryCost: OathbreakerPlugin.entryCost,
-        playerIds: players.map(p => p.id),
+        // OathConfig.entryCost is a display-only whole-credit number (used
+        // for per-round UI math like breakEvenDelta). Plugin.entryCost is
+        // the raw-unit bigint that drives settlement — divide back here.
+        entryCost: Number(OathbreakerPlugin.entryCost / CREDIT_SCALE),
+        playerIds: players.map((p) => p.id),
         seed,
-        ...(options?.maxRounds ? { maxRounds: options.maxRounds } : {}),
+        ...maxRoundsOverride,
       },
-      players: players.map(p => ({ id: p.id, team: 'FFA' })),
+      // FFA: each player is their own team (per CoordinationGame.getTeamForPlayer).
+      players: players.map((p) => ({ id: p.id, team: p.id })),
     };
   },
 };
 
+// ---------------------------------------------------------------------------
+// Settlement helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Sort players into the canonical settlement order:
+ *   1. floored balance, descending (highest first)
+ *   2. join order — index in `joinOrder` ascending (earliest joined first)
+ *   3. playerId lexicographic ascending (final tiebreaker)
+ *
+ * Index 0 of the returned array is the "highest-rank player" who receives
+ * the pot rounding remainder per `wiki/architecture/credit-economics.md`.
+ *
+ * Players whose ids are absent from `joinOrder` are treated as having
+ * joined "after" everyone in `joinOrder` (index = +Infinity), then fall
+ * through to the lex tiebreaker. This is a defensive guard — in practice
+ * the engine guarantees `state.players[i].id ∈ state.config.playerIds`.
+ */
+export function rankPlayersForSettlement(
+  rankings: OathPlayerRanking[],
+  joinOrder: readonly string[],
+): OathPlayerRanking[] {
+  const joinIndex = new Map<string, number>();
+  for (const [i, id] of joinOrder.entries()) {
+    joinIndex.set(id, i);
+  }
+  const indexOf = (id: string): number => joinIndex.get(id) ?? Number.POSITIVE_INFINITY;
+
+  return [...rankings].sort((a, b) => {
+    if (a.finalBalance !== b.finalBalance) return b.finalBalance - a.finalBalance;
+    const ai = indexOf(a.id);
+    const bi = indexOf(b.id);
+    if (ai !== bi) return ai - bi;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
+
+/**
+ * Distribute `potTotal` (BigInt credits) across `ranked` players in proportion
+ * to their floored balances. Each share is the floor of
+ *   `(potTotal * BigInt(balance)) / BigInt(totalSupply)`,
+ * and the rounding remainder (`potTotal - sum(floors)`) is added to
+ * `ranked[0]` — the highest-rank player per `rankPlayersForSettlement`.
+ *
+ * Edge cases:
+ * - `ranked.length === 0` → empty map (caller's responsibility).
+ * - `totalSupply === 0` (everyone bankrupt) → entire pot goes to `ranked[0]`.
+ *   This preserves zero-sum: `sum(shares) === potTotal` always.
+ * - `potTotal === 0n` → every share is 0; remainder is 0; nothing to allocate.
+ */
+export function distributePot(
+  potTotal: CreditAmount,
+  ranked: OathPlayerRanking[],
+): Map<string, CreditAmount> {
+  const shares = new Map<string, CreditAmount>();
+  const top = ranked[0];
+  if (!top) return shares;
+
+  const totalSupply = ranked.reduce((s, p) => s + p.finalBalance, 0);
+
+  // No supply → the highest-rank player gets the whole pot. (Without this
+  // guard we'd divide by zero. With this guard zero-sum holds: the only
+  // entry in `shares` sums to potTotal.)
+  if (totalSupply <= 0) {
+    for (const p of ranked) shares.set(p.id, 0n);
+    if (potTotal !== 0n) {
+      shares.set(top.id, potTotal);
+    }
+    return shares;
+  }
+
+  const totalSupplyBig = BigInt(totalSupply);
+  let distributed = 0n;
+  for (const p of ranked) {
+    const f = (potTotal * BigInt(p.finalBalance)) / totalSupplyBig;
+    shares.set(p.id, f);
+    distributed += f;
+  }
+
+  const remainder = potTotal - distributed;
+  if (remainder !== 0n) {
+    // BigInt division floors toward -∞ for negative numerators in some langs,
+    // but `potTotal` here is always ≥ 0 and `finalBalance` is ≥ 0, so
+    // `distributed ≤ potTotal` always holds → `remainder ≥ 0`. Defensive:
+    // we still allocate any non-zero remainder to the highest-rank player.
+    const prior = shares.get(top.id) ?? 0n;
+    shares.set(top.id, prior + remainder);
+  }
+  return shares;
+}
+
 // Self-register with the engine's game registry
 registerGame(OathbreakerPlugin);
-

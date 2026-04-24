@@ -11,7 +11,9 @@
 
 import type { CoordinationGame } from './types.js';
 
-const games: Map<string, CoordinationGame<any, any, any, any>> = new Map();
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
+const games: Map<string, AnyGame> = new Map();
 
 /** Declarer of a tool within a game plugin. */
 interface ToolDeclarer {
@@ -24,20 +26,18 @@ interface ToolDeclarer {
  * Find tool-name collisions within a single game's declared surface.
  * Returns a map of colliding name → declarers. Empty map means no collisions.
  */
-function findToolCollisions(
-  plugin: CoordinationGame<any, any, any, any>,
-): Map<string, ToolDeclarer[]> {
+function findToolCollisions(plugin: AnyGame): Map<string, ToolDeclarer[]> {
   const byName = new Map<string, ToolDeclarer[]>();
 
   for (const tool of plugin.gameTools ?? []) {
     if (!byName.has(tool.name)) byName.set(tool.name, []);
-    byName.get(tool.name)!.push({ kind: 'game' });
+    byName.get(tool.name)?.push({ kind: 'game' });
   }
 
   for (const phase of plugin.lobby?.phases ?? []) {
     for (const tool of phase.tools ?? []) {
       if (!byName.has(tool.name)) byName.set(tool.name, []);
-      byName.get(tool.name)!.push({ kind: 'lobby-phase', phaseId: phase.id });
+      byName.get(tool.name)?.push({ kind: 'lobby-phase', phaseId: phase.id });
     }
   }
 
@@ -57,14 +57,14 @@ export class ToolCollisionError extends Error {
   readonly declarers: string[];
 
   constructor(gameType: string, toolName: string, declarers: ToolDeclarer[]) {
-    const declarerLabels = declarers.map(d =>
+    const declarerLabels = declarers.map((d) =>
       d.kind === 'game'
         ? `GamePhase of game "${gameType}"`
         : `LobbyPhase "${d.phaseId}" of game "${gameType}"`,
     );
     const message =
       `Tool name collision: "${toolName}" is declared by:\n` +
-      declarerLabels.map(l => `  - ${l}`).join('\n') +
+      declarerLabels.map((l) => `  - ${l}`).join('\n') +
       `\n\nResolve by:\n` +
       `  - renaming one of the conflicting tools, or\n` +
       `  - removing the duplicate declaration from the game plugin.`;
@@ -75,9 +75,30 @@ export class ToolCollisionError extends Error {
   }
 }
 
-export function registerGame(plugin: CoordinationGame<any, any, any, any>): void {
+/**
+ * Required `CoordinationGame` methods checked at registration time. These
+ * are typed as required on the interface, but JS callers (tests, dynamic
+ * loaders) can still construct partial objects — the boot-time guard
+ * makes the contract a hard fail instead of a confusing runtime crash.
+ *
+ * Phase 4.7 added `getReplayChrome` (replay finish chrome) and promoted
+ * `getSummaryFromSpectator` from optional to required.
+ */
+const REQUIRED_GAME_METHODS = ['getReplayChrome', 'getSummaryFromSpectator'] as const;
+
+export function registerGame(plugin: AnyGame): void {
   if (games.has(plugin.gameType)) {
     throw new Error(`Game "${plugin.gameType}" already registered`);
+  }
+
+  for (const method of REQUIRED_GAME_METHODS) {
+    if (typeof (plugin as unknown as Record<string, unknown>)[method] !== 'function') {
+      throw new Error(
+        `Game "${plugin.gameType}" missing required method: ${method}. ` +
+          `Every game plugin must implement ${REQUIRED_GAME_METHODS.join(' and ')} ` +
+          `(see CoordinationGame interface).`,
+      );
+    }
   }
 
   const collisions = findToolCollisions(plugin);
@@ -90,7 +111,7 @@ export function registerGame(plugin: CoordinationGame<any, any, any, any>): void
   games.set(plugin.gameType, plugin);
 }
 
-export function getGame(gameType: string): CoordinationGame<any, any, any, any> | undefined {
+export function getGame(gameType: string): AnyGame | undefined {
   return games.get(gameType);
 }
 
@@ -98,6 +119,6 @@ export function getRegisteredGames(): string[] {
   return Array.from(games.keys());
 }
 
-export function getAllGames(): Map<string, CoordinationGame<any, any, any, any>> {
+export function getAllGames(): Map<string, AnyGame> {
   return games;
 }

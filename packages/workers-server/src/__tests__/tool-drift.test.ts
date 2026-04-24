@@ -22,42 +22,52 @@
  * to this file. New tools MUST come with a drift fixture.
  */
 
-import { describe, it, expect } from 'vitest';
-import Ajv from 'ajv';
-
-import { CaptureTheLobsterPlugin, CTL_SYSTEM_ACTION_TYPES } from '@coordination-games/game-ctl';
-import { OathbreakerPlugin, OATHBREAKER_SYSTEM_ACTION_TYPES } from '@coordination-games/game-oathbreaker';
-import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type {
+  AgentInfo,
   CoordinationGame,
+  LobbyPhase,
   ToolDefinition,
   ToolPlugin,
-  LobbyPhase,
-  AgentInfo,
 } from '@coordination-games/engine';
+import {
+  CaptureTheLobsterPlugin,
+  CTL_GAME_ID,
+  CTL_SYSTEM_ACTION_TYPES,
+} from '@coordination-games/game-ctl';
+import {
+  OATH_GAME_ID,
+  OATHBREAKER_SYSTEM_ACTION_TYPES,
+  OathbreakerPlugin,
+} from '@coordination-games/game-oathbreaker';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import Ajv from 'ajv';
+import { describe, expect, it } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // AJV — strict instance. `additionalProperties: false` on tool schemas gives
 // us the "undeclared shape rejected" invariant for free.
 // ---------------------------------------------------------------------------
 
-const AjvCtor: typeof Ajv = (Ajv as any).default ?? Ajv;
+// Ajv ships both ESM and CJS builds — TS resolves the constructor onto a
+// default property under ESM interop, not under CJS. This tiny shim covers
+// both without pretending to know which Vitest loader picks.
+const AjvCtor: typeof Ajv = (Ajv as unknown as { default?: typeof Ajv }).default ?? Ajv;
 const ajv = new AjvCtor({ allErrors: true, strict: false });
 
 // ---------------------------------------------------------------------------
 // Registered games + plugins under test
 // ---------------------------------------------------------------------------
 
-const GAMES: CoordinationGame<any, any, any, any>[] = [
-  CaptureTheLobsterPlugin,
-  OathbreakerPlugin,
-];
+/** Opaque CoordinationGame — the drift harness walks plugin internals by name. */
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
+const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin];
 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
 const SYSTEM_ACTIONS: Record<string, readonly string[]> = {
-  'capture-the-lobster': CTL_SYSTEM_ACTION_TYPES,
-  'oathbreaker': OATHBREAKER_SYSTEM_ACTION_TYPES,
+  [CTL_GAME_ID]: CTL_SYSTEM_ACTION_TYPES,
+  [OATH_GAME_ID]: OATHBREAKER_SYSTEM_ACTION_TYPES,
 };
 
 // ---------------------------------------------------------------------------
@@ -74,28 +84,29 @@ const CTL_PLAYERS: { id: string; handle: string }[] = [
 ];
 
 /** Build a CtL in-progress state with 4 players split 2v2, rogues on both teams. */
-function buildCtlInProgressState(): { state: any; playerId: string } {
-  const setup = CaptureTheLobsterPlugin.createConfig!(
-    CTL_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+function buildCtlInProgressState(): { state: unknown; playerId: string } {
+  const setup = CaptureTheLobsterPlugin.createConfig?.(
+    CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
     { teamSize: 2 },
   );
-  let state: any = CaptureTheLobsterPlugin.createInitialState(setup.config);
+  if (!setup) throw new Error('drift fixture: CaptureTheLobsterPlugin.createConfig is missing');
+  const fresh = CaptureTheLobsterPlugin.createInitialState(setup.config);
   // Force into in_progress for the move validator to accept.
-  state = { ...state, phase: 'in_progress' };
-  // Pick an alive unit owner.
-  const firstUnit = state.units.find((u: any) => u.alive);
+  const state = { ...fresh, phase: 'in_progress' } as typeof fresh;
+  const firstUnit = state.units.find((u) => u.alive);
   if (!firstUnit) throw new Error('drift fixture: no alive unit in fresh CtL state');
   return { state, playerId: firstUnit.id };
 }
 
 /** Build a CtL pre_game state (for system-action-isolation tests). */
-function buildCtlPreGameState(): any {
-  const setup = CaptureTheLobsterPlugin.createConfig!(
-    CTL_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+function buildCtlPreGameState(): unknown {
+  const setup = CaptureTheLobsterPlugin.createConfig?.(
+    CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
     { teamSize: 2 },
   );
+  if (!setup) throw new Error('drift fixture: CaptureTheLobsterPlugin.createConfig is missing');
   return CaptureTheLobsterPlugin.createInitialState(setup.config);
 }
 
@@ -107,11 +118,12 @@ const OATH_PLAYERS: { id: string; handle: string }[] = [
 ];
 
 /** Build an OATH state with the round already started and pairings in 'pledging'. */
-function buildOathPledgingState(): { state: any; playerId: string } {
-  const setup = OathbreakerPlugin.createConfig!(
-    OATH_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+function buildOathPledgingState(): { state: unknown; playerId: string } {
+  const setup = OathbreakerPlugin.createConfig?.(
+    OATH_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
+  if (!setup) throw new Error('drift fixture: OathbreakerPlugin.createConfig is missing');
   const initial = OathbreakerPlugin.createInitialState(setup.config);
   // game_start transitions from 'waiting' → 'playing' with pairings set.
   const result = OathbreakerPlugin.applyAction(initial, null, { type: 'game_start' });
@@ -121,12 +133,19 @@ function buildOathPledgingState(): { state: any; playerId: string } {
 }
 
 /** Build an OATH state with a pairing in 'deciding' (both proposals matched). */
-function buildOathDecidingState(): { state: any; playerId: string } {
+function buildOathDecidingState(): { state: unknown; playerId: string } {
   const pledging = buildOathPledgingState();
-  const pairing = pledging.state.pairings[0];
+  // Narrow the opaque state for fixture access — OATHBREAKER's state type
+  // isn't re-exported at the package root and we don't want the drift
+  // harness to pull in its private plugin types just for a field walk.
+  const pledgingState = pledging.state as {
+    pairings: Array<{ player1: string; player2: string; phase?: string }>;
+  };
+  const pairing = pledgingState.pairings[0];
+  if (!pairing) throw new Error('drift fixture: oath pledging produced no pairing');
   const pledgeAmount = 10; // >= minPledge (5) and <= 50% of min balance (50)
   // Both players propose the same amount → transitions to 'deciding'.
-  const after1 = OathbreakerPlugin.applyAction(pledging.state, pairing.player1, {
+  const after1 = OathbreakerPlugin.applyAction(pledging.state as never, pairing.player1, {
     type: 'propose_pledge',
     amount: pledgeAmount,
   });
@@ -135,6 +154,7 @@ function buildOathDecidingState(): { state: any; playerId: string } {
     amount: pledgeAmount,
   });
   const updatedPairing = after2.state.pairings[0];
+  if (!updatedPairing) throw new Error('drift fixture: oath pairing vanished after propose_pledge');
   if (updatedPairing.phase !== 'deciding') {
     throw new Error(`drift fixture: oath pairing should be deciding, got ${updatedPairing.phase}`);
   }
@@ -142,11 +162,12 @@ function buildOathDecidingState(): { state: any; playerId: string } {
 }
 
 /** Build an OATH 'waiting' state (for system-action-isolation tests). */
-function buildOathWaitingState(): any {
-  const setup = OathbreakerPlugin.createConfig!(
-    OATH_PLAYERS.map(p => ({ id: p.id, handle: p.handle })),
+function buildOathWaitingState(): unknown {
+  const setup = OathbreakerPlugin.createConfig?.(
+    OATH_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
+  if (!setup) throw new Error('drift fixture: OathbreakerPlugin.createConfig is missing');
   return OathbreakerPlugin.createInitialState(setup.config);
 }
 
@@ -154,10 +175,10 @@ function buildOathWaitingState(): any {
 // Lobby-phase state helpers (CtL only — OATH lobby phase has no tools)
 // ---------------------------------------------------------------------------
 
-const CTL_AGENTS: AgentInfo[] = CTL_PLAYERS.map(p => ({ id: p.id, handle: p.handle }));
+const CTL_AGENTS: AgentInfo[] = CTL_PLAYERS.map((p) => ({ id: p.id, handle: p.handle }));
 
 function findCtlPhase(id: string): LobbyPhase {
-  const phase = CaptureTheLobsterPlugin.lobby?.phases.find(p => p.id === id);
+  const phase = CaptureTheLobsterPlugin.lobby?.phases.find((p) => p.id === id);
   if (!phase) throw new Error(`drift fixture: CtL phase "${id}" not found`);
   return phase;
 }
@@ -172,22 +193,22 @@ function findCtlPhase(id: string): LobbyPhase {
 
 type GameToolFixture = {
   /** Valid sample args (must match the tool's inputSchema). */
-  validSample: Record<string, any>;
+  validSample: Record<string, unknown>;
   /** Build a state where the valid sample is semantically accepted. */
-  buildState: () => { state: any; playerId: string };
+  buildState: () => { state: unknown; playerId: string };
   /** The CoordinationGame owning this tool (for validateAction). */
-  game: CoordinationGame<any, any, any, any>;
+  game: AnyGame;
 };
 
 type LobbyToolFixture = {
-  validSample: Record<string, any>;
+  validSample: Record<string, unknown>;
   /** Build phase state + the player that can invoke this tool. */
-  buildState: () => { state: any; playerId: string; players: AgentInfo[] };
+  buildState: () => { state: unknown; playerId: string; players: AgentInfo[] };
   phase: LobbyPhase;
 };
 
 type PluginToolFixture = {
-  validSample: Record<string, any>;
+  validSample: Record<string, unknown>;
   plugin: ToolPlugin;
 };
 
@@ -322,8 +343,8 @@ interface DiscoveredTool {
   name: string;
   tool: ToolDefinition;
   source:
-    | { kind: 'game'; game: CoordinationGame<any, any, any, any> }
-    | { kind: 'lobby'; game: CoordinationGame<any, any, any, any>; phase: LobbyPhase }
+    | { kind: 'game'; game: AnyGame }
+    | { kind: 'lobby'; game: AnyGame; phase: LobbyPhase }
     | { kind: 'plugin'; plugin: ToolPlugin };
 }
 
@@ -370,19 +391,19 @@ const DISCOVERED = discoverTools();
 
 describe('Tool drift — fixture coverage', () => {
   it('every discovered tool has a DRIFT_FIXTURES entry', () => {
-    const missing = DISCOVERED.filter(d => !DRIFT_FIXTURES[d.key]).map(d => d.key);
+    const missing = DISCOVERED.filter((d) => !DRIFT_FIXTURES[d.key]).map((d) => d.key);
     if (missing.length > 0) {
       throw new Error(
         `\nDRIFT_FIXTURES is missing entries for:\n  - ${missing.join('\n  - ')}\n\n` +
-        `Every tool in gameTools ∪ LobbyPhase.tools ∪ plugin.tools MUST have a ` +
-        `drift fixture. Add entries in packages/workers-server/src/__tests__/tool-drift.test.ts\n`,
+          `Every tool in gameTools ∪ LobbyPhase.tools ∪ plugin.tools MUST have a ` +
+          `drift fixture. Add entries in packages/workers-server/src/__tests__/tool-drift.test.ts\n`,
       );
     }
   });
 
   it('every DRIFT_FIXTURES key matches a discovered tool (no dead entries)', () => {
-    const discoveredKeys = new Set(DISCOVERED.map(d => d.key));
-    const dead = Object.keys(DRIFT_FIXTURES).filter(k => !discoveredKeys.has(k));
+    const discoveredKeys = new Set(DISCOVERED.map((d) => d.key));
+    const dead = Object.keys(DRIFT_FIXTURES).filter((k) => !discoveredKeys.has(k));
     expect(dead, `Dead DRIFT_FIXTURES entries (no matching tool): ${dead.join(', ')}`).toEqual([]);
   });
 
@@ -416,7 +437,13 @@ describe('Invariant 1 — declared shape is accepted', () => {
       it(`${d.key}: validateAction accepts the sample (no shape-mismatch rejection)`, () => {
         const { state, playerId } = f.buildState();
         const action = { type: d.name, ...f.validSample };
-        const accepted = f.game.validateAction(state, playerId, action as any);
+        // validateAction is generic in the plugin's action type; the harness
+        // treats it as opaque and just checks the validator's verdict.
+        const accepted = (f.game.validateAction as (s: unknown, p: string, a: unknown) => boolean)(
+          state,
+          playerId,
+          action,
+        );
         // The validator should return true (accepted). A false here would
         // indicate shape drift — the declaration says valid, the validator
         // says no. False is allowed ONLY if you can prove the rejection is
@@ -453,7 +480,7 @@ describe('Invariant 1 — declared shape is accepted', () => {
             'invalid_args',
             'missing property',
           ];
-          const hit = shapeMismatchMarkers.find(m => msg.includes(m));
+          const hit = shapeMismatchMarkers.find((m) => msg.includes(m));
           expect(
             hit,
             `${d.key}: phase.handleAction returned a shape-mismatch-looking error ` +
@@ -474,26 +501,36 @@ describe('Invariant 1 — declared shape is accepted', () => {
 describe('Invariant 2 — undeclared shape is rejected', () => {
   const REJECTION_KEYWORDS = new Set(['required', 'additionalProperties', 'type']);
 
+  // Minimal shape of a JSON-schema property we walk here. Matches the CLI's
+  // JsonSchema but kept local to avoid reaching across packages.
+  interface PropSchema {
+    type?: string;
+    enum?: unknown[];
+    description?: string;
+  }
+
   for (const d of DISCOVERED) {
     const entry = DRIFT_FIXTURES[d.key];
     if (!entry) continue;
 
     const validate = ajv.compile(d.tool.inputSchema);
     const sample = entry.fixture.validSample;
-    const props = (d.tool.inputSchema.properties ?? {}) as Record<string, any>;
+    const props = (d.tool.inputSchema.properties ?? {}) as Record<string, PropSchema>;
     const required: string[] = Array.isArray(d.tool.inputSchema.required)
       ? (d.tool.inputSchema.required as string[])
       : [];
 
     // -- missing required field --
     if (required.length > 0) {
-      it(`${d.key}: AJV rejects missing required field "${required[0]}"`, () => {
-        const broken = { ...sample };
-        delete broken[required[0]];
+      const firstRequired = required[0];
+      if (!firstRequired) continue;
+      it(`${d.key}: AJV rejects missing required field "${firstRequired}"`, () => {
+        const broken: Record<string, unknown> = { ...sample };
+        delete broken[firstRequired];
         const ok = validate(broken);
         expect(ok).toBe(false);
-        const keywords = new Set((validate.errors ?? []).map(e => e.keyword));
-        const hit = [...keywords].some(k => REJECTION_KEYWORDS.has(k));
+        const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
+        const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
         expect(
           hit,
           `Expected AJV rejection keyword in {${[...REJECTION_KEYWORDS].join(',')}}, ` +
@@ -513,8 +550,8 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
           ok,
           `${d.key}: schema has additionalProperties:false but AJV accepted an extra field.`,
         ).toBe(false);
-        const keywords = new Set((validate.errors ?? []).map(e => e.keyword));
-        const hit = [...keywords].some(k => REJECTION_KEYWORDS.has(k));
+        const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
+        const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
         expect(hit).toBe(true);
       } else {
         // Drift-prevention warning: tool schemas SHOULD set additionalProperties:false
@@ -542,22 +579,24 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
     });
 
     // -- wrong type on a typed property --
-    const typedProp = Object.entries(props).find(([_, v]) =>
-      v && typeof v === 'object' && typeof v.type === 'string',
+    const typedProp = Object.entries(props).find(
+      ([_, v]) => v && typeof v === 'object' && typeof v.type === 'string',
     );
     if (typedProp) {
       const [propName, propSchema] = typedProp;
-      const wrongValue = wrongTypeFor(propSchema.type);
-      it(`${d.key}: AJV rejects wrong type on "${propName}" (expected ${propSchema.type})`, () => {
+      if (!propSchema.type) continue;
+      const propType = propSchema.type;
+      const wrongValue = wrongTypeFor(propType);
+      it(`${d.key}: AJV rejects wrong type on "${propName}" (expected ${propType})`, () => {
         const broken = { ...sample, [propName]: wrongValue };
         const ok = validate(broken);
         expect(
           ok,
           `${d.key}: AJV accepted "${propName}": ${JSON.stringify(wrongValue)} ` +
-            `when the schema declares type: "${propSchema.type}"`,
+            `when the schema declares type: "${propType}"`,
         ).toBe(false);
-        const keywords = new Set((validate.errors ?? []).map(e => e.keyword));
-        const hit = [...keywords].some(k => REJECTION_KEYWORDS.has(k));
+        const keywords = new Set((validate.errors ?? []).map((e) => e.keyword));
+        const hit = [...keywords].some((k) => REJECTION_KEYWORDS.has(k));
         expect(hit).toBe(true);
       });
     }
@@ -565,15 +604,21 @@ describe('Invariant 2 — undeclared shape is rejected', () => {
 });
 
 /** Produce a value that is deliberately the wrong type for a given JSON Schema type. */
-function wrongTypeFor(type: string): any {
+function wrongTypeFor(type: string): unknown {
   switch (type) {
-    case 'string': return 42;
+    case 'string':
+      return 42;
     case 'number':
-    case 'integer': return 'not-a-number';
-    case 'boolean': return 'not-a-boolean';
-    case 'array': return { nope: true };
-    case 'object': return 'not-an-object';
-    default: return Symbol('unknown');
+    case 'integer':
+      return 'not-a-number';
+    case 'boolean':
+      return 'not-a-boolean';
+    case 'array':
+      return { nope: true };
+    case 'object':
+      return 'not-an-object';
+    default:
+      return Symbol('unknown');
   }
 }
 
@@ -589,18 +634,26 @@ describe('Invariant 3 — system-action isolation', () => {
       it(`${game.gameType}:${type}: validateAction rejects non-null playerId`, () => {
         // Build a state where the system action *would* be valid with null
         // playerId — so the ONLY way it rejects below is the null-gate.
-        const state = game.gameType === 'capture-the-lobster'
-          ? buildCtlPreGameState() // pre_game → game_start valid with null
-          : buildOathWaitingState(); // waiting → game_start valid with null
+        const state =
+          game.gameType === CTL_GAME_ID
+            ? buildCtlPreGameState() // pre_game → game_start valid with null
+            : buildOathWaitingState(); // waiting → game_start valid with null
         // For 'turn_timeout' / 'round_timeout' we need the in-progress/playing
         // phase. Swap to a state where each system action could plausibly fire.
         const stateForType = (() => {
-          if (game.gameType === 'capture-the-lobster' && type === 'turn_timeout') {
-            return { ...state, phase: 'in_progress' };
+          if (game.gameType === CTL_GAME_ID && type === 'turn_timeout') {
+            return { ...(state as Record<string, unknown>), phase: 'in_progress' };
           }
-          if (game.gameType === 'oathbreaker' && type === 'round_timeout') {
-            // game_start → phase:'playing'
-            return OathbreakerPlugin.applyAction(state, null, { type: 'game_start' }).state;
+          if (game.gameType === OATH_GAME_ID && type === 'round_timeout') {
+            // game_start → phase:'playing'. applyAction is generic in its
+            // state type; pass opaque and let the runtime do the work.
+            return (
+              OathbreakerPlugin.applyAction as (
+                s: unknown,
+                p: string | null,
+                a: { type: string },
+              ) => { state: unknown }
+            )(state, null, { type: 'game_start' }).state;
           }
           return state;
         })();
@@ -608,7 +661,11 @@ describe('Invariant 3 — system-action isolation', () => {
         // Try with a handful of non-null playerIds — every one must reject.
         const nonNullIds = ['p1', 'op1', 'nonexistent', 'attacker'];
         for (const pid of nonNullIds) {
-          const accepted = game.validateAction(stateForType, pid, { type } as any);
+          const accepted = (game.validateAction as (s: unknown, p: string, a: unknown) => boolean)(
+            stateForType,
+            pid,
+            { type },
+          );
           expect(
             accepted,
             `${game.gameType}: system action "${type}" must reject non-null playerId ` +
@@ -630,7 +687,9 @@ describe('Invariant 3 — system-action isolation', () => {
     it(`${d.key}: validateAction rejects playerId=null`, () => {
       const { state } = f.buildState();
       const action = { type: d.name, ...f.validSample };
-      const accepted = f.game.validateAction(state, null, action as any);
+      const accepted = (
+        f.game.validateAction as (s: unknown, p: string | null, a: unknown) => boolean
+      )(state, null, action);
       expect(
         accepted,
         `${d.key}: tool "${d.name}" accepted playerId=null. This is a ` +
@@ -644,7 +703,7 @@ describe('Invariant 3 — system-action isolation', () => {
   it('no action type appears in both SYSTEM_ACTION_TYPES and gameTools', () => {
     for (const game of GAMES) {
       const systemTypes = new Set(SYSTEM_ACTIONS[game.gameType] ?? []);
-      const toolNames = (game.gameTools ?? []).map(t => t.name);
+      const toolNames = (game.gameTools ?? []).map((t) => t.name);
       for (const name of toolNames) {
         expect(
           systemTypes.has(name),

@@ -1,9 +1,9 @@
 /** Data returned when looking up an agent by wallet address. */
 export interface AgentInfo {
   address: string;
-  agentId: string;       // On-chain uint256 as string, or D1 UUID in mock mode
+  agentId: string; // On-chain uint256 as string, or D1 UUID in mock mode
   name: string;
-  credits: string;       // Credit balance as string (bigint-safe)
+  credits: string; // Credit balance as string (bigint-safe)
   registered: boolean;
 }
 
@@ -39,10 +39,13 @@ export interface BurnRequest {
   executeAfter: number;
 }
 
-/** Credit delta for game settlement. */
+/** Credit delta for game settlement. Per the locked number policy
+ *  (`wiki/architecture/contracts.md`), all money values cross the chain
+ *  boundary as `bigint`. The on-chain `int256` ABI parameter accepts BigInt
+ *  natively via viem; the mock relay simply ignores the field. */
 export interface CreditDelta {
   agentId: string;
-  delta: number;
+  delta: bigint;
 }
 
 /** Game result for on-chain settlement. */
@@ -50,7 +53,7 @@ export interface GameSettlement {
   gameId: string;
   gameType: string;
   playerIds: string[];
-  outcome: any;
+  outcome: unknown;
   movesRoot: string;
   configHash: string;
   turnCount: number;
@@ -62,11 +65,19 @@ export interface SettlementReceipt {
   txHash: string;
 }
 
+import type { OnChainRelay } from '../plugins/capabilities.js';
+
 /**
  * ChainRelay — abstraction over on-chain contract interactions.
  * Two implementations: OnChainRelay (viem + real contracts) and MockRelay (D1-backed).
+ *
+ * Settlement (Phase 3.2) goes through `OnChainRelay` capability methods
+ * (`submit` + `pollReceipt`) on the `ChainRelay` instance, driven by
+ * `SettlementStateMachine`. The pre-3.2 synchronous `settleGame(result, deltas)`
+ * is gone — submit + receipt-poll are now separate so we can survive
+ * hibernation between broadcast and confirmation.
  */
-export interface ChainRelay {
+export interface ChainRelay extends OnChainRelay {
   // Identity
   getAgentByAddress(address: string): Promise<AgentInfo | null>;
   checkName(name: string): Promise<{ available: boolean }>;
@@ -79,6 +90,5 @@ export interface ChainRelay {
   executeBurn(agentId: string): Promise<{ credits: string }>;
   cancelBurn(agentId: string): Promise<void>;
 
-  // Settlement
-  settleGame(result: GameSettlement, deltas: CreditDelta[]): Promise<SettlementReceipt>;
+  // Settlement: see OnChainRelay (submit / pollReceipt).
 }

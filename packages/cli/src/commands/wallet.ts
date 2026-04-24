@@ -1,12 +1,13 @@
-import { Command } from "commander";
-import { loadKey, exportKey, importKey } from "../keys.js";
-import { loadConfig } from "../config.js";
-import { ApiClient } from "../api-client.js";
+import type { Command } from 'commander';
+import { ApiClient } from '../api-client.js';
+import { loadConfig } from '../config.js';
+import { formatCreditsDisplay, parseCreditsInput } from '../credits.js';
+import { exportKey, importKey, loadKey } from '../keys.js';
 
 export function registerWalletCommands(program: Command) {
   program
-    .command("balance")
-    .description("Show USDC balance and credit balance")
+    .command('balance')
+    .description('Show USDC balance and credit balance')
     .action(async () => {
       const wallet = loadKey();
       if (!wallet) {
@@ -21,7 +22,7 @@ export function registerWalletCommands(program: Command) {
 
       // First get agentId from status, then get balance
       try {
-        const status = await client.get(`/api/relay/status/${wallet.address}`);
+        const status = await client.getRelayStatus(wallet.address);
         if (!status.registered || !status.agentId) {
           process.stdout.write(`  Status:  Not registered\n`);
           process.stdout.write(`\n  Register first: coordination register <name>\n`);
@@ -29,20 +30,23 @@ export function registerWalletCommands(program: Command) {
           return;
         }
 
-        const data = await client.get(`/api/relay/balance/${status.agentId}`);
+        const data = await client.getBalance(status.agentId);
         process.stdout.write(`  Agent ID: ${status.agentId}\n`);
-        process.stdout.write(`  USDC:     ${data.usdc ?? "N/A"}\n`);
-        process.stdout.write(`  Credits:  ${data.credits ?? "N/A"}\n`);
-      } catch (err: any) {
-        process.stdout.write(`  Server unreachable: ${err.message}\n`);
+        // USDC is returned in raw 6-decimal units. Credits are also
+        // raw 6-decimal units on-chain; format both as whole-unit displays.
+        process.stdout.write(`  USDC:     ${formatCreditsDisplay(data.usdc)}\n`);
+        process.stdout.write(`  Credits:  ${formatCreditsDisplay(data.credits)}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stdout.write(`  Server unreachable: ${msg}\n`);
       }
 
       process.stdout.write(`\n`);
     });
 
   program
-    .command("fund")
-    .description("Show deposit address for funding your account")
+    .command('fund')
+    .description('Show deposit address for funding your account')
     .action(async () => {
       const wallet = loadKey();
       if (!wallet) {
@@ -57,10 +61,12 @@ export function registerWalletCommands(program: Command) {
     });
 
   program
-    .command("withdraw <amount>")
-    .description("Request withdrawal of credits (two-step: request then execute after cooldown)")
-    .option("--execute", "Execute a pending withdrawal (skip request step)")
-    .action(async (amount: string, opts: any) => {
+    .command('withdraw <amount>')
+    .description(
+      'Request withdrawal of <amount> whole credits (two-step: request then execute after cooldown)',
+    )
+    .option('--execute', 'Execute a pending withdrawal (skip request step)')
+    .action(async (amount: string, opts: { execute?: boolean }) => {
       const wallet = loadKey();
       if (!wallet) {
         process.stdout.write(`\n  No identity found. Run 'coordination init' first.\n\n`);
@@ -72,7 +78,7 @@ export function registerWalletCommands(program: Command) {
 
       try {
         // Get agent ID from status
-        const status = await client.get(`/api/relay/status/${wallet.address}`);
+        const status = await client.getRelayStatus(wallet.address);
         if (!status.registered || !status.agentId) {
           process.stdout.write(`\n  Not registered. Register first.\n\n`);
           return;
@@ -80,55 +86,61 @@ export function registerWalletCommands(program: Command) {
 
         if (opts.execute) {
           // Execute a pending burn
-          const result = await client.post("/api/relay/burn-execute", {
-            agentId: status.agentId,
-          });
+          const result = await client.burnExecute({ agentId: status.agentId });
           process.stdout.write(`\n  Withdrawal executed!\n`);
           process.stdout.write(`  Tx: ${result.txHash}\n`);
-          process.stdout.write(`  Remaining credits: ${result.credits}\n`);
+          process.stdout.write(`  Remaining credits: ${formatCreditsDisplay(result.credits)}\n`);
         } else {
-          // Request a new burn
-          const creditAmount = BigInt(Math.floor(parseFloat(amount) * 100_000_000));
-          const result = await client.post("/api/relay/burn-request", {
+          // `amount` is a user-facing whole-credit value. Scale to raw
+          // 6-decimal on-chain units before hitting the contract.
+          const rawAmount = parseCreditsInput(amount);
+          const result = await client.burnRequest({
             agentId: status.agentId,
-            amount: creditAmount.toString(),
+            amount: rawAmount.toString(),
           });
           const executeAfter = new Date(Number(result.executeAfter) * 1000);
-          process.stdout.write(`\n  Withdrawal requested: ${amount} USDC worth of credits\n`);
-          process.stdout.write(`  Pending amount: ${result.pendingAmount} credits\n`);
+          process.stdout.write(`\n  Withdrawal requested: ${amount} credits\n`);
+          process.stdout.write(
+            `  Pending amount: ${formatCreditsDisplay(result.pendingAmount)} credits\n`,
+          );
           process.stdout.write(`  Executable after: ${executeAfter.toISOString()}\n`);
-          process.stdout.write(`\n  Run 'coordination withdraw ${amount} --execute' after cooldown.\n`);
+          process.stdout.write(
+            `\n  Run 'coordination withdraw ${amount} --execute' after cooldown.\n`,
+          );
         }
-      } catch (err: any) {
-        process.stderr.write(`  Withdrawal failed: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Withdrawal failed: ${msg}\n`);
         process.exit(1);
       }
       process.stdout.write(`\n`);
     });
 
   program
-    .command("export-key [path]")
-    .description("Export key file to a path (default: ./coordination-key.json)")
-    .action(async (destPath: string = "./coordination-key.json") => {
+    .command('export-key [path]')
+    .description('Export key file to a path (default: ./coordination-key.json)')
+    .action(async (destPath: string = './coordination-key.json') => {
       try {
         exportKey(destPath);
         process.stdout.write(`\n  Key exported to: ${destPath}\n\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Error: ${msg}\n`);
         process.exit(1);
       }
     });
 
   program
-    .command("import-key <path>")
-    .description("Import key file from a path")
+    .command('import-key <path>')
+    .description('Import key file from a path')
     .action(async (srcPath: string) => {
       try {
         const wallet = importKey(srcPath);
         process.stdout.write(`\n  Key imported!\n`);
         process.stdout.write(`  Address: ${wallet.address}\n\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`  Error: ${msg}\n`);
         process.exit(1);
       }
     });

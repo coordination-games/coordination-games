@@ -33,7 +33,7 @@ When we migrated from Express (`packages/server`) to Cloudflare Workers (`packag
 - `GET /api/relay/balance/:agentId` — `balance`
 - `POST /api/relay/burn-request` — `withdraw`
 - `POST /api/relay/burn-execute` — `withdraw --execute`
-- `GET /api/player/guide` — `guide` command + MCP `get_guide` tool
+- `GET /api/player/guide` — `guide` command + MCP `guide` tool
 - `GET /api/player/leaderboard` — CLI calls wrong path (exists at `/api/leaderboard`)
 
 **Body shape mismatch (route exists, wrong format):**

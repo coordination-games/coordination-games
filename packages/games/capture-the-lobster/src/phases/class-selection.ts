@@ -6,10 +6,10 @@
  */
 
 import type {
+  AgentInfo,
   LobbyPhase,
   PhaseActionResult,
   PhaseResult,
-  AgentInfo,
   ToolDefinition,
 } from '@coordination-games/engine';
 
@@ -62,7 +62,7 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
   // Lifecycle
   // -------------------------------------------------------------------------
 
-  init(players: AgentInfo[], _config: Record<string, any>): ClassSelectionState {
+  init(players: AgentInfo[], _config: Record<string, unknown>): ClassSelectionState {
     return {
       classPicks: {},
       playerIds: players.map((p) => p.id),
@@ -71,7 +71,7 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
 
   handleAction(
     state: ClassSelectionState,
-    action: { type: string; playerId: string; payload?: any },
+    action: { type: string; playerId: string; payload?: unknown },
     players: AgentInfo[],
   ): PhaseActionResult<ClassSelectionState> {
     if (action.type !== 'choose_class') {
@@ -82,7 +82,8 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
     }
 
     const { playerId, payload } = action;
-    const unitClass: string | undefined = payload?.unitClass;
+    const unitClass: string | undefined = (payload as { unitClass?: string } | undefined)
+      ?.unitClass;
 
     // Validate player is in this phase
     if (!state.playerIds.includes(playerId)) {
@@ -123,15 +124,13 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
 
   // No handleJoin — acceptsJoins is false
 
-  handleTimeout(
-    state: ClassSelectionState,
-    players: AgentInfo[],
-  ): PhaseResult | null {
+  handleTimeout(state: ClassSelectionState, players: AgentInfo[]): PhaseResult | null {
     // Auto-assign round-robin for anyone who hasn't picked
     const filled: Record<string, string> = { ...state.classPicks };
     let idx = 0;
     for (const id of state.playerIds) {
       if (!(id in filled)) {
+        // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
         filled[id] = this.validClasses[idx % this.validClasses.length];
         idx++;
       }
@@ -157,10 +156,7 @@ export class ClassSelectionPhase implements LobbyPhase<ClassSelectionState> {
   // Helpers
   // -------------------------------------------------------------------------
 
-  private buildResult(
-    state: ClassSelectionState,
-    players: AgentInfo[],
-  ): PhaseResult {
+  private buildResult(state: ClassSelectionState, players: AgentInfo[]): PhaseResult {
     // Single flat group — team assignments persist from previous phase metadata
     const allPlayers = state.playerIds
       .map((id) => players.find((p) => p.id === id))

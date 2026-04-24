@@ -17,6 +17,7 @@ export function ScrubberSlider({
   return (
     <div className="flex items-center gap-3 flex-1 min-w-0">
       <button
+        type="button"
         onClick={onPrev}
         disabled={currentTurn === 0}
         className="px-2 py-1 text-sm rounded bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -24,8 +25,8 @@ export function ScrubberSlider({
       >
         &#9664;
       </button>
-
       <button
+        type="button"
         onClick={onNext}
         disabled={currentTurn >= max}
         className="px-2 py-1 text-sm rounded bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -33,7 +34,6 @@ export function ScrubberSlider({
       >
         &#9654;
       </button>
-
       <input
         type="range"
         min={0}
@@ -55,7 +55,6 @@ export function ScrubberSlider({
           [&::-moz-range-thumb]:border-0
           [&::-moz-range-thumb]:hover:bg-emerald-400"
       />
-
       <span className="text-xs text-gray-400 tabular-nums w-14 text-right shrink-0">
         {currentTurn}/{max}
       </span>

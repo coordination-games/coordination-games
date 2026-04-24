@@ -1,15 +1,15 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
-const COORD_DIR = path.join(os.homedir(), ".coordination");
-const CONFIG_PATH = path.join(COORD_DIR, "config.json");
+const COORD_DIR = path.join(os.homedir(), '.coordination');
+const CONFIG_PATH = path.join(COORD_DIR, 'config.json');
 
-export const DEFAULT_SERVER_URL = "https://api.capturethelobster.com";
+export const DEFAULT_SERVER_URL = 'https://api.games.coop';
 
 export interface Config {
   serverUrl: string;
-  keyMode: "local" | "waap";
+  keyMode: 'local' | 'waap';
 }
 
 /** Session state persisted between CLI invocations */
@@ -28,20 +28,20 @@ export interface SessionState {
   handle?: string;
 }
 
-const SESSION_PATH = path.join(COORD_DIR, "session.json");
+const SESSION_PATH = path.join(COORD_DIR, 'session.json');
 
 export function loadConfig(): Config {
   if (!fs.existsSync(CONFIG_PATH)) {
-    return { serverUrl: DEFAULT_SERVER_URL, keyMode: "local" };
+    return { serverUrl: DEFAULT_SERVER_URL, keyMode: 'local' };
   }
   try {
-    const data = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    const data = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
     return {
       serverUrl: data.serverUrl || DEFAULT_SERVER_URL,
-      keyMode: data.keyMode || "local",
+      keyMode: data.keyMode || 'local',
     };
   } catch {
-    return { serverUrl: DEFAULT_SERVER_URL, keyMode: "local" };
+    return { serverUrl: DEFAULT_SERVER_URL, keyMode: 'local' };
   }
 }
 
@@ -57,7 +57,7 @@ export function loadSession(): SessionState {
     return {};
   }
   try {
-    return JSON.parse(fs.readFileSync(SESSION_PATH, "utf-8"));
+    return JSON.parse(fs.readFileSync(SESSION_PATH, 'utf-8'));
   } catch {
     return {};
   }

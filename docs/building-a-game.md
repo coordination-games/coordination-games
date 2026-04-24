@@ -31,8 +31,9 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
   /** Final outcome. Only valid when isOver() is true. */
   getOutcome(state: TState): TOutcome;
 
-  readonly entryCost: number;
-  computePayouts(outcome: TOutcome, playerIds: string[]): Map<string, number>;
+  /** Entry cost per player, in raw credit units. Use `credits(n)` to construct. */
+  readonly entryCost: bigint;
+  computePayouts(outcome: TOutcome, playerIds: string[], entryCost: bigint): Map<string, bigint>;
   readonly lobby?: GameLobbyConfig;
   /** Player-callable tools during the game phase. See "Declaring Game Tools" below. */
   readonly gameTools?: ToolDefinition[];
@@ -290,6 +291,31 @@ The spectator view deliberately hides `decision1`/`decision2` from pairings, onl
 
 Design principle: return exactly what each viewer should know. The framework trusts your visibility function completely.
 
+### Shaping `getVisibleState` for the Agent Envelope
+
+What an authed agent actually sees on the wire is the **agent envelope**: your `getVisibleState` output, plus any plugin contributions (like chat's `newMessages`), run through a **top-level diff**. Keys whose value didn't change since the agent's last call are omitted and listed in `_unchangedKeys`; the agent is expected to reuse its last-seen value for those.
+
+The diff is value-based (`JSON.stringify` equality per top-level key), so the envelope rewards a specific shape:
+
+- **Put static per-game data on its own key.** Map extent, team base positions, radius — anything identical every turn — dedupes forever after the first observation if it has a dedicated key. CtL: `mapStatic: { radius, bases }`.
+- **Put per-turn fog or tick-changing arrays on their own keys.** If terrain-visibility changes when the player moves, don't nest it inside a static map object — it would invalidate the whole key. CtL splits `visibleWalls: HexTuple[]` from `mapStatic`.
+- **Keep scalars together in a small `summary`-style object** so single-scalar changes invalidate only a tiny key, not your big state tree. Agents can read the scalar summary first and skip the large arrays unless they need them.
+- **Put player-specific dynamic state under `yourUnit`** (or equivalent). Include any class-specific constants there so agents don't hardcode lookup tables (CtL puts `visionRange`/`attackRange` there).
+
+### Coord format on the envelope (hex-grid games)
+
+For hex-grid games, import `HexTuple` from `@coordination-games/engine` and emit coords on the agent envelope using these rules:
+
+- **Pure-coord arrays → `HexTuple[]`.** Many entries, no sibling metadata. Example: `visibleWalls: [q, r][]`.
+- **Entries with metadata beyond coords → `{ pos: HexTuple, ...metadata }`.** The object holds the extras; the tuple holds the coord. Example: `visibleOccupants` (carries `unit`/`flag`), `summary.enemies` (carries `unitClass`), `summary.flags` (carries `team`).
+- **Single coord on a metadata-carrier object → direct `HexTuple`.** The object is already the metadata container. Example: `summary.pos: [q, r]`, `yourUnit.position: [q, r]`.
+
+Keep internal state (unit positions, map tiles, combat/fog inputs, spectator views, replays) on `{q, r}` objects — only `getVisibleState(state, playerId)` converts to tuples at the emit boundary. A small `toTuple` helper keeps the two representations from leaking into each other.
+
+Rule of thumb: each top-level key should have one change cadence (static, per-phase, per-turn, per-tick). Mixing breaks dedup.
+
+For delta-semantics fields produced by plugins (like chat's `newMessages`), use the plugin's `agentEnvelopeKeys` declaration — never rename in CLI. See `wiki/architecture/agent-envelope.md` for the full contract and `wiki/architecture/plugin-pipeline.md` for plugin output routing.
+
 ## Lobby Configuration
 
 Games declare their lobby requirements via `GameLobbyConfig`:
@@ -436,7 +462,7 @@ Iterated prisoner's dilemma, FFA.
 
 ## Payouts
 
-Every game defines `entryCost` (credits per player) and `computePayouts(outcome, playerIds)`. Payouts must be zero-sum relative to the entry pool.
+Every game defines `entryCost` as a `bigint` in raw credit units (6-decimal, matching on-chain storage). Use the `credits(n)` helper from `@coordination-games/engine` so the call site reads as whole credits: `entryCost: credits(10)` = `10_000_000n`. See `wiki/architecture/credit-economics.md` for the full unit policy. `computePayouts(outcome, playerIds, entryCost)` returns raw-unit deltas; payouts must be zero-sum relative to the entry pool.
 
 **CtL:** Winners get +10, losers get -10, draws get 0. Simple binary outcome.
 

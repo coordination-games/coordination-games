@@ -9,7 +9,7 @@ No blockchain. Credits tracked server-side. Used for development and beta.
 - No env vars needed beyond Cloudflare bindings
 - Player registration creates D1 records only
 - Settlement is local (no on-chain anchoring)
-- Live at `capturethelobster.com` in this mode currently
+- Live at `games.coop` in this mode currently
 
 ## On-Chain Mode
 

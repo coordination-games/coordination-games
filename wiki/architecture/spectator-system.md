@@ -10,9 +10,9 @@
 
 ## Progress-Based Delay
 
-Spectator delay is measured in **progress units**, not raw actions. The `progressIncrement` flag in `ActionResult` marks meaningful game ticks (turn resolved in CtL, round completed in OATHBREAKER).
+Spectator delay is measured in **progress units**, not raw actions. Each game implements `getProgressCounter(state): number` — a deterministic, monotonic non-decreasing counter (turns for CtL, rounds for OATHBREAKER). The engine compares the counter before/after each `applyAction` and writes a new spectator snapshot whenever it advances.
 
-The engine tracks a `progressCounter` and takes state snapshots at each increment. Spectators see N progress units behind. This prevents leaking partial-turn information (e.g., which players have submitted moves).
+Spectators see N progress units behind. This prevents leaking partial-turn information (e.g., which players have submitted moves).
 
 Set `spectatorDelay` on your game plugin (e.g., `spectatorDelay: 2` for CtL).
 
@@ -23,7 +23,7 @@ Set `spectatorDelay` on your game plugin (e.g., `spectatorDelay: 2` for CtL).
 Every public emission boundary routes through it:
 
 - live spectator WS broadcast (`broadcastUpdates`) — pushes only when the public index advances, so an observer can't count push events to infer hidden action cadence;
-- HTTP `/spectator` + initial WS message (`buildSpectatorMessage`);
+- HTTP `/spectator` + initial WS message (both produced by `buildSpectatorPayload` in `packages/workers-server/src/plugins/spectator-payload.ts`);
 - HTTP `/replay` (`handleReplay`) — snapshots sliced to `[0, idx]`, no raw relay returned;
 - `/api/games` list (`writeSummaryToD1`) — summary derived from the public snapshot via `plugin.getSummaryFromSpectator(snapshot)`.
 
@@ -37,7 +37,7 @@ The delay is pinned into `GameMeta.spectatorDelay` when the game is created. Dep
 
 `buildSpectatorMessage` serves the snapshot captured at the last public progress tick. Any `scope: 'all'` relay message a plugin emits *between* progress ticks (e.g. via the chat tool plugin, which is a separate path) does not reach live spectators until the next tick captures a new snapshot with that message embedded.
 
-If a game needs real-time all-scope relay to spectators for delay=0, emit it via an action with `progressIncrement: true` instead of via a between-tick tool call. Current games:
+If a game needs real-time all-scope relay to spectators for delay=0, emit it via an action that bumps `getProgressCounter` instead of via a between-tick tool call. Current games:
 
 - **CtL** — `spectatorDelay = 2`. All observable-public messages are naturally delayed two ticks. No mid-tick all-scope emissions.
 - **OATHBREAKER** — `spectatorDelay = 0`, so "delayed" ≈ "next progress tick". Players' `scope: 'all'` chat between rounds lands at spectators on the next round resolution. If that lag ever matters for UX, pipe it through the progress boundary.
@@ -106,6 +106,6 @@ Each game defines its own spectator shape — CtL returns hex grid + kill feed, 
 
 ## WebSocket Feed
 
-`GameRoomDO` broadcasts spectator updates via WebSocket. Spectators connect to `/api/spectator/ws/:gameId`. Updates include the `buildSpectatorView()` output.
+`GameRoomDO` broadcasts spectator updates via WebSocket. Spectators connect to the game DO's WS endpoint via the worker (frontend uses the `useSpectatorStream` hook). Updates include the `buildSpectatorView()` output, wrapped in the unified `SpectatorPayload` shape (also served by `GET /spectator` and `GET /replay`).
 
 See: `packages/engine/src/types.ts` (SpectatorPlugin, SpectatorContext), `packages/web/src/games/`

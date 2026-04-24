@@ -1,28 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  DIRECTIONS,
   ALL_DIRECTIONS,
-  hexAdd,
-  hexEquals,
+  DIRECTIONS,
+  type Direction,
   getNeighbor,
   getNeighbors,
+  type Hex,
+  hexAdd,
   hexDistance,
-  hexToString,
-  stringToHex,
+  hexEquals,
   hexesInRadius,
+  hexesOnLine,
   hexLerp,
   hexRound,
-  hexesOnLine,
-  type Hex,
-  type Direction,
+  hexToString,
+  stringToHex,
 } from '../hex.js';
 
 describe('DIRECTIONS', () => {
   it('all six direction vectors sum to zero', () => {
-    const sum = ALL_DIRECTIONS.reduce(
-      (acc, d) => hexAdd(acc, DIRECTIONS[d]),
-      { q: 0, r: 0 },
-    );
+    const sum = ALL_DIRECTIONS.reduce((acc, d) => hexAdd(acc, DIRECTIONS[d]), { q: 0, r: 0 });
     expect(sum).toEqual({ q: 0, r: 0 });
   });
 
@@ -142,9 +139,7 @@ describe('hexDistance', () => {
     const a: Hex = { q: 0, r: 0 };
     const b: Hex = { q: 2, r: -1 };
     const c: Hex = { q: -1, r: 3 };
-    expect(hexDistance(a, c)).toBeLessThanOrEqual(
-      hexDistance(a, b) + hexDistance(b, c),
-    );
+    expect(hexDistance(a, c)).toBeLessThanOrEqual(hexDistance(a, b) + hexDistance(b, c));
   });
 });
 

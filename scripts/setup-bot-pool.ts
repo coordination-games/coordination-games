@@ -12,7 +12,7 @@
  * Usage:
  *   tsx scripts/setup-bot-pool.ts
  *   POOL_SIZE=12 tsx scripts/setup-bot-pool.ts
- *   GAME_SERVER=https://api.capturethelobster.com tsx scripts/setup-bot-pool.ts
+ *   GAME_SERVER=https://api.games.coop tsx scripts/setup-bot-pool.ts
  *
  * Env vars:
  *   GAME_SERVER — server URL (default: http://localhost:8787)
@@ -20,17 +20,34 @@
  */
 
 import { ethers } from 'ethers';
-import { authenticate, faucetBot, registerBotOnChain, loadPool, savePool, POOL_PATH, type PoolBot } from './lib/bot-agent.js';
+import {
+  authenticate,
+  faucetBot,
+  loadPool,
+  POOL_PATH,
+  type PoolBot,
+  registerBotOnChain,
+  savePool,
+} from './lib/bot-agent.js';
 
-const SERVER    = process.env.GAME_SERVER ?? 'http://localhost:8787';
-const POOL_SIZE = parseInt(process.env.POOL_SIZE ?? '8');
+const SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
+const POOL_SIZE = parseInt(process.env.POOL_SIZE ?? '8', 10);
 
 const NAME_SUFFIX = process.env.BOT_NAME_SUFFIX ?? '';
 const BOT_NAMES = [
-  'bot-alice', 'bot-bob',   'bot-carol', 'bot-dave',
-  'bot-erin',  'bot-frank', 'bot-grace', 'bot-henry',
-  'bot-ivy',   'bot-jack',  'bot-kate',  'bot-liam',
-].map(n => NAME_SUFFIX ? `${n}-${NAME_SUFFIX}` : n);
+  'bot-alice',
+  'bot-bob',
+  'bot-carol',
+  'bot-dave',
+  'bot-erin',
+  'bot-frank',
+  'bot-grace',
+  'bot-henry',
+  'bot-ivy',
+  'bot-jack',
+  'bot-kate',
+  'bot-liam',
+].map((n) => (NAME_SUFFIX ? `${n}-${NAME_SUFFIX}` : n));
 
 async function main() {
   console.log(`\nsetup-bot-pool — target size ${POOL_SIZE} on ${SERVER}\n`);
@@ -46,19 +63,22 @@ async function main() {
 
   console.log(`  Creating ${toCreate} new bot(s)...\n`);
 
-  const used = new Set(existing.map(b => b.name));
+  const used = new Set(existing.map((b) => b.name));
   const fresh: PoolBot[] = [];
   let failures = 0;
   const MAX_FAILURES = 3;
 
   for (let i = 0; fresh.length < toCreate; i++) {
     if (failures >= MAX_FAILURES) {
-      console.error(`\n  Aborting after ${failures} consecutive failure(s). Fix the error above and retry.\n`);
+      console.error(
+        `\n  Aborting after ${failures} consecutive failure(s). Fix the error above and retry.\n`,
+      );
       break;
     }
 
-    const name = BOT_NAMES[(existing.length + fresh.length) % BOT_NAMES.length]
-      + (existing.length + fresh.length >= BOT_NAMES.length ? `-${i}` : '');
+    const name =
+      BOT_NAMES[(existing.length + fresh.length) % BOT_NAMES.length] +
+      (existing.length + fresh.length >= BOT_NAMES.length ? `-${i}` : '');
     if (used.has(name)) continue;
 
     const wallet = ethers.Wallet.createRandom();
@@ -71,7 +91,9 @@ async function main() {
       // 2. On-chain register via relay (ERC-8004 mint + 5 USDC fee).
       //    In mock mode this still goes through MockRelay.register() harmlessly.
       const reg = await registerBotOnChain(SERVER, wallet.privateKey, wallet.address, name);
-      console.log(`    register: ${reg.registered ? `agentId=${reg.agentId}` : 'already registered'}`);
+      console.log(
+        `    register: ${reg.registered ? `agentId=${reg.agentId}` : 'already registered'}`,
+      );
 
       // 3. Sign auth challenge to confirm everything wired up.
       const { address, playerId } = await authenticate(SERVER, wallet.privateKey, name);
@@ -86,8 +108,9 @@ async function main() {
       });
       used.add(name);
       failures = 0;
-    } catch (err: any) {
-      console.error(`  ${name} FAILED: ${err.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`  ${name} FAILED: ${msg}`);
       used.add(name); // don't retry same name
       failures++;
     }
@@ -98,7 +121,7 @@ async function main() {
   console.log(`\nDone. Pool: ${final.length} bot(s) at ${POOL_PATH}\n`);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal:', err);
   process.exit(1);
 });

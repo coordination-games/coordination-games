@@ -33,6 +33,10 @@ jobs:
         run: npx tsc --skipLibCheck
         working-directory: packages/engine
 
+      - name: Build chat plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/basic-chat
+
       - name: Build game plugin
         run: npx tsc --skipLibCheck
         working-directory: packages/games/capture-the-lobster
@@ -40,14 +44,6 @@ jobs:
       - name: Build oathbreaker plugin
         run: npx tsc --skipLibCheck
         working-directory: packages/games/oathbreaker
-
-      - name: Build chat plugin
-        run: npx tsc --skipLibCheck
-        working-directory: packages/plugins/basic-chat
-
-      - name: Build elo plugin
-        run: npx tsc --skipLibCheck
-        working-directory: packages/plugins/elo
 
       - name: Build CLI
         run: npm run build

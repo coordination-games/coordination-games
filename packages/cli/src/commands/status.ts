@@ -1,12 +1,13 @@
-import { Command } from "commander";
-import { loadKey, checkPermissions } from "../keys.js";
-import { loadConfig, loadSession, saveSession } from "../config.js";
-import { ApiClient } from "../api-client.js";
+import type { Command } from 'commander';
+import { ApiClient } from '../api-client.js';
+import { loadConfig, loadSession, saveSession } from '../config.js';
+import { formatCreditsDisplay } from '../credits.js';
+import { checkPermissions, loadKey } from '../keys.js';
 
 export function registerStatusCommand(program: Command) {
   program
-    .command("status")
-    .description("Show address, registration status, agent ID, name, and credit balance")
+    .command('status')
+    .description('Show address, registration status, agent ID, name, and credit balance')
     .action(async () => {
       const wallet = loadKey();
       if (!wallet) {
@@ -27,7 +28,7 @@ export function registerStatusCommand(program: Command) {
 
       try {
         const client = new ApiClient(config.serverUrl);
-        const data = await client.get(`/api/relay/status/${wallet.address}`);
+        const data = await client.getRelayStatus(wallet.address);
 
         if (data.registered) {
           // Cache name in session for auth
@@ -40,13 +41,14 @@ export function registerStatusCommand(program: Command) {
           }
           process.stdout.write(`  Agent ID: ${data.agentId}\n`);
           process.stdout.write(`  Name:     ${data.name}\n`);
-          process.stdout.write(`  Credits:  ${data.credits}\n`);
+          process.stdout.write(`  Credits:  ${formatCreditsDisplay(data.credits)}\n`);
         } else {
           process.stdout.write(`  Status:   Not registered\n`);
           process.stdout.write(`\n  Get started with: coordination check-name <your-name>\n`);
         }
-      } catch (err: any) {
-        process.stdout.write(`  Server:   Unreachable (${err.message})\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stdout.write(`  Server:   Unreachable (${msg})\n`);
       }
 
       process.stdout.write(`\n`);

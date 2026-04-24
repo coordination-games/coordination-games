@@ -6,28 +6,29 @@
  * (when calling settleGame) and the verification CLI tool.
  */
 
-import { ethers } from "ethers";
+import { ethers } from 'ethers';
 
 // -------------------------------------------------------------------------
 // Types
 // -------------------------------------------------------------------------
 
 export interface MoveData {
-  player: string;   // address
-  data: string;     // game-specific move data (JSON string or hex bytes)
+  player: string; // address
+  data: string; // game-specific move data (JSON string or hex bytes)
   signature: string; // EIP-712 signature
 }
 
 export interface TurnData {
   turnNumber: number;
   moves: MoveData[];
-  result?: any;     // resolved state after this turn (optional, not included in Merkle leaf)
+  /** Resolved state after this turn — optional, per-game shape, not included in the Merkle leaf. */
+  result?: unknown;
 }
 
 export interface MerkleTree {
-  leaves: string[];     // leaf hashes (one per turn)
-  layers: string[][];   // tree layers from leaves to root
-  root: string;         // the Merkle root hash
+  leaves: string[]; // leaf hashes (one per turn)
+  layers: string[][]; // tree layers from leaves to root
+  root: string; // the Merkle root hash
 }
 
 // -------------------------------------------------------------------------
@@ -43,15 +44,15 @@ export interface MerkleTree {
 export function hashTurnLeaf(turn: TurnData): string {
   // Sort moves by player address (lowercase) for determinism
   const sortedMoves = [...turn.moves].sort((a, b) =>
-    a.player.toLowerCase().localeCompare(b.player.toLowerCase())
+    a.player.toLowerCase().localeCompare(b.player.toLowerCase()),
   );
 
   // Encode each move: abi.encode(player, data, signature)
   const encodedMoves = sortedMoves.map((m) =>
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "bytes", "bytes"],
-      [m.player, ethers.toUtf8Bytes(m.data), m.signature]
-    )
+      ['address', 'bytes', 'bytes'],
+      [m.player, ethers.toUtf8Bytes(m.data), m.signature],
+    ),
   );
 
   // Concatenate all encoded moves
@@ -60,10 +61,7 @@ export function hashTurnLeaf(turn: TurnData): string {
   // Final leaf = keccak256(abi.encode(turnNumber, movesHash))
   const movesHash = ethers.keccak256(movesConcat);
   const leaf = ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "bytes32"],
-      [turn.turnNumber, movesHash]
-    )
+    ethers.AbiCoder.defaultAbiCoder().encode(['uint256', 'bytes32'], [turn.turnNumber, movesHash]),
   );
 
   return leaf;
@@ -95,10 +93,12 @@ export function buildMerkleTree(turns: TurnData[]): MerkleTree {
     for (let i = 0; i < currentLayer.length; i += 2) {
       if (i + 1 < currentLayer.length) {
         // Hash pair — sort to ensure consistent ordering
+        // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
         const [left, right] = sortPair(currentLayer[i], currentLayer[i + 1]);
         nextLayer.push(hashPair(left, right));
       } else {
         // Odd node — promote to next layer
+        // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
         nextLayer.push(currentLayer[i]);
       }
     }
@@ -110,6 +110,7 @@ export function buildMerkleTree(turns: TurnData[]): MerkleTree {
   return {
     leaves,
     layers,
+    // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
     root: currentLayer[0],
   };
 }
@@ -134,7 +135,9 @@ export function getProof(tree: MerkleTree, turnIndex: number): string[] {
     const isRight = index % 2 === 1;
     const siblingIndex = isRight ? index - 1 : index + 1;
 
+    // @ts-expect-error TS18048: 'layer' is possibly 'undefined'. — TODO(2.3-followup)
     if (siblingIndex < layer.length) {
+      // @ts-expect-error TS18048,TS2345: 'layer' is possibly 'undefined'. — TODO(2.3-followup)
       proof.push(layer[siblingIndex]);
     }
 
@@ -172,7 +175,5 @@ function sortPair(a: string, b: string): [string, string] {
 }
 
 function hashPair(left: string, right: string): string {
-  return ethers.keccak256(
-    ethers.concat([ethers.getBytes(left), ethers.getBytes(right)])
-  );
+  return ethers.keccak256(ethers.concat([ethers.getBytes(left), ethers.getBytes(right)]));
 }

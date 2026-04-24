@@ -6,9 +6,9 @@ name: Tests
 #   packages/workers-server/src/__tests__/tool-drift.test.ts
 #   packages/engine/src/__tests__/tool-collision.test.ts
 #   packages/cli/src/__tests__/tool-collision.test.ts
-# See docs/plans/unified-tool-surface.md — "Testing — drift invariants".
-# These gates are the reason the unified-tool-surface refactor exists; if
-# they stop running in CI, we risk silent schema/validator drift shipping.
+# If these gates stop running in CI, we risk silent tool-schema/validator drift
+# shipping — the unified-tool-surface refactor exists specifically to surface
+# that class of bug.
 
 on:
   pull_request:
@@ -17,6 +17,71 @@ on:
     branches: [main]
 
 jobs:
+  lint-and-typecheck:
+    # Merge-blocking gate for Biome lint+format and per-package `tsc --noEmit`.
+    # Kept in its own job so failures are localized in the PR UI and don't get
+    # tangled with the test signal below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # See `test` job below for rationale on these flags.
+        run: npm install --include=dev --legacy-peer-deps
+
+      - name: Biome check (lint + format)
+        run: npm run check
+
+      - name: Build engine + plugins + games
+        # Typechecks below resolve `@coordination-games/engine` and
+        # `@coordination-games/game-*` via each package's `main`/`types`
+        # pointing at `dist/*`. Without built artifacts, every workspace
+        # consumer fails with TS2307 "Cannot find module" — which also
+        # makes @ts-expect-error directives appear "unused". Order matters:
+        # basic-chat must precede the games (both capture-the-lobster and
+        # workers-server import from plugin-chat).
+        run: |
+          npm run build -w packages/engine
+          npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/games/capture-the-lobster
+          npm run build -w packages/games/oathbreaker
+
+      # Per-package typecheck. Each package is invoked individually so the
+      # failure surface in the PR log points at the offending package.
+      # `contracts` is intentionally omitted — it has a pre-existing
+      # Hardhat dependency issue tracked separately.
+      - name: Typecheck — engine
+        run: npx tsc --noEmit
+        working-directory: packages/engine
+
+      - name: Typecheck — workers-server
+        run: npx tsc --noEmit
+        working-directory: packages/workers-server
+
+      - name: Typecheck — cli
+        run: npx tsc --noEmit
+        working-directory: packages/cli
+
+      - name: Typecheck — web
+        run: npx tsc --noEmit
+        working-directory: packages/web
+
+      - name: Typecheck — games/capture-the-lobster
+        run: npx tsc --noEmit
+        working-directory: packages/games/capture-the-lobster
+
+      - name: Typecheck — games/oathbreaker
+        run: npx tsc --noEmit
+        working-directory: packages/games/oathbreaker
+
+      - name: Typecheck — plugins/basic-chat
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/basic-chat
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -33,15 +98,16 @@ jobs:
         # (e.g. zod version drift between MCP SDK and CLI testing).
         run: npm install --include=dev --legacy-peer-deps
 
-      - name: Build engine + games + plugins
+      - name: Build engine + plugins + games
         # Tests in workers-server resolve `@coordination-games/game-*` via the
         # `main`/`types` fields (dist/*). They must be built before tests run.
+        # Order matters: basic-chat must precede the games, since both
+        # capture-the-lobster and workers-server import from plugin-chat.
         run: |
           npm run build -w packages/engine
+          npm run build -w packages/plugins/basic-chat
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
-          npm run build -w packages/plugins/basic-chat
-          npm run build -w packages/plugins/elo
 
       # contracts workspace has a pre-existing hardhat dependency issue;
       # excluded from CI until fixed separately.
@@ -59,5 +125,4 @@ jobs:
                    -w packages/cli \
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
-                   -w packages/plugins/basic-chat \
-                   -w packages/plugins/elo
+                   -w packages/plugins/basic-chat

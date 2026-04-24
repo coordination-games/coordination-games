@@ -1,4 +1,4 @@
-import type { LobbyPhase, AgentInfo, PhaseActionResult, PhaseResult } from '../types.js';
+import type { AgentInfo, LobbyPhase, PhaseActionResult, PhaseResult } from '../types.js';
 
 export interface OpenQueueState {
   playerIds: string[];
@@ -13,12 +13,12 @@ export class OpenQueuePhase implements LobbyPhase<OpenQueueState> {
   constructor(private readonly minPlayers: number = 4) {}
 
   init(players: AgentInfo[]): OpenQueueState {
-    return { playerIds: players.map(p => p.id) };
+    return { playerIds: players.map((p) => p.id) };
   }
 
   handleAction(
     state: OpenQueueState,
-    _action: { type: string; playerId: string; payload?: any },
+    _action: { type: string; playerId: string; payload?: unknown },
     _players: AgentInfo[],
   ): PhaseActionResult<OpenQueueState> {
     return { state, error: { message: 'No actions available during open queue phase' } };

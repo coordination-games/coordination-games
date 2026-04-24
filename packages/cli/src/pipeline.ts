@@ -8,71 +8,71 @@
  * Usage:
  *   1. Fetch raw state + relay messages from server
  *   2. Run pipeline over relay messages
- *   3. Combine game state + pipeline output for the agent
+ *   3. Merge the pipeline's envelope extensions into the agent response
  */
 
-import { PluginLoader, PluginPipeline } from '@coordination-games/engine';
-import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type { ToolPlugin } from '@coordination-games/engine';
+import { PluginLoader, type PluginPipeline } from '@coordination-games/engine';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 
-// Default plugins — always available
 const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
+let registeredPlugins: ToolPlugin[] = [...DEFAULT_PLUGINS];
 let loader: PluginLoader | null = null;
 let pipeline: PluginPipeline | null = null;
 
-/**
- * Initialize the pipeline with installed plugins.
- * Called once on startup or when plugin config changes.
- */
 export function initPipeline(additionalPlugins: ToolPlugin[] = []): void {
   loader = new PluginLoader();
-  const allPlugins = [...DEFAULT_PLUGINS, ...additionalPlugins];
+  registeredPlugins = [...DEFAULT_PLUGINS, ...additionalPlugins];
 
-  for (const plugin of allPlugins) {
+  for (const plugin of registeredPlugins) {
     loader.register(plugin);
   }
 
-  const pluginIds = allPlugins.map((p) => p.id);
-  pipeline = loader.buildPipeline(pluginIds);
+  pipeline = loader.buildPipeline(registeredPlugins.map((p) => p.id));
+}
+
+export function runPipeline(relayMessages: unknown[]): Map<string, unknown> {
+  if (!pipeline) initPipeline();
+  // @ts-expect-error TS2322: Type 'Map<string, any> | undefined' is not assignable to type 'Map<string, any>' — TODO(2.3-followup)
+  return pipeline?.execute(new Map([['relay-messages', relayMessages]]));
 }
 
 /**
- * Run the pipeline over relay messages.
- * Returns the pipeline output (capability type → processed data).
+ * Project pipeline output into an agent-envelope-shaped object using each
+ * plugin's `agentEnvelopeKeys` declaration. Capabilities without a declared
+ * envelope key stay internal to the pipeline (not exposed to agents).
  */
-export function runPipeline(
-  relayMessages: unknown[],
-): Map<string, any> {
-  if (!pipeline) {
-    initPipeline();
+export function buildEnvelopeExtensions(
+  pipelineOutput: Map<string, unknown>,
+): Record<string, unknown> {
+  const ext: Record<string, unknown> = {};
+  for (const plugin of registeredPlugins) {
+    if (!plugin.agentEnvelopeKeys) continue;
+    for (const [capability, envelopeKey] of Object.entries(plugin.agentEnvelopeKeys)) {
+      const value = pipelineOutput.get(capability);
+      if (value !== undefined) ext[envelopeKey] = value;
+    }
   }
-
-  return pipeline!.execute(
-    new Map([['relay-messages', relayMessages]]),
-  );
+  return ext;
 }
 
-/**
- * Process a full state response from the server.
- * Runs the pipeline over relay messages and combines with game state.
- */
 export function processState(serverResponse: {
-  gameState?: any;
+  gameState?: unknown;
   relayMessages?: unknown[];
-  [key: string]: any;
+  [key: string]: unknown;
 }): {
-  gameState: any;
-  messages: any[];
-  pipelineOutput: Map<string, any>;
-  raw: any;
+  gameState: unknown;
+  envelopeExtensions: Record<string, unknown>;
+  pipelineOutput: Map<string, unknown>;
+  raw: unknown;
 } {
   const relayMessages = serverResponse.relayMessages ?? [];
   const pipelineOutput = runPipeline(relayMessages);
 
   return {
     gameState: serverResponse.gameState ?? serverResponse,
-    messages: pipelineOutput.get('messaging') ?? [],
+    envelopeExtensions: buildEnvelopeExtensions(pipelineOutput),
     pipelineOutput,
     raw: serverResponse,
   };

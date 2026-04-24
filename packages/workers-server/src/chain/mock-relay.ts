@@ -1,37 +1,76 @@
-import type { ChainRelay, AgentInfo, RegisterParams, BalanceInfo, PermitParams, BurnRequest, CreditDelta, GameSettlement, SettlementReceipt } from './types.js';
 import { resolvePlayer } from '../db/player.js';
+import type {
+  ReceiptResult,
+  SettlementSubmitPayload,
+  SubmitResult,
+} from '../plugins/capabilities.js';
+import type {
+  AgentInfo,
+  BalanceInfo,
+  BurnRequest,
+  ChainRelay,
+  PermitParams,
+  RegisterParams,
+} from './types.js';
+
+/**
+ * In-memory dev/test relay.
+ *
+ * MockRelay does NOT track credit balances. `getAgentByAddress` / `getBalance`
+ * report `MOCK_CREDIT_BALANCE` (a very large raw-unit value) so the pre-game
+ * balance check in `LobbyDO.handleJoin` passes for everyone in dev/test mode
+ * — we'd otherwise need to run a local chain just to exercise the lobby path.
+ * `topup` / `requestBurn` / `executeBurn` throw ("Credits not available in
+ * mock mode"), and `submit` is a no-op that discards the deltas after
+ * returning a fake tx hash.
+ */
+
+/**
+ * High synthetic balance returned by `MockRelay.getBalance` (raw credit units,
+ * 6-dec scale). 10^18 ≈ 10^12 whole credits — comfortably above any plausible
+ * `entryCost` so dev lobbies don't hit the join-time balance gate. Expressed
+ * as a decimal string to match the on-chain `uint256` wire format everywhere
+ * else in this file.
+ */
+export const MOCK_CREDIT_BALANCE = '1000000000000000000';
 
 export class MockRelay implements ChainRelay {
   constructor(private db: D1Database) {}
 
   async getAgentByAddress(address: string): Promise<AgentInfo | null> {
-    const row = await this.db.prepare(
-      'SELECT id, wallet_address, handle FROM players WHERE wallet_address = ? COLLATE NOCASE'
-    ).bind(address).first<{ id: string; wallet_address: string; handle: string }>();
+    const row = await this.db
+      .prepare(
+        'SELECT id, wallet_address, handle FROM players WHERE wallet_address = ? COLLATE NOCASE',
+      )
+      .bind(address)
+      .first<{ id: string; wallet_address: string; handle: string }>();
     if (!row) return null;
     return {
       address: row.wallet_address,
       agentId: row.id,
       name: row.handle,
-      credits: '0',
+      credits: MOCK_CREDIT_BALANCE,
       registered: true,
     };
   }
 
   async checkName(name: string): Promise<{ available: boolean }> {
-    const row = await this.db.prepare(
-      'SELECT id FROM players WHERE handle = ? COLLATE NOCASE'
-    ).bind(name).first();
+    const row = await this.db
+      .prepare('SELECT id FROM players WHERE handle = ? COLLATE NOCASE')
+      .bind(name)
+      .first();
     return { available: !row };
   }
 
-  async register(params: RegisterParams): Promise<{ agentId: string; name: string; credits: string }> {
+  async register(
+    params: RegisterParams,
+  ): Promise<{ agentId: string; name: string; credits: string }> {
     const { player } = await resolvePlayer(params.address, this, this.db, { handle: params.name });
-    return { agentId: player.id, name: player.handle, credits: '0' };
+    return { agentId: player.id, name: player.handle, credits: MOCK_CREDIT_BALANCE };
   }
 
   async getBalance(_agentId: string): Promise<BalanceInfo> {
-    return { credits: '0', usdc: '0' };
+    return { credits: MOCK_CREDIT_BALANCE, usdc: '0' };
   }
 
   async topup(_agentId: string, _permit: PermitParams): Promise<{ credits: string }> {
@@ -50,8 +89,24 @@ export class MockRelay implements ChainRelay {
     throw new Error('Withdrawal not available in mock mode');
   }
 
-  async settleGame(_result: GameSettlement, _deltas: CreditDelta[]): Promise<SettlementReceipt> {
-    // Mock: no-op, return fake tx hash
-    return { txHash: '0x' + '0'.repeat(64) };
+  /**
+   * Mock settlement submit — no-op, return a deterministic fake tx hash so
+   * the state machine can observe it through `pollReceipt`.
+   * The "nonce" is a monotonic counter scoped to this MockRelay instance.
+   */
+  private _mockNonce = 0;
+  async submit(
+    _payload: SettlementSubmitPayload,
+    opts?: { nonce?: number },
+  ): Promise<SubmitResult> {
+    const nonce = opts?.nonce ?? this._mockNonce++;
+    const txHash = `0x${'0'.repeat(63)}${(nonce & 0xf).toString(16)}` as `0x${string}`;
+    return { txHash, nonce };
+  }
+
+  async pollReceipt(_txHash: `0x${string}`): Promise<ReceiptResult> {
+    // Mock mode: every submitted tx is instantly "confirmed" at block 0 so
+    // local-dev settlement never sits in the submitted state forever.
+    return { status: 'confirmed', blockNumber: 0 };
   }
 }

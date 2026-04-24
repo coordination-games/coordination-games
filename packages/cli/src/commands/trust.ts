@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from 'commander';
 
 /**
  * Trust commands — NOT YET IMPLEMENTED as plugin tools.
@@ -16,26 +16,30 @@ import { Command } from "commander";
 
 export function registerTrustCommands(program: Command) {
   program
-    .command("attest")
-    .description("Create a trust attestation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)")
+    .command('attest')
+    .description(
+      'Create a trust attestation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)',
+    )
     .action(() => {
-      process.stderr.write("\n  Not yet implemented. See docs/TRUST_PLUGINS_SPEC.md\n\n");
+      process.stderr.write('\n  Not yet implemented. See docs/TRUST_PLUGINS_SPEC.md\n\n');
       process.exit(1);
     });
 
   program
-    .command("revoke")
-    .description("Revoke a trust attestation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)")
+    .command('revoke')
+    .description(
+      'Revoke a trust attestation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)',
+    )
     .action(() => {
-      process.stderr.write("\n  Not yet implemented. See docs/TRUST_PLUGINS_SPEC.md\n\n");
+      process.stderr.write('\n  Not yet implemented. See docs/TRUST_PLUGINS_SPEC.md\n\n');
       process.exit(1);
     });
 
   program
-    .command("reputation")
-    .description("Query agent reputation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)")
+    .command('reputation')
+    .description('Query agent reputation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)')
     .action(() => {
-      process.stderr.write("\n  Not yet implemented. See docs/TRUST_PLUGINS_SPEC.md\n\n");
+      process.stderr.write('\n  Not yet implemented. See docs/TRUST_PLUGINS_SPEC.md\n\n');
       process.exit(1);
     });
 }

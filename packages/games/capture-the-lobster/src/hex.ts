@@ -58,12 +58,12 @@ export type Direction = 'N' | 'NE' | 'SE' | 'S' | 'SW' | 'NW';
  * the spec's SW and NW are swapped. Using the mathematically correct vectors.
  */
 export const DIRECTIONS: Record<Direction, Hex> = {
-  N:  { q:  0, r: -1 },
-  S:  { q:  0, r: +1 },
+  N: { q: 0, r: -1 },
+  S: { q: 0, r: +1 },
   NE: { q: +1, r: -1 },
-  SE: { q: +1, r:  0 },
+  SE: { q: +1, r: 0 },
   SW: { q: -1, r: +1 },
-  NW: { q: -1, r:  0 },
+  NW: { q: -1, r: 0 },
 };
 
 /** All direction keys in order: N, NE, SE, S, SW, NW */
@@ -101,6 +101,7 @@ export function hexToString(hex: Hex): string {
 
 export function stringToHex(s: string): Hex {
   const [q, r] = s.split(',').map(Number);
+  // @ts-expect-error TS2322: Type 'number | undefined' is not assignable to type 'number'. — TODO(2.3-followup)
   return { q, r };
 }
 
@@ -111,11 +112,7 @@ export function stringToHex(s: string): Hex {
 export function hexesInRadius(center: Hex, radius: number): Hex[] {
   const results: Hex[] = [];
   for (let dq = -radius; dq <= radius; dq++) {
-    for (
-      let dr = Math.max(-radius, -dq - radius);
-      dr <= Math.min(radius, -dq + radius);
-      dr++
-    ) {
+    for (let dr = Math.max(-radius, -dq - radius); dr <= Math.min(radius, -dq + radius); dr++) {
       results.push({ q: center.q + dq, r: center.r + dr });
     }
   }
@@ -123,11 +120,7 @@ export function hexesInRadius(center: Hex, radius: number): Hex[] {
 }
 
 /** Linear interpolation between two hexes at parameter t ∈ [0,1]. */
-export function hexLerp(
-  a: Hex,
-  b: Hex,
-  t: number,
-): { q: number; r: number } {
+export function hexLerp(a: Hex, b: Hex, t: number): { q: number; r: number } {
   return {
     q: a.q + (b.q - a.q) * t,
     r: a.r + (b.r - a.r) * t,

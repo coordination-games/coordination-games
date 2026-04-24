@@ -1,18 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type {
-  CoordinationGame,
-  ToolPlugin,
-  PluginMode,
-  PluginContext,
   AgentInfo,
-  ToolDefinition,
-  LobbyPhase,
-  PhaseActionResult,
-  PhaseResult,
+  CoordinationGame,
   GameLobbyConfig,
-  MatchmakingConfig,
+  LobbyPhase,
   Message,
-  RelayClient,
+  PluginContext,
+  PluginMode,
+  ToolPlugin,
 } from '../types.js';
 
 describe('Type interfaces compile correctly', () => {
@@ -22,15 +17,17 @@ describe('Type interfaces compile correctly', () => {
       version: '0.1.0',
       modes: [{ name: 'default', consumes: [], provides: ['test-data'] }],
       purity: 'pure',
-      tools: [{
-        name: 'test_tool',
-        description: 'A test tool',
-        inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
-      }],
-      handleData(mode: string, inputs: Map<string, any>) {
+      tools: [
+        {
+          name: 'test_tool',
+          description: 'A test tool',
+          inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
+        },
+      ],
+      handleData(_mode: string, _inputs: Map<string, unknown>) {
         return new Map([['test-data', { value: 42 }]]);
       },
-      handleCall(tool: string, args: unknown, caller: AgentInfo) {
+      handleCall(_tool: string, _args: unknown, _caller: AgentInfo) {
         return { ok: true };
       },
     };
@@ -46,10 +43,16 @@ describe('Type interfaces compile correctly', () => {
       modes: [{ name: 'messaging', consumes: [], provides: ['messaging'] }],
       purity: 'stateful',
       init(ctx: PluginContext) {
-        // access ctx fields
-        const { gameType, gameId, turnCursor, relay, playerId } = ctx;
+        // Smoke-check that PluginContext fields are exposed to the plugin.
+        // (Destructuring + void assertion keeps the shape assertion without
+        // triggering the unused-var rule.)
+        void ctx.gameType;
+        void ctx.gameId;
+        void ctx.turnCursor;
+        void ctx.relay;
+        void ctx.playerId;
       },
-      handleData(mode, inputs) {
+      handleData(_mode, _inputs) {
         return new Map();
       },
     };
@@ -61,16 +64,19 @@ describe('Type interfaces compile correctly', () => {
       id: 'test-phase',
       name: 'Test Phase',
       timeout: 30,
-      init(players: AgentInfo[]) {
+      init(_players: AgentInfo[]) {
         return { ready: false };
       },
-      handleAction(state, action, players) {
-        return { state: { ready: true }, completed: { groups: [players], metadata: { completed: true } } };
+      handleAction(_state, _action, players) {
+        return {
+          state: { ready: true },
+          completed: { groups: [players], metadata: { completed: true } },
+        };
       },
-      handleJoin(state, player, allPlayers) {
+      handleJoin(state, _player, _allPlayers) {
         return { state };
       },
-      handleTimeout(state, players) {
+      handleTimeout(_state, players) {
         return { groups: [players], metadata: {} };
       },
       getView(state) {
@@ -107,7 +113,7 @@ describe('Type interfaces compile correctly', () => {
 
   it('Message type with extensible tags', () => {
     const msg: Message = {
-      from: 42,
+      from: '42',
       body: 'rush flag',
       turn: 3,
       scope: 'team',
@@ -119,7 +125,7 @@ describe('Type interfaces compile correctly', () => {
 
   it('CoordinationGame with lobby config', () => {
     // Type-check that CoordinationGame accepts lobby, requiredPlugins, recommendedPlugins
-    const game: Partial<CoordinationGame<any, any, any, any>> = {
+    const game: Partial<CoordinationGame<unknown, unknown, unknown, unknown>> = {
       gameType: 'test-game',
       version: '0.1.0',
       lobby: {
@@ -144,7 +150,11 @@ describe('Type interfaces compile correctly', () => {
     const producer: PluginMode = { name: 'produce', consumes: [], provides: ['messaging'] };
     const mapper: PluginMode = { name: 'map', consumes: ['messaging'], provides: ['agents'] };
     const enricher: PluginMode = { name: 'enrich', consumes: ['agents'], provides: ['agent-tags'] };
-    const filter: PluginMode = { name: 'filter', consumes: ['messaging', 'agent-tags'], provides: ['messaging'] };
+    const filter: PluginMode = {
+      name: 'filter',
+      consumes: ['messaging', 'agent-tags'],
+      provides: ['messaging'],
+    };
 
     expect(producer.consumes).toHaveLength(0);
     expect(mapper.consumes).toContain('messaging');

@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   BasicChatPlugin,
-  formatChatMessage,
   extractMessages,
+  formatChatMessage,
   type RelayMessage,
 } from '../index.js';
 
@@ -10,7 +10,7 @@ function makeRelayMessage(overrides: Partial<RelayMessage> = {}): RelayMessage {
   return {
     type: 'messaging',
     data: { body: 'hello' },
-    scope: 'team',
+    scope: { kind: 'team', teamId: 'A' },
     pluginId: 'basic-chat',
     sender: 'agent_1',
     turn: 1,
@@ -51,7 +51,7 @@ describe('extractMessages', () => {
     const messages = extractMessages(relay);
 
     expect(messages).toHaveLength(1);
-    expect(messages[0].from).toBe(42);
+    expect(messages[0].from).toBe('42');
     expect(messages[0].body).toBe('test');
     expect(messages[0].turn).toBe(3);
     expect(messages[0].scope).toBe('team');
@@ -83,7 +83,7 @@ describe('extractMessages', () => {
   });
 
   it('handles DM scope by treating as all', () => {
-    const relay = [makeRelayMessage({ scope: 'agent_5' })];
+    const relay = [makeRelayMessage({ scope: { kind: 'dm', recipientHandle: 'agent_5' } })];
     const messages = extractMessages(relay);
     expect(messages[0].scope).toBe('all');
   });
@@ -120,9 +120,7 @@ describe('BasicChatPlugin', () => {
   });
 
   it('ignores non-messaging relay types', () => {
-    const relayMessages = [
-      makeRelayMessage({ type: 'wiki-post', data: { title: 'test' } }),
-    ];
+    const relayMessages = [makeRelayMessage({ type: 'wiki-post', data: { title: 'test' } })];
     const inputs = new Map([['relay-messages', relayMessages]]);
     const outputs = BasicChatPlugin.handleData('messaging', inputs);
     expect(outputs.get('messaging')).toEqual([]);

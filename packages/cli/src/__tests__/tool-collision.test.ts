@@ -16,38 +16,46 @@
  * call, so the stub never needs real MCP behaviour.
  */
 
-import { describe, it, expect } from 'vitest';
+import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { describe, expect, it } from 'vitest';
+import type { GameClient } from '../game-client.js';
 import {
+  type AnyCoordinationGame,
   ClientToolCollisionError,
   registerGameTools,
   STATIC_CLI_COMMANDS,
 } from '../mcp-tools.js';
-import type {
-  CoordinationGame,
-  ToolDefinition,
-  ToolPlugin,
-} from '@coordination-games/engine';
 
 // ---------------------------------------------------------------------------
 // Stub McpServer — `registerGameTools` calls `server.tool(name, desc, shape, fn)`.
 // The stub collects registrations so tests can assert post-collision success.
 // ---------------------------------------------------------------------------
 
-function makeStubServer() {
+interface StubServer {
+  registered: string[];
+  tool: (name: string, desc: string, shape: unknown, fn: unknown) => void;
+}
+
+function makeStubServer(): StubServer {
   const registered: string[] = [];
   return {
-    tool: (name: string, _desc: string, _shape: any, _fn: any) => {
+    tool: (name) => {
       registered.push(name);
     },
     registered,
   };
 }
 
+/** Cast a stub into the real surfaces registerGameTools() expects. */
+function asServer(stub: StubServer): McpServer {
+  return stub as unknown as McpServer;
+}
+
 // Minimal GameClient — only `client.getGuide`/`getState`/etc. are called from
 // the static tool handlers, which run only when a tool is INVOKED. The
-// collision check and registration never call them. Cast as any to avoid
-// dragging the real class into tests.
-const stubClient: any = {};
+// collision check and registration never call them.
+const stubClient = {} as GameClient;
 
 // ---------------------------------------------------------------------------
 // Fake factory helpers
@@ -65,11 +73,11 @@ function tool(name: string, extra: Partial<ToolDefinition> = {}): ToolDefinition
 function fakeGame(
   gameType: string,
   opts: { gameTools?: ToolDefinition[]; phaseTools?: Record<string, ToolDefinition[]> } = {},
-): CoordinationGame<any, any, any, any> {
+): AnyCoordinationGame {
   return {
     gameType,
     version: '0.0.0-test',
-    entryCost: 0,
+    entryCost: 0n,
     gameTools: opts.gameTools,
     lobby: opts.phaseTools
       ? {
@@ -81,24 +89,28 @@ function fakeGame(
             timeout: null,
             acceptsJoins: true,
             init: () => ({}),
-            handleAction: (state: any) => ({ state }),
+            handleAction: (state: unknown) => ({ state }),
             handleTimeout: () => null,
             getView: () => ({}),
           })),
           matchmaking: {
-            minPlayers: 2, maxPlayers: 4, teamSize: 1, numTeams: 2, queueTimeoutMs: 60000,
+            minPlayers: 2,
+            maxPlayers: 4,
+            teamSize: 1,
+            numTeams: 2,
+            queueTimeoutMs: 60000,
           },
         }
       : undefined,
     createInitialState: () => ({}),
     validateAction: () => false,
-    applyAction: (state: any) => ({ state }),
+    applyAction: (state: unknown) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
-  } as unknown as CoordinationGame<any, any, any, any>;
+  } as unknown as CoordinationGame<unknown, unknown, unknown, unknown>;
 }
 
 function fakePlugin(id: string, tools: ToolDefinition[]): ToolPlugin {
@@ -119,14 +131,12 @@ function fakePlugin(id: string, tools: ToolDefinition[]): ToolPlugin {
 
 describe('ClientToolCollisionError — client-side surface', () => {
   it('ToolPlugin named "state" collides with a static CLI command', () => {
-    const plugin = fakePlugin('@cg/plugin-stateful', [
-      tool('state', { mcpExpose: true }),
-    ]);
+    const plugin = fakePlugin('@cg/plugin-stateful', [tool('state', { mcpExpose: true })]);
     const server = makeStubServer();
 
     let thrown: unknown;
     try {
-      registerGameTools(server as any, stubClient, { plugins: [plugin] });
+      registerGameTools(asServer(server), stubClient, { plugins: [plugin] });
     } catch (err) {
       thrown = err;
     }
@@ -139,22 +149,20 @@ describe('ClientToolCollisionError — client-side surface', () => {
   });
 
   it('ToolPlugin tool name colliding with a gameTool throws', () => {
-    const plugin = fakePlugin('@cg/plugin-chatter', [
-      tool('chat', { mcpExpose: true }),
-    ]);
+    const plugin = fakePlugin('@cg/plugin-chatter', [tool('chat', { mcpExpose: true })]);
     const game = fakeGame('fake-game-with-chat', {
       gameTools: [tool('chat')],
     });
     const server = makeStubServer();
 
-    let thrown: any;
+    let thrown: unknown;
     try {
-      registerGameTools(server as any, stubClient, { plugins: [plugin], games: [game] });
+      registerGameTools(asServer(server), stubClient, { plugins: [plugin], games: [game] });
     } catch (err) {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(ClientToolCollisionError);
-    expect(thrown.toolName).toBe('chat');
+    expect((thrown as ClientToolCollisionError).toolName).toBe('chat');
     // Both declarers surface in the error.
     const declarers = (thrown as ClientToolCollisionError).declarers.join('|');
     expect(declarers).toMatch(/GamePhase of game "fake-game-with-chat"/);
@@ -170,7 +178,7 @@ describe('ClientToolCollisionError — client-side surface', () => {
     const server = makeStubServer();
 
     expect(() =>
-      registerGameTools(server as any, stubClient, { games: [game], plugins: [plugin] }),
+      registerGameTools(asServer(server), stubClient, { games: [game], plugins: [plugin] }),
     ).not.toThrow();
     // Both dynamic tools end up registered on the server, plus the fixed
     // built-ins. We only assert on the dynamic ones being present.
@@ -181,13 +189,11 @@ describe('ClientToolCollisionError — client-side surface', () => {
   it('plugin tool with mcpExpose:false is ignored by the collision check', () => {
     // mcpExpose:false means the plugin tool is NOT surfaced as an MCP tool,
     // so it's NOT part of the client-side collision scope.
-    const plugin = fakePlugin('hidden-plugin', [
-      tool('state', { mcpExpose: false }),
-    ]);
+    const plugin = fakePlugin('hidden-plugin', [tool('state', { mcpExpose: false })]);
     const server = makeStubServer();
 
     expect(() =>
-      registerGameTools(server as any, stubClient, { plugins: [plugin] }),
+      registerGameTools(asServer(server), stubClient, { plugins: [plugin] }),
     ).not.toThrow();
   });
 
@@ -200,14 +206,14 @@ describe('ClientToolCollisionError — client-side surface', () => {
     });
     const server = makeStubServer();
 
-    let thrown: any;
+    let thrown: unknown;
     try {
-      registerGameTools(server as any, stubClient, { games: [game] });
+      registerGameTools(asServer(server), stubClient, { games: [game] });
     } catch (err) {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(ClientToolCollisionError);
-    expect(thrown.toolName).toBe('go');
+    expect((thrown as ClientToolCollisionError).toolName).toBe('go');
     const declarers = (thrown as ClientToolCollisionError).declarers.join('|');
     expect(declarers).toMatch(/phase-a/);
     expect(declarers).toMatch(/phase-b/);
@@ -223,10 +229,12 @@ describe('ClientToolCollisionError — client-side surface', () => {
 
   it('re-exported ClientToolCollisionError message ends with resolution suggestions', () => {
     const plugin = fakePlugin('colliding', [tool('state', { mcpExpose: true })]);
-    let thrown: any;
+    let thrown: Error | undefined;
     try {
-      registerGameTools(makeStubServer() as any, stubClient, { plugins: [plugin] });
-    } catch (err) { thrown = err; }
+      registerGameTools(asServer(makeStubServer()), stubClient, { plugins: [plugin] });
+    } catch (err) {
+      thrown = err as Error;
+    }
     expect(thrown?.message).toMatch(/Resolve by:/);
     expect(thrown?.message).toMatch(/renaming one of the conflicting tools/);
   });

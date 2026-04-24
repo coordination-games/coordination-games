@@ -9,14 +9,21 @@ interface ToolPlugin {
   readonly modes: PluginMode[];       // consumes/provides declarations
   readonly purity: 'pure' | 'stateful';
   readonly tools?: ToolDefinition[];  // mcpExpose controls visibility
+  readonly agentEnvelopeKeys?: Record<string, string>; // capability → envelope key (optional)
   handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
   handleCall?(tool: string, args: unknown, caller: AgentInfo): unknown;
 }
 ```
 
+## Surfacing Output to the Agent
+
+`modes.provides` names a capability internal to the pipeline. To surface that capability on the agent-facing response, a plugin declares `agentEnvelopeKeys: { [capability]: envelopeKey }`. The CLI's `buildEnvelopeExtensions` (`packages/cli/src/pipeline.ts`) projects declared capabilities onto the top-level response at the chosen keys; undeclared capabilities stay internal (consumed by downstream plugins but not shown to agents).
+
+BasicChatPlugin maps its `'messaging'` capability to the `newMessages` envelope key. By convention, delta-semantics fields use a `new` prefix; snapshot fields don't. See `wiki/architecture/agent-envelope.md` for the top-level diff that dedupes these keys on every call.
+
 ## Type-Based Resolution
 
-Plugins declare `consumes` and `provides` — capability type names, not plugin IDs. The pipeline builder runs Kahn's topological sort on type edges.
+Plugins declare `consumes` and `provides` — capability type names, not plugin IDs. The pipeline builder (`PluginLoader.buildPipeline()` in `packages/engine/src/plugin-loader.ts`) builds an edge `i → j` whenever step `j` consumes any type that step `i` provides, then runs **Kahn's algorithm** on that graph.
 
 ```
 basic-chat          consumes: —              provides: messaging
@@ -30,16 +37,18 @@ trust-filter        consumes: messaging      provides: messaging
 
 ## Edge Cases
 
-- **Unresolved types:** Plugin consumes a type nobody provides → warning, plugin skipped (graceful degradation)
-- **Type overwriting:** Multiple plugins provide same type → later plugin overwrites (intentional for filters/enrichers)
-- **Same-type filters** (consumes X, provides X): Pipeline builder needs to order filters after enrichers. Current approach: insertion order as tiebreaker when topological order is ambiguous.
+- **Unresolved types:** Plugin consumes a type nobody provides → the consumer just receives no entry for that capability key. No warning, no skip — pipeline runs, plugin gets `undefined`.
+- **Type overwriting:** Multiple plugins provide same type → later step in the topo order overwrites the accumulated map entry (intentional for filters/enrichers).
+- **Cycles error fast.** Same-type cycles (two steps that each consume what the other provides) leave the queue empty before all steps are processed; `buildPipeline()` throws `Plugin dependency cycle detected: <id>:<mode> → ...`. There is no fallback ordering — a cycle is a configuration bug, not a tiebreak.
+- **Self-loops are allowed.** A single step that both consumes and provides the same type (`consumes: ['messaging'], provides: ['messaging']`) doesn't form a cycle — the edge-build skips `i === j`. Two same-type filters from different plugins, however, will cycle and error.
 
 ## Current Plugins
 
-| Plugin | ID | Type | MCP Tools |
+| Plugin | ID | Where | Notes |
 |---|---|---|---|
-| BasicChat | `basic-chat` | Tier 2 (relayed) | `chat` |
-| ELO | `elo` | Tier 3 (server) | none (CLI only) |
+| BasicChat | `basic-chat` | `packages/plugins/basic-chat/` (client + server halves) | Tier 2 relayed; provides `chat` tool |
+| ELO | `elo` | `packages/workers-server/src/plugins/elo/` | Tier 3 server-side; capability-injected via `ServerPluginRuntime` |
+| Settlement | `settlement` | `packages/workers-server/src/plugins/settlement/` | Tier 3 server-side; wraps the on-chain settlement state machine (Phase 5.3) |
 
 ## Trust Plugin Suite (Designed, Not Yet Built)
 
@@ -50,6 +59,10 @@ Five composable plugins for trust/reputation:
 4. `agent-tags-to-message-tags` — enricher, copies agent tags onto messages
 5. `trust-score-filter` — filter, drops messages from `suspicious` agents
 
-The trust graph calculation (PageRank over attestation edges) runs server-side. Clients request scores via REST. Existing EAS code in `relay.ts` needs migration into the plugin.
+The trust graph calculation (PageRank over attestation edges) runs server-side. Clients request scores via REST. Plan: `docs/plans/trust-plugins.md`.
 
-See: `packages/engine/src/plugin-loader.ts`, `packages/plugins/`
+## Server-Side Plugin Runtime
+
+Phase 4.3 added `ServerPluginRuntime` (`packages/workers-server/src/plugins/runtime.ts`) — the host that loads server-side halves of plugins (ELO, Settlement, basic-chat server piece) and injects `Capabilities` (relay client, settlement, persistence). See `packages/workers-server/src/plugins/capabilities.ts`.
+
+See: `packages/engine/src/plugin-loader.ts`, `packages/plugins/`, `packages/workers-server/src/plugins/`

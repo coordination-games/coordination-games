@@ -3,6 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Rebuild worker-side workspace deps before bundling. The worker imports from
+# `@coordination-games/{engine, plugin-chat, game-*}` which resolve to sibling
+# packages' `dist/`; stale dists have shipped wrong money field names + wrong
+# types to prod twice. Web is deployed separately via Pages and has a
+# flaky npm-workspace install — excluded to keep server deploy resilient.
+[build]
+command = "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "ctl-db"
@@ -21,7 +29,11 @@ tag = "v1"
 new_classes = ["GameRoomDO", "LobbyDO"]
 
 # On-chain mode secrets (set via `wrangler secret put`):
-# RPC_URL             — OP Sepolia RPC endpoint
+# RPC_URLS            — Comma-separated list of OP Sepolia RPC endpoints (preferred).
+#                        Auth path tries them in order with exponential backoff and
+#                        caches the first successful URL per request. Single-URL
+#                        config behaves identically to legacy RPC_URL.
+# RPC_URL             — Legacy single OP Sepolia RPC endpoint (used when RPC_URLS unset).
 # RELAYER_PRIVATE_KEY — Relayer wallet private key (gas payer)
 # REGISTRY_ADDRESS    — CoordinationRegistry contract
 # ERC8004_ADDRESS     — ERC-8004 agent identity NFT
@@ -33,9 +45,5 @@ new_classes = ["GameRoomDO", "LobbyDO"]
 ENVIRONMENT = "production"
 
 [[routes]]
-pattern = "api.capturethelobster.com/*"
-zone_name = "capturethelobster.com"
-
-[[worker_domains]]
-hostname = "api.capturethelobster.com"
-zone_name = "capturethelobster.com"
+pattern = "api.games.coop"
+custom_domain = true

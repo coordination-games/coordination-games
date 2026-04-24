@@ -14,17 +14,17 @@
  *  - Re-registering the same gameType throws the "already registered" error.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  registerGame,
-  ToolCollisionError,
-  getAllGames,
+  type AgentInfo,
   type CoordinationGame,
-  type ToolDefinition,
+  getAllGames,
   type LobbyPhase,
   type PhaseActionResult,
   type PhaseResult,
-  type AgentInfo,
+  registerGame,
+  ToolCollisionError,
+  type ToolDefinition,
 } from '../index.js';
 
 // ---------------------------------------------------------------------------
@@ -38,12 +38,18 @@ function fakePhase(id: string, tools: ToolDefinition[]): LobbyPhase {
     tools,
     timeout: null,
     acceptsJoins: true,
-    init(_players: AgentInfo[]) { return {}; },
-    handleAction(state: any, _action, _players): PhaseActionResult {
+    init(_players: AgentInfo[]) {
+      return {};
+    },
+    handleAction(state, _action, _players): PhaseActionResult {
       return { state };
     },
-    handleTimeout(_state, _players): PhaseResult | null { return null; },
-    getView(_state) { return {}; },
+    handleTimeout(_state, _players): PhaseResult | null {
+      return null;
+    },
+    getView(_state) {
+      return {};
+    },
   };
 }
 
@@ -51,35 +57,44 @@ function fakePhase(id: string, tools: ToolDefinition[]): LobbyPhase {
 // Fake CoordinationGame factory — only the fields `registerGame` reads.
 // ---------------------------------------------------------------------------
 
+type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
+
 function fakeGame(options: {
   gameType: string;
   gameTools?: ToolDefinition[];
   phases?: LobbyPhase[];
-}): CoordinationGame<any, any, any, any> {
+}): AnyGame {
   return {
     gameType: options.gameType,
     version: '0.0.0-test',
-    entryCost: 0,
+    entryCost: 0n,
     gameTools: options.gameTools,
     lobby: options.phases
       ? {
           queueType: 'open',
           phases: options.phases,
           matchmaking: {
-            minPlayers: 2, maxPlayers: 4, teamSize: 1, numTeams: 2, queueTimeoutMs: 60000,
+            minPlayers: 2,
+            maxPlayers: 4,
+            teamSize: 1,
+            numTeams: 2,
+            queueTimeoutMs: 60000,
           },
         }
       : undefined,
     // Stubs — not exercised by registerGame's collision check.
     createInitialState: () => ({}),
     validateAction: () => false,
-    applyAction: (state: any) => ({ state }),
+    applyAction: (state: unknown) => ({ state }),
     getVisibleState: () => ({}),
     isOver: () => true,
     getOutcome: () => ({}),
     computePayouts: () => new Map(),
     buildSpectatorView: () => ({}),
-  } as unknown as CoordinationGame<any, any, any, any>;
+    // Phase 4.7 required methods.
+    getSummaryFromSpectator: () => ({}),
+    getReplayChrome: () => ({ isFinished: false, statusVariant: 'in_progress' as const }),
+  } as unknown as AnyGame;
 }
 
 const chatTool = (): ToolDefinition => ({
@@ -133,10 +148,7 @@ describe('ToolCollisionError — server-side', () => {
   it('throws when two lobby phases both declare the same tool name', () => {
     const plugin = fakeGame({
       gameType: uniq('collision-cross-phase'),
-      phases: [
-        fakePhase('phase-a', [chatTool()]),
-        fakePhase('phase-b', [chatTool()]),
-      ],
+      phases: [fakePhase('phase-a', [chatTool()]), fakePhase('phase-b', [chatTool()])],
     });
 
     expect(() => registerGame(plugin)).toThrow(ToolCollisionError);
@@ -187,8 +199,12 @@ describe('ToolCollisionError — server-side', () => {
       gameTools: [chatTool()],
       phases: [fakePhase('phase-x', [chatTool()])],
     });
-    let thrown: any;
-    try { registerGame(plugin); } catch (err) { thrown = err; }
+    let thrown: Error | undefined;
+    try {
+      registerGame(plugin);
+    } catch (err) {
+      thrown = err as Error;
+    }
     expect(thrown?.message).toMatch(/Resolve by:/);
     expect(thrown?.message).toMatch(/renaming one of the conflicting tools/);
   });

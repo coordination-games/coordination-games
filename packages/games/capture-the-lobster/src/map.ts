@@ -1,14 +1,14 @@
 // Procedural map generator for Capture the Lobster
 // Generates rotationally symmetric hex maps with bases, walls, and chokepoints
 
+import { mustGet } from '@coordination-games/engine';
 import {
-  Hex,
-  hexesInRadius,
+  getNeighbors,
+  type Hex,
   hexDistance,
+  hexesInRadius,
   hexToString,
   stringToHex,
-  getNeighbors,
-  hexEquals,
 } from './hex.js';
 
 export type TileType = 'ground' | 'wall' | 'base_a' | 'base_b';
@@ -84,7 +84,8 @@ function bfsReachable(
   const queue: string[] = [start];
   visited.add(start);
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (current === undefined) break;
     const hex = stringToHex(current);
     for (const neighbor of getNeighbors(hex)) {
       const key = hexToString(neighbor);
@@ -121,6 +122,7 @@ export function generateMap(config?: MapConfig): GameMap {
 
   // Base positions: first pair on north/south axis, second pair (if needed) on diagonal
   const flagPositionsA: Hex[] = [{ q: 0, r: radius - 1 }];
+  // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
   const flagPositionsB: Hex[] = [rotate180(flagPositionsA[0])];
 
   if (flagCount >= 2) {
@@ -135,7 +137,12 @@ export function generateMap(config?: MapConfig): GameMap {
   const baseAKeys = new Set<string>();
   const baseBKeys = new Set<string>();
 
-  function pickSpawns(flag: Hex, baseType: TileType, baseKeySet: Set<string>, count: number): Hex[] {
+  function pickSpawns(
+    flag: Hex,
+    baseType: TileType,
+    baseKeySet: Set<string>,
+    count: number,
+  ): Hex[] {
     const neighbors = getNeighbors(flag).filter((n) => tiles.has(hexToString(n)));
     // Distribute spawns evenly around the flag by spacing indices
     // getNeighbors returns 6 directions: N, NE, SE, S, SW, NW (indices 0-5)
@@ -157,12 +164,14 @@ export function generateMap(config?: MapConfig): GameMap {
         indices.push(Math.round((i * available) / count) % available);
       }
     }
-    const spawns = indices.map(i => neighbors[i]);
+    const spawns = indices.map((i) => neighbors[i]);
     for (const s of spawns) {
+      // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
       const key = hexToString(s);
       tiles.set(key, baseType);
       baseKeySet.add(key);
     }
+    // @ts-expect-error TS2322: Type '(Hex | undefined)[]' is not assignable to type 'Hex[]'. — TODO(2.3-followup)
     return spawns;
   }
 
@@ -171,9 +180,12 @@ export function generateMap(config?: MapConfig): GameMap {
 
   for (let i = 0; i < flagCount; i++) {
     // Team A flag
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     tiles.set(hexToString(flagPositionsA[i]), 'base_a');
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     baseAKeys.add(hexToString(flagPositionsA[i]));
     // Mark ALL neighbors of the flag as base tiles (castle walls around the keep)
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     for (const n of getNeighbors(flagPositionsA[i])) {
       const nk = hexToString(n);
       if (tiles.has(nk) && !baseAKeys.has(nk)) {
@@ -181,12 +193,17 @@ export function generateMap(config?: MapConfig): GameMap {
         baseAKeys.add(nk);
       }
     }
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     const spawnsA = pickSpawns(flagPositionsA[i], 'base_a', baseAKeys, spawnsPerBase);
+    // @ts-expect-error TS2322: Type 'Hex | undefined' is not assignable to type 'Hex'. — TODO(2.3-followup)
     basesA.push({ flag: flagPositionsA[i], spawns: spawnsA });
 
     // Team B flag (180° mirror)
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     tiles.set(hexToString(flagPositionsB[i]), 'base_b');
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     baseBKeys.add(hexToString(flagPositionsB[i]));
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     for (const n of getNeighbors(flagPositionsB[i])) {
       const nk = hexToString(n);
       if (tiles.has(nk) && !baseBKeys.has(nk)) {
@@ -194,7 +211,9 @@ export function generateMap(config?: MapConfig): GameMap {
         baseBKeys.add(nk);
       }
     }
+    // @ts-expect-error TS2345: Argument of type 'Hex | undefined' is not assignable to parameter of type 'Hex'. — TODO(2.3-followup)
     const spawnsB = pickSpawns(flagPositionsB[i], 'base_b', baseBKeys, spawnsPerBase);
+    // @ts-expect-error TS2322: Type 'Hex | undefined' is not assignable to type 'Hex'. — TODO(2.3-followup)
     basesB.push({ flag: flagPositionsB[i], spawns: spawnsB });
   }
 
@@ -256,6 +275,7 @@ export function generateMap(config?: MapConfig): GameMap {
   // Shuffle half candidates
   for (let i = halfCandidates.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
+    // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
     [halfCandidates[i], halfCandidates[j]] = [halfCandidates[j], halfCandidates[i]];
   }
 
@@ -263,12 +283,16 @@ export function generateMap(config?: MapConfig): GameMap {
   const wallSeeds: string[] = [];
   for (let i = 0; i < Math.min(seedCount, halfCandidates.length); i++) {
     const key = halfCandidates[i];
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
     const hex = stringToHex(key);
     const mirrorKey = hexToString(rotate180(hex));
 
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
     if (!protectedKeys.has(key) && !protectedKeys.has(mirrorKey)) {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
       wallKeys.add(key);
       wallKeys.add(mirrorKey);
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
       wallSeeds.push(key);
     }
   }
@@ -281,6 +305,7 @@ export function generateMap(config?: MapConfig): GameMap {
     // Shuffle neighbors for randomness
     for (let i = neighbors.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
+      // @ts-expect-error TS2322: Type 'Hex | undefined' is not assignable to type 'Hex'. — TODO(2.3-followup)
       [neighbors[i], neighbors[j]] = [neighbors[j], neighbors[i]];
     }
 
@@ -318,19 +343,19 @@ export function generateMap(config?: MapConfig): GameMap {
   // Shuffle and pick some for chokepoint walls
   for (let i = midCandidates.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
+    // @ts-expect-error TS2322: Type 'string | undefined' is not assignable to type 'string'. — TODO(2.3-followup)
     [midCandidates[i], midCandidates[j]] = [midCandidates[j], midCandidates[i]];
   }
 
   const chokepointCount = Math.max(1, Math.floor(radius * 0.4));
   for (let i = 0; i < Math.min(chokepointCount, midCandidates.length); i++) {
     const key = midCandidates[i];
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
     const hex = stringToHex(key);
     const mirrorKey = hexToString(rotate180(hex));
-    if (
-      !protectedKeys.has(key) &&
-      !protectedKeys.has(mirrorKey) &&
-      tiles.has(mirrorKey)
-    ) {
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+    if (!protectedKeys.has(key) && !protectedKeys.has(mirrorKey) && tiles.has(mirrorKey)) {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
       wallKeys.add(key);
       wallKeys.add(mirrorKey);
     }
@@ -373,7 +398,7 @@ function ensureConnectivity(
   flagA: Hex,
   flagB: Hex,
   wallKeys: Set<string>,
-  protectedKeys: Set<string>,
+  _protectedKeys: Set<string>,
 ): void {
   const flagAKey = hexToString(flagA);
   const flagBKey = hexToString(flagB);
@@ -393,7 +418,8 @@ function ensureConnectivity(
   visited.add(flagAKey);
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (current === undefined) break;
     if (current === flagBKey) break;
     const hex = stringToHex(current);
     const neighbors = getNeighbors(hex);
@@ -430,7 +456,7 @@ function ensureConnectivity(
         wallKeys.delete(mirrorKey);
       }
     }
-    current = parent.get(current)!;
+    current = mustGet(parent, current, 'parent pointer');
   }
 
   // Verify connectivity after fix

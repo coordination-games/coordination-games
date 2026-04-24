@@ -1,58 +1,64 @@
 // Coordination Games Framework
 // Core types and interfaces
-export * from './types.js';
 
+// Canonical encoding (deterministic outcomeBytes; sorted-key JSON, bigint sentinel)
+export {
+  canonicalDecode,
+  canonicalEncode,
+  NonIntegerNumberError,
+  NonPojoValueError,
+} from './canonical-encoding.js';
+// Chat scope validation
+export { type ChatScopeKind, classifyScope, validateChatScope } from './chat-scope.js';
+// Runtime invariants / non-null helpers
+export { invariant, mustFind, mustGet } from './invariant.js';
 // Merkle tree construction and verification
 export {
-  buildMerkleTree,
   buildActionMerkleTree,
   buildGameMerkleTree,
-  generateProof,
-  verifyProof,
+  buildMerkleTree,
   encodeLeaf,
-  type MerkleTree,
-  type MerkleProof,
+  generateProof,
   type MerkleLeafData,
+  type MerkleProof,
+  type MerkleTree,
+  verifyProof,
 } from './merkle.js';
-
-// Plugin loader and pipeline
+// Credit decimal scaling (6 decimals, matching USDC) + helpers for declaring,
+// formatting, and parsing raw credit amounts.
 export {
-  PluginLoader,
-  PluginPipeline,
-  type PipelineStep,
-} from './plugin-loader.js';
-
-// Platform MCP — phase-aware tool visibility
-export {
-  getAvailableTools,
-  generateGuide,
-  PHASE_TOOLS,
-} from './mcp.js';
-
-// Game room (v2 action-based)
-export { GameRoom } from './game-session.js';
-
-// Game plugin registry
-export {
-  registerGame,
-  getGame,
-  getRegisteredGames,
-  getAllGames,
-  ToolCollisionError,
-} from './registry.js';
-
+  CREDIT_DECIMALS,
+  CREDIT_SCALE,
+  credits,
+  formatCredits,
+  parseCredits,
+} from './money.js';
 // Built-in lobby phases
 export { OpenQueuePhase, type OpenQueueState } from './phases/open-queue.js';
-
-// Chat scope validation
-export { validateChatScope, classifyScope, type ChatScopeKind } from './chat-scope.js';
-
-// Server-side framework
+// Plugin loader and pipeline
 export {
-  GameFramework,
-  AuthManager,
-  BalanceTracker,
-  buildGameResult,
-  type AuthConfig,
-  type BalanceConfig,
-} from './server/index.js';
+  type PipelineStep,
+  PluginLoader,
+  PluginPipeline,
+} from './plugin-loader.js';
+// Game plugin registry
+export {
+  getAllGames,
+  getGame,
+  getRegisteredGames,
+  registerGame,
+  ToolCollisionError,
+} from './registry.js';
+// Relay envelope validation registry (Phase 4.2)
+export {
+  clearRelayRegistry,
+  isRelayTypeRegistered,
+  RelayUnknownTypeError,
+  RelayValidationError,
+  registerPluginRelayTypes,
+  registerRelayType,
+  type ValidatedRelayEnvelope,
+  validateRelay,
+  validateRelayBody,
+} from './relay-registry.js';
+export * from './types.js';

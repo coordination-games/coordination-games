@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
 import "./interfaces/ICoordinationCredits.sol";
 
-contract GameAnchor {
+contract GameAnchor is ReentrancyGuard {
     ICoordinationCredits public immutable credits;
     address public immutable relayer;
     address public admin;
@@ -24,10 +26,6 @@ contract GameAnchor {
     // gameId => whether settled
     mapping(bytes32 => bool) public settled;
 
-    // Configurable emergency reclaim delay
-    uint256 public reclaimDelay = 3600; // 1 hour default
-    uint256 constant MAX_RECLAIM_DELAY = 604800; // 1 week max
-
     // Events
     event GameSettled(
         bytes32 indexed gameId,
@@ -35,19 +33,13 @@ contract GameAnchor {
         uint256[] players,
         int256[] deltas
     );
-    event EmergencyReclaimed(bytes32 indexed gameId);
-    event ReclaimDelayUpdated(uint256 newDelay);
 
     // Errors
     error NotRelayer();
-    error NotAdmin();
     error AlreadySettled();
     error MissingMovesRoot();
     error LengthMismatch();
     error ZeroSumViolation();
-    error TooEarlyForReclaim();
-    error GameNotSettled();
-    error ReclaimDelayTooLong();
 
     constructor(address _credits, address _relayer, address _admin) {
         credits = ICoordinationCredits(_credits);
@@ -59,7 +51,7 @@ contract GameAnchor {
     function settleGame(
         GameResult calldata result,
         int256[] calldata deltas
-    ) external {
+    ) external nonReentrant {
         if (msg.sender != relayer) revert NotRelayer();
         if (settled[result.gameId]) revert AlreadySettled();
         if (result.movesRoot == bytes32(0)) revert MissingMovesRoot();
@@ -85,23 +77,5 @@ contract GameAnchor {
     /// @notice View a stored game result
     function results(bytes32 gameId) external view returns (GameResult memory) {
         return _results[gameId];
-    }
-
-    /// @notice Emergency reclaim if game is stale (past configurable delay)
-    function emergencyReclaim(bytes32 gameId) external {
-        GameResult memory result = _results[gameId];
-        if (result.timestamp == 0) revert GameNotSettled();
-        if (block.timestamp <= uint256(result.timestamp) + reclaimDelay) revert TooEarlyForReclaim();
-
-        // Refund: create zero deltas (no-op settle to emit event)
-        emit EmergencyReclaimed(gameId);
-    }
-
-    /// @notice Set emergency reclaim delay (admin only)
-    function setReclaimDelay(uint256 newDelay) external {
-        if (msg.sender != admin) revert NotAdmin();
-        if (newDelay > MAX_RECLAIM_DELAY) revert ReclaimDelayTooLong();
-        reclaimDelay = newDelay;
-        emit ReclaimDelayUpdated(newDelay);
     }
 }

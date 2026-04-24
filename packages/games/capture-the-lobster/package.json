@@ -10,7 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@coordination-games/engine": "*"
+    "@coordination-games/engine": "*",
+    "@coordination-games/plugin-chat": "*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

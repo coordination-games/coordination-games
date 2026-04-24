@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { PluginLoader, PluginPipeline } from '../plugin-loader.js';
+import { describe, expect, it } from 'vitest';
+import { PluginLoader } from '../plugin-loader.js';
 import type { ToolPlugin } from '../types.js';
 
 function makePlugin(overrides: Partial<ToolPlugin> & { id: string }): ToolPlugin {
@@ -34,12 +34,12 @@ describe('PluginLoader', () => {
       const producer = makePlugin({
         id: 'chat',
         modes: [{ name: 'produce', consumes: [], provides: ['messaging'] }],
-        handleData: (mode, inputs) => new Map([['messaging', ['hello']]]),
+        handleData: (_mode, _inputs) => new Map([['messaging', ['hello']]]),
       });
       const consumer = makePlugin({
         id: 'logger',
         modes: [{ name: 'log', consumes: ['messaging'], provides: ['log-output'] }],
-        handleData: (mode, inputs) => {
+        handleData: (_mode, inputs) => {
           const msgs = inputs.get('messaging') ?? [];
           return new Map([['log-output', msgs.length]]);
         },
@@ -57,22 +57,30 @@ describe('PluginLoader', () => {
     it('handles linear chain (producer → mapper → enricher → filter)', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'source',
-        modes: [{ name: 'produce', consumes: [], provides: ['raw'] }],
-      }));
-      loader.register(makePlugin({
-        id: 'mapper',
-        modes: [{ name: 'map', consumes: ['raw'], provides: ['mapped'] }],
-      }));
-      loader.register(makePlugin({
-        id: 'enricher',
-        modes: [{ name: 'enrich', consumes: ['mapped'], provides: ['enriched'] }],
-      }));
-      loader.register(makePlugin({
-        id: 'filter',
-        modes: [{ name: 'filter', consumes: ['enriched'], provides: ['filtered'] }],
-      }));
+      loader.register(
+        makePlugin({
+          id: 'source',
+          modes: [{ name: 'produce', consumes: [], provides: ['raw'] }],
+        }),
+      );
+      loader.register(
+        makePlugin({
+          id: 'mapper',
+          modes: [{ name: 'map', consumes: ['raw'], provides: ['mapped'] }],
+        }),
+      );
+      loader.register(
+        makePlugin({
+          id: 'enricher',
+          modes: [{ name: 'enrich', consumes: ['mapped'], provides: ['enriched'] }],
+        }),
+      );
+      loader.register(
+        makePlugin({
+          id: 'filter',
+          modes: [{ name: 'filter', consumes: ['enriched'], provides: ['filtered'] }],
+        }),
+      );
 
       // Register in reverse order to test that sorting works
       const pipeline = loader.buildPipeline(['filter', 'enricher', 'mapper', 'source']);
@@ -85,18 +93,24 @@ describe('PluginLoader', () => {
     it('handles parallel providers (independent plugins merge)', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'source',
-        modes: [{ name: 'produce', consumes: [], provides: ['agents'] }],
-      }));
-      loader.register(makePlugin({
-        id: 'trust',
-        modes: [{ name: 'enrich', consumes: ['agents'], provides: ['agent-tags'] }],
-      }));
-      loader.register(makePlugin({
-        id: 'reputation',
-        modes: [{ name: 'enrich', consumes: ['agents'], provides: ['agent-tags'] }],
-      }));
+      loader.register(
+        makePlugin({
+          id: 'source',
+          modes: [{ name: 'produce', consumes: [], provides: ['agents'] }],
+        }),
+      );
+      loader.register(
+        makePlugin({
+          id: 'trust',
+          modes: [{ name: 'enrich', consumes: ['agents'], provides: ['agent-tags'] }],
+        }),
+      );
+      loader.register(
+        makePlugin({
+          id: 'reputation',
+          modes: [{ name: 'enrich', consumes: ['agents'], provides: ['agent-tags'] }],
+        }),
+      );
 
       const pipeline = loader.buildPipeline(['source', 'trust', 'reputation']);
       expect(pipeline.steps).toHaveLength(3);
@@ -107,14 +121,18 @@ describe('PluginLoader', () => {
     it('detects and rejects cycles', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'a',
-        modes: [{ name: 'a', consumes: ['b-data'], provides: ['a-data'] }],
-      }));
-      loader.register(makePlugin({
-        id: 'b',
-        modes: [{ name: 'b', consumes: ['a-data'], provides: ['b-data'] }],
-      }));
+      loader.register(
+        makePlugin({
+          id: 'a',
+          modes: [{ name: 'a', consumes: ['b-data'], provides: ['a-data'] }],
+        }),
+      );
+      loader.register(
+        makePlugin({
+          id: 'b',
+          modes: [{ name: 'b', consumes: ['a-data'], provides: ['b-data'] }],
+        }),
+      );
 
       expect(() => loader.buildPipeline(['a', 'b'])).toThrow(/cycle/i);
     });
@@ -135,20 +153,24 @@ describe('PluginLoader', () => {
     it('passes data through pipeline correctly', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'chat',
-        modes: [{ name: 'produce', consumes: [], provides: ['messaging'] }],
-        handleData: () => new Map([['messaging', [{ text: 'hello' }, { text: 'world' }]]]),
-      }));
+      loader.register(
+        makePlugin({
+          id: 'chat',
+          modes: [{ name: 'produce', consumes: [], provides: ['messaging'] }],
+          handleData: () => new Map([['messaging', [{ text: 'hello' }, { text: 'world' }]]]),
+        }),
+      );
 
-      loader.register(makePlugin({
-        id: 'counter',
-        modes: [{ name: 'count', consumes: ['messaging'], provides: ['stats'] }],
-        handleData: (mode, inputs) => {
-          const msgs = inputs.get('messaging') ?? [];
-          return new Map([['stats', { count: msgs.length }]]);
-        },
-      }));
+      loader.register(
+        makePlugin({
+          id: 'counter',
+          modes: [{ name: 'count', consumes: ['messaging'], provides: ['stats'] }],
+          handleData: (_mode, inputs) => {
+            const msgs = inputs.get('messaging') ?? [];
+            return new Map([['stats', { count: msgs.length }]]);
+          },
+        }),
+      );
 
       const pipeline = loader.buildPipeline(['chat', 'counter']);
       const result = pipeline.execute(new Map());
@@ -160,20 +182,24 @@ describe('PluginLoader', () => {
     it('later steps can override data from earlier steps', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'raw',
-        modes: [{ name: 'produce', consumes: [], provides: ['data'] }],
-        handleData: () => new Map([['data', [1, 2, 3]]]),
-      }));
+      loader.register(
+        makePlugin({
+          id: 'raw',
+          modes: [{ name: 'produce', consumes: [], provides: ['data'] }],
+          handleData: () => new Map([['data', [1, 2, 3]]]),
+        }),
+      );
 
-      loader.register(makePlugin({
-        id: 'filter',
-        modes: [{ name: 'filter', consumes: ['data'], provides: ['data'] }],
-        handleData: (mode, inputs) => {
-          const data = inputs.get('data') ?? [];
-          return new Map([['data', data.filter((x: number) => x > 1)]]);
-        },
-      }));
+      loader.register(
+        makePlugin({
+          id: 'filter',
+          modes: [{ name: 'filter', consumes: ['data'], provides: ['data'] }],
+          handleData: (_mode, inputs) => {
+            const data = inputs.get('data') ?? [];
+            return new Map([['data', data.filter((x: number) => x > 1)]]);
+          },
+        }),
+      );
 
       const pipeline = loader.buildPipeline(['raw', 'filter']);
       const result = pipeline.execute(new Map());
@@ -183,11 +209,13 @@ describe('PluginLoader', () => {
     it('preserves initial data alongside pipeline outputs', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'plugin',
-        modes: [{ name: 'produce', consumes: [], provides: ['new-data'] }],
-        handleData: () => new Map([['new-data', 42]]),
-      }));
+      loader.register(
+        makePlugin({
+          id: 'plugin',
+          modes: [{ name: 'produce', consumes: [], provides: ['new-data'] }],
+          handleData: () => new Map([['new-data', 42]]),
+        }),
+      );
 
       const pipeline = loader.buildPipeline(['plugin']);
       const result = pipeline.execute(new Map([['existing', 'kept']]));
@@ -200,20 +228,26 @@ describe('PluginLoader', () => {
     it('returns tools from active plugins only', () => {
       const loader = new PluginLoader();
 
-      loader.register(makePlugin({
-        id: 'chat',
-        tools: [{ name: 'send_chat', description: 'Send a chat message', inputSchema: {} }],
-      }));
+      loader.register(
+        makePlugin({
+          id: 'chat',
+          tools: [{ name: 'send_chat', description: 'Send a chat message', inputSchema: {} }],
+        }),
+      );
 
-      loader.register(makePlugin({
-        id: 'elo',
-        tools: [{ name: 'get_leaderboard', description: 'Get leaderboard', inputSchema: {} }],
-      }));
+      loader.register(
+        makePlugin({
+          id: 'elo',
+          tools: [{ name: 'get_leaderboard', description: 'Get leaderboard', inputSchema: {} }],
+        }),
+      );
 
-      loader.register(makePlugin({
-        id: 'silent',
-        // no tools
-      }));
+      loader.register(
+        makePlugin({
+          id: 'silent',
+          // no tools
+        }),
+      );
 
       const tools = loader.getTools(['chat', 'silent']);
       expect(tools).toHaveLength(1);

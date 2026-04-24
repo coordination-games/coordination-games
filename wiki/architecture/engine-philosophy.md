@@ -15,9 +15,19 @@ The original engine used `resolveTurn()` — collect all moves, resolve simultan
 
 One engine, both patterns. The deadline timer is the unifying mechanism.
 
-## Timer Stale-ID Pattern
+## Multiplexed Alarm Pattern
 
-`GameRoom` uses incrementing `_timerId` to prevent stale timeouts. Every `setDeadline()` increments the ID. When a timeout fires, it checks `myId !== this._timerId` — if true, the timer is stale (another action already changed the deadline). This avoids race conditions without cancellation tracking.
+`GameRoomDO` has a single Cloudflare DO alarm slot that is shared between turn deadlines and the settlement state machine (Phase 3.2). A `StorageAlarmMux` queues entries shaped like `{ when, kind, payload }` in DO storage; the DO always re-arms the slot to the earliest queued `when`.
+
+`applyAction()` returns a discriminated `deadline` directive (`{ kind: 'set' | 'none' | 'unchanged', ... }`). `'set'` schedules a `kind: 'deadline'` mux entry; `'none'` cancels every queued deadline entry and clears the alarm slot if the queue empties.
+
+When `alarm()` fires it pops every entry due at `Date.now()` and dispatches by `kind`:
+
+- `kind: 'deadline'` — if `Date.now() < payload.deadlineMs - 500` it re-queues itself (early fire), otherwise it applies the stored action as a system action (`playerId = null`).
+- `kind: 'settlement'` — drives the settlement state machine.
+- Empty pop (spurious wakeup) → re-arm to the next entry, no dispatch.
+
+Each `kind`'s dispatcher catches its own errors so a broken plugin can't trap the DO in an infinite retry loop.
 
 ## The Lobby Unification Rule
 
@@ -25,4 +35,4 @@ One engine, both patterns. The deadline timer is the unifying mechanism.
 
 OATHBREAKER initially violated this by baking `phase: 'waiting'` into game state and requiring separate endpoints. This broke every generic feature. The fix: all games use the same lobby pipeline. Games with `phases: []` get simple collect-and-start behavior automatically.
 
-See: `docs/BUILDER_NOTES.md` for the full anti-pattern story.
+See: `docs/building-a-game.md`.

@@ -1,25 +1,54 @@
-import { Command } from "commander";
-import fs from "node:fs";
-import path from "node:path";
-import { loadConfig, loadSession, saveSession } from "../config.js";
-import { GameClient } from "../game-client.js";
-import { ApiClient } from "../api-client.js";
-import { loadKey } from "../keys.js";
-import { BasicChatPlugin } from "@coordination-games/plugin-chat";
-import type { ToolDefinition } from "@coordination-games/engine";
+import fs from 'node:fs';
+import path from 'node:path';
+import type { ToolDefinition } from '@coordination-games/engine';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import type { Command } from 'commander';
+import { ApiClient } from '../api-client.js';
+import { loadConfig, loadSession, saveSession } from '../config.js';
+import { GameClient } from '../game-client.js';
+import { loadKey } from '../keys.js';
+import type { JsonSchema, PluginCallResult } from '../types.js';
+
+/** Narrow a ToolDefinition's `inputSchema` (Record<string, unknown>) to our walkable shape. */
+function schemaOf(tool: ToolDefinition): JsonSchema {
+  return (tool.inputSchema ?? {}) as JsonSchema;
+}
+
+/** Extract a user-facing message from a caught error. */
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+/**
+ * Serialize agent-facing JSON.
+ *
+ * Default is compact (single-line) — this is the agent-facing path, and
+ * pretty-printing roughly triples the byte cost for no agent benefit. Humans
+ * who want indented output opt in via `--pretty` on each subcommand that
+ * emits JSON.
+ */
+export function formatJson(value: unknown, pretty: boolean): string {
+  return pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value);
+}
 
 /**
  * Resolve the player's registered name. Checks session cache first,
  * then fetches from the relay status endpoint and caches for next time.
  */
-async function resolveName(wallet: { address: string; privateKey: string }, serverUrl: string): Promise<string> {
+async function resolveName(
+  wallet: { address: string; privateKey: string },
+  serverUrl: string,
+): Promise<string> {
   const session = loadSession();
   if (session.handle) return session.handle;
 
   // Fetch name from server
   try {
     const api = new ApiClient(serverUrl);
-    const data = await api.get(`/api/relay/status/${wallet.address}`);
+    const data = await api.getRelayStatus(wallet.address);
     if (data.registered && data.name) {
       session.handle = data.name;
       saveSession(session);
@@ -37,20 +66,19 @@ async function createClient(): Promise<GameClient> {
   const config = loadConfig();
   const wallet = loadKey();
   if (!wallet) {
-    process.stderr.write(
-      `\n  No wallet found. Run 'coga init' to create one.\n\n`
-    );
+    process.stderr.write(`\n  No wallet found. Run 'coga init' to create one.\n\n`);
     process.exit(1);
   }
 
   const session = loadSession();
   const name = await resolveName(wallet, config.serverUrl);
 
-  return new GameClient(config.serverUrl, {
+  const options: { privateKey: string; name: string; token?: string } = {
     privateKey: wallet.privateKey,
-    token: session.token,
     name,
-  });
+  };
+  if (session.token) options.token = session.token;
+  return new GameClient(config.serverUrl, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +106,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 
   // Server-authoritative phase tools
   try {
-    const state: any = await client.getState();
+    const state = await client.getState();
     const phaseTools = state?.currentPhase?.tools;
     if (Array.isArray(phaseTools)) {
       for (const tool of phaseTools) {
@@ -104,7 +132,7 @@ async function buildCliToolRegistry(client: GameClient): Promise<DiscoveredTool[
 // k=v arg parsing driven by the tool's JSON inputSchema
 // ---------------------------------------------------------------------------
 
-function coerceByType(raw: string, propSchema: any): any {
+function coerceByType(raw: string, propSchema: JsonSchema | undefined): unknown {
   const type = propSchema?.type;
   if (type === 'array') {
     const items = propSchema?.items ?? {};
@@ -124,12 +152,9 @@ function coerceByType(raw: string, propSchema: any): any {
   return raw;
 }
 
-function parseKvArgs(
-  kvs: string[],
-  inputSchema: Record<string, any> | undefined,
-): Record<string, any> {
-  const args: Record<string, any> = {};
-  const props = (inputSchema?.properties ?? {}) as Record<string, any>;
+function parseKvArgs(kvs: string[], inputSchema: JsonSchema | undefined): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  const props = inputSchema?.properties ?? {};
 
   for (const kv of kvs) {
     const eq = kv.indexOf('=');
@@ -160,14 +185,18 @@ function parseKvArgs(
   return args;
 }
 
-function requiredFieldsError(tool: ToolDefinition, args: Record<string, any>): string | null {
-  const required: string[] = (tool.inputSchema?.required as string[]) ?? [];
+function requiredFieldsError(tool: ToolDefinition, args: Record<string, unknown>): string | null {
+  const schema = schemaOf(tool);
+  const required = schema.required ?? [];
   const missing = required.filter((f) => !(f in args));
   if (missing.length === 0) return null;
-  const props = (tool.inputSchema?.properties ?? {}) as Record<string, any>;
+  const props = schema.properties ?? {};
   const lines = missing.map((f) => {
-    const desc = props[f]?.description ? ` — ${props[f].description}` : '';
-    const type = props[f]?.type ? ` (${props[f].type})` : '';
+    const prop = props[f];
+    const desc = prop?.description ? ` — ${prop.description}` : '';
+    const type = prop?.type
+      ? ` (${Array.isArray(prop.type) ? prop.type.join('|') : prop.type})`
+      : '';
     return `    ${f}${type}${desc}`;
   });
   return `Missing required args for "${tool.name}":\n${lines.join('\n')}`;
@@ -176,9 +205,9 @@ function requiredFieldsError(tool: ToolDefinition, args: Record<string, any>): s
 function printToolHelp(tool: ToolDefinition): void {
   process.stdout.write(`\n  ${tool.name}\n`);
   process.stdout.write(`    ${tool.description}\n`);
-  const schema = tool.inputSchema ?? {};
-  const props = (schema.properties ?? {}) as Record<string, any>;
-  const required = new Set<string>((schema.required as string[]) ?? []);
+  const schema = schemaOf(tool);
+  const props = schema.properties ?? {};
+  const required = new Set<string>(schema.required ?? []);
   const names = Object.keys(props);
   if (names.length === 0) {
     process.stdout.write(`    (no arguments)\n\n`);
@@ -187,7 +216,7 @@ function printToolHelp(tool: ToolDefinition): void {
   process.stdout.write(`\n    Arguments:\n`);
   for (const name of names) {
     const p = props[name];
-    const type = p?.type ?? 'any';
+    const type = p?.type ? (Array.isArray(p.type) ? p.type.join('|') : p.type) : 'any';
     const enumNote = Array.isArray(p?.enum) ? ` [${p.enum.join('|')}]` : '';
     const req = required.has(name) ? ' *required*' : '';
     const desc = p?.description ? ` — ${p.description}` : '';
@@ -203,8 +232,8 @@ function printToolHelp(tool: ToolDefinition): void {
 export function registerGameCommands(program: Command) {
   // ==================== lobbies ====================
   program
-    .command("lobbies")
-    .description("List available game lobbies")
+    .command('lobbies')
+    .description('List available game lobbies')
     .action(async () => {
       const client = await createClient();
 
@@ -218,27 +247,27 @@ export function registerGameCommands(program: Command) {
 
         process.stdout.write(`\n  Active Lobbies:\n`);
         for (const lobby of lobbies) {
-          const phase = lobby.phase ?? "forming";
+          const phase = lobby.phase ?? 'lobby';
           process.stdout.write(
-            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`
+            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`,
           );
           if (lobby.gameId) {
             process.stdout.write(`    -> Game started: ${lobby.gameId}\n`);
           }
         }
         process.stdout.write(`\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== create-lobby ====================
   program
-    .command("create-lobby")
-    .description("Create a new game lobby")
-    .option("-s, --size <n>", "Team size (2-6) for CtL, player count (4-20) for OATHBREAKER", "2")
-    .option("-g, --game <name>", "Game type: capture-the-lobster or oathbreaker", "capture-the-lobster")
+    .command('create-lobby')
+    .description('Create a new game lobby')
+    .option('-s, --size <n>', 'Team size (2-6) for CtL, player count (4-20) for OATHBREAKER', '2')
+    .option('-g, --game <name>', `Game type: ${CTL_GAME_ID} or ${OATH_GAME_ID}`, CTL_GAME_ID)
     .action(async (opts) => {
       const client = await createClient();
       const gameType = opts.game;
@@ -252,31 +281,35 @@ export function registerGameCommands(program: Command) {
           process.exit(1);
         }
 
-        if (gameType === 'oathbreaker') {
+        if (gameType === OATH_GAME_ID) {
           process.stdout.write(`\n  OATHBREAKER game created: ${result.gameId}\n`);
           process.stdout.write(`  Players: ${result.playerCount}\n\n`);
-          const session = loadSession();
-          session.currentGameId = result.gameId;
-          saveSession(session);
+          if (result.gameId) {
+            const session = loadSession();
+            session.currentGameId = result.gameId;
+            saveSession(session);
+          }
         } else {
           const lobbyId = result.lobbyId;
           const teamSize = Math.min(6, Math.max(2, size));
           process.stdout.write(`\n  Lobby created: ${lobbyId}\n`);
           process.stdout.write(`  Team size: ${teamSize}v${teamSize}\n\n`);
-          const session = loadSession();
-          session.currentLobbyId = lobbyId;
-          saveSession(session);
+          if (lobbyId) {
+            const session = loadSession();
+            session.currentLobbyId = lobbyId;
+            saveSession(session);
+          }
         }
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== join ====================
   program
-    .command("join <lobbyId>")
-    .description("Join a game lobby")
+    .command('join <lobbyId>')
+    .description('Join a game lobby')
     .action(async (lobbyId: string) => {
       const client = await createClient();
 
@@ -297,44 +330,52 @@ export function registerGameCommands(program: Command) {
         const session = loadSession();
         session.currentLobbyId = lobbyId;
         saveSession(session);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== guide ====================
   program
-    .command("guide [game]")
-    .description("Dynamic playbook — game rules, your plugins, available actions")
-    .action(async (game?: string) => {
+    .command('guide [game]')
+    .description('Dynamic playbook — game rules, your plugins, available actions')
+    .option('--pretty', 'Pretty-print JSON output with 2-space indent')
+    .action(async (game: string | undefined, options: { pretty?: boolean }) => {
+      const pretty = Boolean(options.pretty);
       const client = await createClient();
 
       try {
         const result = await client.getGuide(game);
 
-        if (result.error) {
-          process.stderr.write(`  Error: ${result.error}\n`);
-          process.exit(1);
+        if (typeof result === 'object' && result !== null && 'error' in result) {
+          const errField = (result as { error?: unknown }).error;
+          if (errField) {
+            process.stderr.write(`  Error: ${JSON.stringify(errField)}\n`);
+            process.exit(1);
+          }
         }
 
-        process.stdout.write(typeof result === "string" ? result : JSON.stringify(result, null, 2));
-        process.stdout.write("\n");
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+        process.stdout.write(typeof result === 'string' ? result : formatJson(result, pretty));
+        process.stdout.write('\n');
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== state ====================
   program
-    .command("state")
-    .description("Get current game/lobby state (processed through your plugin pipeline)")
-    .action(async () => {
+    .command('state')
+    .description('Get current game/lobby state (processed through your plugin pipeline)')
+    .option('--fresh', 'Reset agent persistence (cursor + lastSeen) before fetching')
+    .option('--pretty', 'Pretty-print JSON output with 2-space indent')
+    .action(async (options: { fresh?: boolean; pretty?: boolean }) => {
+      const pretty = Boolean(options.pretty);
       const client = await createClient();
 
       try {
-        const result = await client.getState();
+        const result = await client.getState({ fresh: Boolean(options.fresh) });
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -348,23 +389,26 @@ export function registerGameCommands(program: Command) {
           saveSession(session);
         }
 
-        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+        process.stdout.write(`${formatJson(result, pretty)}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== wait ====================
   program
-    .command("wait")
-    .description("Wait for the next game update (long-poll)")
-    .action(async () => {
+    .command('wait')
+    .description('Wait for the next game update (long-poll)')
+    .option('--fresh', 'Reset agent persistence (cursor + lastSeen) before waiting')
+    .option('--pretty', 'Pretty-print JSON output with 2-space indent')
+    .action(async (options: { fresh?: boolean; pretty?: boolean }) => {
+      const pretty = Boolean(options.pretty);
       const client = await createClient();
 
       try {
-        process.stdout.write("  Waiting for update...\n");
-        const result = await client.waitForUpdate();
+        process.stdout.write('  Waiting for update...\n');
+        const result = await client.waitForUpdate({ fresh: Boolean(options.fresh) });
 
         if (result.error) {
           process.stderr.write(`  Error: ${result.error}\n`);
@@ -378,59 +422,68 @@ export function registerGameCommands(program: Command) {
           saveSession(session);
         }
 
-        process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+        process.stdout.write(`${formatJson(result, pretty)}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== tools ====================
   program
-    .command("tools")
-    .description("List tools you can call right now (current phase + local plugin tools)")
+    .command('tools')
+    .description('List tools you can call right now (current phase + local plugin tools)')
     .action(async () => {
       const client = await createClient();
       try {
         const registry = await buildCliToolRegistry(client);
         if (registry.length === 0) {
-          process.stdout.write(`\n  No tools currently callable. Join or create a lobby first.\n\n`);
+          process.stdout.write(
+            `\n  No tools currently callable. Join or create a lobby first.\n\n`,
+          );
           return;
         }
         process.stdout.write(`\n  Available tools:\n`);
         for (const d of registry) {
-          const suffix = d.source === 'plugin' ? ` [plugin:${d.pluginId}]` : '';
-          process.stdout.write(`    ${d.tool.name}${suffix} — ${d.tool.description}\n`);
+          process.stdout.write(`    ${d.tool.name} — ${d.tool.description}\n`);
         }
         process.stdout.write(`\n  Call with: coga tool <name> k=v [...]\n`);
         process.stdout.write(`  Help for one: coga tool <name> --help\n\n`);
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
     });
 
   // ==================== tool ====================
   const toolCmd = program
-    .command("tool <name> [args...]")
+    .command('tool <name> [args...]')
     .description(
-      "Invoke a tool by name (game phase tool, lobby phase tool, or plugin tool). " +
-      "Args: k=v, k=v1,v2 (array), k=@file.json (load JSON). " +
-      "Or --json '{...}' for raw passthrough. Use `coga tool <name> --schema` for schema."
+      'Invoke a tool by name (game phase tool, lobby phase tool, or plugin tool). ' +
+        'Args: k=v, k=v1,v2 (array), k=@file.json (load JSON). ' +
+        "Or --json '{...}' for raw passthrough. Use `coga tool <name> --schema` for schema.",
     );
   // Disable the auto-generated --help on this subcommand so we can reserve
   // --schema for printing the tool's inputSchema. Top-level `coga --help` and
-  // `coga help tool` still work.
-  (toolCmd as any).helpOption(false);
-  toolCmd.option("--json <payload>", "Pass raw JSON args (bypasses k=v parsing)");
-  toolCmd.option("--schema", "Print the tool's input schema and exit");
-  toolCmd.action(async (name: string, rawArgs: string[], opts: any) => {
+  // `coga help tool` still work. The `helpOption` is on Commander's internal
+  // command surface (runtime-available) but not typed in @types/commander.
+  (toolCmd as unknown as { helpOption: (flag: false) => void }).helpOption(false);
+  toolCmd.option('--json <payload>', 'Pass raw JSON args (bypasses k=v parsing)');
+  toolCmd.option('--schema', "Print the tool's input schema and exit");
+  toolCmd.option('--pretty', 'Pretty-print JSON output with 2-space indent');
+  toolCmd.action(
+    async (
+      name: string,
+      rawArgs: string[],
+      opts: { json?: string; schema?: boolean; pretty?: boolean },
+    ) => {
+      const pretty = Boolean(opts?.pretty);
       const client = await createClient();
       let registry: DiscoveredTool[];
       try {
         registry = await buildCliToolRegistry(client);
-      } catch (err: any) {
-        process.stderr.write(`  Error building tool registry: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error building tool registry: ${errMsg(err)}\n`);
         process.exit(1);
         return;
       }
@@ -441,7 +494,9 @@ export function registerGameCommands(program: Command) {
       if (opts?.schema) {
         if (!found) {
           process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
-          process.stderr.write(`  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`);
+          process.stderr.write(
+            `  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`,
+          );
           process.exit(1);
           return;
         }
@@ -451,26 +506,28 @@ export function registerGameCommands(program: Command) {
 
       if (!found) {
         process.stderr.write(`  Unknown tool "${name}" in the current phase.\n`);
-        process.stderr.write(`  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`);
+        process.stderr.write(
+          `  Tools callable now: ${registry.map((d) => d.tool.name).join(', ') || '(none)'}\n`,
+        );
         process.exit(1);
         return;
       }
 
       // Build args
-      let args: Record<string, any>;
+      let args: Record<string, unknown>;
       if (opts?.json) {
         try {
-          args = JSON.parse(opts.json);
-        } catch (err: any) {
-          process.stderr.write(`  Error: invalid --json payload: ${err.message}\n`);
+          args = JSON.parse(opts.json) as Record<string, unknown>;
+        } catch (err) {
+          process.stderr.write(`  Error: invalid --json payload: ${errMsg(err)}\n`);
           process.exit(1);
           return;
         }
       } else {
         try {
-          args = parseKvArgs(rawArgs ?? [], found.tool.inputSchema);
-        } catch (err: any) {
-          process.stderr.write(`  Error: ${err.message}\n`);
+          args = parseKvArgs(rawArgs ?? [], schemaOf(found.tool));
+        } catch (err) {
+          process.stderr.write(`  Error: ${errMsg(err)}\n`);
           process.exit(1);
           return;
         }
@@ -488,40 +545,49 @@ export function registerGameCommands(program: Command) {
       try {
         if (found.source === 'plugin' && found.pluginId === BasicChatPlugin.id) {
           // Local client-side plugin: run handleCall to get the relay envelope.
-          let out: any;
+          let out: PluginCallResult | undefined;
           try {
-            out = BasicChatPlugin.handleCall?.(name, args, { id: 'self', handle: 'self' });
-          } catch (err: any) {
-            const payload = { error: { code: 'PLUGIN_ERROR', message: `Plugin "${found.pluginId}" handleCall threw: ${err?.message ?? err}` } };
-            process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+            out = BasicChatPlugin.handleCall?.(name, args, {
+              id: 'self',
+              handle: 'self',
+            }) as PluginCallResult | undefined;
+          } catch (err) {
+            const payload = {
+              error: {
+                code: 'PLUGIN_ERROR',
+                message: `Plugin "${found.pluginId}" handleCall threw: ${errMsg(err)}`,
+              },
+            };
+            process.stdout.write(`${formatJson(payload, pretty)}\n`);
             process.exit(1);
             return;
           }
           if (out?.error) {
-            process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+            process.stdout.write(`${formatJson(out, pretty)}\n`);
             process.exit(1);
             return;
           }
           if (out?.relay) {
             const result = await client.callPluginRelay(out.relay);
-            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+            process.stdout.write(`${formatJson(result, pretty)}\n`);
             return;
           }
-          process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+          process.stdout.write(`${formatJson(out, pretty)}\n`);
           return;
         }
 
         // Phase tool (game or lobby) → unified endpoint
-        const result: any = await client.callToolRaw(name, args);
+        const result = await client.callToolRaw(name, args);
         if (result.ok) {
-          process.stdout.write(JSON.stringify(result.data, null, 2) + '\n');
+          process.stdout.write(`${formatJson(result.data, pretty)}\n`);
         } else {
-          process.stderr.write(JSON.stringify({ error: result.error }, null, 2) + '\n');
+          process.stderr.write(`${formatJson({ error: result.error }, pretty)}\n`);
           process.exit(1);
         }
-      } catch (err: any) {
-        process.stderr.write(`  Error: ${err.message}\n`);
+      } catch (err) {
+        process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
       }
-    });
+    },
+  );
 }

@@ -36,6 +36,6 @@ Existing ERC-8004 holders: same $5 fee, same flow, wrapper links existing agentI
 
 ## Bot Auth
 
-Bots skip wallet auth entirely. `createBotToken()` generates in-memory tokens. From `GameClient`'s perspective, it's just a token — same code path after that.
+Bots use the same wallet-auth flow as players — there is no bot-specific bypass. Each bot has its own wallet and `GameClient` runs the standard challenge/verify dance before the first API call. Any auth hardening applied here covers bots automatically. See `wiki/development/bot-system.md` for the bot wallet sources (ephemeral vs pool).
 
 See: `packages/workers-server/src/auth.ts`, `packages/cli/src/keys.ts`

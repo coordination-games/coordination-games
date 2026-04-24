@@ -1,46 +1,80 @@
 /**
  * MCP tool registration for the Coordination Games CLI.
  *
- * Single source of truth for the agent-facing tool surface. Post unified-tool-surface
- * cutover, tools are registered dynamically by name — one MCP tool per entry in:
+ * ============================================================================
+ * ⚠️  THIS FILE IS A BARE WRAPPER AROUND THE CLI. DO NOT ADD LOGIC HERE.
+ * ============================================================================
+ *
+ * The shell CLI (`coga`) is the primary agent path. Real agents invoke
+ * `Bash(coga state)`, `Bash(coga wait)`, etc. — MCP is secondary. Every
+ * agent-facing feature (diff/dedup, envelope assembly, compact formatting,
+ * delta semantics, plugin output routing, error taxonomy, ...) MUST live
+ * in `GameClient` (or lower) so shell and MCP share one path.
+ *
+ * MCP handlers in this file should only:
+ *   1. translate the MCP `(name, args)` call into the equivalent
+ *      `GameClient.<method>(...)` call;
+ *   2. return the result verbatim as `jsonResult()`.
+ *
+ * If you find yourself writing logic here — stop. Move it down one layer.
+ * See `wiki/architecture/mcp-not-on-server.md` and the top-of-file rule
+ * in `CLAUDE.md`.
+ *
+ * Historical incident: `AgentStateDiffer` was once instantiated here.
+ * Shell `coga state` bypassed it; real agents got zero dedup for months
+ * before anyone noticed. Don't reprise.
+ *
+ * ============================================================================
+ *
+ * Tool surface is registered at startup — one MCP tool per entry in:
  *
  *   - game.gameTools                 (every registered game)
  *   - game.lobby.phases[*].tools     (every registered game)
  *   - pluginTools with mcpExpose     (client-side ToolPlugin.tools)
  *
- * The full surface is registered at startup (the superset across all phases).
- * Tools that aren't callable in the current phase return a structured
- * WRONG_PHASE error from the server dispatcher — we do NOT dynamically
- * re-register MCP tools when phases change (MCP protocol can't do that cleanly).
+ * Tools not callable in the current phase return a structured WRONG_PHASE
+ * error from the server dispatcher. We do NOT dynamically re-register MCP
+ * tools when phases change (MCP protocol can't do that cleanly).
  *
  * Auth is handled transparently by GameClient (wallet-based challenge-response).
  * No auth tools are exposed to agents.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import type { GameClient } from "./game-client.js";
-import type {
-  ToolPlugin,
-  ToolDefinition,
-  CoordinationGame,
-} from "@coordination-games/engine";
+import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
+import { CTL_GAME_ID } from '@coordination-games/game-ctl';
+import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import type { GameClient } from './game-client.js';
+import type { JsonSchema, PluginCallResult } from './types.js';
+
+/** A CoordinationGame of any shape — the CLI just registers tools by name. */
+export type AnyCoordinationGame = CoordinationGame<unknown, unknown, unknown, unknown>;
 
 export interface RegisterToolsOptions {
-  /** When true, indicates this is a bot session (reserved for future bot-specific behavior). */
-  botMode?: boolean;
   /** Active plugins — their mcpExpose tools get registered as MCP tools. */
   plugins?: ToolPlugin[];
   /** Registered games — declared surface used for dynamic MCP tool registration. */
-  games?: CoordinationGame<any, any, any, any>[];
+  games?: AnyCoordinationGame[];
 }
 
 /** Static top-level CLI commands. Must not collide with any dynamic tool. */
 export const STATIC_CLI_COMMANDS: readonly string[] = Object.freeze([
-  'init', 'status', 'wallet', 'name', 'names',
-  'serve', 'verify',
-  'lobbies', 'create-lobby', 'join', 'state', 'wait', 'guide',
-  'tools', 'tool',
+  'init',
+  'status',
+  'wallet',
+  'name',
+  'names',
+  'serve',
+  'verify',
+  'lobbies',
+  'create-lobby',
+  'join',
+  'state',
+  'wait',
+  'guide',
+  'tools',
+  'tool',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -81,10 +115,7 @@ interface SurfaceEntry {
   plugin?: ToolPlugin;
 }
 
-function buildFullSurface(
-  games: CoordinationGame<any, any, any, any>[],
-  plugins: ToolPlugin[],
-): SurfaceEntry[] {
+function buildFullSurface(games: AnyCoordinationGame[], plugins: ToolPlugin[]): SurfaceEntry[] {
   const entries: SurfaceEntry[] = [];
   for (const game of games) {
     for (const tool of game.gameTools ?? []) {
@@ -154,22 +185,22 @@ function checkSurfaceCollisions(entries: SurfaceEntry[]): void {
  *
  * Unknown shapes fall back to z.any() with the description attached.
  */
-function jsonPropToZod(prop: any): z.ZodTypeAny {
+function jsonPropToZod(prop: JsonSchema | undefined): z.ZodTypeAny {
   if (!prop || typeof prop !== 'object') return z.any();
 
-  const desc: string | undefined = typeof prop.description === 'string' ? prop.description : undefined;
+  const desc = typeof prop.description === 'string' ? prop.description : undefined;
   const attach = (s: z.ZodTypeAny) => (desc ? s.describe(desc) : s);
 
   if (Array.isArray(prop.oneOf) || Array.isArray(prop.anyOf)) {
-    const variants = (prop.oneOf ?? prop.anyOf).map(jsonPropToZod);
-    if (variants.length === 1) return attach(variants[0]);
+    const variants = (prop.oneOf ?? prop.anyOf ?? []).map(jsonPropToZod);
+    if (variants.length === 1 && variants[0]) return attach(variants[0]);
     // z.union requires at least 2 schemas — safe since we checked.
     return attach(z.union(variants as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]));
   }
 
   if (Array.isArray(prop.type)) {
-    const variants = prop.type.map((t: string) => jsonPropToZod({ ...prop, type: t }));
-    if (variants.length === 1) return attach(variants[0]);
+    const variants = prop.type.map((t) => jsonPropToZod({ ...prop, type: t }));
+    if (variants.length === 1 && variants[0]) return attach(variants[0]);
     return attach(z.union(variants as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]));
   }
 
@@ -199,7 +230,7 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
 
   if (type === 'object') {
     const shape: Record<string, z.ZodTypeAny> = {};
-    const props = (prop.properties ?? {}) as Record<string, any>;
+    const props = prop.properties ?? {};
     const required = new Set<string>(Array.isArray(prop.required) ? prop.required : []);
     for (const [k, v] of Object.entries(props)) {
       let zs = jsonPropToZod(v);
@@ -216,10 +247,13 @@ function jsonPropToZod(prop: any): z.ZodTypeAny {
  * Build the per-property zod shape map that `McpServer.tool()` expects from a
  * top-level `inputSchema` object (which is always `{type:'object', properties, required}`).
  */
-function toolInputShape(inputSchema: Record<string, any> | undefined): Record<string, z.ZodTypeAny> {
+function toolInputShape(
+  inputSchema: Record<string, unknown> | undefined,
+): Record<string, z.ZodTypeAny> {
   if (!inputSchema || typeof inputSchema !== 'object') return {};
-  const props = (inputSchema.properties ?? {}) as Record<string, any>;
-  const required = new Set<string>(Array.isArray(inputSchema.required) ? inputSchema.required : []);
+  const schema = inputSchema as JsonSchema;
+  const props = schema.properties ?? {};
+  const required = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const [k, v] of Object.entries(props)) {
     let zs = jsonPropToZod(v);
@@ -256,70 +290,79 @@ export function registerGameTools(
   // ---------------------------------------------------------------------------
 
   server.tool(
-    'get_guide',
+    'guide',
     'Get the game rules, your current status, and available tools. Pass game name to get a specific guide.',
-    { game: z.string().optional().describe('Game name (e.g. "capture-the-lobster", "oathbreaker"). Auto-detects if omitted.') },
-    async (args: any) => {
+    {
+      game: z
+        .string()
+        .optional()
+        .describe(`Game name (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Auto-detects if omitted.`),
+    },
+    async (args) => {
       try {
         const result = await client.getGuide(args.game);
         return jsonResult(result);
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
   );
 
   server.tool(
-    'get_state',
-    'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*.',
-    {},
-    async () => {
+    'state',
+    'Get current game or lobby state (fog-of-war filtered). Includes `currentPhase.tools` — the list of tool names callable *right now*. Top-level keys whose value did not change since your last observation are omitted; their names appear in `_unchangedKeys` and you should reuse the last-seen value. `newMessages` is a DELTA — only messages new since your previous call; accumulate them client-side. Pass `fresh: true` to bypass the cache and force a full re-sync (rarely needed — use only if you suspect the cache is stale).',
+    {
+      fresh: z
+        .boolean()
+        .optional()
+        .describe('Bypass client-side state cache and refetch full state'),
+    },
+    async ({ fresh }) => {
       try {
-        const result = await client.getState();
+        // GameClient.getState applies the agent-state diff for scoped calls.
+        // MCP is a thin wrapper — it MUST NOT re-implement dedup here.
+        const result = await client.getState({ fresh });
         return jsonResult(result);
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
   );
 
   server.tool(
-    'wait_for_update',
-    'Main game loop — blocks until the next event (turn change, chat, phase transition)',
+    'wait',
+    'Main game loop — blocks until the next event (turn change, chat, phase transition). Top-level state keys that did not change since your last observation are omitted; their names appear in `_unchangedKeys` and you should reuse the last-seen value. `newMessages` is a DELTA — only messages new since your previous call; accumulate them client-side.',
     {},
     async () => {
       try {
+        // GameClient.waitForUpdate applies the agent-state diff for scoped
+        // calls. MCP is a thin wrapper — no dedup logic here.
         const result = await client.waitForUpdate();
         return jsonResult(result);
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
   );
 
-  server.tool(
-    'list_lobbies',
-    'List available game lobbies',
-    {},
-    async () => {
-      try {
-        const result = await client.listLobbies();
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
+  server.tool('lobbies', 'List available game lobbies', {}, async () => {
+    try {
+      const result = await client.listLobbies();
+      return jsonResult(result);
+    } catch (err) {
+      return jsonError(err);
+    }
+  });
 
   server.tool(
-    'join_lobby',
+    'join',
     'Join an existing lobby by ID',
     { lobbyId: z.string().describe('The lobby ID to join') },
     async ({ lobbyId }) => {
       try {
         const result = await client.joinLobby(lobbyId);
         return jsonResult(result);
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
@@ -329,52 +372,40 @@ export function registerGameTools(
     'create_lobby',
     'Create a new lobby (you are auto-joined)',
     {
-      gameType: z.string().optional().describe('Game type (e.g. "capture-the-lobster", "oathbreaker"). Defaults to capture-the-lobster.'),
-      teamSize: z.number().min(2).max(6).optional().describe('Players per team for CtL (2-6, default 2)'),
-      playerCount: z.number().min(4).max(20).optional().describe('Number of players for OATHBREAKER (4-20, default 4)'),
+      gameType: z
+        .string()
+        .optional()
+        .describe(
+          `Game type (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Defaults to ${CTL_GAME_ID}.`,
+        ),
+      teamSize: z
+        .number()
+        .min(2)
+        .max(6)
+        .optional()
+        .describe('Players per team for CtL (2-6, default 2)'),
+      playerCount: z
+        .number()
+        .min(4)
+        .max(20)
+        .optional()
+        .describe('Number of players for OATHBREAKER (4-20, default 4)'),
     },
     async ({ gameType, teamSize, playerCount }) => {
       try {
-        const game = gameType || 'capture-the-lobster';
-        const size = game === 'oathbreaker' ? (playerCount || 4) : (teamSize || 2);
+        const game = gameType || CTL_GAME_ID;
+        const size = game === OATH_GAME_ID ? playerCount || 4 : teamSize || 2;
         const result = await client.createLobby(game, size);
         return jsonResult(result);
-      } catch (err: any) {
+      } catch (err) {
         return jsonError(err);
       }
     },
   );
 
-  server.tool(
-    'get_leaderboard',
-    'View the ELO leaderboard',
-    {
-      limit: z.number().optional().describe('Number of entries (default 20, max 100)'),
-      offset: z.number().optional().describe('Offset for pagination'),
-    },
-    async ({ limit, offset }) => {
-      try {
-        const result = await client.getLeaderboard(limit, offset);
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
-
-  server.tool(
-    'get_my_stats',
-    'View your own ELO rating, rank, and game history',
-    {},
-    async () => {
-      try {
-        const result = await client.getMyStats();
-        return jsonResult(result);
-      } catch (err: any) {
-        return jsonError(err);
-      }
-    },
-  );
+  // Phase 5.2: ELO tools (`get_leaderboard`, `get_my_stats`) used to be
+  // hard-coded here; they now come from the dynamic plugin registration
+  // path below — no per-plugin static stubs in the CLI.
 
   // ---------------------------------------------------------------------------
   // Dynamic per-name tools from the declared surface
@@ -391,57 +422,51 @@ export function registerGameTools(
 
     if (entry.kind === 'plugin' && entry.plugin) {
       const plugin = entry.plugin;
-      server.tool(
-        toolName,
-        tool.description,
-        shape,
-        async (args: any) => {
-          // Plugin tools are client-side: run handleCall locally, then post
-          // any returned relay envelope to the unified endpoint.
-          let out: any;
+      server.tool(toolName, tool.description, shape, async (args: Record<string, unknown>) => {
+        // Plugin tools are client-side: run handleCall locally, then post
+        // any returned relay envelope to the unified endpoint.
+        let out: PluginCallResult | undefined;
+        try {
+          out = plugin.handleCall?.(toolName, args, {
+            id: 'self',
+            handle: 'self',
+          }) as PluginCallResult | undefined;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return jsonError({
+            error: {
+              code: 'PLUGIN_ERROR',
+              message: `Plugin "${plugin.id}" handleCall threw: ${msg}`,
+            },
+          });
+        }
+        if (out && typeof out === 'object' && 'error' in out && out.error) {
+          return jsonError(out);
+        }
+        if (out && typeof out === 'object' && out.relay) {
           try {
-            out = plugin.handleCall?.(toolName, args, {
-              id: 'self',
-              handle: 'self',
-            });
-          } catch (err: any) {
-            return jsonError({
-              error: {
-                code: 'PLUGIN_ERROR',
-                message: `Plugin "${plugin.id}" handleCall threw: ${err?.message ?? String(err)}`,
-              },
-            });
+            // GameClient.callPluginRelay applies the diff for scoped calls.
+            const result = await client.callPluginRelay(out.relay);
+            return jsonResult(result);
+          } catch (err) {
+            // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
+            const structured = (err as { structured?: { error: unknown } } | undefined)?.structured;
+            if (structured) return jsonError(structured);
+            return jsonError(err);
           }
-          if (out && typeof out === 'object' && 'error' in out) {
-            return jsonError(out);
-          }
-          if (out && typeof out === 'object' && out.relay) {
-            try {
-              const result = await client.callPluginRelay(out.relay);
-              return jsonResult(result);
-            } catch (err: any) {
-              // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
-              if (err?.structured) return jsonError(err.structured);
-              return jsonError(err);
-            }
-          }
-          // Plugin returned a plain value (no relay post needed).
-          return jsonResult(out);
-        },
-      );
+        }
+        // Plugin returned a plain value (no relay post needed).
+        return jsonResult(out);
+      });
     } else {
       // Game / lobby-phase tool: dispatch through the unified endpoint.
-      server.tool(
-        toolName,
-        tool.description,
-        shape,
-        async (args: any) => {
-          const result: any = await client.callToolRaw(toolName, args ?? {});
-          if (result.ok) return jsonResult(result.data);
-          // Structured error — surface it so the agent can self-correct.
-          return jsonError({ error: result.error });
-        },
-      );
+      // GameClient.callToolRaw applies the diff for scoped calls.
+      server.tool(toolName, tool.description, shape, async (args: Record<string, unknown>) => {
+        const result = await client.callToolRaw(toolName, args ?? {});
+        if (result.ok) return jsonResult(result.data);
+        // Structured error — surface it so the agent can self-correct.
+        return jsonError({ error: result.error });
+      });
     }
   }
 }
@@ -456,14 +481,15 @@ function jsonResult(data: unknown) {
   };
 }
 
-function jsonError(err: any) {
+function jsonError(err: unknown) {
   // Accept either a thrown Error (from ApiClient) or a structured
   // `{error: {code, message, ...}}` payload from the dispatcher.
-  let payload: any;
+  let payload: { error: unknown };
   if (err && typeof err === 'object' && 'error' in err) {
-    payload = err;
+    payload = err as { error: unknown };
   } else {
-    payload = { error: { code: 'CLIENT_ERROR', message: err?.message ?? String(err) } };
+    const message = err instanceof Error ? err.message : String(err);
+    payload = { error: { code: 'CLIENT_ERROR', message } };
   }
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(payload) }],

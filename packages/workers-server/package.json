@@ -14,7 +14,9 @@
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
     "@coordination-games/game-oathbreaker": "*",
-    "viem": "^2.0.0"
+    "@coordination-games/plugin-chat": "*",
+    "viem": "^2.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "ajv": "^8.17.1",

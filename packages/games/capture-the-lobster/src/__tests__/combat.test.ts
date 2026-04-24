@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { beats, resolveCombat, CombatUnit } from '../combat.js';
-import { Hex, hexToString } from '../hex.js';
+import { describe, expect, it } from 'vitest';
+import { beats, type CombatUnit, resolveCombat } from '../combat.js';
+import { hexToString } from '../hex.js';
 
 // Helper to make units concisely
 function unit(
@@ -79,10 +79,7 @@ describe('resolveCombat() — melee', () => {
   });
 
   it('same-class same-hex: both die', () => {
-    const units = [
-      unit('r1', 'A', 'rogue', 3, 3),
-      unit('r2', 'B', 'rogue', 3, 3),
-    ];
+    const units = [unit('r1', 'A', 'rogue', 3, 3), unit('r2', 'B', 'rogue', 3, 3)];
     const result = resolveCombat(units, noWalls);
 
     expect(result.deaths.has('r1')).toBe(true);
@@ -105,27 +102,19 @@ describe('resolveCombat() — melee', () => {
 describe('resolveCombat() — mage ranged', () => {
   it('mage kills knight at distance 2 with clear LoS', () => {
     // distance 2: (0,0) -> (2,0) via SE twice
-    const units = [
-      unit('m1', 'A', 'mage', 0, 0),
-      unit('k1', 'B', 'knight', 2, 0),
-    ];
+    const units = [unit('m1', 'A', 'mage', 0, 0), unit('k1', 'B', 'knight', 2, 0)];
     const noWalls = new Set<string>();
     const result = resolveCombat(units, noWalls);
 
     expect(result.deaths.has('k1')).toBe(true);
     expect(result.deaths.has('m1')).toBe(false);
-    const rangedKill = result.kills.find(
-      (k) => k.killerId === 'm1' && k.victimId === 'k1',
-    );
+    const rangedKill = result.kills.find((k) => k.killerId === 'm1' && k.victimId === 'k1');
     expect(rangedKill).toBeDefined();
-    expect(rangedKill!.reason).toContain('ranged');
+    expect(rangedKill?.reason).toContain('ranged');
   });
 
   it('mage ranged kill blocked by wall', () => {
-    const units = [
-      unit('m1', 'A', 'mage', 0, 0),
-      unit('k1', 'B', 'knight', 2, 0),
-    ];
+    const units = [unit('m1', 'A', 'mage', 0, 0), unit('k1', 'B', 'knight', 2, 0)];
     // Wall at the intermediate hex (1,0)
     const walls = new Set<string>([hexToString({ q: 1, r: 0 })]);
     const result = resolveCombat(units, walls);
@@ -135,10 +124,7 @@ describe('resolveCombat() — mage ranged', () => {
   });
 
   it('mage does NOT ranged-kill rogues at distance 2', () => {
-    const units = [
-      unit('m1', 'A', 'mage', 0, 0),
-      unit('r1', 'B', 'rogue', 2, 0),
-    ];
+    const units = [unit('m1', 'A', 'mage', 0, 0), unit('r1', 'B', 'rogue', 2, 0)];
     const noWalls = new Set<string>();
     const result = resolveCombat(units, noWalls);
 
@@ -146,10 +132,7 @@ describe('resolveCombat() — mage ranged', () => {
   });
 
   it('mage does NOT ranged-kill other mages at distance 2', () => {
-    const units = [
-      unit('m1', 'A', 'mage', 0, 0),
-      unit('m2', 'B', 'mage', 2, 0),
-    ];
+    const units = [unit('m1', 'A', 'mage', 0, 0), unit('m2', 'B', 'mage', 2, 0)];
     const noWalls = new Set<string>();
     const result = resolveCombat(units, noWalls);
 
@@ -164,8 +147,8 @@ describe('resolveCombat() — simultaneous resolution', () => {
     // distance from (0,0) to (0,-2): |0| + |-2| + |0+(-2)| / 2 = (0+2+2)/2 = 2 ✓
     const units = [
       unit('m1', 'A', 'mage', 0, 0),
-      unit('r1', 'B', 'rogue', 1, 0),   // adjacent, rogue beats mage → mage dies
-      unit('k1', 'B', 'knight', 0, -2),  // distance 2 from mage, no wall
+      unit('r1', 'B', 'rogue', 1, 0), // adjacent, rogue beats mage → mage dies
+      unit('k1', 'B', 'knight', 0, -2), // distance 2 from mage, no wall
     ];
     const noWalls = new Set<string>();
     const result = resolveCombat(units, noWalls);
@@ -182,8 +165,8 @@ describe('resolveCombat() — simultaneous resolution', () => {
     // A rogue surrounded by two enemy knights
     const units = [
       unit('r1', 'A', 'rogue', 0, 0),
-      unit('k1', 'B', 'knight', 1, 0),   // adjacent
-      unit('k2', 'B', 'knight', -1, 0),  // adjacent
+      unit('k1', 'B', 'knight', 1, 0), // adjacent
+      unit('k2', 'B', 'knight', -1, 0), // adjacent
     ];
     const noWalls = new Set<string>();
     const result = resolveCombat(units, noWalls);

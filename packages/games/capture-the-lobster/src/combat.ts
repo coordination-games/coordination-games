@@ -1,6 +1,6 @@
-import { Hex, hexDistance, hexToString } from './hex.js';
+import { type Hex, hexDistance } from './hex.js';
 import { hasLineOfSight } from './los.js';
-import { UnitClass } from './movement.js';
+import type { UnitClass } from './movement.js';
 
 export const CLASS_VISION: Record<UnitClass, number> = {
   rogue: 4,
@@ -45,10 +45,7 @@ export interface CombatResult {
  * @param units  All units on the board after movement.
  * @param walls  Set of "q,r" strings for LoS checks.
  */
-export function resolveCombat(
-  units: CombatUnit[],
-  walls: Set<string>,
-): CombatResult {
+export function resolveCombat(units: CombatUnit[], walls: Set<string>): CombatResult {
   const kills: { killerId: string; victimId: string; reason: string }[] = [];
 
   // Phase 1a: Melee — check every pair of opposing units within distance ≤ 1
@@ -58,39 +55,56 @@ export function resolveCombat(
       const b = units[j];
 
       // Skip same-team pairs
+      // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
       if (a.team === b.team) continue;
 
+      // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
       const dist = hexDistance(a.position, b.position);
       if (dist > 1) continue;
 
+      // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
       if (a.unitClass === b.unitClass) {
         // Same class: mutual kill only on same hex (distance 0)
         if (dist === 0) {
           kills.push({
+            // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
             killerId: a.id,
+            // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
             victimId: b.id,
+            // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
             reason: `mutual kill (same class ${a.unitClass} on same hex)`,
           });
           kills.push({
+            // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
             killerId: b.id,
+            // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
             victimId: a.id,
+            // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
             reason: `mutual kill (same class ${b.unitClass} on same hex)`,
           });
         }
         // Same class at distance 1: nothing happens
       } else {
         // Different classes: RPS resolution
+        // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
         if (beats(a.unitClass, b.unitClass)) {
           kills.push({
+            // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
             killerId: a.id,
+            // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
             victimId: b.id,
+            // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
             reason: `${a.unitClass} beats ${b.unitClass} in melee`,
           });
         }
+        // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
         if (beats(b.unitClass, a.unitClass)) {
           kills.push({
+            // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
             killerId: b.id,
+            // @ts-expect-error TS18048: 'a' is possibly 'undefined'. — TODO(2.3-followup)
             victimId: a.id,
+            // @ts-expect-error TS18048: 'b' is possibly 'undefined'. — TODO(2.3-followup)
             reason: `${b.unitClass} beats ${a.unitClass} in melee`,
           });
         }

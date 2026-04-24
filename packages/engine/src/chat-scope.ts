@@ -31,7 +31,8 @@ export function validateChatScope(
   const kind = classifyScope(scope);
   if (kind === 'all') return null;
   if (!allowed || allowed.includes(kind)) return null;
-  const allowedList = ['all', ...allowed.filter(k => k !== 'all')].join(', ');
-  if (kind === 'team') return `Chat scope "team" is not supported in this game. Allowed scopes: ${allowedList}.`;
+  const allowedList = ['all', ...allowed.filter((k) => k !== 'all')].join(', ');
+  if (kind === 'team')
+    return `Chat scope "team" is not supported in this game. Allowed scopes: ${allowedList}.`;
   return `Chat scope "${scope}" (DM) is not supported in this game. Allowed scopes: ${allowedList}.`;
 }

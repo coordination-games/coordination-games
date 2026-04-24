@@ -1,12 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { type Hex, hexEquals, hexToString } from '../hex.js';
 import {
-  validatePath,
-  resolveMovements,
   CLASS_SPEED,
-  type MoveUnit,
   type MoveSubmission,
+  type MoveUnit,
+  resolveMovements,
+  validatePath,
 } from '../movement.js';
-import { hexToString, hexEquals, type Hex } from '../hex.js';
 
 // Helper: build a set of valid tile strings from an array of hexes
 function tileSet(hexes: Hex[]): Set<string> {
@@ -17,11 +17,7 @@ function tileSet(hexes: Hex[]): Set<string> {
 function makeGrid(radius = 3): Set<string> {
   const tiles: Hex[] = [];
   for (let q = -radius; q <= radius; q++) {
-    for (
-      let r = Math.max(-radius, -q - radius);
-      r <= Math.min(radius, -q + radius);
-      r++
-    ) {
+    for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) {
       tiles.push({ q, r });
     }
   }
@@ -29,7 +25,9 @@ function makeGrid(radius = 3): Set<string> {
 }
 
 function findResult(results: ReturnType<typeof resolveMovements>, unitId: string) {
-  return results.find((r) => r.unitId === unitId)!;
+  const r = results.find((x) => x.unitId === unitId);
+  if (!r) throw new Error(`expected movement result for ${unitId}`);
+  return r;
 }
 
 // ─── validatePath ───────────────────────────────────────────────────────────
@@ -122,7 +120,10 @@ describe('resolveMovements', () => {
 
   it('movement into wall stops at last valid hex', () => {
     // Grid is only the origin and N neighbor
-    const tiles = tileSet([{ q: 0, r: 0 }, { q: 0, r: -1 }]);
+    const tiles = tileSet([
+      { q: 0, r: 0 },
+      { q: 0, r: -1 },
+    ]);
     const unit: MoveUnit = { id: 'u1', team: 'A', unitClass: 'knight', position: { q: 0, r: 0 } };
     // Try to move N then N again — second step goes off valid tiles
     const sub: MoveSubmission = { unitId: 'u1', path: ['N', 'N'] };
@@ -149,7 +150,11 @@ describe('resolveMovements', () => {
 
   it('multi-step path hits wall mid-way: stops at correct hex', () => {
     // A line of 3 valid hexes going N from origin: (0,0), (0,-1), (0,-2)
-    const tiles = tileSet([{ q: 0, r: 0 }, { q: 0, r: -1 }, { q: 0, r: -2 }]);
+    const tiles = tileSet([
+      { q: 0, r: 0 },
+      { q: 0, r: -1 },
+      { q: 0, r: -2 },
+    ]);
     const unit: MoveUnit = { id: 'u1', team: 'A', unitClass: 'rogue', position: { q: 0, r: 0 } };
     // Move N, N, N — third step goes to (0,-3) which is off-map
     const sub: MoveSubmission = { unitId: 'u1', path: ['N', 'N', 'N'] };
@@ -181,11 +186,11 @@ describe('resolveMovements', () => {
 
   it('friendly stacking prevented: two teammates targeting same hex, one backtracks', () => {
     // u1 starts at (0,0), u2 starts at (1,-1). Both try to reach (0,-1) via N / SW.
-    const u1: MoveUnit = { id: 'u1', team: 'A', unitClass: 'knight', position: { q: 0, r: 0 } };
-    const u2: MoveUnit = { id: 'u2', team: 'A', unitClass: 'knight', position: { q: 1, r: -1 } };
-    const subs: MoveSubmission[] = [
-      { unitId: 'u1', path: ['N'] },        // (0,0) → (0,-1)
-      { unitId: 'u2', path: ['NW', 'S'] },  // (1,-1) → (0,-1) → (0,0)... wait
+    const _u1: MoveUnit = { id: 'u1', team: 'A', unitClass: 'knight', position: { q: 0, r: 0 } };
+    const _u2: MoveUnit = { id: 'u2', team: 'A', unitClass: 'knight', position: { q: 1, r: -1 } };
+    const _subs: MoveSubmission[] = [
+      { unitId: 'u1', path: ['N'] }, // (0,0) → (0,-1)
+      { unitId: 'u2', path: ['NW', 'S'] }, // (1,-1) → (0,-1) → (0,0)... wait
     ];
     // Simpler: both move 1 step to same hex
     const u3: MoveUnit = { id: 'u3', team: 'B', unitClass: 'mage', position: { q: 0, r: -2 } };
@@ -248,15 +253,15 @@ describe('resolveMovements', () => {
     ]);
 
     const units: MoveUnit[] = [
-      { id: 'a1', team: 'A', unitClass: 'knight', position: { q: 0, r: 0 } },   // will move N
-      { id: 'a2', team: 'A', unitClass: 'mage', position: { q: 0, r: -2 } },     // holds
-      { id: 'b1', team: 'B', unitClass: 'rogue', position: { q: 1, r: -1 } },    // tries NE (wall), stops
+      { id: 'a1', team: 'A', unitClass: 'knight', position: { q: 0, r: 0 } }, // will move N
+      { id: 'a2', team: 'A', unitClass: 'mage', position: { q: 0, r: -2 } }, // holds
+      { id: 'b1', team: 'B', unitClass: 'rogue', position: { q: 1, r: -1 } }, // tries NE (wall), stops
     ];
 
     const subs: MoveSubmission[] = [
-      { unitId: 'a1', path: ['N'] },          // (0,0) → (0,-1) ✓
+      { unitId: 'a1', path: ['N'] }, // (0,0) → (0,-1) ✓
       // a2 has no submission — holds at (0,-2)
-      { unitId: 'b1', path: ['NE'] },         // (1,-1) → (2,-2) — not in tiles, blocked
+      { unitId: 'b1', path: ['NE'] }, // (1,-1) → (2,-2) — not in tiles, blocked
     ];
 
     const results = resolveMovements(units, subs, tiles);
@@ -284,8 +289,8 @@ describe('resolveMovements', () => {
     const u1: MoveUnit = { id: 'u1', team: 'A', unitClass: 'knight', position: { q: 0, r: 0 } };
     const u2: MoveUnit = { id: 'u2', team: 'A', unitClass: 'knight', position: { q: 1, r: 0 } };
     const subs: MoveSubmission[] = [
-      { unitId: 'u1', path: ['N'] },          // (0,0) → (0,-1)
-      { unitId: 'u2', path: ['NW', 'N'] },    // (1,0) → (0,0) → (0,-1)
+      { unitId: 'u1', path: ['N'] }, // (0,0) → (0,-1)
+      { unitId: 'u2', path: ['NW', 'N'] }, // (1,0) → (0,0) → (0,-1)
     ];
     const results = resolveMovements([u1, u2], subs, makeGrid());
 
@@ -309,7 +314,7 @@ describe('resolveMovements', () => {
     const u2: MoveUnit = { id: 'u2', team: 'A', unitClass: 'mage', position: { q: 0, r: 0 } };
     const subs: MoveSubmission[] = [
       // u1 holds (no submission)
-      { unitId: 'u2', path: ['N'] },  // tries to go to (0,-1)
+      { unitId: 'u2', path: ['N'] }, // tries to go to (0,-1)
     ];
     const results = resolveMovements([u1, u2], subs, makeGrid());
 

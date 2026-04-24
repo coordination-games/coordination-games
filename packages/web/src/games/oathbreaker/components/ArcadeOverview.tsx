@@ -1,12 +1,12 @@
+import type { CharacterAssignment } from '../utils/characterAssignment';
 import { CharacterSprite } from './CharacterSprite';
 import { HealthBar } from './HealthBar';
-import type { CharacterAssignment } from '../utils/characterAssignment';
 
 // ---- Types ----
 
 interface OathPlayer {
   id: string;
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   cooperationRate: number;
   oathsKept: number;
@@ -55,20 +55,27 @@ function AgentCard({
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`arcade-card ${inBattle ? 'active' : ''}`}
       style={{ textAlign: 'left', width: '100%' }}
     >
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
         {/* Character portrait */}
-        <div style={{
-          width: 64, height: 80,
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-          background: '#0a0a0f',
-          border: '1px solid #1f2937',
-          flexShrink: 0,
-          overflow: 'hidden',
-        }}>
+        <div
+          style={{
+            width: 64,
+            height: 80,
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'center',
+            background: '#0a0a0f',
+            border: '1px solid #1f2937',
+            flexShrink: 0,
+            overflow: 'hidden',
+          }}
+        >
+          {/* @ts-expect-error TS2375: Type '{ character: string; pose: "idle"; scale: number; tint: string | null | un — TODO(2.3-followup) */}
           <CharacterSprite
             character={char?.characterName ?? 'buchu'}
             pose="idle"
@@ -79,27 +86,45 @@ function AgentCard({
 
         {/* Stats */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb' }}>{name}</span>
-            <span className="pixel-text" style={{
-              fontSize: 6,
-              padding: '2px 6px',
-              background: inBattle ? 'rgba(59, 130, 246, 0.15)' : 'rgba(107, 114, 128, 0.1)',
-              color: inBattle ? '#60a5fa' : '#9ca3af',
-            }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 6,
+            }}
+          >
+            <span className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb' }}>
+              {name}
+            </span>
+            <span
+              className="pixel-text"
+              style={{
+                fontSize: 6,
+                padding: '2px 6px',
+                background: inBattle ? 'rgba(59, 130, 246, 0.15)' : 'rgba(107, 114, 128, 0.1)',
+                color: inBattle ? '#60a5fa' : '#9ca3af',
+              }}
+            >
               {status}
             </span>
           </div>
 
-          <HealthBar dollarValue={player.dollarValue} breakEvenDelta={player.breakEvenDelta} />
+          <HealthBar creditValue={player.creditValue} breakEvenDelta={player.breakEvenDelta} />
 
-          <div className="pixel-text" style={{
-            display: 'flex', justifyContent: 'space-between',
-            marginTop: 4, fontSize: 6, color: '#d1d5db',
-          }}>
+          <div
+            className="pixel-text"
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              marginTop: 4,
+              fontSize: 6,
+              color: '#d1d5db',
+            }}
+          >
             <span>
-              OATHS: <span style={{ color: '#4ade80' }}>{player.oathsKept}</span>
-              /<span style={{ color: '#f87171' }}>{player.oathsBroken}</span>
+              OATHS: <span style={{ color: '#4ade80' }}>{player.oathsKept}</span>/
+              <span style={{ color: '#f87171' }}>{player.oathsBroken}</span>
               {totalOaths > 0 && ` (${Math.round(player.cooperationRate * 100)}%)`}
             </span>
           </div>
@@ -133,26 +158,50 @@ export function ArcadeOverview({
   onSelectPlayer,
 }: ArcadeOverviewProps) {
   // Sort by dollar value descending
-  const sorted = [...players].sort((a, b) => b.dollarValue - a.dollarValue);
+  const sorted = [...players].sort((a, b) => b.creditValue - a.creditValue);
 
   const getPairing = (playerId: string) =>
-    pairings.find(p => p.player1 === playerId || p.player2 === playerId);
+    pairings.find((p) => p.player1 === playerId || p.player2 === playerId);
 
   return (
-    <div className="arcade-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 16 }}>
+    <div
+      className="arcade-screen"
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 16 }}
+    >
       {/* Title */}
-      <div style={{
-        textAlign: 'center', padding: '16px 0 12px',
-        borderBottom: '2px solid #1f2937', marginBottom: 16,
-      }}>
-        <div className="pixel-text" style={{
-          fontSize: 16, color: '#e9d852', letterSpacing: 6,
-          textShadow: '0 0 12px rgba(233, 216, 82, 0.5)',
-        }}>
+      <div
+        style={{
+          textAlign: 'center',
+          padding: '16px 0 12px',
+          borderBottom: '2px solid #1f2937',
+          marginBottom: 16,
+        }}
+      >
+        <div
+          className="pixel-text"
+          style={{
+            fontSize: 16,
+            color: '#e9d852',
+            letterSpacing: 6,
+            textShadow: '0 0 12px rgba(233, 216, 82, 0.5)',
+          }}
+        >
           OATHBREAKER
         </div>
-        <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{ height: 120, imageRendering: 'pixelated', display: 'block', margin: '8px auto 0' }} />
-        <div className="pixel-text" style={{ fontSize: 10, color: '#d1d5db', marginTop: 6, letterSpacing: 3 }}>
+        <img
+          src="/assets/oathbreaker/kanji-title-pixel.png"
+          alt="誓約破り"
+          style={{
+            height: 120,
+            imageRendering: 'pixelated',
+            display: 'block',
+            margin: '8px auto 0',
+          }}
+        />
+        <div
+          className="pixel-text"
+          style={{ fontSize: 10, color: '#d1d5db', marginTop: 6, letterSpacing: 3 }}
+        >
           Seiyaku-yaburi
         </div>
         <div className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb', marginTop: 10 }}>
@@ -163,14 +212,17 @@ export function ArcadeOverview({
       </div>
 
       {/* Agent grid */}
-      <div style={{
-        flex: 1, overflowY: 'auto',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: 8,
-        alignContent: 'start',
-      }}>
-        {sorted.map(player => {
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gap: 8,
+          alignContent: 'start',
+        }}
+      >
+        {sorted.map((player) => {
           const pairing = getPairing(player.id);
           return (
             <AgentCard
@@ -178,7 +230,7 @@ export function ArcadeOverview({
               player={player}
               handles={handles}
               characters={characters}
-              pairing={pairing}
+              pairing={pairing as OathSpectatorPairing}
               onClick={() => onSelectPlayer(player.id)}
             />
           );

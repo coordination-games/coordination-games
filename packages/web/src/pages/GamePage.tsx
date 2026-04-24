@@ -1,90 +1,39 @@
-import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { getSpectatorPlugin } from '../games/registry';
-import { API_BASE, getWsUrl } from '../config.js';
+import { getDefaultPlugin, getSpectatorPlugin } from '../games/registry';
+import { useSpectatorStream } from '../hooks/useSpectatorStream';
+import { type RelayMessageView, SlotHost } from '../plugins';
 
 // ---------------------------------------------------------------------------
-// Helpers — extract platform data (handles, chat) from server payloads
-// ---------------------------------------------------------------------------
-
-interface ChatMessage {
-  from: string;
-  message: string;
-  timestamp: number;
-}
-
-function extractHandles(data: any): Record<string, string> {
-  return data?.handles ?? {};
-}
-
-function extractChat(data: any): ChatMessage[] {
-  const relay = data?.relayMessages;
-  if (!Array.isArray(relay)) return [];
-  const msgs: ChatMessage[] = [];
-  for (const msg of relay) {
-    if (msg.type === 'messaging' && msg.data?.body) {
-      msgs.push({
-        from: msg.sender ?? msg.from ?? msg.data?.from ?? 'unknown',
-        message: msg.data.body,
-        timestamp: msg.timestamp ?? 0,
-      });
-    }
-  }
-  return msgs;
-}
-
-// ---------------------------------------------------------------------------
-// GamePage — game-agnostic wrapper that delegates to a SpectatorPlugin
+// GamePage — game-agnostic wrapper that delegates to a SpectatorPlugin.
+//
+// Phase 7.1: the WS lifecycle now lives in `useSpectatorStream`. This page
+// reads the unified spectator payload and forwards (handles, relay) to the
+// slot host + the per-game SpectatorView.
+//
+// Phase 7.2: the per-game SpectatorViews used to open their OWN
+// `useSpectatorStream` against the same /ws/game/:id path, producing a
+// second WS per page. We now forward the live snapshot/isLive/error from
+// the single GamePage stream into the SpectatorView via props, so the
+// page opens exactly one WS.
 // ---------------------------------------------------------------------------
 
 export default function GamePage() {
   const { id } = useParams<{ id: string }>();
-  const [perspective, setPerspective] = useState<'all' | 'A' | 'B'>('all');
-  const [gameType, setGameType] = useState<string | null>(null);
-  const [handles, setHandles] = useState<Record<string, string>>({});
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const wsRef = useRef<WebSocket | null>(null);
+  const { snapshot, isLive, error: streamError } = useSpectatorStream(id ?? '');
 
-  // Fetch game type + platform data, connect WS
-  useEffect(() => {
-    if (!id) return;
+  const defaultGameType = getDefaultPlugin().gameType;
+  const gameType =
+    snapshot?.meta.gameType && snapshot.meta.gameType !== '__unknown__'
+      ? snapshot.meta.gameType
+      : defaultGameType;
+  const handles = snapshot?.meta.handles ?? {};
+  // SlotHost expects `RelayMessageView[]` (mirrors RelayEnvelope at the
+  // engine boundary). Spectator-pending payloads have no `relay` field —
+  // surface an empty list while the delay window has not yet elapsed.
+  const relayMessages: RelayMessageView[] =
+    snapshot?.type === 'state_update' ? (snapshot.relay as RelayMessageView[]) : [];
 
-    fetch(`${API_BASE}/games/${id}`)
-      .then(r => r.json())
-      .then(data => {
-        setGameType(data.gameType ?? 'capture-the-lobster');
-        const h = extractHandles(data);
-        if (Object.keys(h).length) setHandles(h);
-        const c = extractChat(data);
-        if (c.length) setChatMessages(c);
-        setLoading(false);
-      })
-      .catch(() => {
-        setGameType('capture-the-lobster');
-        setLoading(false);
-      });
-
-    // Connect WebSocket for live updates
-    const wsUrl = getWsUrl(`/ws/game/${id}`);
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data);
-        const data = raw.data ?? raw;
-        const h = extractHandles(data);
-        if (Object.keys(h).length) setHandles(h);
-        const c = extractChat(data);
-        if (c.length) setChatMessages(c);
-      } catch {}
-    };
-
-    return () => { ws.close(); wsRef.current = null; };
-  }, [id]);
-
-  if (loading || !gameType) {
+  if (!snapshot) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-5rem)]">
         <div className="text-center">
@@ -107,17 +56,25 @@ export default function GamePage() {
   }
 
   const SpectatorView = plugin.SpectatorView;
+  // Build a synthetic agents array from `handles` so plugin slots can render
+  // friendly names. The game payload doesn't carry a roster object, so we
+  // derive one from the same map the spectator view uses.
+  const agents = Object.entries(handles).map(([id, handle]) => ({ id, handle }));
 
   return (
-    <SpectatorView
-      gameState={null}
-      chatMessages={chatMessages}
-      handles={handles}
-      gameId={id ?? ''}
-      gameType={gameType}
-      phase="in_progress"
-      perspective={perspective}
-      onPerspectiveChange={setPerspective}
-    />
+    <>
+      <SlotHost name="game:panel" gameId={id ?? ''} relayMessages={relayMessages} agents={agents} />
+      <SpectatorView
+        gameState={null}
+        chatMessages={[]}
+        handles={handles}
+        gameId={id ?? ''}
+        gameType={gameType}
+        phase={snapshot.meta.finished ? 'finished' : 'in_progress'}
+        liveSnapshot={snapshot}
+        liveIsLive={isLive}
+        liveError={streamError?.message ?? null}
+      />
+    </>
   );
 }

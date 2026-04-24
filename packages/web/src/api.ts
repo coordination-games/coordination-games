@@ -26,20 +26,19 @@ export interface GameSummary {
   players?: string[];
 }
 
-export async function fetchLobbies(): Promise<any[]> {
-  return request<any[]>('/lobbies');
+export async function fetchLobbies(): Promise<LobbySummary[]> {
+  return request<LobbySummary[]>('/lobbies');
 }
 
 export async function fetchGames(): Promise<GameSummary[]> {
   return request<GameSummary[]>('/games');
 }
 
-export async function fetchGame(id: string): Promise<any> {
-  return request<any>(`/games/${id}`);
-}
-
-export async function fetchLeaderboard(): Promise<any[]> {
-  return request<any[]>('/leaderboard');
+/**
+ * Game state payload shape is per-game; callers narrow at the SpectatorView boundary.
+ */
+export async function fetchGame(id: string): Promise<unknown> {
+  return request<unknown>(`/games/${id}`);
 }
 
 export interface ReplayData {
@@ -56,7 +55,8 @@ export interface ReplayData {
   teamMap: Record<string, string>;
   finished: boolean;
   progressCounter: number | null;
-  snapshots: any[];
+  /** Per-game snapshot shape; consumers narrow at the replay-view boundary. */
+  snapshots: unknown[];
 }
 
 export async function fetchReplay(id: string): Promise<ReplayData> {
@@ -66,7 +66,7 @@ export async function fetchReplay(id: string): Promise<ReplayData> {
 export interface LobbySummary {
   lobbyId: string;
   gameType: string;
-  phase: 'running' | 'starting' | 'game' | 'failed';
+  phase: 'lobby' | 'in_progress' | 'finished';
   currentPhase?: {
     id: string;
     name: string;

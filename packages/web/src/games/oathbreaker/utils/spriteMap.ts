@@ -25,7 +25,7 @@ export const CHARACTERS: CharacterDef[] = [
 
 /** Look up a character's natural facing direction */
 export function getFacesRight(characterName: string): boolean {
-  return CHARACTERS.find(c => c.name === characterName)?.facesRight ?? true;
+  return CHARACTERS.find((c) => c.name === characterName)?.facesRight ?? true;
 }
 
 export function getSpritePath(character: string, pose: Pose): string {

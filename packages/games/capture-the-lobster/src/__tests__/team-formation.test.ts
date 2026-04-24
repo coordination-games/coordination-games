@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { TeamFormationPhase } from '../phases/team-formation.js';
 import type { AgentInfo } from '@coordination-games/engine';
+import { describe, expect, it } from 'vitest';
+import { TeamFormationPhase } from '../phases/team-formation.js';
 
 function makePlayers(...names: string[]): AgentInfo[] {
-  return names.map((n, i) => ({ id: n.toLowerCase(), handle: n }));
+  return names.map((n, _i) => ({ id: n.toLowerCase(), handle: n }));
 }
 
 describe('TeamFormationPhase', () => {
@@ -64,7 +64,8 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(r2.error).toBeUndefined();
-    const team = r2.state.teams.find(t => t.id === teamId)!;
+    const team = r2.state.teams.find((t) => t.id === teamId);
+    if (!team) throw new Error(`expected team ${teamId}`);
     expect(team.members).toContain('alice');
     expect(team.members).toContain('bob');
     expect(team.invites).not.toContain('bob');
@@ -90,14 +91,10 @@ describe('TeamFormationPhase', () => {
     ).state;
 
     // Bob leaves
-    const result = phase.handleAction(
-      state,
-      { type: 'leave_team', playerId: 'bob' },
-      players,
-    );
+    const result = phase.handleAction(state, { type: 'leave_team', playerId: 'bob' }, players);
 
     expect(result.error).toBeUndefined();
-    const team = result.state.teams.find(t => t.id === teamId);
+    const team = result.state.teams.find((t) => t.id === teamId);
     // Team still has Alice
     expect(team?.members).toEqual(['alice']);
     // Bob is back in unassigned
@@ -136,11 +133,11 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(result.completed).toBeDefined();
-    expect(result.completed!.groups).toHaveLength(2);
-    expect(result.completed!.groups[0]).toHaveLength(2);
-    expect(result.completed!.groups[1]).toHaveLength(2);
+    expect(result.completed?.groups).toHaveLength(2);
+    expect(result.completed?.groups[0]).toHaveLength(2);
+    expect(result.completed?.groups[1]).toHaveLength(2);
 
-    const allIds = result.completed!.groups.flat().map(p => p.id);
+    const allIds = result.completed?.groups.flat().map((p) => p.id);
     expect(allIds).toContain('alice');
     expect(allIds).toContain('bob');
     expect(allIds).toContain('carol');
@@ -155,11 +152,11 @@ describe('TeamFormationPhase', () => {
     const result = phase.handleTimeout(state, players);
 
     expect(result).not.toBeNull();
-    expect(result!.groups).toHaveLength(2);
-    expect(result!.groups[0]).toHaveLength(2);
-    expect(result!.groups[1]).toHaveLength(2);
+    expect(result?.groups).toHaveLength(2);
+    expect(result?.groups[0]).toHaveLength(2);
+    expect(result?.groups[1]).toHaveLength(2);
 
-    const allIds = result!.groups.flat().map(p => p.id);
+    const allIds = result?.groups.flat().map((p) => p.id);
     expect(allIds).toContain('alice');
     expect(allIds).toContain('bob');
     expect(allIds).toContain('carol');
@@ -185,9 +182,9 @@ describe('TeamFormationPhase', () => {
     const result = phase.handleTimeout(state, players);
 
     expect(result).not.toBeNull();
-    expect(result!.groups).toHaveLength(1);
-    expect(result!.groups[0]).toHaveLength(2);
-    expect(result!.removed).toHaveLength(1);
+    expect(result?.groups).toHaveLength(1);
+    expect(result?.groups[0]).toHaveLength(2);
+    expect(result?.removed).toHaveLength(1);
   });
 
   it('getTeamForPlayer returns correct team ID', () => {
@@ -222,7 +219,7 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(result.error).toBeDefined();
-    expect(result.error!.message).toContain('yourself');
+    expect(result.error?.message).toContain('yourself');
   });
 
   it('accept_team for non-existent team returns error', () => {
@@ -237,7 +234,7 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(result.error).toBeDefined();
-    expect(result.error!.message).toContain('not found');
+    expect(result.error?.message).toContain('not found');
   });
 
   it('handleJoin adds new player to unassigned', () => {
@@ -269,8 +266,8 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(result.completed).toBeDefined();
-    expect(result.completed!.metadata.teams).toBeDefined();
-    expect(result.completed!.metadata.teams).toHaveLength(1);
-    expect(result.completed!.metadata.teams[0].members).toHaveLength(2);
+    expect(result.completed?.metadata.teams).toBeDefined();
+    expect(result.completed?.metadata.teams).toHaveLength(1);
+    expect(result.completed?.metadata.teams[0].members).toHaveLength(2);
   });
 });

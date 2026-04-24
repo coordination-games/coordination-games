@@ -8,12 +8,16 @@
     "packages/plugins/*"
   ],
   "scripts": {
-    "build": "npm run build -w packages/engine && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/plugins/basic-chat -w packages/plugins/elo && npm run build -w packages/web -w packages/cli",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "build": "npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker && npm run build -w packages/web -w packages/cli",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/workers-server",
     "dev:web": "npm run dev --workspace=packages/web",
     "build:contracts": "npm run build --workspace=packages/contracts",
-    "build:cli": "npm run build --workspace=packages/cli"
+    "build:cli": "npm run build --workspace=packages/cli",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check ."
   },
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -29,6 +33,7 @@
     "vite": "^8.0.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
     "@esbuild/linux-x64": "^0.27.0",
     "@tailwindcss/postcss": "^4.2.2",
     "esbuild": "^0.27.0",

@@ -1,7 +1,9 @@
-import { Command } from "commander";
-import { loadConfig } from "../config.js";
-import { ApiClient } from "../api-client.js";
-import { buildMerkleTree, TurnData } from "../merkle.js";
+import type { Command } from 'commander';
+import type { TypedDataField } from 'ethers';
+import { ApiClient } from '../api-client.js';
+import { loadConfig } from '../config.js';
+import { buildMerkleTree, type TurnData } from '../merkle.js';
+import type { GameBundle, OnChainResult } from '../types.js';
 
 /**
  * Game verification command.
@@ -21,27 +23,36 @@ interface VerifyStep {
 }
 
 function pass(label: string, detail?: string): VerifyStep {
-  return { label, passed: true, detail };
+  const step: VerifyStep = { label, passed: true };
+  if (detail !== undefined) step.detail = detail;
+  return step;
 }
 
 function fail(label: string, detail?: string): VerifyStep {
-  return { label, passed: false, detail };
+  const step: VerifyStep = { label, passed: false };
+  if (detail !== undefined) step.detail = detail;
+  return step;
+}
+
+/** Extract a user-facing message from a caught error. */
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function printStep(step: VerifyStep) {
-  const icon = step.passed ? "[OK]" : "[FAIL]";
+  const icon = step.passed ? '[OK]' : '[FAIL]';
   process.stdout.write(`  ${icon} ${step.label}`);
   if (step.detail) {
     process.stdout.write(` — ${step.detail}`);
   }
-  process.stdout.write("\n");
+  process.stdout.write('\n');
 }
 
 export function registerVerifyCommand(program: Command) {
   program
-    .command("verify <gameId>")
+    .command('verify <gameId>')
     .description("Verify a game's integrity against on-chain records")
-    .option("--server <url>", "Override server URL")
+    .option('--server <url>', 'Override server URL')
     .action(async (gameId: string, opts: { server?: string }) => {
       const config = loadConfig();
       const serverUrl = opts.server || config.serverUrl;
@@ -50,17 +61,17 @@ export function registerVerifyCommand(program: Command) {
       const steps: VerifyStep[] = [];
 
       process.stdout.write(`\n  Verifying game: ${gameId}\n`);
-      process.stdout.write(`  ${"=".repeat(50)}\n\n`);
+      process.stdout.write(`  ${'='.repeat(50)}\n\n`);
 
       // -------------------------------------------------------------------
       // Step 1: Fetch game bundle
       // -------------------------------------------------------------------
-      let bundle: any;
+      let bundle: GameBundle;
       try {
-        bundle = await client.get(`/api/games/${encodeURIComponent(gameId)}/bundle`);
-        steps.push(pass("Fetch game bundle", `${bundle.turns?.length ?? 0} turns`));
-      } catch (err: any) {
-        steps.push(fail("Fetch game bundle", err.message));
+        bundle = await client.getGameBundle(gameId);
+        steps.push(pass('Fetch game bundle', `${bundle.turns?.length ?? 0} turns`));
+      } catch (err) {
+        steps.push(fail('Fetch game bundle', errMsg(err)));
         printResults(steps);
         return;
       }
@@ -68,13 +79,15 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       // Step 2: Fetch on-chain result (via server API)
       // -------------------------------------------------------------------
-      let onChainResult: any;
+      let onChainResult: OnChainResult | undefined;
       try {
-        onChainResult = await client.get(`/api/games/${encodeURIComponent(gameId)}/result`);
-        steps.push(pass("Fetch on-chain result", `turnCount=${onChainResult.turnCount}`));
-      } catch (err: any) {
+        onChainResult = await client.getGameResult(gameId);
+        steps.push(pass('Fetch on-chain result', `turnCount=${onChainResult.turnCount}`));
+      } catch (err) {
         // On-chain result may not be available (game not settled yet, or local testing)
-        steps.push(fail("Fetch on-chain result", `${err.message} (game may not be settled on-chain)`));
+        steps.push(
+          fail('Fetch on-chain result', `${errMsg(err)} (game may not be settled on-chain)`),
+        );
         // Continue with what we can verify
       }
 
@@ -83,23 +96,25 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       if (bundle.config && onChainResult?.configHash) {
         try {
-          const { ethers } = await import("ethers");
+          const { ethers } = await import('ethers');
           const configJson = JSON.stringify(bundle.config, Object.keys(bundle.config).sort());
           const computedHash = ethers.keccak256(ethers.toUtf8Bytes(configJson));
 
           if (computedHash.toLowerCase() === onChainResult.configHash.toLowerCase()) {
-            steps.push(pass("Verify config hash", computedHash.slice(0, 18) + "..."));
+            steps.push(pass('Verify config hash', `${computedHash.slice(0, 18)}...`));
           } else {
-            steps.push(fail(
-              "Verify config hash",
-              `computed ${computedHash.slice(0, 18)}... != on-chain ${onChainResult.configHash.slice(0, 18)}...`
-            ));
+            steps.push(
+              fail(
+                'Verify config hash',
+                `computed ${computedHash.slice(0, 18)}... != on-chain ${onChainResult.configHash.slice(0, 18)}...`,
+              ),
+            );
           }
-        } catch (err: any) {
-          steps.push(fail("Verify config hash", err.message));
+        } catch (err) {
+          steps.push(fail('Verify config hash', errMsg(err)));
         }
       } else {
-        steps.push(pass("Verify config hash", "skipped (no on-chain result available)"));
+        steps.push(pass('Verify config hash', 'skipped (no on-chain result available)'));
       }
 
       // -------------------------------------------------------------------
@@ -107,23 +122,27 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       if (bundle.turns && bundle.turns.length > 0) {
         try {
-          const { ethers } = await import("ethers");
+          const { ethers } = await import('ethers');
           let sigValid = 0;
           let sigTotal = 0;
-          let sigErrors: string[] = [];
+          const sigErrors: string[] = [];
 
           const domain = {
-            name: "Coordination Games",
-            version: "1",
+            name: 'Coordination Games',
+            version: '1',
             chainId: 10,
           };
 
-          // Move schema from bundle or default
-          const moveSchema = bundle.moveSchema || {
+          // Move schema from bundle or default. ethers expects
+          // `Record<string, TypedDataField[]>`; bundle.moveSchema is typed
+          // loosely (per-game) so we cast at this boundary.
+          const moveSchema: Record<string, TypedDataField[]> = (bundle.moveSchema as
+            | Record<string, TypedDataField[]>
+            | undefined) ?? {
             Move: [
-              { name: "gameId", type: "bytes32" },
-              { name: "turnNumber", type: "uint16" },
-              { name: "data", type: "string" },
+              { name: 'gameId', type: 'bytes32' },
+              { name: 'turnNumber', type: 'uint16' },
+              { name: 'data', type: 'string' },
             ],
           };
 
@@ -142,31 +161,35 @@ export function registerVerifyCommand(program: Command) {
                   domain,
                   moveSchema,
                   moveData,
-                  move.signature
+                  move.signature,
                 );
 
                 if (recoveredAddress.toLowerCase() === move.player.toLowerCase()) {
                   sigValid++;
                 } else {
                   sigErrors.push(
-                    `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... signed by ${recoveredAddress.slice(0, 10)}...`
+                    `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... signed by ${recoveredAddress.slice(0, 10)}...`,
                   );
                 }
-              } catch (err: any) {
+              } catch (err) {
                 // Signature verification may fail if the schema doesn't match
                 // (e.g., game-specific move schemas). Count as unverifiable.
-                sigErrors.push(`Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... — ${err.message}`);
+                sigErrors.push(
+                  `Turn ${turn.turnNumber}: ${move.player.slice(0, 10)}... — ${errMsg(err)}`,
+                );
               }
             }
           }
 
           if (sigErrors.length === 0) {
-            steps.push(pass("Verify move signatures", `${sigValid}/${sigTotal} valid`));
+            steps.push(pass('Verify move signatures', `${sigValid}/${sigTotal} valid`));
           } else {
-            steps.push(fail(
-              "Verify move signatures",
-              `${sigValid}/${sigTotal} valid, ${sigErrors.length} failed`
-            ));
+            steps.push(
+              fail(
+                'Verify move signatures',
+                `${sigValid}/${sigTotal} valid, ${sigErrors.length} failed`,
+              ),
+            );
             for (const e of sigErrors.slice(0, 5)) {
               process.stdout.write(`         ${e}\n`);
             }
@@ -174,11 +197,11 @@ export function registerVerifyCommand(program: Command) {
               process.stdout.write(`         ... and ${sigErrors.length - 5} more\n`);
             }
           }
-        } catch (err: any) {
-          steps.push(fail("Verify move signatures", err.message));
+        } catch (err) {
+          steps.push(fail('Verify move signatures', errMsg(err)));
         }
       } else {
-        steps.push(pass("Verify move signatures", "no turns to verify"));
+        steps.push(pass('Verify move signatures', 'no turns to verify'));
       }
 
       // -------------------------------------------------------------------
@@ -186,11 +209,11 @@ export function registerVerifyCommand(program: Command) {
       // -------------------------------------------------------------------
       if (bundle.turns && bundle.turns.length > 0) {
         try {
-          const turns: TurnData[] = bundle.turns.map((t: any) => ({
+          const turns: TurnData[] = bundle.turns.map((t) => ({
             turnNumber: t.turnNumber,
-            moves: t.moves.map((m: any) => ({
+            moves: t.moves.map((m) => ({
               player: m.player,
-              data: typeof m.data === "string" ? m.data : JSON.stringify(m.data),
+              data: typeof m.data === 'string' ? m.data : JSON.stringify(m.data),
               signature: m.signature,
             })),
             result: t.result,
@@ -201,24 +224,28 @@ export function registerVerifyCommand(program: Command) {
 
           if (onChainResult?.movesRoot) {
             if (computedRoot.toLowerCase() === onChainResult.movesRoot.toLowerCase()) {
-              steps.push(pass("Verify Merkle root", computedRoot.slice(0, 18) + "..."));
+              steps.push(pass('Verify Merkle root', `${computedRoot.slice(0, 18)}...`));
             } else {
-              steps.push(fail(
-                "Verify Merkle root",
-                `computed ${computedRoot.slice(0, 18)}... != on-chain ${onChainResult.movesRoot.slice(0, 18)}...`
-              ));
+              steps.push(
+                fail(
+                  'Verify Merkle root',
+                  `computed ${computedRoot.slice(0, 18)}... != on-chain ${onChainResult.movesRoot.slice(0, 18)}...`,
+                ),
+              );
             }
           } else {
-            steps.push(pass(
-              "Verify Merkle root",
-              `computed ${computedRoot.slice(0, 18)}... (no on-chain root to compare)`
-            ));
+            steps.push(
+              pass(
+                'Verify Merkle root',
+                `computed ${computedRoot.slice(0, 18)}... (no on-chain root to compare)`,
+              ),
+            );
           }
-        } catch (err: any) {
-          steps.push(fail("Verify Merkle root", err.message));
+        } catch (err) {
+          steps.push(fail('Verify Merkle root', errMsg(err)));
         }
       } else {
-        steps.push(pass("Verify Merkle root", "no turns to hash"));
+        steps.push(pass('Verify Merkle root', 'no turns to hash'));
       }
 
       // -------------------------------------------------------------------
@@ -229,12 +256,14 @@ export function registerVerifyCommand(program: Command) {
         const chainTurnCount = Number(onChainResult.turnCount);
 
         if (bundleTurnCount === chainTurnCount) {
-          steps.push(pass("Verify turn count", `${bundleTurnCount} turns`));
+          steps.push(pass('Verify turn count', `${bundleTurnCount} turns`));
         } else {
-          steps.push(fail(
-            "Verify turn count",
-            `bundle has ${bundleTurnCount} turns, chain says ${chainTurnCount}`
-          ));
+          steps.push(
+            fail(
+              'Verify turn count',
+              `bundle has ${bundleTurnCount} turns, chain says ${chainTurnCount}`,
+            ),
+          );
         }
       }
 
@@ -246,7 +275,7 @@ export function registerVerifyCommand(program: Command) {
 }
 
 function printResults(steps: VerifyStep[]) {
-  process.stdout.write("\n");
+  process.stdout.write('\n');
   for (const step of steps) {
     printStep(step);
   }

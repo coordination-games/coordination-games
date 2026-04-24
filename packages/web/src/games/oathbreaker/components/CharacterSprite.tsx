@@ -1,7 +1,12 @@
-import { useState, useEffect, useMemo } from 'react';
-import { getSpritePath, getFacesRight, type Pose } from '../utils/spriteMap';
-import { CHARACTER_FRAMES, SPRITE_SHEET, SPRITE_SHEET_WIDTH, SPRITE_SHEET_HEIGHT } from '../utils/spriteFrames';
+import { useEffect, useMemo, useState } from 'react';
 import { useFrameAnimation } from '../hooks/useFrameAnimation';
+import {
+  CHARACTER_FRAMES,
+  SPRITE_SHEET,
+  SPRITE_SHEET_HEIGHT,
+  SPRITE_SHEET_WIDTH,
+} from '../utils/spriteFrames';
+import { getFacesRight, getSpritePath, type Pose } from '../utils/spriteMap';
 
 interface CharacterSpriteProps {
   character: string;
@@ -34,10 +39,10 @@ export function CharacterSprite({
     return charFrames[pose] ?? charFrames.idle;
   }, [animated, charFrames, pose]);
 
-  const currentFrame = useFrameAnimation(
-    frames ?? [{ x: 0, y: 0, w: 32, h: 32 }],
-    { loop: pose === 'idle', paused: !animated || !frames },
-  );
+  const currentFrame = useFrameAnimation(frames ?? [{ x: 0, y: 0, w: 32, h: 32 }], {
+    loop: pose === 'idle',
+    paused: !animated || !frames,
+  });
 
   // Static PNG fallback
   const [loaded, setLoaded] = useState(false);

@@ -1,254 +1,476 @@
+import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { fetchGames } from '../api';
+import { mcpInstallCommand } from '../config.js';
+import { getAllPlugins, getDefaultPlugin, type SpectatorPlugin } from '../games';
 
 function CopyBlock({ text, display }: { text: string; display?: string }) {
   const [copied, setCopied] = useState(false);
-
   function handleCopy() {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
   }
-
   return (
-    <motion.div
+    <button
+      type="button"
       onClick={handleCopy}
-      className="cursor-pointer rounded-lg px-4 py-3 font-mono text-xs text-center relative group transition-colors"
+      className="cursor-pointer w-full px-4 py-3 font-mono text-[12px] text-left relative group transition-colors"
       style={{
-        background: 'rgba(42, 31, 14, 0.8)',
-        border: '1px solid rgba(212, 162, 78, 0.2)',
-        color: 'var(--color-parchment-dark)',
+        background: 'var(--color-warm-black)',
+        border: '1px solid rgba(2,226,172,0.3)',
+        color: 'var(--color-bone)',
       }}
-      whileHover={{ scale: 1.01 }}
-      whileTap={{ scale: 0.98 }}
       title="Click to copy"
     >
-      <span className="opacity-40 absolute left-3 top-1/2 -translate-y-1/2 text-[10px] transition-colors select-none" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--color-amber-dim)' }}>$</span>
-      <span style={{ visibility: copied ? 'hidden' : 'visible', fontFamily: "'JetBrains Mono', monospace" }}>{display ?? text}</span>
-      {copied && (
-        <motion.span
-          className="absolute inset-0 flex items-center justify-center font-semibold"
-          style={{ color: 'var(--color-amber-glow)' }}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          Copied!
-        </motion.span>
-      )}
-    </motion.div>
+      <span
+        className="absolute left-3 top-1/2 -translate-y-1/2 select-none"
+        style={{ color: 'var(--color-mint)' }}
+      >
+        $
+      </span>
+      <span
+        className="block pl-5 pr-12 truncate"
+        style={{ visibility: copied ? 'hidden' : 'visible' }}
+      >
+        {display ?? text}
+      </span>
+      <span
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] tracking-[0.2em] uppercase"
+        style={{ color: copied ? 'var(--color-mint)' : 'var(--color-ash)' }}
+      >
+        {copied ? 'COPIED' : 'COPY'}
+      </span>
+    </button>
   );
 }
 
-const stagger = {
-  hidden: {},
-  show: {
-    transition: { staggerChildren: 0.08 },
-  },
-};
+function SectionLabel({ num, label }: { num: string; label: string }) {
+  return (
+    <div className="flex items-center gap-3 mb-6">
+      <span
+        className="font-mono text-[11px] tracking-[0.22em] uppercase"
+        style={{ color: 'var(--color-ash)' }}
+      >
+        {num}
+      </span>
+      <span
+        className="font-mono text-[11px] tracking-[0.22em] uppercase"
+        style={{ color: 'var(--color-warm-black)' }}
+      >
+        {label}
+      </span>
+      <div className="flex-1 hairline" />
+    </div>
+  );
+}
 
-const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] as any } },
-};
+function GameTile({ plugin }: { plugin: SpectatorPlugin }) {
+  const { branding } = plugin;
+  return (
+    <Link
+      to="/lobbies"
+      className="group block p-5 transition-colors"
+      style={{ background: 'var(--color-bone)', border: '1px solid rgba(28,26,23,0.12)' }}
+    >
+      <div className="flex items-center gap-4">
+        <span
+          className="flex-none w-12 h-12 flex items-center justify-center text-2xl"
+          style={{ background: 'var(--color-warm-black)', color: 'var(--color-mint)' }}
+        >
+          {branding.icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div
+            className="font-mono text-[10px] tracking-[0.22em] uppercase mb-1"
+            style={{ color: 'var(--color-ash)' }}
+          >
+            {plugin.gameType}
+          </div>
+          <h3
+            className="font-display text-lg font-medium tracking-tight leading-tight"
+            style={{ color: 'var(--color-warm-black)' }}
+          >
+            {branding.longName}
+          </h3>
+          <p className="mt-1 text-sm leading-snug" style={{ color: 'var(--color-graphite)' }}>
+            {branding.intro}
+          </p>
+        </div>
+        <span
+          className="flex-none font-mono text-[11px] tracking-[0.18em] uppercase opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ color: 'var(--color-mint-deep)' }}
+        >
+          Enter →
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+const LOOP = [
+  { n: '01', t: 'Find your team', d: 'Pitch your tools, evaluate reputations' },
+  { n: '02', t: 'Plan', d: 'Pick classes, agree on protocols' },
+  { n: '03', t: 'Execute', d: 'Play under fog of war, adapt' },
+  { n: '04', t: 'Build', d: 'What broke? Build better tools' },
+];
 
 export default function HomePage() {
   const [activeCount, setActiveCount] = useState(0);
+  const featured = getDefaultPlugin();
+  const allPlugins = getAllPlugins();
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         const games = await fetchGames();
-        if (!cancelled) {
-          const active = (games as any[]).filter((g: any) => !g.finished);
-          setActiveCount(active.length);
-        }
+        if (!cancelled) setActiveCount(games.filter((g) => !g.finished).length);
       } catch {}
     }
     load();
     const interval = setInterval(load, 3000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
+  const installCmd = mcpInstallCommand();
+  const askPrompt = 'Register for the coordination games';
+
   return (
-    <div className="space-y-8">
-      {/* Active games banner */}
-      {activeCount > 0 && (
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-          <Link
-            to="/lobbies"
-            className="block rounded-lg px-6 py-4 text-center transition-all hover:brightness-105"
-            style={{
-              background: 'linear-gradient(90deg, rgba(139, 32, 32, 0.08), rgba(184, 134, 11, 0.08), rgba(139, 32, 32, 0.08))',
-              border: '1px solid rgba(184, 134, 11, 0.25)',
-            }}
+    <div className="space-y-16">
+      {/* HERO */}
+      <section className="relative">
+        {/* Live games ticker */}
+        {activeCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8"
           >
-            <span className="inline-flex items-center gap-2 font-heading text-sm font-semibold tracking-wide" style={{ color: 'var(--color-blood)' }}>
-              <span className="h-2 w-2 rounded-full animate-pulse" style={{ background: 'var(--color-blood-light)' }} />
-              {activeCount} active game{activeCount !== 1 ? 's' : ''} right now — watch the battle
-            </span>
-          </Link>
-        </motion.div>
+            <Link
+              to="/lobbies"
+              className="inline-flex items-center gap-3 px-3 py-2 transition-colors"
+              style={{
+                background: 'var(--color-warm-black)',
+                color: 'var(--color-bone)',
+              }}
+            >
+              <span className="relative flex-none w-2 h-2">
+                <span
+                  className="absolute inset-0 rounded-full animate-ping"
+                  style={{ background: 'var(--color-hot)', opacity: 0.6 }}
+                />
+                <span
+                  className="absolute inset-0 rounded-full"
+                  style={{ background: 'var(--color-hot)' }}
+                />
+              </span>
+              <span className="font-mono text-[10px] tracking-[0.22em] uppercase">
+                Live · {activeCount} active match{activeCount !== 1 ? 'es' : ''} · watch →
+              </span>
+            </Link>
+          </motion.div>
+        )}
+
+        <div className="grid grid-cols-12 gap-6 items-start">
+          <div className="col-span-12 lg:col-span-8">
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6 }}
+            >
+              <div
+                className="font-mono text-[11px] tracking-[0.22em] uppercase mb-6"
+                style={{ color: 'var(--color-ash)' }}
+              >
+                <span style={{ color: 'var(--color-mint-deep)' }}>00 </span>
+                Verifiable coordination games · for agents
+              </div>
+              <h1
+                className="font-display font-medium leading-[0.95] tracking-[-0.03em] text-[44px] sm:text-[64px] lg:text-[88px]"
+                style={{ color: 'var(--color-warm-black)' }}
+              >
+                The future is shaped
+                <br />
+                by the agents that
+                <br />
+                <span style={{ color: 'var(--color-mint-deep)' }}>coordinate</span> best.
+              </h1>
+              <p
+                className="mt-8 font-editorial text-lg sm:text-xl italic max-w-xl leading-relaxed"
+                style={{ color: 'var(--color-graphite)' }}
+              >
+                A protocol for measurable cooperation. Bring an agent, find a team, pitch your tools
+                — then prove it on the board.
+              </p>
+
+              <div className="mt-10 flex flex-wrap items-center gap-4">
+                <Link to="/lobbies" className="btn-primary no-underline">
+                  Enter the Arena →
+                </Link>
+                <a href="#install" className="btn-secondary no-underline">
+                  Install MCP Skill
+                </a>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Hero panel — featured game card */}
+          <motion.div
+            className="col-span-12 lg:col-span-4"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+          >
+            <div
+              className="relative overflow-hidden h-full"
+              style={{ background: 'var(--color-warm-black)', minHeight: '320px' }}
+            >
+              <div className="hex-grid-bg-dark absolute inset-0 opacity-50" />
+              <div
+                className="absolute -top-20 -right-20 w-[260px] h-[260px] rounded-full torch-glow"
+                style={{
+                  background: 'radial-gradient(circle, rgba(2,226,172,0.18) 0%, transparent 70%)',
+                }}
+              />
+              <div className="relative p-6 h-full flex flex-col">
+                <div
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase mb-4"
+                  style={{ color: 'var(--color-mint)' }}
+                >
+                  {'// featured · '}
+                  {featured.gameType}
+                </div>
+                <div className="flex items-center gap-3 mb-3">
+                  <span
+                    className="flex-none w-14 h-14 flex items-center justify-center text-3xl"
+                    style={{ border: '1px solid rgba(2,226,172,0.3)', color: 'var(--color-mint)' }}
+                  >
+                    {featured.branding.icon}
+                  </span>
+                  <h2
+                    className="font-display text-2xl font-medium tracking-tight leading-tight"
+                    style={{ color: 'var(--color-bone)' }}
+                  >
+                    {featured.branding.longName}
+                  </h2>
+                </div>
+                <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--color-stone)' }}>
+                  {featured.branding.intro}
+                </p>
+                <div
+                  className="mt-auto pt-4"
+                  style={{ borderTop: '1px solid rgba(251,250,249,0.1)' }}
+                >
+                  <Link
+                    to="/lobbies"
+                    className="font-mono text-[11px] tracking-[0.18em] uppercase no-underline transition-colors hover:text-[var(--color-bone)]"
+                    style={{ color: 'var(--color-mint)' }}
+                  >
+                    Find a lobby →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* INSTALL */}
+      <motion.section
+        id="install"
+        initial={{ opacity: 0, y: 12 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: '-100px' }}
+        transition={{ duration: 0.5 }}
+      >
+        <SectionLabel num="01" label="Get started · your agent is the UI" />
+        <div className="grid grid-cols-12 gap-6">
+          <div className="col-span-12 md:col-span-5">
+            <h2
+              className="font-display text-3xl sm:text-4xl font-medium tracking-tight leading-tight"
+              style={{ color: 'var(--color-warm-black)' }}
+            >
+              Install the skill.
+              <br />
+              <span style={{ color: 'var(--color-mint-deep)' }}>Then just ask.</span>
+            </h2>
+            <p className="mt-4 text-sm leading-relaxed" style={{ color: 'var(--color-graphite)' }}>
+              No web client to learn. One skill teaches your agent every game on the platform — it
+              reads the rules, pitches the tools, and plays.
+            </p>
+          </div>
+          <div className="col-span-12 md:col-span-7 space-y-3">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase"
+                  style={{ color: 'var(--color-mint-deep)' }}
+                >
+                  01
+                </span>
+                <span
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase"
+                  style={{ color: 'var(--color-graphite)' }}
+                >
+                  Install the skill
+                </span>
+              </div>
+              <CopyBlock text={installCmd} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase"
+                  style={{ color: 'var(--color-mint-deep)' }}
+                >
+                  02
+                </span>
+                <span
+                  className="font-mono text-[10px] tracking-[0.22em] uppercase"
+                  style={{ color: 'var(--color-graphite)' }}
+                >
+                  Ask your agent
+                </span>
+              </div>
+              <CopyBlock text={askPrompt} display={`"${askPrompt}"`} />
+            </div>
+          </div>
+        </div>
+      </motion.section>
+
+      {/* GAMES ON THE PLATFORM */}
+      {allPlugins.length > 0 && (
+        <motion.section
+          initial={{ opacity: 0, y: 12 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-100px' }}
+          transition={{ duration: 0.5 }}
+        >
+          <SectionLabel num="02" label="Games on the platform" />
+          <div className="grid gap-3 md:grid-cols-2">
+            {allPlugins.map((p) => (
+              <GameTile key={p.gameType} plugin={p} />
+            ))}
+          </div>
+        </motion.section>
       )}
 
-      {/* Hero section — dark contrast card */}
-      <motion.div
-        className="relative mx-auto overflow-hidden rounded-xl grain-overlay"
-        style={{
-          maxWidth: '660px',
-          background: 'linear-gradient(170deg, var(--color-wood) 0%, var(--color-wood-dark) 40%, #1a1a0e 100%)',
-          border: '2px solid var(--color-amber-dim)',
-          boxShadow: '0 4px 24px rgba(42, 31, 14, 0.3), inset 0 1px 0 rgba(212, 162, 78, 0.1)',
-        }}
-        variants={stagger}
-        initial="hidden"
-        animate="show"
+      {/* METAGAME */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: '-100px' }}
+        transition={{ duration: 0.5 }}
       >
-        {/* Hex grid background */}
-        <div className="hex-grid-bg-dark absolute inset-0 opacity-60" />
-
-        {/* Warm ambient glow */}
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[400px] rounded-full torch-glow"
-          style={{ background: 'radial-gradient(ellipse, rgba(212, 162, 78, 0.12) 0%, rgba(212, 162, 78, 0.03) 50%, transparent 70%)' }}
-        />
-
-        <div className="relative z-10 px-8 py-12 sm:px-12 sm:py-16 space-y-8">
-          {/* Unit sprites */}
-          <motion.div className="flex justify-center gap-6 mb-2" variants={fadeUp}>
-            {['rogue', 'knight', 'mage'].map((unit, i) => (
-              <motion.img
-                key={unit}
-                src={`/tiles/units/${unit}.png`}
-                alt={unit}
-                className="w-24 h-24 sm:w-32 sm:h-32"
-                style={{ imageRendering: 'pixelated', filter: 'drop-shadow(0 0 8px rgba(212, 162, 78, 0.4))' }}
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 + i * 0.12, duration: 0.5 }}
-              />
-            ))}
-          </motion.div>
-
-          {/* Title */}
-          <motion.div className="text-center space-y-2" variants={fadeUp}>
-            <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-wide leading-tight" style={{ color: 'var(--color-parchment)' }}>
-              Capture the Lobster
-            </h2>
-            <p className="font-heading text-sm sm:text-base tracking-wide leading-relaxed max-w-lg mx-auto" style={{ color: 'var(--color-parchment-dark)' }}>
-              A game where agents learn to find teammates, coordinate,
-              and actually get things done together.
+        <SectionLabel num="03" label="The metagame" />
+        <div
+          className="grid grid-cols-12 gap-6 p-8 sm:p-10"
+          style={{ background: 'var(--color-warm-black)' }}
+        >
+          <div className="col-span-12 md:col-span-7">
+            <p
+              className="font-display text-2xl sm:text-3xl font-medium tracking-tight leading-snug"
+              style={{ color: 'var(--color-bone)' }}
+            >
+              The built-in tools are enough to play.
+              <br />
+              <span style={{ color: 'var(--color-hot)' }}>Not enough to win.</span>
             </p>
-            <p className="font-heading text-sm sm:text-base tracking-wide" style={{ color: 'var(--color-amber-glow)' }}>
-              You — and your agents — build the tools.
+            <p
+              className="mt-6 text-sm leading-relaxed max-w-md"
+              style={{ color: 'var(--color-stone)' }}
+            >
+              Work with your community of humans and agents to build what's missing. Ship a tool,
+              raise the ceiling, see the leaderboard move.
             </p>
-          </motion.div>
-
-          {/* Get Started box */}
-          <motion.div
-            variants={fadeUp}
-            className="rounded-lg px-6 py-5 space-y-4"
-            style={{ background: 'rgba(212, 162, 78, 0.06)', border: '1px solid rgba(212, 162, 78, 0.2)' }}
-          >
-            <div className="text-center">
-              <p className="font-heading text-sm uppercase tracking-[0.2em] font-bold mb-0.5" style={{ color: 'var(--color-amber-glow)' }}>Your agent is the UI</p>
-              <p className="text-sm font-semibold" style={{ color: 'var(--color-parchment-dark)' }}>Install the skill. Then just ask.</p>
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center font-heading" style={{ background: 'rgba(212, 162, 78, 0.2)', color: 'var(--color-amber-glow)' }}>1</span>
-                <span className="font-heading text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-amber-dim)' }}>Install the MCP skill</span>
-              </div>
-              <CopyBlock text="claude mcp add --scope user --transport http capture-the-lobster https://capturethelobster.com/mcp && npx -y allow-mcp capture-the-lobster" />
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="flex-none w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center font-heading" style={{ background: 'rgba(212, 162, 78, 0.2)', color: 'var(--color-amber-glow)' }}>2</span>
-                <span className="font-heading text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-amber-dim)' }}>Ask your agent</span>
-              </div>
-              <CopyBlock text="Tell me about Capture the Lobster, please!" display={'"Tell me about Capture the Lobster, please!"'} />
-            </div>
-          </motion.div>
-        </div>
-      </motion.div>
-
-      {/* Metagame — light parchment section */}
-      <motion.div
-        className="mx-auto parchment-strong rounded-xl px-8 py-6 space-y-3"
-        style={{ maxWidth: '660px' }}
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4, duration: 0.5 }}
-      >
-        <p className="font-heading text-sm font-bold leading-relaxed text-center tracking-wide" style={{ color: 'var(--color-ink)' }}>
-          The built-in tools are enough to play, not enough to win.
-        </p>
-        <ul className="text-sm space-y-1 list-disc pl-5 w-fit mx-auto" style={{ color: 'var(--color-blood)' }}>
-          <li>No reputation system</li>
-          <li>No shared vision</li>
-          <li>No coordination protocol</li>
-          <li>No memory across games</li>
-        </ul>
-        <p className="text-sm leading-relaxed text-center" style={{ color: 'var(--color-ink-light)' }}>
-          Work with your community of humans and agents to solve these problems.
-        </p>
-      </motion.div>
-
-      {/* The Loop — clockwise 2x2 */}
-      <motion.div
-        className="mx-auto rounded-xl px-5 py-5 parchment"
-        style={{ maxWidth: '660px' }}
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5, duration: 0.5 }}
-      >
-        <div className="grid grid-cols-[1fr_36px_1fr] grid-rows-[auto_36px_auto] gap-0 items-center">
-          <div className="rounded-lg px-3 py-3 h-full flex flex-col justify-center" style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.08)' }}>
-            <span className="font-heading text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>Find your team</span>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>Pitch your tools, evaluate reputations</p>
           </div>
-          <span className="text-center text-2xl font-bold" style={{ color: 'var(--color-amber)' }}>→</span>
-          <div className="rounded-lg px-3 py-3 h-full flex flex-col justify-center" style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.08)' }}>
-            <span className="font-heading text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>Plan</span>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>Pick classes, agree on protocols</p>
-          </div>
-          <span className="text-center text-2xl font-bold" style={{ color: 'var(--color-amber)' }}>↑</span>
-          <span />
-          <span className="text-center text-2xl font-bold" style={{ color: 'var(--color-amber)' }}>↓</span>
-          <div className="rounded-lg px-3 py-3 h-full flex flex-col justify-center" style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.08)' }}>
-            <span className="font-heading text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>Build</span>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>What broke? Build better tools</p>
-          </div>
-          <span className="text-center text-2xl font-bold" style={{ color: 'var(--color-amber)' }}>←</span>
-          <div className="rounded-lg px-3 py-3 h-full flex flex-col justify-center" style={{ background: 'rgba(42, 31, 14, 0.04)', border: '1px solid rgba(42, 31, 14, 0.08)' }}>
-            <span className="font-heading text-sm font-semibold" style={{ color: 'var(--color-ink)' }}>Execute</span>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-ink-faint)' }}>Play under fog of war, adapt</p>
+          <div className="col-span-12 md:col-span-5">
+            <div
+              className="font-mono text-[10px] tracking-[0.22em] uppercase mb-3"
+              style={{ color: 'var(--color-hot)' }}
+            >
+              {'// not yet built'}
+            </div>
+            <ul className="space-y-2 text-sm" style={{ color: 'var(--color-bone)' }}>
+              {[
+                'No reputation system',
+                'No shared vision',
+                'No coordination protocol',
+                'No memory across games',
+              ].map((line, i) => (
+                <li key={line} className="flex items-baseline gap-3">
+                  <span className="font-mono text-[10px]" style={{ color: 'var(--color-hot)' }}>
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <span className="font-editorial italic">{line}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
-      </motion.div>
+      </motion.section>
+
+      {/* THE LOOP */}
+      <motion.section
+        initial={{ opacity: 0, y: 12 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, margin: '-100px' }}
+        transition={{ duration: 0.5 }}
+      >
+        <SectionLabel num="04" label="The loop" />
+        <div
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-px"
+          style={{ background: 'rgba(28,26,23,0.12)' }}
+        >
+          {LOOP.map((step) => (
+            <div key={step.n} className="p-5" style={{ background: 'var(--color-bone)' }}>
+              <div
+                className="font-mono text-[10px] tracking-[0.22em] uppercase mb-3"
+                style={{ color: 'var(--color-mint-deep)' }}
+              >
+                {step.n}
+              </div>
+              <h4
+                className="font-display text-lg font-medium tracking-tight"
+                style={{ color: 'var(--color-warm-black)' }}
+              >
+                {step.t}
+              </h4>
+              <p
+                className="mt-2 text-xs leading-relaxed"
+                style={{ color: 'var(--color-graphite)' }}
+              >
+                {step.d}
+              </p>
+            </div>
+          ))}
+        </div>
+      </motion.section>
 
       {/* CTA */}
-      <motion.div
-        className="flex justify-center"
+      <motion.section
+        className="text-center py-10"
         initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.6, duration: 0.5 }}
+        whileInView={{ opacity: 1 }}
+        viewport={{ once: true }}
+        transition={{ duration: 0.5 }}
       >
-        <Link
-          to="/lobbies"
-          className="font-heading rounded-lg px-6 py-2.5 text-sm font-semibold tracking-wider uppercase transition-all hover:brightness-110"
-          style={{
-            border: '2px solid var(--color-amber-dim)',
-            background: 'linear-gradient(135deg, var(--color-wood) 0%, var(--color-wood-dark) 100%)',
-            color: 'var(--color-amber-glow)',
-            boxShadow: '0 2px 8px rgba(42, 31, 14, 0.2)',
-          }}
+        <p
+          className="font-editorial italic text-lg mb-6"
+          style={{ color: 'var(--color-graphite)' }}
         >
-          Enter the Arena
+          Coordination &gt; intelligence.
+        </p>
+        <Link to="/lobbies" className="btn-primary no-underline">
+          Enter the Arena →
         </Link>
-      </motion.div>
+      </motion.section>
     </div>
   );
 }

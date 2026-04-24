@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { CharacterAssignment } from '../utils/characterAssignment';
+import type { Pose } from '../utils/spriteMap';
 import { CharacterSprite } from './CharacterSprite';
 import { HealthBar } from './HealthBar';
-import type { Pose } from '../utils/spriteMap';
-import type { CharacterAssignment } from '../utils/characterAssignment';
 
 // ---- Types (mirrored from SpectatorView) ----
 
 interface OathPlayer {
   id: string;
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   cooperationRate: number;
   oathsKept: number;
@@ -99,13 +99,25 @@ function useRevealAnimation(
     t += TIMING.aftermath;
     const t5 = setTimeout(() => setPhase('none'), t);
 
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4); clearTimeout(t5); };
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+    };
   }, [resultKey, result, animate, hasNewRound]);
 
   const noState: RevealState = {
-    phase: 'none', p1Pose: 'idle', p2Pose: 'idle',
-    shakeClass: '', flashClass: '', showDelta: false,
-    effectClass: '', banner: null, lunge: 'none',
+    phase: 'none',
+    p1Pose: 'idle',
+    p2Pose: 'idle',
+    shakeClass: '',
+    flashClass: '',
+    showDelta: false,
+    effectClass: '',
+    banner: null,
+    lunge: 'none',
   };
 
   if (!result || phase === 'none') {
@@ -121,9 +133,15 @@ function useRevealAnimation(
 /** Final resting state when not animating (replay scrub). */
 function getFinalState(outcome: string): RevealState {
   const base: RevealState = {
-    phase: 'none', shakeClass: '', flashClass: '', showDelta: true,
-    effectClass: '', banner: null, lunge: 'none',
-    p1Pose: 'idle', p2Pose: 'idle',
+    phase: 'none',
+    shakeClass: '',
+    flashClass: '',
+    showDelta: true,
+    effectClass: '',
+    banner: null,
+    lunge: 'none',
+    p1Pose: 'idle',
+    p2Pose: 'idle',
   };
   if (outcome === 'cooperation') {
     return { ...base, p1Pose: 'victory', p2Pose: 'victory' };
@@ -140,9 +158,15 @@ function getFinalState(outcome: string): RevealState {
 /** Per-phase animation state for each outcome type. */
 function getPhaseState(phase: RevealPhase, outcome: string): RevealState {
   const base: RevealState = {
-    phase, shakeClass: '', flashClass: '', showDelta: false,
-    effectClass: '', banner: null, lunge: 'none',
-    p1Pose: 'idle', p2Pose: 'idle',
+    phase,
+    shakeClass: '',
+    flashClass: '',
+    showDelta: false,
+    effectClass: '',
+    banner: null,
+    lunge: 'none',
+    p1Pose: 'idle',
+    p2Pose: 'idle',
   };
 
   if (phase === 'darken') {
@@ -155,13 +179,23 @@ function getPhaseState(phase: RevealPhase, outcome: string): RevealState {
       case 'windup':
         return { ...base, p1Pose: 'idle', p2Pose: 'idle' }; // slight bow (CSS handles dip)
       case 'action':
-        return { ...base, p1Pose: 'victory', p2Pose: 'victory', effectClass: 'golden-ripple',
-          banner: { text: 'HONOR', color: '#fbbf24' } };
+        return {
+          ...base,
+          p1Pose: 'victory',
+          p2Pose: 'victory',
+          effectClass: 'golden-ripple',
+          banner: { text: 'HONOR', color: '#fbbf24' },
+        };
       case 'impact':
         return { ...base, p1Pose: 'victory', p2Pose: 'victory', effectClass: 'golden-ripple' };
       case 'aftermath':
-        return { ...base, p1Pose: 'victory', p2Pose: 'victory', showDelta: true,
-          banner: { text: 'OATH HONORED', color: '#4ade80' } };
+        return {
+          ...base,
+          p1Pose: 'victory',
+          p2Pose: 'victory',
+          showDelta: true,
+          banner: { text: 'OATH HONORED', color: '#4ade80' },
+        };
     }
   } else if (outcome === 'betrayal_1') {
     // P1 attacks, P2 gets hit
@@ -169,13 +203,25 @@ function getPhaseState(phase: RevealPhase, outcome: string): RevealState {
       case 'windup':
         return { ...base, p1Pose: 'attack', p2Pose: 'idle', lunge: 'p1' };
       case 'action':
-        return { ...base, p1Pose: 'attack', p2Pose: 'hit', shakeClass: 'shake', flashClass: 'red-flash',
-          effectClass: 'red-slash-right', banner: { text: 'BETRAYED!', color: '#f87171' } };
+        return {
+          ...base,
+          p1Pose: 'attack',
+          p2Pose: 'hit',
+          shakeClass: 'shake',
+          flashClass: 'red-flash',
+          effectClass: 'red-slash-right',
+          banner: { text: 'BETRAYED!', color: '#f87171' },
+        };
       case 'impact':
         return { ...base, p1Pose: 'attack', p2Pose: 'hit', effectClass: 'red-slash-right' };
       case 'aftermath':
-        return { ...base, p1Pose: 'attack', p2Pose: 'hit', showDelta: true,
-          banner: { text: 'OATH BROKEN', color: '#f87171' } };
+        return {
+          ...base,
+          p1Pose: 'attack',
+          p2Pose: 'hit',
+          showDelta: true,
+          banner: { text: 'OATH BROKEN', color: '#f87171' },
+        };
     }
   } else if (outcome === 'betrayal_2') {
     // P2 attacks, P1 gets hit
@@ -183,13 +229,25 @@ function getPhaseState(phase: RevealPhase, outcome: string): RevealState {
       case 'windup':
         return { ...base, p1Pose: 'idle', p2Pose: 'attack', lunge: 'p2' };
       case 'action':
-        return { ...base, p1Pose: 'hit', p2Pose: 'attack', shakeClass: 'shake', flashClass: 'red-flash',
-          effectClass: 'red-slash-left', banner: { text: 'BETRAYED!', color: '#f87171' } };
+        return {
+          ...base,
+          p1Pose: 'hit',
+          p2Pose: 'attack',
+          shakeClass: 'shake',
+          flashClass: 'red-flash',
+          effectClass: 'red-slash-left',
+          banner: { text: 'BETRAYED!', color: '#f87171' },
+        };
       case 'impact':
         return { ...base, p1Pose: 'hit', p2Pose: 'attack', effectClass: 'red-slash-left' };
       case 'aftermath':
-        return { ...base, p1Pose: 'hit', p2Pose: 'attack', showDelta: true,
-          banner: { text: 'OATH BROKEN', color: '#f87171' } };
+        return {
+          ...base,
+          p1Pose: 'hit',
+          p2Pose: 'attack',
+          showDelta: true,
+          banner: { text: 'OATH BROKEN', color: '#f87171' },
+        };
     }
   } else if (outcome === 'standoff') {
     // Both lunge + clash
@@ -197,13 +255,25 @@ function getPhaseState(phase: RevealPhase, outcome: string): RevealState {
       case 'windup':
         return { ...base, p1Pose: 'attack', p2Pose: 'attack', lunge: 'both' };
       case 'action':
-        return { ...base, p1Pose: 'attack', p2Pose: 'attack', shakeClass: 'shake', flashClass: 'red-flash',
-          effectClass: 'spark-burst', banner: { text: 'CLASH!', color: '#fb923c' } };
+        return {
+          ...base,
+          p1Pose: 'attack',
+          p2Pose: 'attack',
+          shakeClass: 'shake',
+          flashClass: 'red-flash',
+          effectClass: 'spark-burst',
+          banner: { text: 'CLASH!', color: '#fb923c' },
+        };
       case 'impact':
         return { ...base, p1Pose: 'hit', p2Pose: 'hit', shakeClass: 'shake' };
       case 'aftermath':
-        return { ...base, p1Pose: 'attack', p2Pose: 'attack', showDelta: true,
-          banner: { text: 'BOTH FORSWORN', color: '#fbbf24' } };
+        return {
+          ...base,
+          p1Pose: 'attack',
+          p2Pose: 'attack',
+          showDelta: true,
+          banner: { text: 'BOTH FORSWORN', color: '#fbbf24' },
+        };
     }
   }
 
@@ -221,14 +291,21 @@ function PhaseBadge({ pairing }: { pairing: OathSpectatorPairing }) {
   const s = styles[pairing.phase] ?? styles.pledging;
 
   return (
-    <span className="pixel-text" style={{
-      fontSize: 7,
-      letterSpacing: 2,
-      padding: '4px 10px',
-      background: s.bg,
-      color: s.color,
-      border: `1px solid ${s.color}33`,
-    }}>
+    <span
+      className="pixel-text"
+      style={{
+        fontSize: 7,
+        letterSpacing: 2,
+        padding: '4px 10px',
+        // @ts-expect-error TS18048: 's' is possibly 'undefined'. — TODO(2.3-followup)
+        background: s.bg,
+        // @ts-expect-error TS18048: 's' is possibly 'undefined'. — TODO(2.3-followup)
+        color: s.color,
+        // @ts-expect-error TS18048: 's' is possibly 'undefined'. — TODO(2.3-followup)
+        border: `1px solid ${s.color}33`,
+      }}
+    >
+      {/* @ts-expect-error TS18048: 's' is possibly 'undefined'. — TODO(2.3-followup) */}
       {s.label}
     </span>
   );
@@ -236,76 +313,96 @@ function PhaseBadge({ pairing }: { pairing: OathSpectatorPairing }) {
 
 function OathBanner({ text, glow }: { text: string; glow?: boolean }) {
   return (
-    <div className={glow ? 'oath-glow' : ''} style={{
-      textAlign: 'center',
-      padding: '8px 16px',
-      background: 'rgba(234, 179, 8, 0.1)',
-      border: '1px solid rgba(234, 179, 8, 0.3)',
-      fontSize: 8,
-      fontFamily: "'Press Start 2P', monospace",
-      color: '#eab308',
-      letterSpacing: 2,
-    }}>
+    <div
+      className={glow ? 'oath-glow' : ''}
+      style={{
+        textAlign: 'center',
+        padding: '8px 16px',
+        background: 'rgba(234, 179, 8, 0.1)',
+        border: '1px solid rgba(234, 179, 8, 0.3)',
+        fontSize: 8,
+        fontFamily: "'Press Start 2P', monospace",
+        color: '#eab308',
+        letterSpacing: 2,
+      }}
+    >
       {text}
     </div>
   );
 }
 
-function DollarDelta({ delta, side }: { delta: number; side: 'left' | 'right' }) {
+function CreditDelta({ delta, side }: { delta: number; side: 'left' | 'right' }) {
   const color = delta >= 0 ? '#4ade80' : '#f87171';
-  const text = delta >= 0 ? `+$${delta.toFixed(2)}` : `-$${Math.abs(delta).toFixed(2)}`;
+  const sign = delta >= 0 ? '+' : '-';
+  const text = `${sign}${Math.abs(delta).toFixed(2)} cr`;
 
   return (
-    <div className="float-up pixel-text" style={{
-      position: 'absolute',
-      [side]: '20%',
-      top: '30%',
-      fontSize: 12,
-      color,
-      fontWeight: 'bold',
-      textShadow: `0 0 8px ${color}`,
-      zIndex: 10,
-    }}>
+    <div
+      className="float-up pixel-text"
+      style={{
+        position: 'absolute',
+        [side]: '20%',
+        top: '30%',
+        fontSize: 12,
+        color,
+        fontWeight: 'bold',
+        textShadow: `0 0 8px ${color}`,
+        zIndex: 10,
+      }}
+    >
       {text}
     </div>
   );
 }
 
-function ChatBubble({ message, side, visible }: { message: string; side: 'left' | 'right'; visible: boolean }) {
+function ChatBubble({
+  message,
+  side,
+  visible,
+}: {
+  message: string;
+  side: 'left' | 'right';
+  visible: boolean;
+}) {
   if (!message || !visible) return null;
-  const truncated = message.length > 60 ? message.slice(0, 57) + '...' : message;
+  const truncated = message.length > 60 ? `${message.slice(0, 57)}...` : message;
   const isLeft = side === 'left';
 
   return (
-    <div className={`chat-bubble chat-bubble-${side}`} style={{
-      position: 'absolute',
-      [isLeft ? 'left' : 'right']: '5%',
-      top: '5%',
-      maxWidth: '40%',
-      background: 'rgba(255,255,255,0.95)',
-      color: '#111',
-      padding: '6px 10px',
-      fontSize: 9,
-      fontFamily: "'Press Start 2P', monospace",
-      lineHeight: 1.5,
-      borderRadius: 4,
-      zIndex: 8,
-      opacity: visible ? 1 : 0,
-      transition: 'opacity 0.3s',
-      wordBreak: 'break-word',
-    }}>
+    <div
+      className={`chat-bubble chat-bubble-${side}`}
+      style={{
+        position: 'absolute',
+        [isLeft ? 'left' : 'right']: '5%',
+        top: '5%',
+        maxWidth: '40%',
+        background: 'rgba(255,255,255,0.95)',
+        color: '#111',
+        padding: '6px 10px',
+        fontSize: 9,
+        fontFamily: "'Press Start 2P', monospace",
+        lineHeight: 1.5,
+        borderRadius: 4,
+        zIndex: 8,
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.3s',
+        wordBreak: 'break-word',
+      }}
+    >
       {truncated}
       {/* Speech bubble tail */}
-      <div style={{
-        position: 'absolute',
-        bottom: -8,
-        [isLeft ? 'left' : 'right']: 16,
-        width: 0,
-        height: 0,
-        borderLeft: '6px solid transparent',
-        borderRight: '6px solid transparent',
-        borderTop: '8px solid rgba(255,255,255,0.95)',
-      }} />
+      <div
+        style={{
+          position: 'absolute',
+          bottom: -8,
+          [isLeft ? 'left' : 'right']: 16,
+          width: 0,
+          height: 0,
+          borderLeft: '6px solid transparent',
+          borderRight: '6px solid transparent',
+          borderTop: '8px solid rgba(255,255,255,0.95)',
+        }}
+      />
     </div>
   );
 }
@@ -345,8 +442,34 @@ export function ArcadeBattleView({
   newRoundResults = null,
 }: ArcadeBattleViewProps) {
   const chatRef = useRef<HTMLDivElement>(null);
-  const p1 = players.find(p => p.id === pairing.player1);
-  const p2 = players.find(p => p.id === pairing.player2);
+
+  // Find the followed player's most recent result. Hooks must run
+  // unconditionally, so derive latestResult from pairing IDs directly rather
+  // than the resolved player objects (which may be missing below).
+  //
+  // Pairings rotate each round — after a round resolves, the snapshot already
+  // has the NEXT round's pairings, so the current pairing won't match the
+  // just-resolved results. Instead, search for any result involving the
+  // followed player (pairing.player1, since SpectatorView normalizes order).
+  let latestResult: OathPairingResult | undefined;
+  for (let i = roundResults.length - 1; i >= 0; i--) {
+    const match = roundResults[i]?.find(
+      (r) => r.player1 === pairing.player1 || r.player2 === pairing.player1,
+    );
+    if (match) {
+      latestResult = match;
+      break;
+    }
+  }
+
+  const reveal = useRevealAnimation(latestResult, animate, newRoundResults);
+
+  useEffect(() => {
+    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+  }, []);
+
+  const p1 = players.find((p) => p.id === pairing.player1);
+  const p2 = players.find((p) => p.id === pairing.player2);
   if (!p1 || !p2) return null;
 
   const name1 = handles[p1.id] ?? p1.id.slice(0, 8);
@@ -354,53 +477,39 @@ export function ArcadeBattleView({
   const char1 = characters[p1.id];
   const char2 = characters[p2.id];
 
-  // Find the followed player's most recent result.
-  // Pairings rotate each round — after a round resolves, the snapshot already
-  // has the NEXT round's pairings, so the current p1/p2 pairing won't match
-  // the just-resolved results. Instead, search for any result involving the
-  // followed player (p1, since SpectatorView normalizes pairing order).
-  let latestResult: OathPairingResult | undefined;
-  for (let i = roundResults.length - 1; i >= 0; i--) {
-    const match = roundResults[i]?.find(
-      r => r.player1 === p1.id || r.player2 === p1.id
-    );
-    if (match) { latestResult = match; break; }
-  }
-
-  const reveal = useRevealAnimation(latestResult, animate, newRoundResults);
-
   // Determine background
   const bgIdx = (p1.id + p2.id).split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 2;
-  const bgUrl = bgIdx === 0
-    ? '/assets/oathbreaker/bg-temple.jpg'
-    : '/assets/oathbreaker/bg-waterfall.jpg';
+  const bgUrl =
+    bgIdx === 0 ? '/assets/oathbreaker/bg-temple.jpg' : '/assets/oathbreaker/bg-waterfall.jpg';
 
   // Filter chat to these two players
-  const battleChat = chatMessages.filter(m => m.from === p1.id || m.from === p2.id);
+  const battleChat = chatMessages.filter((m) => m.from === p1.id || m.from === p2.id);
 
   // Latest chat message per player (for speech bubbles)
-  const p1LastMsg = [...battleChat].reverse().find(m => m.from === p1.id)?.message ?? '';
-  const p2LastMsg = [...battleChat].reverse().find(m => m.from === p2.id)?.message ?? '';
+  const p1LastMsg = [...battleChat].reverse().find((m) => m.from === p1.id)?.message ?? '';
+  const p2LastMsg = [...battleChat].reverse().find((m) => m.from === p2.id)?.message ?? '';
   const showBubbles = reveal.phase === 'darken' || reveal.phase === 'none';
-
-  useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, [battleChat.length]);
 
   // Chat panel (reused in both layouts)
   const chatPanel = (
-    <div style={{
-      flex: 1,
-      background: 'rgba(0,0,0,0.85)',
-      display: 'flex', flexDirection: 'column',
-      minHeight: 0, overflow: 'hidden',
-    }}>
+    <div
+      style={{
+        flex: 1,
+        background: 'rgba(0,0,0,0.85)',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        overflow: 'hidden',
+      }}
+    >
       {/* Pledge status */}
       <div style={{ flexShrink: 0 }}>
         {pairing.agreedPledge !== null ? (
           <OathBanner text={`⚔ OATH SWORN — ${pairing.agreedPledge} PTS ⚔`} glow />
         ) : pairing.phase === 'pledging' ? (
-          <div style={{ display: 'flex', padding: '6px 12px', gap: 12, fontSize: 7, flexWrap: 'wrap' }}>
+          <div
+            style={{ display: 'flex', padding: '6px 12px', gap: 12, fontSize: 7, flexWrap: 'wrap' }}
+          >
             <span className="pixel-text" style={{ color: '#60a5fa' }}>
               {name1}: {pairing.proposal1 !== null ? `${pairing.proposal1} pts` : '...'}
             </span>
@@ -411,15 +520,31 @@ export function ArcadeBattleView({
         ) : null}
 
         {(pairing.phase === 'deciding' || pairing.phase === 'decided') && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 16, padding: '4px 12px', flexWrap: 'wrap' }}>
-            <span className="pixel-text" style={{
-              fontSize: 7, color: pairing.player1HasDecided ? '#4ade80' : '#9ca3af',
-            }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              gap: 16,
+              padding: '4px 12px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span
+              className="pixel-text"
+              style={{
+                fontSize: 7,
+                color: pairing.player1HasDecided ? '#4ade80' : '#9ca3af',
+              }}
+            >
               {name1}: {pairing.player1HasDecided ? 'SEALED' : 'DECIDING...'}
             </span>
-            <span className="pixel-text" style={{
-              fontSize: 7, color: pairing.player2HasDecided ? '#4ade80' : '#9ca3af',
-            }}>
+            <span
+              className="pixel-text"
+              style={{
+                fontSize: 7,
+                color: pairing.player2HasDecided ? '#4ade80' : '#9ca3af',
+              }}
+            >
               {name2}: {pairing.player2HasDecided ? 'SEALED' : 'DECIDING...'}
             </span>
           </div>
@@ -427,10 +552,16 @@ export function ArcadeBattleView({
       </div>
 
       {/* Chat header */}
-      <div className="pixel-text" style={{
-        fontSize: 7, color: '#6b7280', padding: '6px 12px 2px',
-        letterSpacing: 1.5, flexShrink: 0,
-      }}>
+      <div
+        className="pixel-text"
+        style={{
+          fontSize: 7,
+          color: '#6b7280',
+          padding: '6px 12px 2px',
+          letterSpacing: 1.5,
+          flexShrink: 0,
+        }}
+      >
         NEGOTIATION
       </div>
 
@@ -441,6 +572,7 @@ export function ArcadeBattleView({
           const senderName = isP1 ? name1 : name2;
           const color = isP1 ? '#60a5fa' : '#f87171';
           return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: append-only battle-chat log — entries never reorder, so index is a stable key.
             <div key={i} style={{ marginBottom: 3, fontSize: 12, lineHeight: 1.4 }}>
               <span style={{ color, fontWeight: 'bold' }}>{senderName}:</span>{' '}
               <span style={{ color: '#d1d5db' }}>{msg.message}</span>
@@ -457,24 +589,37 @@ export function ArcadeBattleView({
   );
 
   // Lunge transform for fighters (slide toward center during attack)
-  const p1Lunge = (reveal.lunge === 'both' || reveal.lunge === 'p1') ? 'translateX(30px)' : '';
-  const p2Lunge = (reveal.lunge === 'both' || reveal.lunge === 'p2') ? 'translateX(-30px)' : '';
+  const p1Lunge = reveal.lunge === 'both' || reveal.lunge === 'p1' ? 'translateX(30px)' : '';
+  const p2Lunge = reveal.lunge === 'both' || reveal.lunge === 'p2' ? 'translateX(-30px)' : '';
 
   // Arena panel (reused in both layouts)
   const arenaPanel = (
-    <div className={`arena-bg ${reveal.shakeClass}`} style={{
-      backgroundImage: `url(${bgUrl})`,
-      display: 'flex', flexDirection: 'column',
-      position: 'relative',
-      minHeight: 250,
-    }}>
+    <div
+      className={`arena-bg ${reveal.shakeClass}`}
+      style={{
+        backgroundImage: `url(${bgUrl})`,
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        minHeight: 250,
+      }}
+    >
       {reveal.phase === 'darken' && (
-        <div style={{
-          position: 'absolute', inset: 0,
-          background: 'rgba(0,0,0,0.6)', zIndex: 5,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <span className="pixel-text oath-glow" style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}>
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 5,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <span
+            className="pixel-text oath-glow"
+            style={{ fontSize: 10, color: '#eab308', letterSpacing: 3 }}
+          >
             FATES SEALED...
           </span>
         </div>
@@ -486,45 +631,64 @@ export function ArcadeBattleView({
 
       {reveal.showDelta && latestResult && (
         <>
-          <DollarDelta delta={latestResult.delta1} side="left" />
-          <DollarDelta delta={latestResult.delta2} side="right" />
+          <CreditDelta delta={latestResult.delta1} side="left" />
+          <CreditDelta delta={latestResult.delta2} side="right" />
         </>
       )}
 
       {/* Outcome-specific effect overlays */}
       {reveal.effectClass && (
-        <div className={reveal.effectClass} style={{
-          position: 'absolute', inset: 0, zIndex: 6, pointerEvents: 'none',
-        }} />
+        <div
+          className={reveal.effectClass}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 6,
+            pointerEvents: 'none',
+          }}
+        />
       )}
 
       {/* Outcome banner (from reveal state) */}
       {reveal.banner && (
-        <div className="fade-in-up" style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}>
-          <div className="pixel-text" style={{
-            textAlign: 'center',
-            fontSize: 14,
-            color: reveal.banner.color,
-            textShadow: `0 0 12px ${reveal.banner.color}`,
-            letterSpacing: 3,
-            padding: '12px 0',
-          }}>
+        <div
+          className="fade-in-up"
+          style={{ position: 'absolute', top: '10%', left: 0, right: 0, zIndex: 10 }}
+        >
+          <div
+            className="pixel-text"
+            style={{
+              textAlign: 'center',
+              fontSize: 14,
+              color: reveal.banner.color,
+              textShadow: `0 0 12px ${reveal.banner.color}`,
+              letterSpacing: 3,
+              padding: '12px 0',
+            }}
+          >
             {reveal.banner.text}
           </div>
         </div>
       )}
 
       {/* Fighters — fill the arena */}
-      <div className="arena-fighters" style={{
-        flex: 1,
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-        paddingBottom: 8,
-        position: 'relative', zIndex: 2,
-      }}>
+      <div
+        className="arena-fighters"
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'center',
+          paddingBottom: 8,
+          position: 'relative',
+          zIndex: 2,
+        }}
+      >
         <div
           className={reveal.p1Pose === 'victory' && reveal.phase !== 'none' ? 'golden-glow' : ''}
           style={{ transform: p1Lunge, transition: 'transform 0.3s ease-out' }}
         >
+          {/* @ts-expect-error TS2375: Type '{ character: string; pose: Pose; faceRight: true; scale: number; tint: str — TODO(2.3-followup) */}
           <CharacterSprite
             character={char1?.characterName ?? 'buchu'}
             pose={reveal.p1Pose}
@@ -538,6 +702,7 @@ export function ArcadeBattleView({
           className={reveal.p2Pose === 'victory' && reveal.phase !== 'none' ? 'golden-glow' : ''}
           style={{ transform: p2Lunge, transition: 'transform 0.3s ease-out' }}
         >
+          {/* @ts-expect-error TS2375: Type '{ character: string; pose: Pose; faceRight: false; scale: number; tint: st — TODO(2.3-followup) */}
           <CharacterSprite
             character={char2?.characterName ?? 'star'}
             pose={reveal.p2Pose}
@@ -552,27 +717,53 @@ export function ArcadeBattleView({
   );
 
   return (
-    <div className={`arcade-screen ${reveal.flashClass}`} style={{
-      display: 'flex', flexDirection: 'column', height: '100%',
-    }}>
+    <div
+      className={`arcade-screen ${reveal.flashClass}`}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+      }}
+    >
       {/* HUD — full width, always on top */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '8px 16px', background: 'rgba(0,0,0,0.8)', zIndex: 10,
-        borderBottom: '2px solid #333', flexShrink: 0,
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 16px',
+          background: 'rgba(0,0,0,0.8)',
+          zIndex: 10,
+          borderBottom: '2px solid #333',
+          flexShrink: 0,
+        }}
+      >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <button onClick={onBack} className="pixel-text" style={{
-            background: 'transparent', border: '1px solid #444', padding: '4px 10px',
-            color: '#9ca3af', fontSize: 7, cursor: 'pointer',
-          }}>
+          <button
+            type="button"
+            onClick={onBack}
+            className="pixel-text"
+            style={{
+              background: 'transparent',
+              border: '1px solid #444',
+              padding: '4px 10px',
+              color: '#9ca3af',
+              fontSize: 7,
+              cursor: 'pointer',
+            }}
+          >
             ← BACK
           </button>
           {followedPlayerId && (
-            <span className="pixel-text" style={{
-              fontSize: 6, color: '#e9d852', letterSpacing: 1.5,
-              padding: '2px 4px',
-            }}>
+            <span
+              className="pixel-text"
+              style={{
+                fontSize: 6,
+                color: '#e9d852',
+                letterSpacing: 1.5,
+                padding: '2px 4px',
+              }}
+            >
               ▶ FOLLOWING {handles[followedPlayerId] ?? followedPlayerId.slice(0, 8)}
             </span>
           )}
@@ -581,9 +772,16 @@ export function ArcadeBattleView({
           <div className="pixel-text" style={{ fontSize: 10, color: '#e9d852', letterSpacing: 3 }}>
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="誓約破り" style={{
-            height: 24, imageRendering: 'pixelated', display: 'block', margin: '2px auto 0',
-          }} />
+          <img
+            src="/assets/oathbreaker/kanji-title-pixel.png"
+            alt="誓約破り"
+            style={{
+              height: 24,
+              imageRendering: 'pixelated',
+              display: 'block',
+              margin: '2px auto 0',
+            }}
+          />
         </div>
         <span className="pixel-text" style={{ fontSize: 7, color: '#e5e7eb' }}>
           ROUND {currentRound}/{maxRounds}
@@ -591,13 +789,21 @@ export function ArcadeBattleView({
       </div>
 
       {/* Fighter stats — full width */}
-      <div style={{
-        display: 'flex', gap: 16, padding: '8px 16px',
-        background: 'rgba(0,0,0,0.7)', zIndex: 10, flexShrink: 0,
-      }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          padding: '8px 16px',
+          background: 'rgba(0,0,0,0.7)',
+          zIndex: 10,
+          flexShrink: 0,
+        }}
+      >
         <div style={{ flex: 1 }}>
-          <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 4 }}>{name1}</div>
-          <HealthBar dollarValue={p1.dollarValue} breakEvenDelta={p1.breakEvenDelta} />
+          <div className="pixel-text" style={{ fontSize: 8, color: '#60a5fa', marginBottom: 4 }}>
+            {name1}
+          </div>
+          <HealthBar creditValue={p1.creditValue} breakEvenDelta={p1.breakEvenDelta} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p1.oathsKept}/{p1.oathsKept + p1.oathsBroken}
           </div>
@@ -606,8 +812,10 @@ export function ArcadeBattleView({
           <PhaseBadge pairing={pairing} />
         </div>
         <div style={{ flex: 1, textAlign: 'right' }}>
-          <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 4 }}>{name2}</div>
-          <HealthBar dollarValue={p2.dollarValue} breakEvenDelta={p2.breakEvenDelta} />
+          <div className="pixel-text" style={{ fontSize: 8, color: '#f87171', marginBottom: 4 }}>
+            {name2}
+          </div>
+          <HealthBar creditValue={p2.creditValue} breakEvenDelta={p2.breakEvenDelta} />
           <div className="pixel-text" style={{ fontSize: 6, color: '#9ca3af', marginTop: 2 }}>
             OATHS {p2.oathsKept}/{p2.oathsKept + p2.oathsBroken}
           </div>
@@ -615,18 +823,29 @@ export function ArcadeBattleView({
       </div>
 
       {/* Main content: side-by-side on desktop (>640px), stacked on mobile */}
-      <div className="battle-content" style={{
-        flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden',
-      }}>
+      <div
+        className="battle-content"
+        style={{
+          flex: 1,
+          display: 'flex',
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
         {/* Arena */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {arenaPanel}
         </div>
         {/* Chat — beside arena on desktop, below on mobile */}
-        <div className="battle-chat" style={{
-          display: 'flex', flexDirection: 'column', minHeight: 0,
-          borderLeft: '2px solid #333',
-        }}>
+        <div
+          className="battle-chat"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            borderLeft: '2px solid #333',
+          }}
+        >
           {chatPanel}
         </div>
       </div>

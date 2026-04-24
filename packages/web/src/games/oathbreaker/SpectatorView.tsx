@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { API_BASE, getWsUrl } from '../../config.js';
+import { useMemo, useState } from 'react';
 import type { SpectatorViewProps } from '../types';
 import { ArcadeBattleView } from './components/ArcadeBattleView';
 import { ArcadeOverview } from './components/ArcadeOverview';
+import { GameOverScreen } from './components/GameOverScreen';
 import { assignCharacters } from './utils/characterAssignment';
 import './styles/arcade.css';
 
@@ -12,7 +12,7 @@ import './styles/arcade.css';
 
 interface OathPlayer {
   id: string;
-  dollarValue: number;
+  creditValue: number;
   breakEvenDelta: number;
   cooperationRate: number;
   oathsKept: number;
@@ -54,9 +54,23 @@ interface OathSpectatorState {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function mapServerState(raw: any): OathSpectatorState | null {
-  if (!raw) return null;
-  const data = raw.data ?? raw;
+function mapServerState(raw: unknown): OathSpectatorState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  // Phase 7.1: live mode hands us the unified spectator payload's
+  // `state` field directly. Replay mode (and legacy callers) still pass
+  // the snapshot at the top level. `raw.data ?? raw` keeps both shapes
+  // working while replay is on the legacy `/replay` path.
+  const top = raw as { data?: unknown };
+  const dataCandidate = top.data ?? raw;
+  if (!dataCandidate || typeof dataCandidate !== 'object') return null;
+  const data = dataCandidate as {
+    players?: OathPlayer[];
+    round?: number;
+    maxRounds?: number;
+    phase?: 'playing' | 'finished';
+    pairings?: OathSpectatorPairing[];
+    roundResults?: OathPairingResult[][];
+  };
   if (!data.players || !Array.isArray(data.players)) return null;
   return {
     round: data.round ?? 0,
@@ -73,14 +87,30 @@ function mapServerState(raw: any): OathSpectatorState | null {
 // ---------------------------------------------------------------------------
 
 export function OathbreakerSpectatorView(props: SpectatorViewProps) {
-  const { gameId, handles, chatMessages, gameState: rawGameState, replaySnapshots, prevGameState: rawPrevGameState, animate } = props;
+  const {
+    gameId,
+    handles,
+    chatMessages,
+    gameState: rawGameState,
+    replaySnapshots,
+    prevGameState: rawPrevGameState,
+    animate,
+    liveSnapshot,
+    liveError,
+  } = props;
   const isReplay = replaySnapshots != null;
 
-  const [liveState, setLiveState] = useState<OathSpectatorState | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Phase 7.2 — the single WS now lives in GamePage's `useSpectatorStream`.
+  // The live snapshot/error arrive via props in live mode; replay derives
+  // state from `rawGameState`.
+  const liveSnapshotTyped = liveSnapshot as { type?: string; state?: unknown } | null | undefined;
+  const liveState =
+    !isReplay && liveSnapshotTyped?.type === 'state_update'
+      ? mapServerState(liveSnapshotTyped.state)
+      : null;
+  const connected = !isReplay && liveSnapshotTyped != null;
+  const error = liveError ?? null;
   const [followedPlayerId, setFollowedPlayerId] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   // ---------------------------------------------------------------------------
   // Replay mode: derive state from props
@@ -95,44 +125,6 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
     if (!isReplay || !rawPrevGameState) return null;
     return mapServerState(rawPrevGameState);
   }, [isReplay, rawPrevGameState]);
-
-  // ---------------------------------------------------------------------------
-  // Live mode: fetch initial state + connect WebSocket
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    if (isReplay || !gameId) return;
-
-    fetch(`${API_BASE}/games/${gameId}`)
-      .then(r => r.json())
-      .then(data => {
-        // Symmetric guard; spectator_pending never fires for delay=0.
-        if (data?.type === 'spectator_pending') return;
-        const mapped = mapServerState(data);
-        if (mapped) setLiveState(mapped);
-      })
-      .catch(() => {});
-
-    const wsUrl = getWsUrl(`/ws/game/${gameId}`);
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => { setConnected(true); setError(null); };
-    ws.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data);
-        if (raw?.type === 'spectator_pending') return;
-        const mapped = mapServerState(raw);
-        if (mapped) setLiveState(mapped);
-      } catch {
-        console.warn('Failed to parse OATHBREAKER WS message');
-      }
-    };
-    ws.onerror = () => setError('WebSocket error');
-    ws.onclose = () => setConnected(false);
-
-    return () => { ws.close(); wsRef.current = null; };
-  }, [gameId, isReplay]);
 
   // ---------------------------------------------------------------------------
   // Unified state: replay or live
@@ -155,47 +147,88 @@ export function OathbreakerSpectatorView(props: SpectatorViewProps) {
   // Character assignments — seeded, deterministic
   const characters = useMemo(() => {
     if (!state) return {};
-    const playerIds = state.players.map(p => p.id).sort();
+    const playerIds = state.players.map((p) => p.id).sort();
     return assignCharacters(playerIds, gameId ?? 'default');
-  }, [state?.players.length, gameId]);
+    // @ts-expect-error TS18047: 'state' is possibly 'null'. — TODO(2.3-followup)
+  }, [state?.players.length, gameId, state.players.map, state]);
 
   if (!state) {
     return (
-      <div className="arcade-screen" style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%',
-      }}>
+      <div
+        className="arcade-screen"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+        }}
+      >
         <div style={{ textAlign: 'center' }}>
-          <div className="pixel-text" style={{ fontSize: 14, color: '#e9d852', letterSpacing: 4, marginBottom: 16 }}>
+          <div
+            className="pixel-text"
+            style={{ fontSize: 14, color: '#e9d852', letterSpacing: 4, marginBottom: 16 }}
+          >
             OATHBREAKER
           </div>
-          <img src="/assets/oathbreaker/kanji-title-pixel.png" alt="&#35475;&#32004;&#30772;&#12426;" style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }} />
-          <div className="pixel-text" style={{ fontSize: 9, color: '#d1d5db', marginBottom: 8, letterSpacing: 3 }}>Seiyaku-yaburi</div>
+          <img
+            src="/assets/oathbreaker/kanji-title-pixel.png"
+            alt="&#35475;&#32004;&#30772;&#12426;"
+            style={{ height: 80, marginTop: 6, imageRendering: 'pixelated' }}
+          />
+          <div
+            className="pixel-text"
+            style={{ fontSize: 9, color: '#d1d5db', marginBottom: 8, letterSpacing: 3 }}
+          >
+            Seiyaku-yaburi
+          </div>
           <p className="pixel-text" style={{ fontSize: 8, color: '#e5e7eb' }}>
-            {error ? error : isReplay ? 'LOADING REPLAY...' : connected ? 'WAITING FOR GAME DATA...' : 'CONNECTING...'}
+            {error
+              ? error
+              : isReplay
+                ? 'LOADING REPLAY...'
+                : connected
+                  ? 'WAITING FOR GAME DATA...'
+                  : 'CONNECTING...'}
           </p>
         </div>
       </div>
     );
   }
 
+  // Finished tournament → dedicated winners + oathbreaker screen. Replay
+  // stays on the per-round views so scrubbing backwards still animates.
+  if (state.phase === 'finished' && !isReplay) {
+    return (
+      <div style={{ height: '100%' }}>
+        <GameOverScreen
+          players={state.players}
+          roundResults={state.roundResults}
+          handles={handles}
+          characters={characters}
+          gameId={gameId ?? 'oathbreaker'}
+        />
+      </div>
+    );
+  }
+
   // Resolve followed player to their current pairing
   const rawPairing = followedPlayerId
-    ? state.pairings.find(
-        p => p.player1 === followedPlayerId || p.player2 === followedPlayerId
-      ) ?? null
+    ? (state.pairings.find(
+        (p) => p.player1 === followedPlayerId || p.player2 === followedPlayerId,
+      ) ?? null)
     : null;
-  const livePairing = rawPairing && rawPairing.player2 === followedPlayerId
-    ? {
-        ...rawPairing,
-        player1: rawPairing.player2,
-        player2: rawPairing.player1,
-        proposal1: rawPairing.proposal2,
-        proposal2: rawPairing.proposal1,
-        player1HasDecided: rawPairing.player2HasDecided,
-        player2HasDecided: rawPairing.player1HasDecided,
-      }
-    : rawPairing;
+  const livePairing =
+    rawPairing && rawPairing.player2 === followedPlayerId
+      ? {
+          ...rawPairing,
+          player1: rawPairing.player2,
+          player2: rawPairing.player1,
+          proposal1: rawPairing.proposal2,
+          proposal2: rawPairing.proposal1,
+          player1HasDecided: rawPairing.player2HasDecided,
+          player2HasDecided: rawPairing.player1HasDecided,
+        }
+      : rawPairing;
 
   // Battle view
   if (livePairing) {

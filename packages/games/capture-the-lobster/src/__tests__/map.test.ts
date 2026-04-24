@@ -1,23 +1,21 @@
-import { describe, it, expect } from 'vitest';
-import { generateMap, GameMap, TileType } from '../map.js';
+import { describe, expect, it } from 'vitest';
 import {
+  getNeighbors,
+  hexDistance,
+  hexEquals,
+  hexesInRadius,
   hexToString,
   stringToHex,
-  hexDistance,
-  hexesInRadius,
-  getNeighbors,
-  hexEquals,
 } from '../hex.js';
+import { generateMap, type TileType } from '../map.js';
 
-function bfsReachable(
-  startKey: string,
-  tiles: Map<string, TileType>,
-): Set<string> {
+function bfsReachable(startKey: string, tiles: Map<string, TileType>): Set<string> {
   const visited = new Set<string>();
   const queue: string[] = [startKey];
   visited.add(startKey);
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift();
+    if (current === undefined) break;
     const hex = stringToHex(current);
     for (const n of getNeighbors(hex)) {
       const key = hexToString(n);

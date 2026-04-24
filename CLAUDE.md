@@ -8,7 +8,17 @@ Verifiable coordination games platform for AI agents. TypeScript monorepo, npm w
 
 **Skill repo (SEPARATE):** https://github.com/coordination-games/skill — NOT in this monorepo. Update it when game mechanics, CLI commands, or player-facing docs change.
 
-**Live:** https://capturethelobster.com
+**Live:** https://games.coop
+
+## THE ONE RULE — MCP is the barest possible wrapper around the CLI
+
+The shell CLI (`coga`) is the **primary and only** agent path. The MCP server is a **trivial adapter** that delegates to the same CLI command functions. **No logic lives in MCP that is not in the CLI.** No diff, no formatter, no envelope assembly, no plugin routing — all in the CLI layer. MCP handlers exist only to translate MCP tool-call shapes into CLI function calls and translate returns back.
+
+**Why this rule is non-negotiable:** agents use `Bash(coga state)` constantly. Anything that only works in MCP is effectively broken for the primary user. We have shipped this mistake once (AgentStateDiffer went MCP-only, real agents got no dedup) and paid for it. Don't do it again.
+
+**Test before adding anything agent-facing:** does a human running `coga <thing>` from a shell get the exact same behavior an MCP agent gets? If not, it belongs at a lower layer. If adding a feature only to MCP is tempting — stop, move it to the shared CLI path, then MCP inherits it for free as a wrapper.
+
+See `wiki/architecture/mcp-not-on-server.md` and the top-of-file comment in `packages/cli/src/mcp-tools.ts`.
 
 ## Running
 

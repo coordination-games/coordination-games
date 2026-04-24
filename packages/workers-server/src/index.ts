@@ -1,11 +1,22 @@
+import { getGame, getRegisteredGames } from '@coordination-games/engine';
+import {
+  consumeWsTicket,
+  createWsTicket,
+  handleAuthChallenge,
+  handleAuthVerify,
+  validateBearerToken,
+} from './auth.js';
+import { createRelay } from './chain/index.js';
 import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
-import { handleAuthChallenge, handleAuthVerify, validateBearerToken } from './auth.js';
-import { D1EloTracker } from './db/elo.js';
-import { getRegisteredGames, getGame } from '@coordination-games/engine';
-import { createRelay } from './chain/index.js';
-import { dispatchToolCall, handleAdminSessionTools } from './tool-dispatcher.js';
 import type { Env } from './env.js';
+import {
+  handlePluginCall,
+  PluginEndpointBadRequestError,
+  PluginEndpointNotFoundError,
+  PluginEndpointUnauthorizedError,
+} from './plugin-endpoint.js';
+import { dispatchToolCall, handleAdminSessionTools } from './tool-dispatcher.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
 export { GameRoomDO, LobbyDO };
@@ -20,7 +31,11 @@ const CORS_HEADERS = {
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -28,12 +43,17 @@ function withCors(response: Response): Response {
 // ---------------------------------------------------------------------------
 
 /** Parse JSON body from a request, returning the parsed object or an error Response. */
-async function parseJsonBody<T = any>(request: Request): Promise<T | Response> {
+async function parseJsonBody<T = unknown>(request: Request): Promise<T | Response> {
   try {
-    return await request.json() as T;
+    return (await request.json()) as T;
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
+}
+
+/** Best-effort message extraction for an unknown thrown value. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Validate bearer token and return playerId, or return a 401 Response. */
@@ -41,7 +61,26 @@ async function requireAuth(request: Request, env: Env): Promise<string | Respons
   const playerId = await validateBearerToken(request, env);
   if (!playerId) {
     return Response.json(
-      { error: 'auth_required', message: 'Missing or invalid Authorization: Bearer <token> header' },
+      {
+        error: 'auth_required',
+        message: 'Missing or invalid Authorization: Bearer <token> header',
+      },
+      { status: 401 },
+    );
+  }
+  return playerId;
+}
+
+/**
+ * Consume the single-use `?ticket=` query param on a WebSocket upgrade.
+ * The ticket is issued by `POST /api/player/ws-ticket` (Bearer-authed) so
+ * the long-lived session token never appears in the WS URL.
+ */
+async function requireWsTicket(url: URL, env: Env): Promise<string | Response> {
+  const playerId = await consumeWsTicket(url, env);
+  if (!playerId) {
+    return Response.json(
+      { error: 'auth_required', message: 'Missing, expired, or invalid ?ticket=' },
       { status: 401 },
     );
   }
@@ -64,357 +103,461 @@ export default {
 };
 
 async function handleRequest(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const method = request.method;
-    const { pathname } = url;
+  const url = new URL(request.url);
+  const method = request.method;
+  const { pathname } = url;
 
-    // ------------------------------------------------------------------
-    // Health / root
-    // ------------------------------------------------------------------
-    if (pathname === '/health') {
-      return Response.json({ ok: true, games: getRegisteredGames() });
+  // ------------------------------------------------------------------
+  // Health / root
+  // ------------------------------------------------------------------
+  if (pathname === '/health') {
+    return Response.json({ ok: true, games: getRegisteredGames() });
+  }
+
+  if (pathname === '/') {
+    return Response.redirect(new URL('/health', request.url).toString(), 302);
+  }
+
+  // ------------------------------------------------------------------
+  // Auth (public — no Bearer required)
+  // ------------------------------------------------------------------
+  if (pathname === '/api/player/auth/challenge' && method === 'POST') {
+    return handleAuthChallenge(request, env);
+  }
+
+  if (pathname === '/api/player/auth/verify' && method === 'POST') {
+    return handleAuthVerify(request, env);
+  }
+
+  // ------------------------------------------------------------------
+  // Relay endpoints (public — no auth required)
+  // ------------------------------------------------------------------
+  const relay = createRelay(env);
+
+  const relayStatusMatch = pathname.match(/^\/api\/relay\/status\/([^/]+)$/);
+  if (relayStatusMatch && method === 'GET') {
+    try {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+      const address = decodeURIComponent(relayStatusMatch[1]);
+      const agent = await relay.getAgentByAddress(address);
+      return Response.json(agent ?? { registered: false });
+    } catch (err) {
+      console.error('[relay/status] Error:', err);
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
+  }
 
-
-
-    if (pathname === '/') {
-      return Response.redirect(new URL('/health', request.url).toString(), 302);
+  const relayNameMatch = pathname.match(/^\/api\/relay\/check-name\/([^/]+)$/);
+  if (relayNameMatch && method === 'GET') {
+    try {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+      const name = decodeURIComponent(relayNameMatch[1]);
+      const result = await relay.checkName(name);
+      return Response.json(result);
+    } catch (err) {
+      console.error('[relay/check-name] Error:', err);
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
+  }
 
-    // ------------------------------------------------------------------
-    // Auth (public — no Bearer required)
-    // ------------------------------------------------------------------
-    if (pathname === '/api/player/auth/challenge' && method === 'POST') {
-      return handleAuthChallenge(request, env);
+  const relayBalanceMatch = pathname.match(/^\/api\/relay\/balance\/([^/]+)$/);
+  if (relayBalanceMatch && method === 'GET') {
+    try {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+      const agentId = decodeURIComponent(relayBalanceMatch[1]);
+      const result = await relay.getBalance(agentId);
+      return Response.json(result);
+    } catch (err) {
+      console.error('[relay/balance] Error:', err);
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
+  }
 
-    if (pathname === '/api/player/auth/verify' && method === 'POST') {
-      return handleAuthVerify(request, env);
-    }
-
-    // ------------------------------------------------------------------
-    // Relay endpoints (public — no auth required)
-    // ------------------------------------------------------------------
-    const relay = createRelay(env);
-
-    const relayStatusMatch = pathname.match(/^\/api\/relay\/status\/([^/]+)$/);
-    if (relayStatusMatch && method === 'GET') {
-      try {
-        const address = decodeURIComponent(relayStatusMatch[1]);
-        const agent = await relay.getAgentByAddress(address);
-        return Response.json(agent ?? { registered: false });
-      } catch (err: any) {
-        console.error('[relay/status] Error:', err);
-        return Response.json({ error: err.message }, { status: 500 });
+  // POST /api/relay/register
+  const registerMatch = pathname === '/api/relay/register' && method === 'POST';
+  if (registerMatch) {
+    try {
+      const body = (await request.json()) as Partial<{
+        name: string;
+        address: string;
+        agentURI: string;
+        permitDeadline: number;
+        v: number;
+        r: string;
+        s: string;
+      }>;
+      const { name, address, agentURI, permitDeadline, v, r, s } = body;
+      if (
+        !name ||
+        !address ||
+        !agentURI ||
+        typeof permitDeadline !== 'number' ||
+        typeof v !== 'number' ||
+        typeof r !== 'string' ||
+        typeof s !== 'string'
+      ) {
+        return Response.json(
+          { error: 'name, address, agentURI, and permit (deadline/v/r/s) are required' },
+          { status: 400 },
+        );
       }
+      const result = await relay.register({ name, address, agentURI, permitDeadline, v, r, s });
+      return Response.json(result);
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
     }
+  }
 
-    const relayNameMatch = pathname.match(/^\/api\/relay\/check-name\/([^/]+)$/);
-    if (relayNameMatch && method === 'GET') {
-      try {
-        const name = decodeURIComponent(relayNameMatch[1]);
-        const result = await relay.checkName(name);
-        return Response.json(result);
-      } catch (err: any) {
-        console.error('[relay/check-name] Error:', err);
-        return Response.json({ error: err.message }, { status: 500 });
+  // POST /api/relay/topup
+  if (pathname === '/api/relay/topup' && method === 'POST') {
+    try {
+      const body = (await request.json()) as {
+        agentId: string;
+        permitDeadline: number;
+        v: number;
+        r: string;
+        s: string;
+        amount: string;
+      };
+      const result = await relay.topup(body.agentId, {
+        deadline: body.permitDeadline,
+        v: body.v,
+        r: body.r,
+        s: body.s,
+        amount: body.amount,
+      });
+      return Response.json(result);
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
+    }
+  }
+
+  // POST /api/relay/burn-request
+  if (pathname === '/api/relay/burn-request' && method === 'POST') {
+    try {
+      const body = (await request.json()) as { agentId: string; amount: string };
+      const result = await relay.requestBurn(body.agentId, body.amount);
+      return Response.json(result);
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
+    }
+  }
+
+  // POST /api/relay/burn-execute
+  if (pathname === '/api/relay/burn-execute' && method === 'POST') {
+    try {
+      const body = (await request.json()) as { agentId: string };
+      const result = await relay.executeBurn(body.agentId);
+      return Response.json(result);
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
+    }
+  }
+
+  // POST /api/relay/burn-cancel
+  if (pathname === '/api/relay/burn-cancel' && method === 'POST') {
+    try {
+      const body = (await request.json()) as { agentId: string };
+      await relay.cancelBurn(body.agentId);
+      return Response.json({ ok: true });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
+    }
+  }
+
+  // GET /api/relay/faucet/:address — testnet only, mints MockUSDC
+  const faucetMatch = pathname.match(/^\/api\/relay\/faucet\/(.+)$/);
+  if (faucetMatch && method === 'GET') {
+    if (!env.RPC_URL || !env.USDC_ADDRESS || !env.RELAYER_PRIVATE_KEY) {
+      return Response.json({ error: 'Faucet not available' }, { status: 503 });
+    }
+    try {
+      const { createWalletClient, http } = await import('viem');
+      const { privateKeyToAccount } = await import('viem/accounts');
+      const { optimismSepolia } = await import('viem/chains');
+
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+      const address = decodeURIComponent(faucetMatch[1]);
+      const account = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as `0x${string}`);
+      const walletClient = createWalletClient({
+        account,
+        chain: optimismSepolia,
+        transport: http(env.RPC_URL),
+      });
+
+      const txHash = await walletClient.writeContract({
+        address: env.USDC_ADDRESS as `0x${string}`,
+        abi: [
+          {
+            name: 'mint',
+            type: 'function',
+            stateMutability: 'nonpayable',
+            inputs: [
+              { name: 'to', type: 'address' },
+              { name: 'amount', type: 'uint256' },
+            ],
+            outputs: [],
+          },
+        ] as const,
+        functionName: 'mint',
+        args: [address as `0x${string}`, 100_000_000n],
+        // biome-ignore lint/suspicious/noExplicitAny: viem writeContract requires a `chain` property even though the walletClient binds one; untyped-overload workaround
+      } as any);
+
+      return Response.json({ txHash, amount: '100000000' });
+    } catch (err) {
+      return Response.json({ error: errorMessage(err) }, { status: 500 });
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Framework info
+  // ------------------------------------------------------------------
+  if (pathname === '/api/framework' && method === 'GET') {
+    return Response.json({ version: '0.1.0', games: getRegisteredGames(), status: 'active' });
+  }
+
+  // ------------------------------------------------------------------
+  // Generic plugin-call endpoint
+  //
+  // POST /api/plugin/:pluginId/call  body: { name, args }
+  //
+  // Single entry point for every server-plugin handleCall (Phase 5.2 — ELO
+  // is the first user; settlement migrates to the same shape in 5.3).
+  // Identity comes from the optional `Authorization: Bearer <token>` header
+  // (validated → playerId), exactly the same way every other authenticated
+  // route works. Unauthenticated callers reach the plugin as
+  // `{ kind: 'spectator' }`; plugins gate sensitive calls themselves.
+  // ------------------------------------------------------------------
+  const pluginCallMatch = pathname.match(/^\/api\/plugin\/([^/]+)\/call$/);
+  if (pluginCallMatch && method === 'POST') {
+    const pluginId = pluginCallMatch[1];
+    if (!pluginId) {
+      return Response.json({ error: 'plugin id missing' }, { status: 400 });
+    }
+    // Optional auth — leaderboard is public, my-stats requires playerId.
+    const playerId = await validateBearerToken(request, env);
+    try {
+      const body = await parseJsonBody<{ name?: string; args?: unknown }>(request);
+      if (body instanceof Response) return body;
+      const name = typeof body?.name === 'string' ? body.name : '';
+      if (!name) {
+        return Response.json(
+          { error: 'plugin call body must include `name` (string)' },
+          { status: 400 },
+        );
       }
-    }
-
-    const relayBalanceMatch = pathname.match(/^\/api\/relay\/balance\/([^/]+)$/);
-    if (relayBalanceMatch && method === 'GET') {
-      try {
-        const agentId = decodeURIComponent(relayBalanceMatch[1]);
-        const result = await relay.getBalance(agentId);
-        return Response.json(result);
-      } catch (err: any) {
-        console.error('[relay/balance] Error:', err);
-        return Response.json({ error: err.message }, { status: 500 });
+      const result = await handlePluginCall(env, pluginId, name, body.args ?? {}, playerId);
+      return Response.json(result);
+    } catch (err) {
+      if (err instanceof PluginEndpointNotFoundError) {
+        return Response.json({ error: err.message }, { status: 404 });
       }
-    }
-
-    // POST /api/relay/register
-    const registerMatch = pathname === '/api/relay/register' && method === 'POST';
-    if (registerMatch) {
-      try {
-        const body = await request.json() as any;
-        const { name, address, agentURI, permitDeadline, v, r, s } = body;
-        if (!name || !address || !agentURI) {
-          return Response.json({ error: 'name, address, and agentURI are required' }, { status: 400 });
-        }
-        const result = await relay.register({ name, address, agentURI, permitDeadline, v, r, s });
-        return Response.json(result);
-      } catch (err: any) {
-        return Response.json({ error: err.message }, { status: 500 });
+      if (err instanceof PluginEndpointBadRequestError) {
+        return Response.json({ error: err.message }, { status: 400 });
       }
-    }
-
-    // POST /api/relay/topup
-    if (pathname === '/api/relay/topup' && method === 'POST') {
-      try {
-        const body = await request.json() as any;
-        const result = await relay.topup(body.agentId, {
-          deadline: body.permitDeadline,
-          v: body.v, r: body.r, s: body.s,
-          amount: body.amount,
-        });
-        return Response.json(result);
-      } catch (err: any) {
-        return Response.json({ error: err.message }, { status: 500 });
+      if (err instanceof PluginEndpointUnauthorizedError) {
+        return Response.json({ error: err.message }, { status: 401 });
       }
+      console.error(`[plugin-call] ${pluginId}.${(err as Error)?.message ?? err}`);
+      return Response.json(
+        { error: (err as Error)?.message ?? 'plugin call failed' },
+        { status: 500 },
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Lobby endpoints — /api/lobbies
+  // ------------------------------------------------------------------
+
+  if (pathname === '/api/lobbies' && method === 'GET') {
+    return handleListLobbies(env);
+  }
+
+  if (pathname === '/api/lobbies/create' && method === 'POST') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    return handleCreateLobby(request, env);
+  }
+
+  // /api/lobbies/:id[/subpath] — forward to LobbyDO.
+  // GET /state is public (spectator view). Every other sub-path requires
+  // Bearer auth; the Worker forwards identity in X-Player-Id.
+  const lobbyRestMatch = pathname.match(/^\/api\/lobbies\/([^/]+)(\/.*)?$/);
+  if (lobbyRestMatch) {
+    const lobbyId = lobbyRestMatch[1];
+    const sub = lobbyRestMatch[2] ?? (method === 'DELETE' ? '/' : '/state');
+
+    const publicPaths = new Set(['/state']);
+    if (method === 'GET' && publicPaths.has(sub)) {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+      return forwardToLobbyDO(env, lobbyId, sub, request);
     }
 
-    // POST /api/relay/burn-request
-    if (pathname === '/api/relay/burn-request' && method === 'POST') {
-      try {
-        const body = await request.json() as any;
-        const result = await relay.requestBurn(body.agentId, body.amount);
-        return Response.json(result);
-      } catch (err: any) {
-        return Response.json({ error: err.message }, { status: 500 });
-      }
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    const playerId = auth;
+    // Strip attacker-controlled playerId query param before forwarding.
+    const sanitisedUrl = new URL(request.url);
+    sanitisedUrl.searchParams.delete('playerId');
+    const forwarded = new Request(sanitisedUrl.toString(), request);
+    forwarded.headers.set('X-Player-Id', playerId);
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+    return forwardToLobbyDO(env, lobbyId, sub, forwarded);
+  }
+
+  // WS /ws/lobby/:id — unauthenticated spectator WebSocket for lobby updates
+  const wsLobbyMatch = pathname.match(/^\/ws\/lobby\/([^/]+)$/);
+  if (wsLobbyMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+    return forwardToLobbyDO(env, wsLobbyMatch[1], '/', request);
+  }
+
+  // ------------------------------------------------------------------
+  // Game endpoints — /api/games
+  // ------------------------------------------------------------------
+
+  if (pathname === '/api/games' && method === 'GET') {
+    return handleListGames(env);
+  }
+
+  if (pathname === '/api/games/create' && method === 'POST') {
+    return handleCreateGame(request, env);
+  }
+
+  // /api/games/:id[/subpath] — forward to GameRoomDO
+  // Only allow unauthenticated access to spectator-safe paths
+  const gameMatch = pathname.match(/^\/api\/games\/([^/]+)(\/.*)?$/);
+  if (gameMatch) {
+    const gameId = gameMatch[1];
+    const sub = gameMatch[2] ?? '/spectator';
+
+    // Spectator-safe paths (no auth required)
+    const spectatorPaths = ['/spectator', '/replay', '/bundle'];
+    if (spectatorPaths.includes(sub)) {
+      // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+      return forwardToGameDO(env, gameId, sub, request);
     }
 
-    // POST /api/relay/burn-execute
-    if (pathname === '/api/relay/burn-execute' && method === 'POST') {
-      try {
-        const body = await request.json() as any;
-        const result = await relay.executeBurn(body.agentId);
-        return Response.json(result);
-      } catch (err: any) {
-        return Response.json({ error: err.message }, { status: 500 });
-      }
+    // All other game sub-paths require auth
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    const playerId = auth;
+    // Strip the playerId query param — the DO trusts only X-Player-Id.
+    const sanitisedUrl = new URL(request.url);
+    sanitisedUrl.searchParams.delete('playerId');
+    const forwarded = new Request(sanitisedUrl.toString(), request);
+    forwarded.headers.set('X-Player-Id', playerId);
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+    return forwardToGameDO(env, gameId, sub, forwarded);
+  }
+
+  // WS /ws/game/:id — unauthenticated spectator WebSocket (delayed view)
+  const wsSpectatorMatch = pathname.match(/^\/ws\/game\/([^/]+)$/);
+  if (wsSpectatorMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+    return forwardToGameDO(env, wsSpectatorMatch[1], '/', request);
+  }
+
+  // WS /ws/player — authenticated stream for the caller's current session.
+  // The server resolves lobby vs game via `player_sessions` (the same source
+  // of truth as /api/player/state and /api/player/tool), so the client never
+  // carries a lobbyId/gameId on the wire. This keeps the "one active
+  // session" invariant on the server where it belongs.
+  if (pathname === '/ws/player' && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+    const auth = await requireWsTicket(url, env);
+    if (auth instanceof Response) return auth;
+    const playerId = auth;
+    const location = await getPlayerLocation(playerId, env);
+    if (!location) {
+      return Response.json({ error: 'No active lobby or game' }, { status: 404 });
     }
+    const forwarded = new Request(request.url, request);
+    forwarded.headers.set('X-Player-Id', playerId);
+    return location.kind === 'game'
+      ? forwardToGameDO(env, location.gameId, '/', forwarded)
+      : forwardToLobbyDO(env, location.lobbyId, '/', forwarded);
+  }
 
-    // POST /api/relay/burn-cancel
-    if (pathname === '/api/relay/burn-cancel' && method === 'POST') {
-      try {
-        const body = await request.json() as any;
-        await relay.cancelBurn(body.agentId);
-        return Response.json({ ok: true });
-      } catch (err: any) {
-        return Response.json({ error: err.message }, { status: 500 });
-      }
-    }
+  // ------------------------------------------------------------------
+  // Authenticated player endpoints
+  // ------------------------------------------------------------------
 
-    // GET /api/relay/faucet/:address — testnet only, mints MockUSDC
-    const faucetMatch = pathname.match(/^\/api\/relay\/faucet\/(.+)$/);
-    if (faucetMatch && method === 'GET') {
-      if (!env.RPC_URL || !env.USDC_ADDRESS || !env.RELAYER_PRIVATE_KEY) {
-        return Response.json({ error: 'Faucet not available' }, { status: 503 });
-      }
-      try {
-        const { createWalletClient, http } = await import('viem');
-        const { privateKeyToAccount } = await import('viem/accounts');
-        const { optimismSepolia } = await import('viem/chains');
+  if (pathname === '/api/player/state' && method === 'GET') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    return handlePlayerState(auth, env, request);
+  }
 
-        const address = decodeURIComponent(faucetMatch[1]);
-        const account = privateKeyToAccount(env.RELAYER_PRIVATE_KEY as `0x${string}`);
-        const walletClient = createWalletClient({ account, chain: optimismSepolia, transport: http(env.RPC_URL) });
+  // POST /api/player/ws-ticket — trade a Bearer token for a single-use, 30s
+  // ticket. The client opens authed WebSockets as `/ws/...?ticket=<id>`.
+  if (pathname === '/api/player/ws-ticket' && method === 'POST') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    const ticket = await createWsTicket(auth, env);
+    return Response.json({ ticket });
+  }
 
-        const txHash = await walletClient.writeContract({
-          address: env.USDC_ADDRESS as `0x${string}`,
-          abi: [{ name: 'mint', type: 'function', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [] }] as const,
-          functionName: 'mint',
-          args: [address as `0x${string}`, 100_000_000n],
-        } as any);
+  // GET /api/player/wait — poll for state updates (CLI long-poll shim)
+  if (pathname === '/api/player/wait' && method === 'GET') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    return handlePlayerState(auth, env, request);
+  }
 
-        return Response.json({ txHash, amount: '100000000' });
-      } catch (err: any) {
-        return Response.json({ error: err.message }, { status: 500 });
-      }
-    }
+  // POST /api/player/lobby/join — join a lobby
+  if (pathname === '/api/player/lobby/join' && method === 'POST') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    return handlePlayerLobbyJoin(auth, request, env);
+  }
 
-    // ------------------------------------------------------------------
-    // Framework info
-    // ------------------------------------------------------------------
-    if (pathname === '/api/framework' && method === 'GET') {
-      return Response.json({ version: '0.1.0', games: getRegisteredGames(), status: 'active' });
-    }
+  // POST /api/player/tool — UNIFIED tool-call endpoint.
+  // Replaces /api/player/move, /api/player/lobby/action, and the pre-refactor
+  // /api/player/tool + /api/player/lobby/tool plugin-relay endpoints.
+  // Wire shape: { toolName: string, args: object }. Dispatcher routes by
+  // declarer (game vs lobby-phase vs legacy plugin-relay). See
+  // src/tool-dispatcher.ts for the full algorithm.
+  if (pathname === '/api/player/tool' && method === 'POST') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    return dispatchToolCall(auth, request, env);
+  }
 
-    // ------------------------------------------------------------------
-    // Public leaderboard / profile
-    // ------------------------------------------------------------------
-    if (pathname === '/api/leaderboard' && method === 'GET') {
-      return handleLeaderboard(request, env);
-    }
+  // GET /api/player/guide — game guide + available tools
+  if (pathname === '/api/player/guide' && method === 'GET') {
+    const auth = await requireAuth(request, env);
+    if (auth instanceof Response) return auth;
+    return handlePlayerGuide(auth, request, env);
+  }
 
-    const profileMatch = pathname.match(/^\/api\/profile\/([^/]+)$/);
-    if (profileMatch && method === 'GET') {
-      return handleProfile(profileMatch[1], env);
-    }
+  // ------------------------------------------------------------------
+  // Admin endpoints — ADMIN_TOKEN via X-Admin-Token header
+  // ------------------------------------------------------------------
 
-    // ------------------------------------------------------------------
-    // Lobby endpoints — /api/lobbies
-    // ------------------------------------------------------------------
+  const adminToolsMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/tools$/);
+  if (adminToolsMatch && method === 'GET') {
+    // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
+    return handleAdminSessionTools(decodeURIComponent(adminToolsMatch[1]), request, env);
+  }
 
-    if (pathname === '/api/lobbies' && method === 'GET') {
-      return handleListLobbies(env);
-    }
+  const adminKillMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/kill$/);
+  if (adminKillMatch && method === 'POST') {
+    // @ts-expect-error TS2345 — decoded match is always a string here
+    return handleAdminSessionKill(decodeURIComponent(adminKillMatch[1]), request, env);
+  }
 
-    if (pathname === '/api/lobbies/create' && method === 'POST') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handleCreateLobby(request, env);
-    }
+  const adminInspectMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/inspect$/);
+  if (adminInspectMatch && method === 'GET') {
+    // @ts-expect-error TS2345 — decoded match is always a string here
+    return handleAdminSessionInspect(decodeURIComponent(adminInspectMatch[1]), request, env);
+  }
 
-    // /api/lobbies/:id[/subpath] — forward to LobbyDO.
-    // GET /state is public (spectator view). Every other sub-path requires
-    // Bearer auth; the Worker forwards identity in X-Player-Id.
-    const lobbyRestMatch = pathname.match(/^\/api\/lobbies\/([^/]+)(\/.*)?$/);
-    if (lobbyRestMatch) {
-      const lobbyId = lobbyRestMatch[1];
-      const sub = lobbyRestMatch[2] ?? (method === 'DELETE' ? '/' : '/state');
-
-      const publicPaths = new Set(['/state']);
-      if (method === 'GET' && publicPaths.has(sub)) {
-        return forwardToLobbyDO(env, lobbyId, sub, request);
-      }
-
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      const playerId = auth;
-      // Strip attacker-controlled playerId query param before forwarding.
-      const sanitisedUrl = new URL(request.url);
-      sanitisedUrl.searchParams.delete('playerId');
-      const forwarded = new Request(sanitisedUrl.toString(), request);
-      forwarded.headers.set('X-Player-Id', playerId);
-      return forwardToLobbyDO(env, lobbyId, sub, forwarded);
-    }
-
-    // WS /ws/lobby/:id — unauthenticated spectator WebSocket for lobby updates
-    const wsLobbyMatch = pathname.match(/^\/ws\/lobby\/([^/]+)$/);
-    if (wsLobbyMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      return forwardToLobbyDO(env, wsLobbyMatch[1], '/', request);
-    }
-
-    // ------------------------------------------------------------------
-    // Game endpoints — /api/games
-    // ------------------------------------------------------------------
-
-    if (pathname === '/api/games' && method === 'GET') {
-      return handleListGames(env);
-    }
-
-    if (pathname === '/api/games/create' && method === 'POST') {
-      return handleCreateGame(request, env);
-    }
-
-    // /api/games/:id[/subpath] — forward to GameRoomDO
-    // Only allow unauthenticated access to spectator-safe paths
-    const gameMatch = pathname.match(/^\/api\/games\/([^/]+)(\/.*)?$/);
-    if (gameMatch) {
-      const gameId = gameMatch[1];
-      const sub = gameMatch[2] ?? '/spectator';
-
-      // Spectator-safe paths (no auth required)
-      const spectatorPaths = ['/spectator', '/replay', '/bundle'];
-      if (spectatorPaths.includes(sub)) {
-        return forwardToGameDO(env, gameId, sub, request);
-      }
-
-      // All other game sub-paths require auth
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      const playerId = auth;
-      // Strip the playerId query param — the DO trusts only X-Player-Id.
-      const sanitisedUrl = new URL(request.url);
-      sanitisedUrl.searchParams.delete('playerId');
-      const forwarded = new Request(sanitisedUrl.toString(), request);
-      forwarded.headers.set('X-Player-Id', playerId);
-      return forwardToGameDO(env, gameId, sub, forwarded);
-    }
-
-    // WS /ws/game/:id — unauthenticated spectator WebSocket (delayed view)
-    const wsSpectatorMatch = pathname.match(/^\/ws\/game\/([^/]+)$/);
-    if (wsSpectatorMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      return forwardToGameDO(env, wsSpectatorMatch[1], '/', request);
-    }
-
-    // WS /ws/game/:id/player — authenticated player WebSocket (real-time fog-filtered)
-    const wsPlayerMatch = pathname.match(/^\/ws\/game\/([^/]+)\/player$/);
-    if (wsPlayerMatch && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      const playerId = auth;
-      const location = await getPlayerLocation(playerId, env);
-      if (location?.kind !== 'game' || location.gameId !== wsPlayerMatch[1]) {
-        return Response.json({ error: 'Not a player in this game' }, { status: 403 });
-      }
-      const forwarded = new Request(request.url, request);
-      forwarded.headers.delete('Authorization');
-      forwarded.headers.set('X-Player-Id', playerId);
-      return forwardToGameDO(env, wsPlayerMatch[1], '/', forwarded);
-    }
-
-    // ------------------------------------------------------------------
-    // Authenticated player endpoints
-    // ------------------------------------------------------------------
-
-    if (pathname === '/api/player/leaderboard' && method === 'GET') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handleLeaderboard(request, env);
-    }
-
-    if (pathname === '/api/player/stats' && method === 'GET') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerStats(auth, env);
-    }
-
-if (pathname === '/api/player/state' && method === 'GET') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerState(auth, env);
-    }
-
-    // GET /api/player/wait — poll for state updates (CLI long-poll shim)
-    if (pathname === '/api/player/wait' && method === 'GET') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerState(auth, env);
-    }
-
-    // POST /api/player/lobby/join — join a lobby
-    if (pathname === '/api/player/lobby/join' && method === 'POST') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerLobbyJoin(auth, request, env);
-    }
-
-    // POST /api/player/tool — UNIFIED tool-call endpoint.
-    // Replaces /api/player/move, /api/player/lobby/action, and the pre-refactor
-    // /api/player/tool + /api/player/lobby/tool plugin-relay endpoints.
-    // Wire shape: { toolName: string, args: object }. Dispatcher routes by
-    // declarer (game vs lobby-phase vs legacy plugin-relay). See
-    // src/tool-dispatcher.ts for the full algorithm.
-    if (pathname === '/api/player/tool' && method === 'POST') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return dispatchToolCall(auth, request, env);
-    }
-
-    // GET /api/player/guide — game guide + available tools
-    if (pathname === '/api/player/guide' && method === 'GET') {
-      const auth = await requireAuth(request, env);
-      if (auth instanceof Response) return auth;
-      return handlePlayerGuide(auth, request, env);
-    }
-
-    // ------------------------------------------------------------------
-    // Admin endpoints — ADMIN_TOKEN via X-Admin-Token header
-    // ------------------------------------------------------------------
-
-    const adminToolsMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/tools$/);
-    if (adminToolsMatch && method === 'GET') {
-      return handleAdminSessionTools(decodeURIComponent(adminToolsMatch[1]), request, env);
-    }
-
-    // ------------------------------------------------------------------
-    // Not found
-    // ------------------------------------------------------------------
-    return new Response('Not found', { status: 404 });
+  // ------------------------------------------------------------------
+  // Not found
+  // ------------------------------------------------------------------
+  return new Response('Not found', { status: 404 });
 }
 
 // ---------------------------------------------------------------------------
@@ -423,34 +566,58 @@ if (pathname === '/api/player/state' && method === 'GET') {
 
 async function handleListLobbies(env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
-    "SELECT l.id, l.game_type, l.team_size, l.phase, l.created_at, l.game_id, " +
-    "COUNT(ps.player_id) as player_count " +
-    "FROM lobbies l " +
-    "LEFT JOIN player_sessions ps ON ps.lobby_id = l.id " +
-    "WHERE l.phase NOT IN ('failed', 'game') " +
-    "GROUP BY l.id " +
-    "ORDER BY l.created_at DESC LIMIT 50"
-  ).all<{ id: string; game_type: string; team_size: number; phase: string; created_at: string; game_id: string | null; player_count: number }>();
+    'SELECT l.id, l.game_type, l.team_size, l.phase, l.created_at, l.game_id, ' +
+      'COUNT(ps.player_id) as player_count ' +
+      'FROM lobbies l ' +
+      'LEFT JOIN player_sessions ps ON ps.lobby_id = l.id ' +
+      // Only show lobbies still accepting players (post-Phase-4.6 unified
+      // GamePhaseKind: 'lobby' | 'in_progress' | 'finished').
+      "WHERE l.phase = 'lobby' " +
+      'GROUP BY l.id ' +
+      'ORDER BY l.created_at DESC LIMIT 50',
+  ).all<{
+    id: string;
+    game_type: string;
+    team_size: number;
+    phase: string;
+    created_at: string;
+    game_id: string | null;
+    player_count: number;
+  }>();
 
-  return Response.json(rows.results.map(r => ({
-    lobbyId: r.id,
-    gameType: r.game_type,
-    teamSize: r.team_size,
-    phase: r.phase,
-    createdAt: r.created_at,
-    gameId: r.game_id,
-    playerCount: r.player_count,
-  })));
+  return Response.json(
+    rows.results.map((r) => ({
+      lobbyId: r.id,
+      gameType: r.game_type,
+      teamSize: r.team_size,
+      phase: r.phase,
+      createdAt: r.created_at,
+      gameId: r.game_id,
+      playerCount: r.player_count,
+    })),
+  );
 }
 
 async function handleCreateLobby(request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
+  const body = await parseJsonBody<{
+    gameType?: string;
+    noTimeout?: boolean;
+    teamSize?: number;
+  }>(request);
   if (body instanceof Response) return body;
 
-  const gameType  = (body?.gameType as string) ?? 'capture-the-lobster';
+  // Default to the first registered game (matches the web shell's
+  // `getDefaultPlugin()`). No literal — adding/removing games doesn't
+  // require shell edits.
+  const registered = getRegisteredGames();
+  const defaultGameType = registered[0];
+  if (!defaultGameType) {
+    return Response.json({ error: 'No games registered' }, { status: 500 });
+  }
+  const gameType = body?.gameType ?? defaultGameType;
   const noTimeout = !!body?.noTimeout;
   // Broad bounds — LobbyDO enforces per-game limits via plugin.lobby.matchmaking
-  const teamSize  = Math.min(20, Math.max(1, Math.floor((body?.teamSize as number) ?? 2)));
+  const teamSize = Math.min(20, Math.max(1, Math.floor(body?.teamSize ?? 2)));
 
   const lobbyId = crypto.randomUUID();
 
@@ -458,24 +625,34 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   try {
     await env.DB.prepare(
       'INSERT INTO lobbies (id, game_type, team_size, phase, created_at) VALUES (?, ?, ?, ?, ?)',
-    ).bind(lobbyId, gameType, teamSize, 'running', new Date().toISOString()).run();
-  } catch (err) {
+    )
+      .bind(lobbyId, gameType, teamSize, 'lobby', new Date().toISOString())
+      .run();
+  } catch (_err) {
     return Response.json({ error: 'Failed to create lobby record' }, { status: 500 });
   }
 
   // Create LobbyDO
   const doStub = getLobbyDO(env, lobbyId);
-  const createResp = await doStub.fetch(new Request('https://do/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lobbyId, gameType, teamSize, noTimeout }),
-  }));
+  const createResp = await doStub.fetch(
+    new Request('https://do/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lobbyId, gameType, teamSize, noTimeout }),
+    }),
+  );
 
   if (!createResp.ok) {
     // Roll back D1 row
-    await env.DB.prepare('DELETE FROM lobbies WHERE id = ?').bind(lobbyId).run().catch(() => {});
-    const err = await createResp.json() as any;
-    return Response.json({ error: err.error ?? 'Lobby creation failed' }, { status: createResp.status });
+    await env.DB.prepare('DELETE FROM lobbies WHERE id = ?')
+      .bind(lobbyId)
+      .run()
+      .catch(() => {});
+    const err = (await createResp.json()) as { error?: string };
+    return Response.json(
+      { error: err.error ?? 'Lobby creation failed' },
+      { status: createResp.status },
+    );
   }
 
   console.log(`[Worker] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize})`);
@@ -498,8 +675,10 @@ async function handleListGames(env: Env): Promise<Response> {
     `UPDATE games SET finished = 1
      WHERE finished = 0
        AND game_id NOT IN (SELECT game_id FROM game_summaries)
-       AND datetime(created_at) < datetime('now', '-60 seconds')`
-  ).run().catch(() => {});
+       AND datetime(created_at) < datetime('now', '-60 seconds')`,
+  )
+    .run()
+    .catch(() => {});
 
   const rows = await env.DB.prepare(
     `SELECT g.game_id, g.game_type, g.finished,
@@ -511,20 +690,29 @@ async function handleListGames(env: Env): Promise<Response> {
      LEFT JOIN game_summaries gs ON gs.game_id = g.game_id
      GROUP BY g.game_id
      ORDER BY g.finished ASC, g.created_at DESC
-     LIMIT 50`
-  ).all<{ game_id: string; game_type: string; finished: number; player_count: number; progress_counter: number | null; summary_json: string | null }>();
+     LIMIT 50`,
+  ).all<{
+    game_id: string;
+    game_type: string;
+    finished: number;
+    player_count: number;
+    progress_counter: number | null;
+    summary_json: string | null;
+  }>();
 
-  return Response.json(rows.results.map(r => {
-    const summary = r.summary_json ? JSON.parse(r.summary_json) : {};
-    return {
-      gameId: r.game_id,
-      gameType: r.game_type,
-      playerCount: r.player_count,
-      finished: r.finished === 1,
-      progressCounter: r.progress_counter ?? 0,
-      ...summary,
-    };
-  }));
+  return Response.json(
+    rows.results.map((r) => {
+      const summary = r.summary_json ? JSON.parse(r.summary_json) : {};
+      return {
+        gameId: r.game_id,
+        gameType: r.game_type,
+        playerCount: r.player_count,
+        finished: r.finished === 1,
+        progressCounter: r.progress_counter ?? 0,
+        ...summary,
+      };
+    }),
+  );
 }
 
 let _summariesTableReady = false;
@@ -536,7 +724,7 @@ async function ensureGameSummariesTable(env: Env): Promise<void> {
         game_id TEXT PRIMARY KEY REFERENCES games(game_id),
         progress_counter INTEGER NOT NULL DEFAULT 0,
         summary_json TEXT NOT NULL DEFAULT '{}',
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')))`
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')))`,
     ).run();
     _summariesTableReady = true;
   } catch (err) {
@@ -545,26 +733,47 @@ async function ensureGameSummariesTable(env: Env): Promise<void> {
 }
 
 async function handleCreateGame(request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
+  const body = await parseJsonBody<{
+    gameType?: string;
+    config?: unknown;
+    playerIds?: unknown;
+    handleMap?: Record<string, string>;
+    teamMap?: Record<string, string>;
+  }>(request);
   if (body instanceof Response) return body;
 
   const { gameType, config, playerIds, handleMap, teamMap } = body ?? {};
   if (!gameType || !config || !Array.isArray(playerIds) || playerIds.length === 0) {
-    return Response.json({ error: 'gameType, config, and playerIds[] are required' }, { status: 400 });
+    return Response.json(
+      { error: 'gameType, config, and playerIds[] are required' },
+      { status: 400 },
+    );
   }
 
   const gameId = crypto.randomUUID();
 
   const doStub = getGameDO(env, gameId);
-  const createResp = await doStub.fetch(new Request('https://do/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, gameType, config, playerIds, handleMap: handleMap ?? {}, teamMap: teamMap ?? {} }),
-  }));
+  const createResp = await doStub.fetch(
+    new Request('https://do/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gameId,
+        gameType,
+        config,
+        playerIds,
+        handleMap: handleMap ?? {},
+        teamMap: teamMap ?? {},
+      }),
+    }),
+  );
 
   if (!createResp.ok) {
-    const err = await createResp.json() as any;
-    return Response.json({ error: err.error ?? 'Game creation failed' }, { status: createResp.status });
+    const err = (await createResp.json()) as { error?: string };
+    return Response.json(
+      { error: err.error ?? 'Game creation failed' },
+      { status: createResp.status },
+    );
   }
 
   // Every game is modeled as the child of a lobby (see player_sessions →
@@ -574,17 +783,17 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
   const syntheticLobbyId = `synthetic-${gameId}`;
   await env.DB.batch([
     env.DB.prepare(
-      'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)'
+      'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)',
     ).bind(gameId, gameType, now),
     env.DB.prepare(
       `INSERT OR REPLACE INTO lobbies (id, game_type, team_size, phase, created_at, game_id)
-       VALUES (?, ?, ?, 'game', ?, ?)`
+       VALUES (?, ?, ?, 'in_progress', ?, ?)`,
     ).bind(syntheticLobbyId, gameType, (playerIds as string[]).length, now, gameId),
-    ...((playerIds as string[]).map(pid =>
+    ...(playerIds as string[]).map((pid) =>
       env.DB.prepare(
-        'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
-      ).bind(pid, syntheticLobbyId, now)
-    )),
+        'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)',
+      ).bind(pid, syntheticLobbyId, now),
+    ),
   ]);
 
   console.log(`[Worker] Created ${gameType} game ${gameId} for ${playerIds.length} players`);
@@ -595,56 +804,126 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 // Player-scoped handlers (auth required)
 // ---------------------------------------------------------------------------
 
-async function handlePlayerState(playerId: string, env: Env): Promise<Response> {
+async function handlePlayerState(playerId: string, env: Env, request?: Request): Promise<Response> {
   const location = await getPlayerLocation(playerId, env);
   if (!location) {
-    return Response.json({ error: 'No active lobby or game. Join a lobby first.' }, { status: 404 });
+    return Response.json(
+      { error: 'No active lobby or game. Join a lobby first.' },
+      { status: 404 },
+    );
   }
 
-  const stub = location.kind === 'game'
-    ? getGameDO(env, location.gameId)
-    : getLobbyDO(env, location.lobbyId);
-  return stub.fetch(new Request('https://do/state', {
-    method: 'GET',
-    headers: { 'X-Player-Id': playerId },
-  }));
+  const stub =
+    location.kind === 'game' ? getGameDO(env, location.gameId) : getLobbyDO(env, location.lobbyId);
+  // Forward `?sinceIdx=N` (and any other pass-through query params) so the
+  // DO's state builder can return a relay delta instead of the full history.
+  const incoming = request ? new URL(request.url).search : '';
+  return stub.fetch(
+    new Request(`https://do/state${incoming}`, {
+      method: 'GET',
+      headers: { 'X-Player-Id': playerId },
+    }),
+  );
 }
 
-async function handlePlayerLobbyJoin(playerId: string, request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody(request);
+export async function handlePlayerLobbyJoin(
+  playerId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const body = await parseJsonBody<{ lobbyId?: string; gameId?: string }>(request);
   if (body instanceof Response) return body;
 
   const lobbyId = body?.lobbyId ?? body?.gameId;
   if (!lobbyId) return Response.json({ error: 'lobbyId is required' }, { status: 400 });
 
+  // Single-game exclusivity guard. The pre-game balance check in
+  // `LobbyDO.handleJoin` asks "does this player have the credits right
+  // now?" but can't see a concurrent lobby/game the player is already in —
+  // both holds would read the same unmoved on-chain balance and both would
+  // pass. `player_sessions` has a PRIMARY KEY on player_id, but the
+  // `INSERT OR REPLACE` below would silently move the session without
+  // checking the previous row. So before we forward the join, reject any
+  // attempt to enter a DIFFERENT lobby while the player's current session
+  // is unfinished.
+  //
+  // "Unfinished" = the player's current session points at a lobby that
+  // hasn't terminated. Termination requires either:
+  //   • `lobbies.phase = 'finished'`   — disbanded / errored lobby, OR
+  //   • `lobbies.game_id` set AND `games.finished = 1` — game is over.
+  // Note that a post-game `lobbies` row stays on `phase = 'in_progress'`
+  // (LobbyDO only flips it to 'finished' on disband/fail), so we MUST
+  // consult `games.finished` to let bots cycle through back-to-back games.
+  // Same-lobby re-join is idempotent and allowed (LobbyDO.handleJoin is
+  // itself idempotent on the agent roster).
+  const existing = await env.DB.prepare(
+    `SELECT ps.lobby_id AS lobbyId, l.phase AS lobbyPhase, l.game_id AS gameId,
+            g.finished AS gameFinished
+     FROM player_sessions ps
+     JOIN lobbies l ON l.id = ps.lobby_id
+     LEFT JOIN games g ON g.game_id = l.game_id
+     WHERE ps.player_id = ?`,
+  )
+    .bind(playerId)
+    .first<{
+      lobbyId: string;
+      lobbyPhase: string;
+      gameId: string | null;
+      gameFinished: number | null;
+    }>();
+
+  if (existing) {
+    const lobbyTerminated = existing.lobbyPhase === 'finished';
+    const gameTerminated = existing.gameId !== null && existing.gameFinished === 1;
+    const unfinished = !lobbyTerminated && !gameTerminated;
+    if (unfinished && existing.lobbyId !== lobbyId) {
+      return Response.json(
+        {
+          error: 'Already in an active game or lobby',
+          playerId,
+          existing: {
+            lobbyId: existing.lobbyId,
+            gameId: existing.gameId ?? undefined,
+            status: existing.gameId ? 'in_game' : 'in_lobby',
+          },
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   // Fetch handle + ELO from D1 players table
-  const player = await env.DB.prepare(
-    'SELECT handle, elo FROM players WHERE id = ?'
-  ).bind(playerId).first<{ handle: string; elo: number }>();
+  const player = await env.DB.prepare('SELECT handle, elo FROM players WHERE id = ?')
+    .bind(playerId)
+    .first<{ handle: string; elo: number }>();
   const handle = player?.handle ?? playerId;
-  const elo    = player?.elo    ?? 1000;
+  const elo = player?.elo ?? 1000;
 
   // Forward join to LobbyDO — identity goes in the header, body carries
   // only the player's display info.
   const doStub = getLobbyDO(env, lobbyId);
-  const joinResp = await doStub.fetch(new Request('https://do/join', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Player-Id': playerId },
-    body: JSON.stringify({ handle, elo }),
-  }));
+  const joinResp = await doStub.fetch(
+    new Request('https://do/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Player-Id': playerId },
+      body: JSON.stringify({ handle, elo }),
+    }),
+  );
 
   if (!joinResp.ok) return joinResp;
 
   // Clone the response so we can inspect it and still return it
-  const joinBody = await joinResp.json() as any;
+  const joinBody = (await joinResp.json()) as unknown;
 
   // Point the player's session at this lobby. Works for all phases — if the
   // join immediately transitioned the lobby into 'game' phase, the session
   // row still correctly points at the lobby, and getPlayerLocation() resolves
   // through lobbies.game_id to the GameRoomDO.
   await env.DB.prepare(
-    'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)'
-  ).bind(playerId, lobbyId, new Date().toISOString()).run();
+    'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)',
+  )
+    .bind(playerId, lobbyId, new Date().toISOString())
+    .run();
 
   return Response.json(joinBody, { status: joinResp.status });
 }
@@ -678,7 +957,7 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
   if (plugin.lobby?.phases) {
     for (const phase of plugin.lobby.phases) {
       if (phase.tools) {
-        tools.push(...phase.tools.map((t: any) => t.name ?? t));
+        tools.push(...phase.tools.map((t) => t.name ?? String(t)));
       }
     }
   }
@@ -687,33 +966,157 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
 }
 
 // ---------------------------------------------------------------------------
-// Leaderboard / profile handlers
+// Admin — kill a session (disband lobby + mark game finished). Dev-only.
 // ---------------------------------------------------------------------------
 
-async function handleLeaderboard(request: Request, env: Env): Promise<Response> {
-  const url     = new URL(request.url);
-  const limit   = Math.min(parseInt(url.searchParams.get('limit')  ?? '50', 10), 200);
-  const offset  = Math.max(parseInt(url.searchParams.get('offset') ?? '0',  10), 0);
-  const tracker = D1EloTracker.fromEnv(env);
-  const players = await tracker.getLeaderboard(limit, offset);
-  return Response.json(players);
+async function handleAdminSessionKill(
+  sessionId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const expected = env.ADMIN_TOKEN;
+  if (!expected) {
+    return Response.json(
+      { error: 'Admin endpoint disabled (ADMIN_TOKEN not set)' },
+      { status: 503 },
+    );
+  }
+  if (request.headers.get('X-Admin-Token') !== expected) {
+    return Response.json({ error: 'Invalid admin token' }, { status: 401 });
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT id AS lobby_id, game_id FROM lobbies WHERE id = ?1 OR game_id = ?1 LIMIT 1`,
+  )
+    .bind(sessionId)
+    .first<{ lobby_id: string; game_id: string | null }>();
+
+  // Orphan game-id path: no lobbies row matched, but a games row exists. This
+  // happens when a lobby row was deleted / rolled back after its GameRoomDO
+  // spawned — the game keeps ticking `progressCounter` with no parent row.
+  // Reach into GameRoomDO directly to stop the alarm.
+  if (!row) {
+    const gameRow = await env.DB.prepare('SELECT game_id FROM games WHERE game_id = ? LIMIT 1')
+      .bind(sessionId)
+      .first<{ game_id: string }>();
+    if (!gameRow) {
+      return Response.json({ error: 'Session not found', sessionId }, { status: 404 });
+    }
+    const gameStub = getGameDO(env, gameRow.game_id);
+    const gameResp = await gameStub.fetch(new Request('https://do/', { method: 'DELETE' }));
+    await env.DB.prepare('UPDATE games SET finished = 1 WHERE game_id = ?')
+      .bind(gameRow.game_id)
+      .run();
+    return Response.json({
+      ok: true,
+      lobbyId: null,
+      gameId: gameRow.game_id,
+      lobbyDisbanded: false,
+      gameMarkedFinished: gameResp.ok,
+      orphan: true,
+    });
+  }
+
+  const lobbyStub = getLobbyDO(env, row.lobby_id);
+  const lobbyResp = await lobbyStub.fetch(new Request('https://do/', { method: 'DELETE' }));
+  const lobbyOk = lobbyResp.ok;
+
+  let gameMarked = false;
+  if (row.game_id) {
+    // Stop the GameRoomDO's progression alarm AND mark the D1 row finished.
+    // Without the DO call, a game whose lobby row is gone keeps firing
+    // alarms and bumping `progressCounter` until Cloudflare evicts it.
+    const gameStub = getGameDO(env, row.game_id);
+    await gameStub.fetch(new Request('https://do/', { method: 'DELETE' })).catch(() => {});
+    await env.DB.prepare('UPDATE games SET finished = 1 WHERE game_id = ?').bind(row.game_id).run();
+    gameMarked = true;
+  }
+
+  return Response.json({
+    ok: true,
+    lobbyId: row.lobby_id,
+    gameId: row.game_id,
+    lobbyDisbanded: lobbyOk,
+    gameMarkedFinished: gameMarked,
+  });
 }
 
-async function handleProfile(handle: string, env: Env): Promise<Response> {
-  const tracker = D1EloTracker.fromEnv(env);
-  const player  = await tracker.getPlayerByHandle(decodeURIComponent(handle));
-  if (!player) return Response.json({ error: 'Player not found' }, { status: 404 });
-  const { walletAddress: _omit, ...publicProfile } = player;
-  return Response.json(publicProfile);
-}
+// ---------------------------------------------------------------------------
+// Admin — inspect a session's live DO state (diagnostic; read-only).
+// ---------------------------------------------------------------------------
 
-async function handlePlayerStats(playerId: string, env: Env): Promise<Response> {
-  const tracker = D1EloTracker.fromEnv(env);
-  const player  = await tracker.getPlayer(playerId);
-  if (!player) return Response.json({ error: 'Player not found' }, { status: 404 });
-  const matches = await tracker.getPlayerMatches(playerId, 20);
-  const { walletAddress: _omit, ...stats } = player;
-  return Response.json({ ...stats, recentMatches: matches });
+async function handleAdminSessionInspect(
+  sessionId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const expected = env.ADMIN_TOKEN;
+  if (!expected) {
+    return Response.json(
+      { error: 'Admin endpoint disabled (ADMIN_TOKEN not set)' },
+      { status: 503 },
+    );
+  }
+  if (request.headers.get('X-Admin-Token') !== expected) {
+    return Response.json({ error: 'Invalid admin token' }, { status: 401 });
+  }
+
+  const lobbyRow = await env.DB.prepare(
+    `SELECT id AS lobby_id, game_id, game_type, team_size, phase, created_at
+     FROM lobbies WHERE id = ?1 OR game_id = ?1 LIMIT 1`,
+  )
+    .bind(sessionId)
+    .first<{
+      lobby_id: string;
+      game_id: string | null;
+      game_type: string;
+      team_size: number;
+      phase: string;
+      created_at: string;
+    }>();
+
+  const gameId =
+    lobbyRow?.game_id ??
+    (
+      await env.DB.prepare('SELECT game_id FROM games WHERE game_id = ? LIMIT 1')
+        .bind(sessionId)
+        .first<{ game_id: string }>()
+    )?.game_id ??
+    null;
+
+  if (!lobbyRow && !gameId) {
+    return Response.json({ error: 'Session not found', sessionId }, { status: 404 });
+  }
+
+  let gameInspect: unknown = null;
+  if (gameId) {
+    const stub = getGameDO(env, gameId);
+    const resp = await stub
+      .fetch(new Request('https://do/inspect', { method: 'GET' }))
+      .catch((err) => new Response(`DO error: ${err}`, { status: 500 }));
+    if (resp.ok) {
+      gameInspect = await resp.json();
+    } else {
+      gameInspect = { error: `DO inspect failed: ${resp.status}`, body: await resp.text() };
+    }
+  }
+
+  const gameRow = gameId
+    ? await env.DB.prepare(
+        'SELECT game_id, game_type, finished, created_at FROM games WHERE game_id = ? LIMIT 1',
+      )
+        .bind(gameId)
+        .first()
+    : null;
+
+  return Response.json({
+    sessionId,
+    lobby: lobbyRow,
+    gameRow,
+    gameId,
+    gameInspect,
+    now: Date.now(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -749,8 +1152,10 @@ async function getPlayerLocation(
     `SELECT l.id AS lobby_id, l.game_id, l.game_type
      FROM player_sessions ps
      JOIN lobbies l ON l.id = ps.lobby_id
-     WHERE ps.player_id = ?`
-  ).bind(playerId).first<{ lobby_id: string; game_id: string | null; game_type: string }>();
+     WHERE ps.player_id = ?`,
+  )
+    .bind(playerId)
+    .first<{ lobby_id: string; game_id: string | null; game_type: string }>();
 
   if (!row) return null;
   if (row.game_id) {
@@ -759,14 +1164,24 @@ async function getPlayerLocation(
   return { kind: 'lobby', lobbyId: row.lobby_id, gameType: row.game_type };
 }
 
-function forwardToGameDO(env: Env, gameId: string, subPath: string, request: Request): Promise<Response> {
+function forwardToGameDO(
+  env: Env,
+  gameId: string,
+  subPath: string,
+  request: Request,
+): Promise<Response> {
   const stub = getGameDO(env, gameId);
   const url = new URL(request.url);
   url.pathname = subPath;
   return stub.fetch(new Request(url.toString(), request));
 }
 
-function forwardToLobbyDO(env: Env, lobbyId: string, subPath: string, request: Request): Promise<Response> {
+function forwardToLobbyDO(
+  env: Env,
+  lobbyId: string,
+  subPath: string,
+  request: Request,
+): Promise<Response> {
   const stub = getLobbyDO(env, lobbyId);
   const url = new URL(request.url);
   url.pathname = subPath;

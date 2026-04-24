@@ -2,15 +2,22 @@
  * Capture the Lobster — Stateless Game Engine
  *
  * All game logic is expressed as pure functions: state in, state out.
- * No mutable classes, no caching. The framework (GameRoom) holds the state
+ * No mutable classes, no caching. The framework (GameRoomDO) holds the state
  * and passes it to these functions each turn.
  */
 
-import { Hex, Direction, hexEquals, hexToString } from './hex.js';
-import { UnitClass, CLASS_SPEED, MoveUnit, MoveSubmission, validatePath, resolveMovements } from './movement.js';
-import { GameMap, TileType, getMapRadiusForTeamSize } from './map.js';
-import { VisibleTile, FogUnit, buildVisibleState } from './fog.js';
-import { CombatUnit, resolveCombat } from './combat.js';
+import { type HexTuple, mustFind } from '@coordination-games/engine';
+import { CLASS_RANGE, CLASS_VISION, type CombatUnit, resolveCombat } from './combat.js';
+import { buildVisibleOccupants, type FogUnit, type VisibleOccupant } from './fog.js';
+import { type Direction, type Hex, hexEquals, hexToString } from './hex.js';
+import type { GameMap } from './map.js';
+import {
+  type MoveSubmission,
+  type MoveUnit,
+  resolveMovements,
+  type UnitClass,
+  validatePath,
+} from './movement.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,20 +52,80 @@ export interface TurnRecord {
 
 export type GamePhase = 'pre_game' | 'in_progress' | 'finished';
 
+/**
+ * Static per-game map data — same value every turn, so the agent envelope's
+ * top-level diff collapses it into `_unchangedKeys` after the first
+ * observation. Walls are NOT here because they're fog-filtered per-turn;
+ * see `visibleWalls` on `GameState`. Bases are public (CtF convention —
+ * you always know where both teams' bases are).
+ *
+ * Emit shape: `flag` is a single coord carried alongside its spawns list on
+ * a per-base object — keep as a tuple for consistency with the adjacent
+ * `spawns: HexTuple[]` (pure-coord array). The base object itself is the
+ * metadata container.
+ */
+export interface AgentMapStatic {
+  radius: number;
+  bases: {
+    A: { flag: HexTuple; spawns: HexTuple[] }[];
+    B: { flag: HexTuple; spawns: HexTuple[] }[];
+  };
+}
+
+/**
+ * Condensed at-a-glance read for the agent — everything you need to make
+ * a decision this turn, without parsing `map`/`visibleOccupants`. Dedupes
+ * via the top-level `_unchangedKeys` diff when nothing actionable changed.
+ */
+export type YourFlagStatus = 'at_base' | 'carried' | 'unknown';
+export type EnemyFlagStatus = 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
+
+export interface AgentSummary {
+  /** Your unit's position as `[q, r]` — the summary itself is the metadata container. */
+  pos: HexTuple;
+  carrying: boolean;
+  alive: boolean;
+  moveSubmitted: boolean;
+  score: { yourTeam: number; enemyTeam: number };
+  yourFlag: YourFlagStatus;
+  enemyFlag: EnemyFlagStatus;
+  /** Visible enemy units this turn (no ID for fog reasons). `pos` is a `[q, r]` tuple, metadata follows. */
+  enemies: { pos: HexTuple; unitClass: UnitClass }[];
+  /** Visible loose/carried flags this turn. `pos` is a `[q, r]` tuple, `team` follows. */
+  flags: { pos: HexTuple; team: 'A' | 'B' }[];
+}
+
 export interface GameState {
+  /** Lean at-a-glance summary — read this first; parse `map`/`visibleOccupants` only if you need terrain or positions. */
+  summary: AgentSummary;
   turn: number;
   phase: GamePhase;
   yourUnit: {
     id: string;
     unitClass: UnitClass;
-    position: Hex;
+    /** Your unit's position as `[q, r]` — yourUnit is the metadata container, coord stays lean. */
+    position: HexTuple;
     carryingFlag: boolean;
     alive: boolean;
     respawnTurn?: number;
+    /** Hex radius you can see (class-specific: rogue=4, knight=2, mage=3). */
+    visionRange: number;
+    /** Hex radius you can attack from (class-specific: rogue=1, knight=1, mage=2). */
+    attackRange: number;
   };
-  visibleTiles: VisibleTile[];
-  yourFlag: { status: 'at_base' | 'carried' | 'unknown' };
-  enemyFlag: { status: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' };
+  /** Static map info (radius + bases). Dedupes via _unchangedKeys after turn 0. */
+  mapStatic: AgentMapStatic;
+  /**
+   * Walls currently within your vision. Fog-filtered per turn — walls you
+   * haven't seen yet are not revealed. A hex you can see that isn't in
+   * `visibleWalls` and isn't a base tile is walkable ground. Pure-coord
+   * array → `HexTuple` entries (`[q, r]`), not objects.
+   */
+  visibleWalls: HexTuple[];
+  /** Per-turn: only visible hexes that contain a unit or flag. Tiny. */
+  visibleOccupants: VisibleOccupant[];
+  yourFlag: { status: YourFlagStatus };
+  enemyFlag: { status: EnemyFlagStatus };
   timeRemainingSeconds: number;
   moveSubmitted: boolean;
   score: { yourTeam: number; enemyTeam: number };
@@ -95,11 +162,18 @@ export interface CtlGameState {
   allKills: { killerId: string; victimId: string; reason: string; turn: number }[];
   /** Post-move positions for units that died this turn (for animation: move → die → respawn) */
   lastDeathPositions?: Record<string, { q: number; r: number }>;
+  /**
+   * Absolute ms timestamp (Date.now() scale) when the current turn's timer
+   * expires. Set by the plugin's action handlers whenever a new
+   * `turnTimeoutDeadline` is scheduled; used by `getStateForAgent` to derive
+   * `timeRemainingSeconds`. Undefined before the game is in progress.
+   */
+  turnDeadlineMs?: number;
 }
 
 /** Compute turn limit based on map radius */
 export function getTurnLimitForRadius(radius: number): number {
-  return 20 + (radius * 2);
+  return 20 + radius * 2;
 }
 
 const DEFAULT_CONFIG: Required<GameConfig> = {
@@ -109,20 +183,35 @@ const DEFAULT_CONFIG: Required<GameConfig> = {
 };
 
 // ---------------------------------------------------------------------------
+// Envelope-boundary coord helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert internal `{ q, r }` to the envelope tuple form. Only called from
+ * `getStateForAgent` — the internal state never sees tuples.
+ */
+function toTuple(h: Hex): HexTuple {
+  return [h.q, h.r];
+}
+
+// ---------------------------------------------------------------------------
 // Helper: compute wall/valid tile sets from map data
 // ---------------------------------------------------------------------------
 
-function computeTileSets(mapTiles: [string, string][]): { wallSet: Set<string>; validTiles: Set<string> } {
+function computeTileSets(mapTiles: [string, string][]): {
+  wallSet: Set<string>;
+  walkableTiles: Set<string>;
+  allHexes: Set<string>;
+} {
   const wallSet = new Set<string>();
-  const validTiles = new Set<string>();
+  const walkableTiles = new Set<string>();
+  const allHexes = new Set<string>();
   for (const [key, type] of mapTiles) {
-    if (type === 'wall') {
-      wallSet.add(key);
-    } else {
-      validTiles.add(key);
-    }
+    allHexes.add(key);
+    if (type === 'wall') wallSet.add(key);
+    else walkableTiles.add(key);
   }
-  return { wallSet, validTiles };
+  return { wallSet, walkableTiles, allHexes };
 }
 
 // ---------------------------------------------------------------------------
@@ -142,9 +231,10 @@ export function createGameState(
   // Place units at spawn positions
   const spawnIndexA = { current: 0 };
   const spawnIndexB = { current: 0 };
-  const allSpawnsA = map.bases.A.flatMap(b => b.spawns);
-  const allSpawnsB = map.bases.B.flatMap(b => b.spawns);
+  const allSpawnsA = map.bases.A.flatMap((b) => b.spawns);
+  const allSpawnsB = map.bases.B.flatMap((b) => b.spawns);
 
+  // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass; position: { q?: numbe — TODO(2.3-followup)
   const units: GameUnit[] = players.map((p) => {
     const spawns = p.team === 'A' ? allSpawnsA : allSpawnsB;
     const spawnIdx = p.team === 'A' ? spawnIndexA : spawnIndexB;
@@ -184,7 +274,7 @@ export function createGameState(
     config: resolvedConfig,
     mapTiles: [...map.tiles.entries()] as [string, string][],
     mapRadius: map.radius,
-    mapBases: map.bases as any,
+    mapBases: map.bases,
     moveSubmissions: [],
     allKills: [],
   };
@@ -213,6 +303,7 @@ export function validateMoveForPlayer(
     position: unit.position,
   };
   const validation = validatePath(moveUnit, path);
+  // @ts-expect-error TS2375: Type '{ valid: false; error: string | undefined; }' is not assignable to type '{ — TODO(2.3-followup)
   if (!validation.valid) return { valid: false, error: validation.error };
 
   return { valid: true };
@@ -228,6 +319,7 @@ export function submitMove(
 ): { state: CtlGameState; success: boolean; error?: string } {
   const validation = validateMoveForPlayer(state, playerId, path);
   if (!validation.valid) {
+    // @ts-expect-error TS2375: Type '{ state: CtlGameState; success: false; error: string | undefined; }' is no — TODO(2.3-followup)
     return { state, success: false, error: validation.error };
   }
 
@@ -255,16 +347,16 @@ export function allMovesSubmitted(state: CtlGameState): boolean {
  */
 export function resolveTurn(state: CtlGameState): { state: CtlGameState; record: TurnRecord } {
   const currentTurn = state.turn;
-  const { wallSet, validTiles } = computeTileSets(state.mapTiles);
+  const { wallSet, walkableTiles } = computeTileSets(state.mapTiles);
   const submissions = new Map(state.moveSubmissions);
 
   // Deep-copy mutable parts
-  const units: GameUnit[] = state.units.map(u => ({ ...u, position: { ...u.position } }));
+  const units: GameUnit[] = state.units.map((u) => ({ ...u, position: { ...u.position } }));
   const flags = {
-    A: state.flags.A.map(f => ({ ...f, position: { ...f.position } })),
-    B: state.flags.B.map(f => ({ ...f, position: { ...f.position } })),
+    A: state.flags.A.map((f) => ({ ...f, position: { ...f.position } })),
+    B: state.flags.B.map((f) => ({ ...f, position: { ...f.position } })),
   };
-  let score = { ...state.score };
+  const score = { ...state.score };
   let phase: GamePhase = state.phase;
   let winner: 'A' | 'B' | null = state.winner;
 
@@ -272,6 +364,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   for (const unit of units) {
     if (!unit.alive && unit.respawnTurn === currentTurn) {
       unit.alive = true;
+      // @ts-expect-error TS2412: Type 'undefined' is not assignable to type 'number' with 'exactOptionalPropertyT — TODO(2.3-followup)
       unit.respawnTurn = undefined;
     }
   }
@@ -304,16 +397,16 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   }
 
   // 3. Resolve movements
-  const moveResults = resolveMovements(moveUnits, moveSubmissions, validTiles);
+  const moveResults = resolveMovements(moveUnits, moveSubmissions, walkableTiles);
 
   // 4. Update unit positions
   for (const result of moveResults) {
-    const unit = units.find((u) => u.id === result.unitId)!;
+    const unit = mustFind(units, (u) => u.id === result.unitId, 'moveResult.unitId');
     unit.position = { ...result.to };
 
     if (unit.carryingFlag) {
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const carriedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      const carriedFlag = flags[enemyTeam].find((f) => f.carrierId === unit.id);
       if (carriedFlag) {
         carriedFlag.position = { ...result.to };
       }
@@ -336,7 +429,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   // Capture post-move positions for dead units (before teleport to spawn)
   const deathPositions: Record<string, { q: number; r: number }> = {};
   for (const deadId of combatResult.deaths) {
-    const unit = units.find((u) => u.id === deadId)!;
+    const unit = mustFind(units, (u) => u.id === deadId, 'deadId');
     deathPositions[deadId] = { q: unit.position.q, r: unit.position.r };
   }
 
@@ -348,7 +441,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   const spawnCountB = { current: 0 };
 
   for (const deadId of combatResult.deaths) {
-    const unit = units.find((u) => u.id === deadId)!;
+    const unit = mustFind(units, (u) => u.id === deadId, 'deadId');
     unit.alive = false;
     // Respawn 2 turns later (skip next turn entirely)
     unit.respawnTurn = currentTurn + 2;
@@ -357,6 +450,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     const spawns = unit.team === 'A' ? allSpawnsA : allSpawnsB;
     const counter = unit.team === 'A' ? spawnCountA : spawnCountB;
     if (spawns && spawns.length > 0) {
+      // @ts-expect-error TS2322: Type '{ q?: number; r?: number; }' is not assignable to type 'Hex'. — TODO(2.3-followup)
       unit.position = { ...spawns[counter.current % spawns.length] };
       counter.current++;
     }
@@ -365,15 +459,15 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     if (unit.carryingFlag) {
       unit.carryingFlag = false;
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const droppedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      const droppedFlag = flags[enemyTeam].find((f) => f.carrierId === unit.id);
       if (droppedFlag) {
         droppedFlag.carried = false;
+        // @ts-expect-error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyT — TODO(2.3-followup)
         droppedFlag.carrierId = undefined;
         const baseIdx = flags[enemyTeam].indexOf(droppedFlag);
+        // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
         droppedFlag.position = { ...mapBases[enemyTeam][baseIdx].flag };
-        flagEvents.push(
-          `${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`,
-        );
+        flagEvents.push(`${unit.id} died carrying ${enemyTeam}'s flag — flag returned to base`);
       }
     }
   }
@@ -406,11 +500,13 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
       flagEvents.push(`${unit.id} captured the flag! Team ${unit.team} scores!`);
 
       const enemyTeam: 'A' | 'B' = unit.team === 'A' ? 'B' : 'A';
-      const capturedFlag = flags[enemyTeam].find(f => f.carrierId === unit.id);
+      const capturedFlag = flags[enemyTeam].find((f) => f.carrierId === unit.id);
       if (capturedFlag) {
         const baseIdx = flags[enemyTeam].indexOf(capturedFlag);
         capturedFlag.carried = false;
+        // @ts-expect-error TS2412: Type 'undefined' is not assignable to type 'string' with 'exactOptionalPropertyT — TODO(2.3-followup)
         capturedFlag.carrierId = undefined;
+        // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
         capturedFlag.position = { ...mapBases[enemyTeam][baseIdx].flag };
       }
       unit.carryingFlag = false;
@@ -445,6 +541,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     winner = null;
   }
 
+  // @ts-expect-error TS2375: Type '{ turn: number; phase: GamePhase; units: GameUnit[]; flags: { A: { positio — TODO(2.3-followup)
   const newState: CtlGameState = {
     turn: newTurn,
     phase,
@@ -457,10 +554,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
     mapRadius: state.mapRadius,
     mapBases: state.mapBases,
     moveSubmissions: [], // cleared after resolution
-    allKills: [
-      ...state.allKills,
-      ...combatResult.kills.map(k => ({ ...k, turn: currentTurn })),
-    ],
+    allKills: [...state.allKills, ...combatResult.kills.map((k) => ({ ...k, turn: currentTurn }))],
     lastDeathPositions: Object.keys(deathPositions).length > 0 ? deathPositions : undefined,
   };
 
@@ -481,10 +575,8 @@ export function getStateForAgent(
 
   const team = unit.team;
   const enemyTeam: 'A' | 'B' = team === 'A' ? 'B' : 'A';
-  const { wallSet } = computeTileSets(state.mapTiles);
-  const tiles = new Map(state.mapTiles.map(([k, v]) => [k, v]));
+  const { wallSet, allHexes } = computeTileSets(state.mapTiles);
 
-  // Fog of war
   const fogUnits: FogUnit[] = state.units.map((u) => ({
     id: u.id,
     team: u.team,
@@ -493,84 +585,111 @@ export function getStateForAgent(
     alive: u.alive,
   }));
 
-  const viewer: FogUnit = {
-    id: unit.id,
-    team: unit.team,
-    unitClass: unit.unitClass,
-    position: unit.position,
-    alive: unit.alive,
+  const {
+    occupants: visibleOccupants,
+    visibleKeys,
+    walls: visibleWalls,
+  } = buildVisibleOccupants(
+    mustFind(fogUnits, (u) => u.id === agentId),
+    fogUnits,
+    wallSet,
+    allHexes,
+    state.flags,
+  );
+
+  // Convert internal {q, r} base coords into envelope tuple form. Static
+  // after turn 0 so the diff collapses this forever — the per-call cost of
+  // the map is paid once per game per agent.
+  const mapStatic: AgentMapStatic = {
+    radius: state.mapRadius,
+    bases: {
+      A: state.mapBases.A.map((b) => ({
+        flag: toTuple(b.flag),
+        spawns: b.spawns.map(toTuple),
+      })),
+      B: state.mapBases.B.map((b) => ({
+        flag: toTuple(b.flag),
+        spawns: b.spawns.map(toTuple),
+      })),
+    },
   };
 
-  const flagsForFog = {
-    A: state.flags.A.map(f => ({
-      position: f.position,
-      carried: f.carried,
-      carrierId: f.carrierId,
-    })),
-    B: state.flags.B.map(f => ({
-      position: f.position,
-      carried: f.carried,
-      carrierId: f.carrierId,
-    })),
-  };
-
-  const visibleTiles = buildVisibleState(viewer, fogUnits, wallSet, tiles, flagsForFog);
-
-  // Your flag status
-  const yourFlags = state.flags[team];
-  let yourFlagStatus: 'at_base' | 'carried' | 'unknown' = 'at_base';
-  for (const f of yourFlags) {
-    if (f.carried) { yourFlagStatus = 'carried'; break; }
+  let yourFlagStatus: YourFlagStatus = 'at_base';
+  for (const f of state.flags[team]) {
+    if (f.carried) {
+      yourFlagStatus = 'carried';
+      break;
+    }
   }
 
-  // Enemy flag status
-  const enemyFlags = state.flags[enemyTeam];
-  let enemyFlagStatus: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' = 'unknown';
-  for (const ef of enemyFlags) {
+  let enemyFlagStatus: EnemyFlagStatus = 'unknown';
+  for (const ef of state.flags[enemyTeam]) {
     if (ef.carried && ef.carrierId === agentId) {
       enemyFlagStatus = 'carried_by_you';
       break;
     } else if (ef.carried && ef.carrierId) {
       const carrier = state.units.find((u) => u.id === ef.carrierId);
-      if (carrier && carrier.team === team) {
-        enemyFlagStatus = 'carried_by_ally';
-      }
-    } else if (!ef.carried) {
-      const enemyFlagKey = hexToString(ef.position);
-      const isVisible = visibleTiles.some(
-        (t) => hexToString({ q: t.q, r: t.r }) === enemyFlagKey,
-      );
-      if (isVisible && enemyFlagStatus === 'unknown') {
-        enemyFlagStatus = 'at_base';
-      }
+      if (carrier?.team === team) enemyFlagStatus = 'carried_by_ally';
+    } else if (!ef.carried && enemyFlagStatus === 'unknown') {
+      if (visibleKeys.has(hexToString(ef.position))) enemyFlagStatus = 'at_base';
     }
   }
 
-  // Check if this agent has submitted a move
   const moveSubmitted = submittedMoves
     ? submittedMoves.has(agentId)
-    : new Map(state.moveSubmissions).has(agentId);
+    : state.moveSubmissions.some(([id]) => id === agentId);
+
+  const score = { yourTeam: state.score[team], enemyTeam: state.score[enemyTeam] };
+
+  // visibleOccupants already carries `pos: [q, r]` tuples — reuse directly
+  // so summary entries and the top-level `visibleOccupants` key agree.
+  const enemies: AgentSummary['enemies'] = [];
+  const flagEntries: AgentSummary['flags'] = [];
+  for (const o of visibleOccupants) {
+    if (o.unit && o.unit.team !== team) {
+      enemies.push({ pos: o.pos, unitClass: o.unit.unitClass });
+    }
+    if (o.flag) flagEntries.push({ pos: o.pos, team: o.flag.team });
+  }
+
+  const summary: AgentSummary = {
+    pos: toTuple(unit.position),
+    carrying: unit.carryingFlag,
+    alive: unit.alive,
+    moveSubmitted,
+    score,
+    yourFlag: yourFlagStatus,
+    enemyFlag: enemyFlagStatus,
+    enemies,
+    flags: flagEntries,
+  };
 
   return {
+    summary,
     turn: state.turn,
     phase: state.phase,
+    // @ts-expect-error TS2375: Type '{ id: string; unitClass: UnitClass; position: HexTuple; c — TODO(2.3-followup)
     yourUnit: {
       id: unit.id,
       unitClass: unit.unitClass,
-      position: { ...unit.position },
+      position: toTuple(unit.position),
       carryingFlag: unit.carryingFlag,
       alive: unit.alive,
       respawnTurn: unit.respawnTurn,
+      visionRange: CLASS_VISION[unit.unitClass],
+      attackRange: CLASS_RANGE[unit.unitClass],
     },
-    visibleTiles,
+    mapStatic,
+    visibleWalls,
+    visibleOccupants,
     yourFlag: { status: yourFlagStatus },
     enemyFlag: { status: enemyFlagStatus },
-    timeRemainingSeconds: state.config.turnTimerSeconds,
+    timeRemainingSeconds:
+      state.turnDeadlineMs === undefined
+        ? 0
+        : Math.max(0, Math.floor((state.turnDeadlineMs - Date.now()) / 1000)),
     moveSubmitted,
-    score: {
-      yourTeam: state.score[team],
-      enemyTeam: state.score[enemyTeam],
-    },
+    score,
   };
 }
 

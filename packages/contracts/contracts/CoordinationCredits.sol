@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
 import "./interfaces/IERC8004.sol";
 import "./interfaces/IUSDC.sol";
 
-contract CoordinationCredits {
+contract CoordinationCredits is ReentrancyGuard {
     IERC8004 public immutable canonical8004;
     IUSDC public immutable usdc;
     address public immutable registry;
@@ -19,6 +21,7 @@ contract CoordinationCredits {
     struct PendingBurn {
         uint256 amount;
         uint256 executeAfter;
+        address recipient;
     }
 
     // agentId => pending burn request
@@ -48,6 +51,7 @@ contract CoordinationCredits {
     error NoPendingBurn();
     error BurnNotReady();
     error BurnDelayTooLong();
+    error DustBurnRejected();
 
     constructor(
         address _canonical8004,
@@ -68,13 +72,13 @@ contract CoordinationCredits {
     }
 
     /// @notice Mint credits by depositing USDC (10% tax)
-    function mint(uint256 agentId, uint256 usdcAmount) external {
+    function mint(uint256 agentId, uint256 usdcAmount) external nonReentrant {
         if (canonical8004.ownerOf(agentId) != msg.sender) revert NotAgentOwner();
         _mintCredits(agentId, usdcAmount, 1000); // 10% tax
     }
 
     /// @notice Mint credits for an agent without tax (registry only)
-    function mintFor(uint256 agentId, uint256 usdcAmount) external {
+    function mintFor(uint256 agentId, uint256 usdcAmount) external nonReentrant {
         if (msg.sender != registry) revert NotRegistry();
         _mintCredits(agentId, usdcAmount, 0);
     }
@@ -92,7 +96,7 @@ contract CoordinationCredits {
     }
 
     /// @notice Settle credit deltas after a game (gameAnchor only)
-    function settleDeltas(uint256[] calldata agentIds, int256[] calldata deltas) external {
+    function settleDeltas(uint256[] calldata agentIds, int256[] calldata deltas) external nonReentrant {
         if (msg.sender != gameAnchor) revert NotGameAnchor();
         if (agentIds.length != deltas.length) revert LengthMismatch();
 
@@ -107,11 +111,8 @@ contract CoordinationCredits {
                 balances[agentIds[i]] += uint256(deltas[i]);
             } else {
                 uint256 debit = uint256(-deltas[i]);
-                if (balances[agentIds[i]] < debit) {
-                    balances[agentIds[i]] = 0;
-                } else {
-                    balances[agentIds[i]] -= debit;
-                }
+                if (balances[agentIds[i]] < debit) revert InsufficientBalance();
+                balances[agentIds[i]] -= debit;
             }
         }
 
@@ -125,14 +126,15 @@ contract CoordinationCredits {
 
         pendingBurns[agentId] = PendingBurn({
             amount: amount,
-            executeAfter: block.timestamp + burnDelay
+            executeAfter: block.timestamp + burnDelay,
+            recipient: msg.sender
         });
 
         emit BurnRequested(agentId, amount, block.timestamp + burnDelay);
     }
 
     /// @notice Execute a pending burn after cooldown
-    function executeBurn(uint256 agentId) external {
+    function executeBurn(uint256 agentId) external nonReentrant {
         PendingBurn memory pending = pendingBurns[agentId];
         if (pending.amount == 0) revert NoPendingBurn();
         if (block.timestamp < pending.executeAfter) revert BurnNotReady();
@@ -142,13 +144,16 @@ contract CoordinationCredits {
             actual = balances[agentId];
         }
 
+        // Reject burns whose USDC payout would round to 0 (dust). Each USDC
+        // unit is 100 credits, so any amount < 100 credits would yield 0 USDC.
+        uint256 usdcAmount = actual / 100;
+        if (usdcAmount == 0) revert DustBurnRejected();
+
+        address recipient = pending.recipient;
         delete pendingBurns[agentId];
         balances[agentId] -= actual;
 
-        uint256 usdcAmount = actual / 100;
-        if (usdcAmount > 0) {
-            usdc.transferFrom(vault, msg.sender, usdcAmount);
-        }
+        usdc.transferFrom(vault, recipient, usdcAmount);
 
         emit BurnExecuted(agentId, actual, usdcAmount);
     }

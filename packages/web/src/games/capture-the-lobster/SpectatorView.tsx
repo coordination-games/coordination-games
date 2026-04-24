@@ -1,21 +1,21 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import HexGrid from '../../components/HexGrid';
-import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
-import { ScrubberSlider } from '../../components/ScrubberSlider';
-import type { SpectatorViewProps } from '../types';
-import { API_BASE, getWsUrl } from '../../config.js';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import HexGrid from '../../../../games/capture-the-lobster/web/HexGrid';
 import type {
-  SpectatorGameState,
-  KillEvent,
   ChatMessage,
-} from '../../types';
+  KillEvent,
+  SpectatorGameState,
+} from '../../../../games/capture-the-lobster/web/types';
+import { ScrubberSlider } from '../../components/ScrubberSlider';
+import { SpectatorPendingPlaceholder } from '../../components/SpectatorPendingPlaceholder';
+import { API_BASE } from '../../config.js';
+import type { SpectatorViewProps } from '../types';
 import { useHexAnimations } from './useHexAnimations';
 
 // Raw spectator-visible snapshot shape. Canonical source is
 // buildCtlSpectatorView in packages/games/capture-the-lobster/src/plugin.ts.
 // Kept as an open record to accept both /replay entries and WS envelopes
 // (which spread the snapshot plus type/gameType/handles/progressCounter).
-type RawSnapshot = Record<string, any>;
+type RawSnapshot = Record<string, unknown>;
 
 type RewindState =
   | { mode: 'live' }
@@ -26,34 +26,93 @@ type RewindState =
 // Map server state -> frontend types (CtL-specific)
 // ---------------------------------------------------------------------------
 
-function mapServerState(raw: any): SpectatorGameState | null {
-  if (!raw) return null;
-  const data = raw.data ?? raw;
+/**
+ * Loose shape the mapper walks — every field is optional because both the
+ * replay payload and the live WS envelope may be missing arbitrary parts.
+ * All narrowing happens here; downstream consumers see the strict
+ * `SpectatorGameState`.
+ */
+interface RawCtlStateLike {
+  tiles?: Array<{
+    q: number;
+    r: number;
+    type: 'ground' | 'wall' | 'base_a' | 'base_b';
+    unit?: {
+      id: string;
+      team: 'A' | 'B';
+      unitClass: 'rogue' | 'knight' | 'mage';
+      carryingFlag?: boolean;
+      alive?: boolean;
+    };
+    flag?: { team: 'A' | 'B' };
+  }>;
+  units?: Array<{
+    id: string;
+    team?: 'A' | 'B';
+    unitClass?: 'rogue' | 'knight' | 'mage';
+  }>;
+  kills?: Array<{
+    killerId: string;
+    victimId: string;
+    killerClass?: string;
+    killerUnitClass?: string;
+    killerTeam?: 'A' | 'B';
+    victimClass?: string;
+    victimUnitClass?: string;
+    victimTeam?: 'A' | 'B';
+    reason: string;
+    turn?: number;
+  }>;
+  turn?: number;
+  maxTurns?: number;
+  phase?: 'pre_game' | 'in_progress' | 'finished';
+  chatA?: SpectatorGameState['chatA'];
+  chatB?: SpectatorGameState['chatB'];
+  flagA?: { status?: string; carrier?: string };
+  flagB?: { status?: string; carrier?: string };
+  winner?: 'A' | 'B' | null;
+  mapRadius?: number;
+  visibleA?: string[];
+  visibleB?: string[];
+  visibleByUnit?: Record<string, string[]>;
+  handles?: Record<string, string>;
+  deathPositions?: Record<string, { q: number; r: number }>;
+}
+
+function mapServerState(raw: unknown): SpectatorGameState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const top = raw as { data?: unknown };
+  const dataCandidate = top.data ?? raw;
+  if (!dataCandidate || typeof dataCandidate !== 'object') return null;
+  const data = dataCandidate as RawCtlStateLike;
 
   if (!data.tiles || !Array.isArray(data.tiles)) return null;
 
-  const tiles = data.tiles.map((t: any) => ({
-    q: t.q,
-    r: t.r,
-    type: t.type,
-    unit: t.unit
-      ? {
-          id: t.unit.id,
-          team: t.unit.team,
-          unitClass: t.unit.unitClass,
-          carryingFlag: t.unit.carryingFlag || false,
-          alive: t.unit.alive !== false,
-        }
-      : undefined,
-    flag: t.flag,
-  }));
+  const tiles: SpectatorGameState['tiles'] = data.tiles.map((t) => {
+    const base: SpectatorGameState['tiles'][number] = {
+      q: t.q,
+      r: t.r,
+      type: t.type,
+    };
+    if (t.unit) {
+      base.unit = {
+        id: t.unit.id,
+        team: t.unit.team,
+        unitClass: t.unit.unitClass,
+        carryingFlag: t.unit.carryingFlag || false,
+        alive: t.unit.alive !== false,
+      };
+    }
+    if (t.flag) base.flag = t.flag;
+    return base;
+  });
 
-  const unitMap = new Map<string, any>();
+  const unitMap = new Map<string, { team?: 'A' | 'B'; unitClass?: string }>();
   for (const u of data.units ?? []) {
     unitMap.set(u.id, u);
   }
 
-  const kills: KillEvent[] = (data.kills ?? []).map((k: any) => {
+  const kills: KillEvent[] = (data.kills ?? []).map((k) => {
     const killer = unitMap.get(k.killerId);
     const victim = unitMap.get(k.victimId);
     return {
@@ -64,7 +123,7 @@ function mapServerState(raw: any): SpectatorGameState | null {
       victimClass: victim?.unitClass ?? k.victimClass ?? k.victimUnitClass ?? 'unknown',
       victimTeam: victim?.team ?? k.victimTeam ?? 'B',
       reason: k.reason,
-      turn: k.turn ?? data.turn,
+      turn: k.turn ?? data.turn ?? 0,
     };
   });
 
@@ -72,15 +131,11 @@ function mapServerState(raw: any): SpectatorGameState | null {
   const flagB = data.flagB ?? { status: 'at_base' };
 
   const flagAStatus =
-    flagA.status === 'carried' && flagA.carrier
-      ? `Carried by ${flagA.carrier}`
-      : 'At Base';
+    flagA.status === 'carried' && flagA.carrier ? `Carried by ${flagA.carrier}` : 'At Base';
   const flagBStatus =
-    flagB.status === 'carried' && flagB.carrier
-      ? `Carried by ${flagB.carrier}`
-      : 'At Base';
+    flagB.status === 'carried' && flagB.carrier ? `Carried by ${flagB.carrier}` : 'At Base';
 
-  return {
+  const out: SpectatorGameState = {
     turn: data.turn ?? 0,
     maxTurns: data.maxTurns ?? 30,
     phase: data.phase ?? 'in_progress',
@@ -96,11 +151,12 @@ function mapServerState(raw: any): SpectatorGameState | null {
     visibleA: new Set(data.visibleA ?? []),
     visibleB: new Set(data.visibleB ?? []),
     visibleByUnit: Object.fromEntries(
-      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]: [string, any]) => [id, new Set(hexes as string[])])
+      Object.entries(data.visibleByUnit ?? {}).map(([id, hexes]) => [id, new Set(hexes)]),
     ),
     handles: data.handles ?? {},
-    deathPositions: data.deathPositions ?? undefined,
   };
+  if (data.deathPositions) out.deathPositions = data.deathPositions;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,18 +172,15 @@ const CLASS_ICONS: Record<string, string> = {
 function KillFeed({ kills }: { kills: KillEvent[] }) {
   return (
     <div className="flex flex-col gap-1.5">
-      {kills.length === 0 && (
-        <p className="text-gray-600 text-xs italic">No kills yet</p>
-      )}
+      {kills.length === 0 && <p className="text-gray-600 text-xs italic">No kills yet</p>}
       {[...kills].reverse().map((k, i) => {
         const killerColor = k.killerTeam === 'A' ? 'text-blue-400' : 'text-red-400';
         const victimColor = k.victimTeam === 'A' ? 'text-blue-400' : 'text-red-400';
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: append-only game-state list (kill feed / chat log) — entries never reorder or splice, so index is a stable key.
           <div key={i} className="text-xs flex items-center gap-1 text-gray-300">
             <span className="text-gray-500 w-6 text-right shrink-0">T{k.turn}</span>
-            <span className={`font-bold ${killerColor}`}>
-              {CLASS_ICONS[k.killerClass]}
-            </span>
+            <span className={`font-bold ${killerColor}`}>{CLASS_ICONS[k.killerClass]}</span>
             <span className="text-gray-500">&rarr;</span>
             <span className={`font-bold ${victimColor} line-through opacity-60`}>
               {CLASS_ICONS[k.victimClass]}
@@ -164,13 +217,15 @@ function ChatLog({
     if (shouldAutoScroll.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [messages.length]);
+  }, []);
 
   return (
-    <div ref={containerRef} onScroll={handleScroll} className="flex flex-col gap-1 overflow-y-auto h-full">
-      {messages.length === 0 && (
-        <p className="text-gray-600 text-xs italic">No messages</p>
-      )}
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="flex flex-col gap-1 overflow-y-auto h-full"
+    >
+      {messages.length === 0 && <p className="text-gray-600 text-xs italic">No messages</p>}
       {messages.map((m, i) => {
         const msgTeam = m.team ?? team;
         const teamColor = msgTeam === 'A' ? 'text-blue-400' : 'text-red-400';
@@ -178,6 +233,7 @@ function ChatLog({
         const label = unitLabels?.[m.from];
         const displayName = label ? `${name} (${label})` : name;
         return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: append-only game-state list (kill feed / chat log) — entries never reorder or splice, so index is a stable key.
           <div key={i} className="text-xs">
             <span className={`font-semibold ${teamColor}`}>{displayName}:</span>{' '}
             <span className="text-gray-300">&ldquo;{m.message}&rdquo;</span>
@@ -203,37 +259,38 @@ interface LobbyChatMessage {
 // ---------------------------------------------------------------------------
 
 export function CtlSpectatorView(props: SpectatorViewProps) {
-  const { gameState: rawGameState, gameId, handles, replaySnapshots, prevGameState: rawPrevState, animate } = props;
+  const {
+    gameState: rawGameState,
+    gameId,
+    replaySnapshots,
+    prevGameState: rawPrevState,
+    animate,
+    liveSnapshot,
+    liveIsLive,
+    liveError,
+  } = props;
   const isReplay = replaySnapshots != null;
 
   // Internal state for CtL-specific rendering
-  const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>(props.perspective ?? 'all');
+  const [selectedTeam, setSelectedTeam] = useState<'A' | 'B' | 'all'>('all');
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
   const [liveState, setLiveState] = useState<SpectatorGameState | null>(null);
   const [allKills, setAllKills] = useState<KillEvent[]>([]);
-  const [connected, setConnected] = useState(false);
   // Server reported { type: 'spectator_pending' } — delay hasn't elapsed.
   const [pendingWindow, setPendingWindow] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [lobbyChat, setLobbyChat] = useState<LobbyChatMessage[]>([]);
   const [preGameChatA, setPreGameChatA] = useState<LobbyChatMessage[]>([]);
   const [preGameChatB, setPreGameChatB] = useState<LobbyChatMessage[]>([]);
   const [showLobbyChat, setShowLobbyChat] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
 
   // Live scrubber state — see docs/plans/live-scrubber.md
   const [rewind, setRewind] = useState<RewindState>({ mode: 'live' });
   const snapshotCacheRef = useRef<Map<number, RawSnapshot>>(new Map());
   const [latestProgress, setLatestProgress] = useState<number | null>(null);
   const rewindRef = useRef<RewindState>(rewind);
-  useEffect(() => { rewindRef.current = rewind; }, [rewind]);
-
-  // Sync perspective from props
   useEffect(() => {
-    if (props.perspective) {
-      setSelectedTeam(props.perspective);
-    }
-  }, [props.perspective]);
+    rewindRef.current = rewind;
+  }, [rewind]);
 
   // ---------------------------------------------------------------------------
   // Replay mode: derive state from props (no fetch, no websocket)
@@ -250,92 +307,68 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   }, [isReplay, rawPrevState]);
 
   // ---------------------------------------------------------------------------
-  // Live mode: fetch initial state + connect WebSocket
+  // Live mode (Phase 7.2): the WS lifecycle now lives in GamePage's single
+  // `useSpectatorStream`. We project the unified spectator payload (passed
+  // in via props) onto CtL-specific (liveState, snapshot cache, rewind)
+  // state. Rewind machinery stays co-located here because it depends on
+  // `mapServerState` + the cache.
   // ---------------------------------------------------------------------------
 
+  /**
+   * The live-mode spectator payload shape we actually touch. `SpectatorView`
+   * accepts `liveSnapshot` as `unknown` in the shared props (to keep the
+   * dependency graph one-way); narrow to the useful subset at this boundary.
+   */
+  interface LiveSnapshotLike {
+    type: 'state_update' | 'spectator_pending';
+    meta: { progressCounter: number | null; handles: Record<string, string> };
+    state: Record<string, unknown> | null;
+  }
+  const snapshot = isReplay ? undefined : (liveSnapshot as LiveSnapshotLike | undefined);
+  const connected = !isReplay && (liveIsLive ?? false);
+  const error = liveError ?? null;
+
   useEffect(() => {
-    if (isReplay || !gameId) return;
-
-    fetch(`${API_BASE}/games/${gameId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.type === 'spectator_pending') {
-          setPendingWindow(true);
-          setLiveState(null);
-        } else {
-          setPendingWindow(false);
-          const mapped = mapServerState(data);
-          if (mapped) {
-            setLiveState(mapped);
-            if (mapped.kills.length > 0) {
-              setAllKills(mapped.kills);
-            }
-          }
-        }
-        if (data.lobbyChat && Array.isArray(data.lobbyChat)) {
-          setLobbyChat(data.lobbyChat);
-        }
-        if (data.preGameChatA && Array.isArray(data.preGameChatA)) {
-          setPreGameChatA(data.preGameChatA);
-        }
-        if (data.preGameChatB && Array.isArray(data.preGameChatB)) {
-          setPreGameChatB(data.preGameChatB);
-        }
-      })
-      .catch(() => {});
-
-    const wsUrl = getWsUrl(`/ws/game/${gameId}`);
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      setError(null);
+    if (isReplay || !snapshot) return;
+    if (snapshot.type === 'spectator_pending') {
+      setPendingWindow(true);
+      // Preserve liveState during an open rewind session — otherwise the
+      // !gameState gate below would tear down the rewind UI even though
+      // the cached snapshots are still valid.
+      if (rewindRef.current.mode === 'live') setLiveState(null);
+      return;
+    }
+    setPendingWindow(false);
+    // The unified payload's `state` IS the spectator snapshot. Rebuild a
+    // legacy-shaped raw envelope (with progressCounter at top level) so
+    // `mapServerState` and the snapshot cache keep working without
+    // change. This is a BOUNDARY adapter — once Phase 6 unifies the
+    // SpectatorView API the cache can store payloads directly.
+    const idx = snapshot.meta.progressCounter ?? 0;
+    const stateObj: Record<string, unknown> = snapshot.state ?? {};
+    const raw: RawSnapshot = {
+      ...stateObj,
+      progressCounter: idx,
+      handles: snapshot.meta.handles,
     };
-
-    ws.onmessage = (event) => {
-      try {
-        const raw = JSON.parse(event.data);
-        if (raw?.type === 'spectator_pending') {
-          setPendingWindow(true);
-          // Preserve liveState during an open rewind session — otherwise
-          // the !gameState gate below would tear down the rewind UI even
-          // though the cached snapshots are still valid.
-          if (rewindRef.current.mode === 'live') setLiveState(null);
-          return;
-        }
-        setPendingWindow(false);
-        const mapped = mapServerState(raw);
-        if (mapped) {
-          setLiveState(mapped);
-          // Accumulate raw snapshot by public index for the scrubber.
-          if (typeof raw.progressCounter === 'number') {
-            snapshotCacheRef.current.set(raw.progressCounter, raw);
-            setLatestProgress((prev) =>
-              prev === null || raw.progressCounter > prev ? raw.progressCounter : prev,
-            );
-          }
-          if (mapped.kills.length > 0) {
-            setAllKills((prev) => {
-              const existing = new Set(prev.map(k => `${k.turn}:${k.victimId}`));
-              const newKills = mapped.kills.filter(k => !existing.has(`${k.turn}:${k.victimId}`));
-              return newKills.length > 0 ? [...prev, ...newKills] : prev;
-            });
-          }
-        }
-      } catch {
-        console.warn('Failed to parse WS message');
-      }
-    };
-
-    ws.onerror = () => setError('WebSocket error');
-    ws.onclose = () => setConnected(false);
-
-    return () => {
-      ws.close();
-      wsRef.current = null;
-    };
-  }, [gameId, isReplay]);
+    const mapped = mapServerState(raw);
+    if (!mapped) return;
+    setLiveState(mapped);
+    snapshotCacheRef.current.set(idx, raw);
+    setLatestProgress((prev) => (prev === null || idx > prev ? idx : prev));
+    if (mapped.kills.length > 0) {
+      setAllKills((prev) => {
+        const existing = new Set(prev.map((k) => `${k.turn}:${k.victimId}`));
+        const newKills = mapped.kills.filter((k) => !existing.has(`${k.turn}:${k.victimId}`));
+        return newKills.length > 0 ? [...prev, ...newKills] : prev;
+      });
+    }
+    // lobby/pre-game chat fields ride on the same state shape — pull
+    // them through if the spectator state still exposes them.
+    if (Array.isArray(stateObj.lobbyChat)) setLobbyChat(stateObj.lobbyChat);
+    if (Array.isArray(stateObj.preGameChatA)) setPreGameChatA(stateObj.preGameChatA);
+    if (Array.isArray(stateObj.preGameChatB)) setPreGameChatB(stateObj.preGameChatB);
+  }, [isReplay, snapshot]);
 
   // ---------------------------------------------------------------------------
   // Live scrubber — enterRewind, backToLive, cache alignment, auto-exit
@@ -348,14 +381,17 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
 
     let haveAll = true;
     for (let i = 0; i <= latestProgress; i++) {
-      if (!snapshotCacheRef.current.has(i)) { haveAll = false; break; }
+      if (!snapshotCacheRef.current.has(i)) {
+        haveAll = false;
+        break;
+      }
     }
 
     if (!haveAll) {
       try {
         const res = await fetch(`${API_BASE}/games/${gameId}/replay`, { cache: 'no-store' });
         const data = await res.json();
-        if (rewindRef.current.mode !== 'loading') return;  // user bailed or game ended
+        if (rewindRef.current.mode !== 'loading') return; // user bailed or game ended
         if (data?.type === 'replay' && Array.isArray(data.snapshots)) {
           data.snapshots.forEach((s: RawSnapshot, i: number) => {
             if (!snapshotCacheRef.current.has(i)) {
@@ -392,6 +428,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   }, []);
 
   // §6.5 Keep rewind.snapshots aligned with cache growth.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the ternary gates re-runs to active-rewind only; depending on raw snapshots.length would re-fire during live playback.
   useEffect(() => {
     if (rewind.mode !== 'active') return;
     if (latestProgress === null) return;
@@ -427,13 +464,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
 
   const displayRaw = rewind.mode === 'active' ? rewind.snapshots[rewind.index] : null;
   const rewindDisplayState = useMemo(
-    () => displayRaw ? mapServerState(displayRaw) : null,
+    () => (displayRaw ? mapServerState(displayRaw) : null),
     [displayRaw],
   );
 
-  const gameState = isReplay
-    ? replayState
-    : rewindDisplayState ?? liveState;
+  const gameState = isReplay ? replayState : (rewindDisplayState ?? liveState);
   const prevGameState = isReplay ? prevReplayState : null;
   const displayKills = isReplay
     ? (replayState?.kills ?? [])
@@ -481,7 +516,13 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         <div className="text-center">
           <div className="text-4xl mb-4">🦞</div>
           <p className="text-gray-400">
-            {error ? error : connected ? 'Waiting for game data...' : isReplay ? 'Loading replay...' : `Connecting to game ${gameId}...`}
+            {error
+              ? error
+              : connected
+                ? 'Waiting for game data...'
+                : isReplay
+                  ? 'Loading replay...'
+                  : `Connecting to game ${gameId}...`}
           </p>
         </div>
       </div>
@@ -493,7 +534,8 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
   const teamACounts: string[] = [];
   const teamBCounts: string[] = [];
   for (const tile of gameState.tiles) {
-    if (tile.unit && tile.unit.id) {
+    if (tile.unit?.id) {
+      // @ts-expect-error TS2532: Object is possibly 'undefined'. — TODO(2.3-followup)
       const classLetter = tile.unit.unitClass[0].toUpperCase();
       if (tile.unit.team === 'A') {
         teamACounts.push(tile.unit.id);
@@ -515,13 +557,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             ...gameState.chatB.map((m) => ({ ...m, team: 'B' as const })),
           ].sort((a, b) => a.turn - b.turn);
 
-  const chatTeamLabel =
-    selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
+  const chatTeamLabel = selectedTeam === 'all' ? 'All Chat' : `Team ${selectedTeam} Chat`;
 
   const handlePerspectiveChange = (value: 'A' | 'B' | 'all') => {
     setSelectedTeam(value);
     setSelectedUnit(null);
-    props.onPerspectiveChange?.(value);
   };
 
   return (
@@ -532,9 +572,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           <span className="text-sm font-semibold text-gray-200">
             Turn {gameState.turn}/{gameState.maxTurns}
           </span>
-          {!isReplay && !connected && (
-            <span className="text-xs text-yellow-500">disconnected</span>
-          )}
+          {!isReplay && !connected && <span className="text-xs text-yellow-500">disconnected</span>}
           {/* FINISHED reads from liveState (not gameState) so scrubbing
               through past turns during rewind doesn't flash a misleading
               FINISHED badge when the game is still active. In replay
@@ -550,6 +588,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         <div className="flex items-center gap-1">
           {selectedUnit && (
             <button
+              type="button"
               onClick={() => setSelectedUnit(null)}
               className="px-2 py-1 text-xs rounded font-medium bg-yellow-900/60 text-yellow-300 hover:bg-yellow-800/60 mr-1 cursor-pointer"
             >
@@ -558,6 +597,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           )}
           {teamButtons.map((btn) => (
             <button
+              type="button"
               key={btn.value}
               onClick={() => handlePerspectiveChange(btn.value)}
               className={`px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer ${
@@ -575,20 +615,21 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           ))}
           {/* Rewind toggle — shown only for live mode when there's
               something worth rewinding through and the game is ongoing. */}
-          {!isReplay
-            && rewind.mode !== 'active'
-            && latestProgress !== null
-            && latestProgress >= 1
-            && liveState?.phase !== 'finished' && (
-            <button
-              onClick={enterRewind}
-              disabled={rewind.mode === 'loading'}
-              className="ml-1 px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 disabled:opacity-50 disabled:cursor-wait"
-              title="Rewind to past turns (live view keeps updating in background)"
-            >
-              {rewind.mode === 'loading' ? '…' : '↻ Rewind'}
-            </button>
-          )}
+          {!isReplay &&
+            rewind.mode !== 'active' &&
+            latestProgress !== null &&
+            latestProgress >= 1 &&
+            liveState?.phase !== 'finished' && (
+              <button
+                type="button"
+                onClick={enterRewind}
+                disabled={rewind.mode === 'loading'}
+                className="ml-1 px-2 sm:px-3 py-1 text-xs rounded font-medium transition-colors cursor-pointer bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 disabled:opacity-50 disabled:cursor-wait"
+                title="Rewind to past turns (live view keeps updating in background)"
+              >
+                {rewind.mode === 'loading' ? '…' : '↻ Rewind'}
+              </button>
+            )}
         </div>
       </div>
 
@@ -601,16 +642,10 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           <ScrubberSlider
             currentTurn={rewind.index}
             totalTurns={rewind.snapshots.length}
-            onSeek={(i) =>
-              setRewind((r) =>
-                r.mode === 'active' ? { ...r, index: i } : r,
-              )
-            }
+            onSeek={(i) => setRewind((r) => (r.mode === 'active' ? { ...r, index: i } : r))}
             onPrev={() =>
               setRewind((r) =>
-                r.mode === 'active'
-                  ? { ...r, index: Math.max(0, r.index - 1) }
-                  : r,
+                r.mode === 'active' ? { ...r, index: Math.max(0, r.index - 1) } : r,
               )
             }
             onNext={() =>
@@ -622,6 +657,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             }
           />
           <button
+            type="button"
             onClick={backToLive}
             className="px-3 py-1 text-xs rounded font-semibold bg-emerald-800 text-emerald-200 hover:bg-emerald-700 transition-colors cursor-pointer shrink-0"
             title="Return to live view"
@@ -646,7 +682,10 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
                 <div className="text-center px-8 py-6">
                   {finishSrc.winner ? (
                     <>
-                      <div className="text-5xl md:text-7xl font-black mb-3" style={{ color: finishSrc.winner === 'A' ? '#60a5fa' : '#f87171' }}>
+                      <div
+                        className="text-5xl md:text-7xl font-black mb-3"
+                        style={{ color: finishSrc.winner === 'A' ? '#60a5fa' : '#f87171' }}
+                      >
                         {finishSrc.winner === 'A' ? '' : ''} TEAM {finishSrc.winner} WINS!
                       </div>
                       <div className="text-xl md:text-2xl text-gray-300 font-medium">
@@ -655,9 +694,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
                     </>
                   ) : (
                     <>
-                      <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">
-                        DRAW
-                      </div>
+                      <div className="text-5xl md:text-7xl font-black text-gray-400 mb-3">DRAW</div>
                       <div className="text-xl md:text-2xl text-gray-500 font-medium">
                         Turn limit reached — no capture
                       </div>
@@ -667,6 +704,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               </div>
             );
           })()}
+          {/* @ts-expect-error TS2375: Type '{ tiles: VisibleTile[]; fogTiles: Set<string> | undefined; mapRadius: numb — TODO(2.3-followup) */}
           <HexGrid
             tiles={gameState.tiles}
             fogTiles={fogTiles}
@@ -674,7 +712,11 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
             selectedTeam={selectedTeam}
             visibleA={gameState.visibleA}
             visibleB={gameState.visibleB}
-            visibleOverride={selectedUnit && gameState.visibleByUnit?.[selectedUnit] ? gameState.visibleByUnit[selectedUnit] : undefined}
+            visibleOverride={
+              selectedUnit && gameState.visibleByUnit?.[selectedUnit]
+                ? gameState.visibleByUnit[selectedUnit]
+                : undefined
+            }
             floatingUnits={animState.floatingUnits}
             hiddenUnitIds={animState.hiddenUnitIds.size > 0 ? animState.hiddenUnitIds : undefined}
             killEffects={animState.killEffects}
@@ -696,9 +738,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
         <div className="flex flex-col gap-2 md:w-52 shrink-0 min-h-0 overflow-hidden">
           {/* Kill feed */}
           <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-32 md:max-h-[40%] overflow-hidden">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-              Kills
-            </h3>
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Kills</h3>
             <div className="overflow-y-auto flex-1">
               <KillFeed kills={displayKills} />
             </div>
@@ -710,6 +750,7 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
               {chatTeamLabel}
             </h3>
             <div className="overflow-y-auto flex-1">
+              {/* @ts-expect-error TS2375: Type '{ messages: ({ team: "A"; from: string; message: string; turn: number; } | — TODO(2.3-followup) */}
               <ChatLog
                 messages={chatMessages}
                 team={selectedTeam === 'all' ? 'A' : selectedTeam}
@@ -720,43 +761,53 @@ export function CtlSpectatorView(props: SpectatorViewProps) {
           </div>
 
           {/* Pre-game / Lobby chat (collapsible) — live mode only */}
-          {!isReplay && (() => {
-            const preGameChat = selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
-            const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
-            const chatLabel = preGameChat.length > 0
-              ? `Pre-Game (${preGameChat.length})`
-              : `Lobby (${lobbyChat.length})`;
-            const chatColor = preGameChat.length > 0
-              ? (selectedTeam === 'A' ? 'text-blue-400' : 'text-red-400')
-              : 'text-yellow-400';
-            if (chatToShow.length === 0) return null;
-            return (
-              <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-40 md:max-h-[30%] overflow-hidden">
-                <button
-                  onClick={() => setShowLobbyChat(!showLobbyChat)}
-                  className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
-                >
-                  <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>&#9654;</span>
-                  {chatLabel}
-                </button>
-                {showLobbyChat && (
-                  <div className="overflow-y-auto flex-1">
-                    <div className="flex flex-col gap-1">
-                      {chatToShow.map((m, i) => {
-                        const name = gameState.handles?.[m.from] ?? m.from;
-                        return (
-                          <div key={i} className="text-xs">
-                            <span className={`font-semibold ${chatColor}`}>{name}:</span>{' '}
-                            <span className="text-gray-300">{m.message}</span>
-                          </div>
-                        );
-                      })}
+          {!isReplay &&
+            (() => {
+              const preGameChat =
+                selectedTeam === 'A' ? preGameChatA : selectedTeam === 'B' ? preGameChatB : [];
+              const chatToShow = preGameChat.length > 0 ? preGameChat : lobbyChat;
+              const chatLabel =
+                preGameChat.length > 0
+                  ? `Pre-Game (${preGameChat.length})`
+                  : `Lobby (${lobbyChat.length})`;
+              const chatColor =
+                preGameChat.length > 0
+                  ? selectedTeam === 'A'
+                    ? 'text-blue-400'
+                    : 'text-red-400'
+                  : 'text-yellow-400';
+              if (chatToShow.length === 0) return null;
+              return (
+                <div className="bg-gray-900 rounded-lg p-3 flex flex-col gap-2 max-h-40 md:max-h-[30%] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowLobbyChat(!showLobbyChat)}
+                    className="text-xs font-semibold text-gray-400 uppercase tracking-wider text-left flex items-center gap-1 cursor-pointer hover:text-gray-300"
+                  >
+                    <span className={`transition-transform ${showLobbyChat ? 'rotate-90' : ''}`}>
+                      &#9654;
+                    </span>
+                    {chatLabel}
+                  </button>
+                  {showLobbyChat && (
+                    <div className="overflow-y-auto flex-1">
+                      <div className="flex flex-col gap-1">
+                        {chatToShow.map((m, i) => {
+                          const name = gameState.handles?.[m.from] ?? m.from;
+                          return (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: append-only game-state list (kill feed / chat log) — entries never reorder or splice, so index is a stable key.
+                            <div key={i} className="text-xs">
+                              <span className={`font-semibold ${chatColor}`}>{name}:</span>{' '}
+                              <span className="text-gray-300">{m.message}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+                  )}
+                </div>
+              );
+            })()}
         </div>
       </div>
 
