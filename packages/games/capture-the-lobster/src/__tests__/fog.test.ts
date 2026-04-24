@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildVisibleState, type FogUnit, getUnitVision } from '../fog.js';
+import { buildVisibleOccupants, type FogUnit, getUnitVision } from '../fog.js';
 import { type Hex, hexesInRadius, hexToString } from '../hex.js';
 
 function makeAllHexes(center: Hex, radius: number): Set<string> {
@@ -10,18 +10,9 @@ function wallSet(...hexes: Hex[]): Set<string> {
   return new Set(hexes.map(hexToString));
 }
 
-function makeTiles(center: Hex, radius: number, walls: Set<string>): Map<string, string> {
-  const tiles = new Map<string, string>();
-  for (const hex of hexesInRadius(center, radius)) {
-    const key = hexToString(hex);
-    tiles.set(key, walls.has(key) ? 'wall' : 'ground');
-  }
-  return tiles;
-}
-
-const defaultFlags = {
-  A: { position: { q: -10, r: 0 }, carried: false },
-  B: { position: { q: 10, r: 0 }, carried: false },
+const noFlags = {
+  A: [{ position: { q: -10, r: 0 }, carried: false }],
+  B: [{ position: { q: 10, r: 0 }, carried: false }],
 };
 
 describe('getUnitVision', () => {
@@ -36,13 +27,11 @@ describe('getUnitVision', () => {
     const allHexes = makeAllHexes({ q: 0, r: 0 }, 6);
     const visible = getUnitVision(unit, new Set(), allHexes);
 
-    // Rogue vision = 4; all hexes within distance 4 should be visible (no walls)
     const expectedHexes = makeAllHexes({ q: 0, r: 0 }, 4);
     expect(visible.size).toBe(expectedHexes.size);
     for (const key of expectedHexes) {
       expect(visible.has(key)).toBe(true);
     }
-    // Hex at distance 5 should NOT be visible
     expect(visible.has(hexToString({ q: 5, r: 0 }))).toBe(false);
   });
 
@@ -62,7 +51,6 @@ describe('getUnitVision', () => {
     for (const key of expectedHexes) {
       expect(visible.has(key)).toBe(true);
     }
-    // Hex at distance 3 should NOT be visible
     expect(visible.has(hexToString({ q: 3, r: 0 }))).toBe(false);
   });
 
@@ -75,25 +63,25 @@ describe('getUnitVision', () => {
       alive: true,
     };
     const allHexes = makeAllHexes({ q: 0, r: 0 }, 5);
-    // Wall at (1,0) blocks vision along the SE axis
     const walls = wallSet({ q: 1, r: 0 });
     const visible = getUnitVision(unit, walls, allHexes);
 
-    // Wall itself is visible
     expect(visible.has(hexToString({ q: 1, r: 0 }))).toBe(true);
-    // Hex behind wall is blocked
     expect(visible.has(hexToString({ q: 2, r: 0 }))).toBe(false);
     expect(visible.has(hexToString({ q: 3, r: 0 }))).toBe(false);
   });
 });
 
-describe('buildVisibleState', () => {
+describe('buildVisibleOccupants', () => {
+  const center = { q: 0, r: 0 };
+  const validTiles = makeAllHexes(center, 4);
+
   it('allies show unit ID, enemies do not', () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
       unitClass: 'mage',
-      position: { q: 0, r: 0 },
+      position: center,
       alive: true,
     };
     const ally: FogUnit = {
@@ -111,30 +99,29 @@ describe('buildVisibleState', () => {
       alive: true,
     };
 
-    const walls = new Set<string>();
-    const tiles = makeTiles({ q: 0, r: 0 }, 4, walls);
+    const { occupants } = buildVisibleOccupants(
+      viewer,
+      [viewer, ally, enemy],
+      new Set(),
+      validTiles,
+      noFlags,
+    );
 
-    const result = buildVisibleState(viewer, [viewer, ally, enemy], walls, tiles, defaultFlags);
+    const allyOcc = occupants.find((o) => o.q === 1 && o.r === 0);
+    expect(allyOcc?.unit?.id).toBe('a2');
+    expect(allyOcc?.unit?.team).toBe('A');
 
-    const allyTile = result.find((t) => t.q === 1 && t.r === 0);
-    expect(allyTile?.unit).toBeDefined();
-    expect(allyTile?.unit?.id).toBe('a2');
-    expect(allyTile?.unit?.team).toBe('A');
-    expect(allyTile?.unit?.unitClass).toBe('knight');
-
-    const enemyTile = result.find((t) => t.q === 0 && t.r === -1);
-    expect(enemyTile?.unit).toBeDefined();
-    expect(enemyTile?.unit?.id).toBeUndefined();
-    expect(enemyTile?.unit?.team).toBe('B');
-    expect(enemyTile?.unit?.unitClass).toBe('rogue');
+    const enemyOcc = occupants.find((o) => o.q === 0 && o.r === -1);
+    expect(enemyOcc?.unit?.id).toBeUndefined();
+    expect(enemyOcc?.unit?.team).toBe('B');
   });
 
-  it('dead units are not visible', () => {
+  it('dead units are not emitted as occupants', () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
       unitClass: 'mage',
-      position: { q: 0, r: 0 },
+      position: center,
       alive: true,
     };
     const deadEnemy: FogUnit = {
@@ -145,48 +132,42 @@ describe('buildVisibleState', () => {
       alive: false,
     };
 
-    const walls = new Set<string>();
-    const tiles = makeTiles({ q: 0, r: 0 }, 4, walls);
+    const { occupants } = buildVisibleOccupants(
+      viewer,
+      [viewer, deadEnemy],
+      new Set(),
+      validTiles,
+      noFlags,
+    );
 
-    const result = buildVisibleState(viewer, [viewer, deadEnemy], walls, tiles, defaultFlags);
-
-    const enemyTile = result.find((t) => t.q === 1 && t.r === 0);
-    expect(enemyTile).toBeDefined();
-    expect(enemyTile?.unit).toBeUndefined();
+    expect(occupants.find((o) => o.q === 1 && o.r === 0)).toBeUndefined();
   });
 
-  it('flag visible on its hex', () => {
+  it('loose flag on a visible hex shows up as occupant', () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
       unitClass: 'mage',
-      position: { q: 0, r: 0 },
+      position: center,
       alive: true,
     };
-
-    const walls = new Set<string>();
-    const tiles = makeTiles({ q: 0, r: 0 }, 4, walls);
-
     const flags = {
-      A: { position: { q: -2, r: 0 }, carried: false },
-      B: { position: { q: 2, r: 0 }, carried: false },
+      A: [{ position: { q: -2, r: 0 }, carried: false }],
+      B: [{ position: { q: 2, r: 0 }, carried: false }],
     };
 
-    const result = buildVisibleState(viewer, [viewer], walls, tiles, flags);
+    const { occupants } = buildVisibleOccupants(viewer, [viewer], new Set(), validTiles, flags);
 
-    const flagATile = result.find((t) => t.q === -2 && t.r === 0);
-    expect(flagATile?.flag).toEqual({ team: 'A' });
-
-    const flagBTile = result.find((t) => t.q === 2 && t.r === 0);
-    expect(flagBTile?.flag).toEqual({ team: 'B' });
+    expect(occupants.find((o) => o.q === -2 && o.r === 0)?.flag).toEqual({ team: 'A' });
+    expect(occupants.find((o) => o.q === 2 && o.r === 0)?.flag).toEqual({ team: 'B' });
   });
 
-  it('flag carried by visible unit shows on that unit tile', () => {
+  it('carried flag rides on the carrier hex with carryingFlag:true', () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
       unitClass: 'mage',
-      position: { q: 0, r: 0 },
+      position: center,
       alive: true,
     };
     const carrier: FogUnit = {
@@ -196,70 +177,65 @@ describe('buildVisibleState', () => {
       position: { q: 1, r: 0 },
       alive: true,
     };
-
-    const walls = new Set<string>();
-    const tiles = makeTiles({ q: 0, r: 0 }, 4, walls);
-
     const flags = {
-      A: { position: { q: -5, r: 0 }, carried: false },
-      B: { position: { q: 5, r: 0 }, carried: true, carrierId: 'a2' },
+      A: [{ position: { q: -5, r: 0 }, carried: false }],
+      B: [{ position: { q: 5, r: 0 }, carried: true, carrierId: 'a2' }],
     };
 
-    const result = buildVisibleState(viewer, [viewer, carrier], walls, tiles, flags);
+    const { occupants } = buildVisibleOccupants(
+      viewer,
+      [viewer, carrier],
+      new Set(),
+      validTiles,
+      flags,
+    );
 
-    const carrierTile = result.find((t) => t.q === 1 && t.r === 0);
-    expect(carrierTile?.unit?.carryingFlag).toBe(true);
-    expect(carrierTile?.flag).toEqual({ team: 'B' });
+    const carrierOcc = occupants.find((o) => o.q === 1 && o.r === 0);
+    expect(carrierOcc?.unit?.carryingFlag).toBe(true);
+    expect(carrierOcc?.flag).toEqual({ team: 'B' });
   });
 
-  it('tiles outside vision are not included', () => {
+  it('visibleKeys excludes hexes outside the viewer radius', () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
-      unitClass: 'knight', // vision = 2
-      position: { q: 0, r: 0 },
+      unitClass: 'knight',
+      position: center,
       alive: true,
     };
+    const allTiles = makeAllHexes(center, 6);
 
-    const walls = new Set<string>();
-    const tiles = makeTiles({ q: 0, r: 0 }, 6, walls);
+    const { visibleKeys } = buildVisibleOccupants(viewer, [viewer], new Set(), allTiles, noFlags);
 
-    const result = buildVisibleState(viewer, [viewer], walls, tiles, defaultFlags);
-
-    // Knight vision = 2, so hex at distance 3 should not be in result
-    const farTile = result.find((t) => t.q === 3 && t.r === 0);
-    expect(farTile).toBeUndefined();
-
-    // But hex at distance 2 should be present
-    const nearTile = result.find((t) => t.q === 2 && t.r === 0);
-    expect(nearTile).toBeDefined();
+    expect(visibleKeys.has(hexToString({ q: 3, r: 0 }))).toBe(false);
+    expect(visibleKeys.has(hexToString({ q: 2, r: 0 }))).toBe(true);
   });
 
-  it('wall tiles are visible with type wall but block further vision', () => {
+  it('walls within vision are emitted; hexes behind them are not visible', () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
-      unitClass: 'rogue', // vision = 4
-      position: { q: 0, r: 0 },
+      unitClass: 'rogue',
+      position: center,
       alive: true,
     };
-
     const walls = wallSet({ q: 1, r: 0 });
-    const tiles = makeTiles({ q: 0, r: 0 }, 5, walls);
+    const allTiles = makeAllHexes(center, 5);
 
-    const result = buildVisibleState(viewer, [viewer], walls, tiles, defaultFlags);
+    const { visibleKeys, walls: emittedWalls } = buildVisibleOccupants(
+      viewer,
+      [viewer],
+      walls,
+      allTiles,
+      noFlags,
+    );
 
-    // Wall tile itself is visible and has type 'wall'
-    const wallTile = result.find((t) => t.q === 1 && t.r === 0);
-    expect(wallTile).toBeDefined();
-    expect(wallTile?.type).toBe('wall');
-
-    // Tile behind wall is NOT visible
-    const behindWall = result.find((t) => t.q === 2 && t.r === 0);
-    expect(behindWall).toBeUndefined();
+    expect(emittedWalls).toContainEqual({ q: 1, r: 0 });
+    expect(visibleKeys.has(hexToString({ q: 1, r: 0 }))).toBe(true);
+    expect(visibleKeys.has(hexToString({ q: 2, r: 0 }))).toBe(false);
   });
 
-  it("viewer's own tile is always included", () => {
+  it("viewer's own hex is emitted as an occupant (self)", () => {
     const viewer: FogUnit = {
       id: 'a1',
       team: 'A',
@@ -267,15 +243,12 @@ describe('buildVisibleState', () => {
       position: { q: 3, r: 2 },
       alive: true,
     };
+    const allTiles = makeAllHexes({ q: 3, r: 2 }, 5);
 
-    const walls = new Set<string>();
-    const tiles = makeTiles({ q: 3, r: 2 }, 5, walls);
+    const { occupants } = buildVisibleOccupants(viewer, [viewer], new Set(), allTiles, noFlags);
 
-    const result = buildVisibleState(viewer, [viewer], walls, tiles, defaultFlags);
-
-    const ownTile = result.find((t) => t.q === 3 && t.r === 2);
-    expect(ownTile).toBeDefined();
-    expect(ownTile?.unit?.id).toBe('a1');
-    expect(ownTile?.unit?.team).toBe('A');
+    const self = occupants.find((o) => o.q === 3 && o.r === 2);
+    expect(self?.unit?.id).toBe('a1');
+    expect(self?.unit?.team).toBe('A');
   });
 });

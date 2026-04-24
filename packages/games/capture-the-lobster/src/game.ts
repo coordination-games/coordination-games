@@ -9,7 +9,7 @@
 import { mustFind } from '@coordination-games/engine';
 import { CLASS_RANGE, CLASS_VISION, type CombatUnit, resolveCombat } from './combat.js';
 import { buildVisibleOccupants, type FogUnit, type VisibleOccupant } from './fog.js';
-import { type Direction, type Hex, hexEquals, hexToString, stringToHex } from './hex.js';
+import { type Direction, type Hex, hexEquals, hexToString } from './hex.js';
 import type { GameMap } from './map.js';
 import {
   type MoveSubmission,
@@ -72,6 +72,9 @@ export interface AgentMapStatic {
  * a decision this turn, without parsing `map`/`visibleOccupants`. Dedupes
  * via the top-level `_unchangedKeys` diff when nothing actionable changed.
  */
+export type YourFlagStatus = 'at_base' | 'carried' | 'unknown';
+export type EnemyFlagStatus = 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
+
 export interface AgentSummary {
   turn: number;
   phase: GamePhase;
@@ -80,8 +83,8 @@ export interface AgentSummary {
   alive: boolean;
   moveSubmitted: boolean;
   score: { yourTeam: number; enemyTeam: number };
-  yourFlag: 'at_base' | 'carried' | 'unknown';
-  enemyFlag: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown';
+  yourFlag: YourFlagStatus;
+  enemyFlag: EnemyFlagStatus;
   /** Visible enemy units this turn (no ID for fog reasons). */
   enemies: { q: number; r: number; unitClass: UnitClass }[];
   /** Visible loose/carried flags this turn. */
@@ -115,8 +118,8 @@ export interface GameState {
   visibleWalls: Hex[];
   /** Per-turn: only visible hexes that contain a unit or flag. Tiny. */
   visibleOccupants: VisibleOccupant[];
-  yourFlag: { status: 'at_base' | 'carried' | 'unknown' };
-  enemyFlag: { status: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' };
+  yourFlag: { status: YourFlagStatus };
+  enemyFlag: { status: EnemyFlagStatus };
   timeRemainingSeconds: number;
   moveSubmitted: boolean;
   score: { yourTeam: number; enemyTeam: number };
@@ -172,18 +175,18 @@ const DEFAULT_CONFIG: Required<GameConfig> = {
 
 function computeTileSets(mapTiles: [string, string][]): {
   wallSet: Set<string>;
-  validTiles: Set<string>;
+  walkableTiles: Set<string>;
+  allHexes: Set<string>;
 } {
   const wallSet = new Set<string>();
-  const validTiles = new Set<string>();
+  const walkableTiles = new Set<string>();
+  const allHexes = new Set<string>();
   for (const [key, type] of mapTiles) {
-    if (type === 'wall') {
-      wallSet.add(key);
-    } else {
-      validTiles.add(key);
-    }
+    allHexes.add(key);
+    if (type === 'wall') wallSet.add(key);
+    else walkableTiles.add(key);
   }
-  return { wallSet, validTiles };
+  return { wallSet, walkableTiles, allHexes };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +322,7 @@ export function allMovesSubmitted(state: CtlGameState): boolean {
  */
 export function resolveTurn(state: CtlGameState): { state: CtlGameState; record: TurnRecord } {
   const currentTurn = state.turn;
-  const { wallSet, validTiles } = computeTileSets(state.mapTiles);
+  const { wallSet, walkableTiles } = computeTileSets(state.mapTiles);
   const submissions = new Map(state.moveSubmissions);
 
   // Deep-copy mutable parts
@@ -369,7 +372,7 @@ export function resolveTurn(state: CtlGameState): { state: CtlGameState; record:
   }
 
   // 3. Resolve movements
-  const moveResults = resolveMovements(moveUnits, moveSubmissions, validTiles);
+  const moveResults = resolveMovements(moveUnits, moveSubmissions, walkableTiles);
 
   // 4. Update unit positions
   for (const result of moveResults) {
@@ -547,10 +550,8 @@ export function getStateForAgent(
 
   const team = unit.team;
   const enemyTeam: 'A' | 'B' = team === 'A' ? 'B' : 'A';
-  const { wallSet } = computeTileSets(state.mapTiles);
-  const tiles = new Map(state.mapTiles.map(([k, v]) => [k, v]));
+  const { wallSet, allHexes } = computeTileSets(state.mapTiles);
 
-  // Fog of war
   const fogUnits: FogUnit[] = state.units.map((u) => ({
     id: u.id,
     team: u.team,
@@ -559,93 +560,59 @@ export function getStateForAgent(
     alive: u.alive,
   }));
 
-  const viewer: FogUnit = {
-    id: unit.id,
-    team: unit.team,
-    unitClass: unit.unitClass,
-    position: unit.position,
-    alive: unit.alive,
-  };
-
-  const flagsForFog = {
-    A: state.flags.A.map((f) => ({
-      position: f.position,
-      carried: f.carried,
-      carrierId: f.carrierId,
-    })),
-    B: state.flags.B.map((f) => ({
-      position: f.position,
-      carried: f.carried,
-      carrierId: f.carrierId,
-    })),
-  };
-
-  const { occupants: visibleOccupants, visibleKeys } = buildVisibleOccupants(
-    viewer,
+  const {
+    occupants: visibleOccupants,
+    visibleKeys,
+    walls: visibleWalls,
+  } = buildVisibleOccupants(
+    mustFind(fogUnits, (u) => u.id === agentId),
     fogUnits,
     wallSet,
-    tiles,
-    // @ts-expect-error TS2345: carrierId: string | undefined vs carrierId?: string — TODO(2.3-followup)
-    flagsForFog,
+    allHexes,
+    state.flags,
   );
 
-  // Static map info — value-identical every turn, dedupes via _unchangedKeys.
   const mapStatic: AgentMapStatic = {
     radius: state.mapRadius,
     bases: state.mapBases,
   };
 
-  // Fog-filtered walls: only walls within the viewer's current LoS. Walls
-  // outside vision are NOT revealed — the agent discovers terrain by
-  // exploring, same as pre-refactor `visibleTiles` behavior.
-  const visibleWalls: Hex[] = [];
-  for (const [k, type] of state.mapTiles) {
-    if (type === 'wall' && visibleKeys.has(k)) visibleWalls.push(stringToHex(k));
-  }
-
-  // Your flag status
-  const yourFlags = state.flags[team];
-  let yourFlagStatus: 'at_base' | 'carried' | 'unknown' = 'at_base';
-  for (const f of yourFlags) {
+  let yourFlagStatus: YourFlagStatus = 'at_base';
+  for (const f of state.flags[team]) {
     if (f.carried) {
       yourFlagStatus = 'carried';
       break;
     }
   }
 
-  // Enemy flag status
-  const enemyFlags = state.flags[enemyTeam];
-  let enemyFlagStatus: 'at_base' | 'carried_by_you' | 'carried_by_ally' | 'unknown' = 'unknown';
-  for (const ef of enemyFlags) {
+  let enemyFlagStatus: EnemyFlagStatus = 'unknown';
+  for (const ef of state.flags[enemyTeam]) {
     if (ef.carried && ef.carrierId === agentId) {
       enemyFlagStatus = 'carried_by_you';
       break;
     } else if (ef.carried && ef.carrierId) {
       const carrier = state.units.find((u) => u.id === ef.carrierId);
-      if (carrier && carrier.team === team) {
-        enemyFlagStatus = 'carried_by_ally';
-      }
-    } else if (!ef.carried) {
-      const enemyFlagKey = hexToString(ef.position);
-      if (visibleKeys.has(enemyFlagKey) && enemyFlagStatus === 'unknown') {
-        enemyFlagStatus = 'at_base';
-      }
+      if (carrier?.team === team) enemyFlagStatus = 'carried_by_ally';
+    } else if (!ef.carried && enemyFlagStatus === 'unknown') {
+      if (visibleKeys.has(hexToString(ef.position))) enemyFlagStatus = 'at_base';
     }
   }
 
-  // Check if this agent has submitted a move
   const moveSubmitted = submittedMoves
     ? submittedMoves.has(agentId)
-    : new Map(state.moveSubmissions).has(agentId);
+    : state.moveSubmissions.some(([id]) => id === agentId);
 
-  const score = {
-    yourTeam: state.score[team],
-    enemyTeam: state.score[enemyTeam],
-  };
+  const score = { yourTeam: state.score[team], enemyTeam: state.score[enemyTeam] };
 
-  // Lean summary — everything you need at a glance, without parsing
-  // `map`/`visibleOccupants`. Dedupes via top-level diff when nothing
-  // actionable changed (e.g. after chat-only turns).
+  const enemies: AgentSummary['enemies'] = [];
+  const flags: AgentSummary['flags'] = [];
+  for (const o of visibleOccupants) {
+    if (o.unit && o.unit.team !== team) {
+      enemies.push({ q: o.q, r: o.r, unitClass: o.unit.unitClass });
+    }
+    if (o.flag) flags.push({ q: o.q, r: o.r, team: o.flag.team });
+  }
+
   const summary: AgentSummary = {
     turn: state.turn,
     phase: state.phase,
@@ -656,14 +623,8 @@ export function getStateForAgent(
     score,
     yourFlag: yourFlagStatus,
     enemyFlag: enemyFlagStatus,
-    enemies: visibleOccupants
-      .filter((o) => o.unit && o.unit.team !== team)
-      // biome-ignore lint/style/noNonNullAssertion: filtered above
-      .map((o) => ({ q: o.q, r: o.r, unitClass: o.unit!.unitClass })),
-    flags: visibleOccupants
-      .filter((o) => o.flag)
-      // biome-ignore lint/style/noNonNullAssertion: filtered above
-      .map((o) => ({ q: o.q, r: o.r, team: o.flag!.team })),
+    enemies,
+    flags,
   };
 
   return {
