@@ -45,7 +45,6 @@ import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { AgentStateDiffer } from './agent-state-differ.js';
 import type { GameClient } from './game-client.js';
 import type { JsonSchema, PluginCallResult } from './types.js';
 
@@ -286,12 +285,6 @@ export function registerGameTools(
   const surface = buildFullSurface(games, plugins);
   checkSurfaceCollisions(surface);
 
-  // Per-registration agent-state differ. One baseline across state/wait/
-  // callTool so the agent's prompt only re-reads top-level keys that
-  // actually changed. Human CLI commands bypass this — they never go
-  // through the MCP tool path.
-  const agentDiffer = new AgentStateDiffer();
-
   // ---------------------------------------------------------------------------
   // Static built-ins
   // ---------------------------------------------------------------------------
@@ -326,9 +319,10 @@ export function registerGameTools(
     },
     async ({ fresh }) => {
       try {
-        if (fresh) agentDiffer.reset();
+        // GameClient.getState applies the agent-state diff for scoped calls.
+        // MCP is a thin wrapper — it MUST NOT re-implement dedup here.
         const result = await client.getState({ fresh });
-        return jsonResult(agentDiffer.diff(result));
+        return jsonResult(result);
       } catch (err) {
         return jsonError(err);
       }
@@ -341,8 +335,10 @@ export function registerGameTools(
     {},
     async () => {
       try {
+        // GameClient.waitForUpdate applies the agent-state diff for scoped
+        // calls. MCP is a thin wrapper — no dedup logic here.
         const result = await client.waitForUpdate();
-        return jsonResult(agentDiffer.diff(result));
+        return jsonResult(result);
       } catch (err) {
         return jsonError(err);
       }
@@ -449,8 +445,9 @@ export function registerGameTools(
         }
         if (out && typeof out === 'object' && out.relay) {
           try {
+            // GameClient.callPluginRelay applies the diff for scoped calls.
             const result = await client.callPluginRelay(out.relay);
-            return jsonResult(agentDiffer.diff(result));
+            return jsonResult(result);
           } catch (err) {
             // callPluginRelay attaches `structured` for RELAY_UNREACHABLE.
             const structured = (err as { structured?: { error: unknown } } | undefined)?.structured;
@@ -463,9 +460,10 @@ export function registerGameTools(
       });
     } else {
       // Game / lobby-phase tool: dispatch through the unified endpoint.
+      // GameClient.callToolRaw applies the diff for scoped calls.
       server.tool(toolName, tool.description, shape, async (args: Record<string, unknown>) => {
         const result = await client.callToolRaw(toolName, args ?? {});
-        if (result.ok) return jsonResult(agentDiffer.diff(result.data));
+        if (result.ok) return jsonResult(result.data);
         // Structured error — surface it so the agent can self-correct.
         return jsonError({ error: result.error });
       });
