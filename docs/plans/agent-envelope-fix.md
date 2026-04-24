@@ -16,24 +16,29 @@ every dedup win we measured via an MCP probe reaches nobody.
 ## The Four Shipped Problems
 
 1. **MCP-only dedup.** `AgentStateDiffer` is instantiated at
-   `packages/cli/src/mcp-tools.ts:269` and applied at lines 307, 321,
-   429, 444. Shell handlers in `packages/cli/src/commands/game.ts:361`
+   `packages/cli/src/mcp-tools.ts:292` and applied at lines 330, 344,
+   452, 467. Shell handlers in `packages/cli/src/commands/game.ts:361`
    (`state`) and `:391` (`wait`) call `client.getState()` /
    `client.waitForUpdate()` with **no differ**. Shell bypasses.
 2. **Coord format.** Every coord field on the envelope is `{q,r}`
    (verified: `hex.ts:5`, `game.ts:62-66,81,89,91,102,118,120`,
    `fog.ts:94`). Agreed spec was 2-tuple `[q,r]`. Regressed silently
    during implementation.
-3. **Pretty-printed shell JSON.** `commands/game.ts` has **8** call
-   sites doing `JSON.stringify(result, null, 2)` (lines 345, 375, 405,
-   535, 540, 546, 549, 556, 558). Tripled byte cost vs compact.
+3. **Pretty-printed shell JSON.** `commands/game.ts` has **9** call
+   sites doing `JSON.stringify(..., null, 2)` (lines 345, 375, 405,
+   535, 540, 546, 549, 556, 558). Line 345 is conditional
+   (`typeof result === 'string' ? result : JSON.stringify(result, null, 2)`).
+   Tripled byte cost vs compact.
 4. **`currentPhase` (and any other always-emitted field) re-emits
    every call.** In the shell path this is collateral damage from #1 —
    fixing the diff fixes it. But the plan must still explicitly audit
    each top-level key to decide: *inside the diff's scope and expected
    to dedup* vs *volatile by design*. `timeRemainingSeconds` is the
-   likely volatile offender (computed fresh each call against
-   `deadlineMs`), and will invalidate dedup tests if not addressed.
+   specific offender here: today at `game.ts:650` it emits the config
+   constant `state.config.turnTimerSeconds` (always 30 — a lie), and
+   the correctness fix will make it actually tick down per call. That
+   correctness-fixed value will invalidate dedup tests if not
+   addressed (see Phase 4).
 
 ## Principle Violated
 
@@ -106,6 +111,15 @@ stays. Don't touch those key names.
 
 Non-negotiable prerequisite for the diff. Ship together.
 
+**Persistence scope — only game/lobby-scoped calls activate the diff +
+persistence.** Non-scoped commands (`coga lobbies`, `coga wallet`,
+`coga balance`, identity/trust commands) bypass persistence entirely
+and emit their raw output. `GameClient` methods that take a
+`gameId`/`lobbyId` opt in; others don't. `scopeId` in the persistence
+API is always the active game-or-lobby ID — never null, never a
+catch-all. If a caller has no scope, it doesn't touch
+`agent-persistence` at all.
+
 - New module: `packages/cli/src/agent-persistence.ts`.
 - API:
   ```ts
@@ -133,12 +147,25 @@ Non-negotiable prerequisite for the diff. Ship together.
   `processResponse` — good — so the extension splice is shared. The
   diff hasn't been.)
 - Delete the four `agentDiffer.diff(result)` calls in `mcp-tools.ts`
-  (lines 307, 321, 429, 444). MCP handlers now get the diff for free
-  via the shared `GameClient` methods.
+  (lines 330, 344, 452, 467) and the `AgentStateDiffer` instantiation
+  at line 292. MCP handlers now get the diff for free via the shared
+  `GameClient` methods.
+
+**Acceptance criterion (MCP-wrapper purity):** after this phase,
+
+```bash
+grep -nE 'JSON.stringify|AgentStateDiffer|agentEnvelopeKeys|_unchangedKeys' packages/cli/src/mcp-tools.ts
+```
+
+returns ZERO hits related to state shaping. MCP handlers do one
+thing: translate MCP tool-call shapes to CLI function calls and
+return results verbatim. If this grep lights up, the rule is
+violated — push the logic down to the shared CLI layer.
 
 ### Phase 3 — Compact JSON by default for shell output
 
-- Audit `commands/game.ts` — all 8 `JSON.stringify(x, null, 2)` sites.
+- Audit `commands/game.ts` — all 9 `JSON.stringify(..., null, 2)` sites
+  (345, 375, 405, 535, 540, 546, 549, 556, 558; 345 is conditional).
   Flip default to `JSON.stringify(x)` (compact).
 - Add a `--pretty` flag on each shell subcommand that prints
   agent-facing JSON. Default off. Humans opt in.
@@ -150,7 +177,7 @@ List every top-level key in the agent envelope and classify:
 
 | Key | Dedupable? | Action |
 |---|---|---|
-| `summary` | yes (object) | in-diff |
+| `summary` | yes (object) | in-diff; **drop duplicate `turn` + `phase` inside `summary` — canonical copies stay at top-level only** |
 | `turn` | yes (scalar, changes per tick only) | in-diff |
 | `phase` | yes | in-diff |
 | `yourUnit` | yes per-turn | in-diff |
@@ -158,25 +185,42 @@ List every top-level key in the agent envelope and classify:
 | `visibleWalls` | yes per-turn-per-position | in-diff |
 | `visibleOccupants` | yes per-turn | in-diff |
 | `yourFlag`/`enemyFlag` | yes | in-diff |
-| `timeRemainingSeconds` | **NO — ticks per call** | **replace with `deadlineMs` (absolute, changes only on turn tick)** |
+| `timeRemainingSeconds` | yes per-tick once correctness-fixed | **keep the key name; fix the compute — today at `game.ts:650` it emits `state.config.turnTimerSeconds` (constant 30, a lie). Replace with `Math.max(0, Math.floor((deadlineMs - Date.now()) / 1000))` where `deadlineMs` derives from the existing `turnTimeoutDeadline` mechanism in `plugin.ts:100`. Agent-readable field stays — no wasted tokens on client-side date math.** |
 | `moveSubmitted` | yes per-turn | in-diff |
 | `score` | yes per-turn | in-diff |
 | `gameType`/`gameId`/`gameOver` | yes | in-diff |
 | `currentPhase` | yes per-phase | in-diff (will stabilize once differ runs on shell too) |
 | `newMessages` | delta | in-diff (dedupes when empty `[]`) |
 
-**Action:** replace `timeRemainingSeconds` with `deadlineMs` in the
-envelope. Agent computes seconds-left from `Date.now()` client-side.
-Removes the one truly anti-dedup field.
+**Actions:**
+1. **Correctness-fix `timeRemainingSeconds`** (not a rename): derive
+   the actual remaining seconds from the server-known deadline, clamp
+   at 0. Key name is unchanged. This is a correctness fix that
+   *enables* dedup, not a schema change.
+2. **Drop duplicate `turn` and `phase` emissions inside `summary`**
+   (currently at `game.ts:617-618`). Canonical copies stay at
+   top-level (`game.ts:632-633`). `summary` keeps its other fields
+   (`pos`, `carrying`, `alive`, `moveSubmitted`, `score`, flag
+   statuses, `enemies`, `flags`).
 
-### Phase 5 — Coord format `{q,r}` → `[q,r]`
+### Phase 5 — Coord format: context-sensitive, not uniform
 
 Scope is larger than it sounds. Do a full file-level inventory first.
 
 **Boundary discipline:** internal game state (`GameUnit.position`,
 `FlagState.position`, map storage, combat/movement/los/fog internals,
 spectator view, replay, web UI) stays `{q,r}`. Only the **envelope
-emit** converts to `HexTuple`.
+emit** converts.
+
+**The rule — tuples for pure coords, objects for "thing at a
+position":**
+- **Pure-coord arrays** (many entries, bytes matter) → 2-tuple
+  `[q, r]`. Examples: `visibleWalls`, any `HexTuple[]` list.
+- **Entries carrying metadata beyond coords** (few entries, clarity
+  wins) → `{ pos: [q, r], ...metadata }`. Examples: `enemies`,
+  `flags`, `visibleOccupants`. Do **not** pack metadata into a
+  positional tuple — `[q, r, unitClass]` saves maybe ten bytes per
+  entry and burns readability across every agent forever.
 
 **Type:** add `export type HexTuple = [number, number]` to
 `packages/engine/src/types.ts` (shared so other games adopt the same
@@ -184,11 +228,11 @@ convention).
 
 **Files to change (confirmed via live code audit):**
 - `packages/games/capture-the-lobster/src/game.ts` — `AgentMapStatic`,
-  `AgentSummary`, `GameState`, `getStateForAgent` emit. For inline
-  `{q, r, unitClass}` in `AgentSummary.enemies` / `{q, r, team}` in
-  `.flags`, decide shape: use `[q, r, unitClass]` (3-tuple) or
-  `{ pos: [q,r], unitClass }`. **Recommendation: 3-tuple** for
-  consistency and brevity. Same for `flags`.
+  `AgentSummary`, `GameState`, `getStateForAgent` emit. Inline
+  `{q, r, unitClass}` in `AgentSummary.enemies` (line 611) and
+  `{q, r, team}` in `AgentSummary.flags` (line 613) become
+  `{ pos: [q, r], unitClass }` / `{ pos: [q, r], team }`. `visibleWalls`
+  (pure-coord list) becomes `HexTuple[]`.
 - `packages/games/capture-the-lobster/src/fog.ts` —
   `VisibleOccupant.{q, r}` → `pos: HexTuple` (object still, since it
   carries optional `unit`/`flag`).
@@ -219,8 +263,10 @@ now; it inherits correctness from the shared layer.
 6. `coga state > /tmp/s2.json`
 7. Assert: `jq '._unchangedKeys' /tmp/s2.json` lists every
    **non-volatile** key (`mapStatic`, `visibleOccupants`, etc.).
-   `timeRemainingSeconds` must NOT appear as a key (replaced with
-   `deadlineMs`, which itself dedupes).
+   `timeRemainingSeconds` dedupes per-tick (two back-to-back calls
+   inside the same second land on the same integer value and it
+   appears in `_unchangedKeys`). Across a turn boundary it changes
+   and drops out of `_unchangedKeys` — that's the correct signal.
 
 **Test B — fresh works.**
 - `coga state --fresh` after Test A returns full state with no
@@ -238,9 +284,14 @@ now; it inherits correctness from the shared layer.
 - `coga state` stdout has no `\n  ` indentation. `coga state --pretty`
   does.
 
-**Test F — coord format.**
+**Test F — coord format (context-sensitive).**
 - `coga state | jq '.visibleWalls[0]'` returns an array
   (`[-3, 2]`-shape), not an object (`{"q":-3,"r":2}`).
+- `coga state | jq '.summary.enemies[0]'` returns an object with
+  `pos` as a 2-tuple plus metadata, e.g.
+  `{"pos":[-3,2],"unitClass":"scout"}` — NOT a 3-tuple.
+- `coga state | jq '.summary.flags[0]'` same shape:
+  `{"pos":[-3,2],"team":"red"}`.
 
 **Test G — concurrency.**
 - Spawn two `coga state` processes in parallel against the same agent.
@@ -263,7 +314,8 @@ turn 3 stable (both teams formed, class picks done):
 **Order (this order matters):**
 1. All Phase 6 tests pass locally.
 2. Bump `packages/cli/package.json` from `0.11.1` → `0.12.0`
-   (breaking: coord format + `deadlineMs` rename + file-state deps).
+   (breaking: coord format shift on agent envelope + dropped duplicate
+   `turn`/`phase` from `summary` + persistent agent-state file).
 3. Rebuild engine (for plugins to pick up the new type if any are
    updated — for this PR, no plugin changes, but still: workspace
    build order).
@@ -303,10 +355,6 @@ turn 3 stable (both teams formed, class picks done):
   it's acceptable vs writing a 20-line file-based lock. (Dependency
   audit — is `proper-lockfile` used elsewhere? If not, inline is
   fine.)
-- **Is `scopeId` always the active game/lobby ID, or is it null for
-  pre-lobby state calls?** `coga lobbies` lists lobbies before the
-  agent picks one — does that produce stateful output that needs
-  persistence? Probably not, but confirm before Phase 1.
 
 ## Audit Notes (Cross-Referenced With Live Code)
 
