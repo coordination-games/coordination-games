@@ -23,6 +23,18 @@ function errMsg(err: unknown): string {
 }
 
 /**
+ * Serialize agent-facing JSON.
+ *
+ * Default is compact (single-line) — this is the agent-facing path, and
+ * pretty-printing roughly triples the byte cost for no agent benefit. Humans
+ * who want indented output opt in via `--pretty` on each subcommand that
+ * emits JSON.
+ */
+export function formatJson(value: unknown, pretty: boolean): string {
+  return pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value);
+}
+
+/**
  * Resolve the player's registered name. Checks session cache first,
  * then fetches from the relay status endpoint and caches for next time.
  */
@@ -328,7 +340,9 @@ export function registerGameCommands(program: Command) {
   program
     .command('guide [game]')
     .description('Dynamic playbook — game rules, your plugins, available actions')
-    .action(async (game?: string) => {
+    .option('--pretty', 'Pretty-print JSON output with 2-space indent')
+    .action(async (game: string | undefined, options: { pretty?: boolean }) => {
+      const pretty = Boolean(options.pretty);
       const client = await createClient();
 
       try {
@@ -342,7 +356,7 @@ export function registerGameCommands(program: Command) {
           }
         }
 
-        process.stdout.write(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+        process.stdout.write(typeof result === 'string' ? result : formatJson(result, pretty));
         process.stdout.write('\n');
       } catch (err) {
         process.stderr.write(`  Error: ${errMsg(err)}\n`);
@@ -355,7 +369,9 @@ export function registerGameCommands(program: Command) {
     .command('state')
     .description('Get current game/lobby state (processed through your plugin pipeline)')
     .option('--fresh', 'Reset agent persistence (cursor + lastSeen) before fetching')
-    .action(async (options: { fresh?: boolean }) => {
+    .option('--pretty', 'Pretty-print JSON output with 2-space indent')
+    .action(async (options: { fresh?: boolean; pretty?: boolean }) => {
+      const pretty = Boolean(options.pretty);
       const client = await createClient();
 
       try {
@@ -373,7 +389,7 @@ export function registerGameCommands(program: Command) {
           saveSession(session);
         }
 
-        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        process.stdout.write(`${formatJson(result, pretty)}\n`);
       } catch (err) {
         process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
@@ -385,7 +401,9 @@ export function registerGameCommands(program: Command) {
     .command('wait')
     .description('Wait for the next game update (long-poll)')
     .option('--fresh', 'Reset agent persistence (cursor + lastSeen) before waiting')
-    .action(async (options: { fresh?: boolean }) => {
+    .option('--pretty', 'Pretty-print JSON output with 2-space indent')
+    .action(async (options: { fresh?: boolean; pretty?: boolean }) => {
+      const pretty = Boolean(options.pretty);
       const client = await createClient();
 
       try {
@@ -404,7 +422,7 @@ export function registerGameCommands(program: Command) {
           saveSession(session);
         }
 
-        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        process.stdout.write(`${formatJson(result, pretty)}\n`);
       } catch (err) {
         process.stderr.write(`  Error: ${errMsg(err)}\n`);
         process.exit(1);
@@ -452,8 +470,14 @@ export function registerGameCommands(program: Command) {
   (toolCmd as unknown as { helpOption: (flag: false) => void }).helpOption(false);
   toolCmd.option('--json <payload>', 'Pass raw JSON args (bypasses k=v parsing)');
   toolCmd.option('--schema', "Print the tool's input schema and exit");
+  toolCmd.option('--pretty', 'Pretty-print JSON output with 2-space indent');
   toolCmd.action(
-    async (name: string, rawArgs: string[], opts: { json?: string; schema?: boolean }) => {
+    async (
+      name: string,
+      rawArgs: string[],
+      opts: { json?: string; schema?: boolean; pretty?: boolean },
+    ) => {
+      const pretty = Boolean(opts?.pretty);
       const client = await createClient();
       let registry: DiscoveredTool[];
       try {
@@ -534,30 +558,30 @@ export function registerGameCommands(program: Command) {
                 message: `Plugin "${found.pluginId}" handleCall threw: ${errMsg(err)}`,
               },
             };
-            process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+            process.stdout.write(`${formatJson(payload, pretty)}\n`);
             process.exit(1);
             return;
           }
           if (out?.error) {
-            process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+            process.stdout.write(`${formatJson(out, pretty)}\n`);
             process.exit(1);
             return;
           }
           if (out?.relay) {
             const result = await client.callPluginRelay(out.relay);
-            process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+            process.stdout.write(`${formatJson(result, pretty)}\n`);
             return;
           }
-          process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+          process.stdout.write(`${formatJson(out, pretty)}\n`);
           return;
         }
 
         // Phase tool (game or lobby) → unified endpoint
         const result = await client.callToolRaw(name, args);
         if (result.ok) {
-          process.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+          process.stdout.write(`${formatJson(result.data, pretty)}\n`);
         } else {
-          process.stderr.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+          process.stderr.write(`${formatJson({ error: result.error }, pretty)}\n`);
           process.exit(1);
         }
       } catch (err) {
