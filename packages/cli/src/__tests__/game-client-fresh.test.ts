@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('GameClient fresh flag', () => {
-  it('getState({ fresh: true }) clears the on-disk (agent, scope) entry before fetching', async () => {
+  it('getState({ fresh: true }) wipes the pre-fresh (agent, scope) entry before fetching', async () => {
     const { ap, gc } = await loadFresh();
 
     const client = new gc.GameClient('http://localhost:8787', {
@@ -70,7 +70,9 @@ describe('GameClient fresh flag', () => {
 
     client.setScope('game-fresh-1');
 
-    // Seed an entry that `fresh: true` should wipe.
+    // Seed an entry that `fresh: true` should wipe. The pre-fresh marker
+    // must NOT survive into the post-call persisted entry — the whole
+    // point of `fresh` is to drop prior observations.
     ap.write(agent, 'game-fresh-1', { relayCursor: 99, lastSeen: { marker: 'pre-fresh' } });
     expect(ap.read(agent, 'game-fresh-1')).not.toBeNull();
 
@@ -85,15 +87,20 @@ describe('GameClient fresh flag', () => {
 
     await client.getState({ fresh: true });
 
-    // The on-disk entry for the active scope is gone.
-    expect(ap.read(agent, 'game-fresh-1')).toBeNull();
+    // Phase 2: the differ reseeds `lastSeen` from the fetch response.
+    // So the entry isn't null post-call — it reflects the fresh response
+    // (empty object here, since the stub returned `{}`). Crucially, the
+    // pre-fresh marker is gone.
+    const post = ap.read(agent, 'game-fresh-1');
+    expect(post).not.toBeNull();
+    expect((post?.lastSeen as Record<string, unknown> | null)?.marker).toBeUndefined();
     // And the in-memory session cursors were reset via ApiClient.
     const api = (client as unknown as { api: { resetSessionCursors: ReturnType<typeof vi.fn> } })
       .api;
     expect(api.resetSessionCursors).toHaveBeenCalledTimes(1);
   });
 
-  it('waitForUpdate({ fresh: true }) clears the on-disk entry and resets session cursors', async () => {
+  it('waitForUpdate({ fresh: true }) wipes the pre-fresh entry and resets session cursors', async () => {
     const { ap, gc } = await loadFresh();
 
     const client = new gc.GameClient('http://localhost:8787', {
@@ -118,7 +125,11 @@ describe('GameClient fresh flag', () => {
 
     await client.waitForUpdate({ fresh: true });
 
-    expect(ap.read(agent, 'game-fresh-2')).toBeNull();
+    // Phase 2: persistence is reseeded from the fresh response; only the
+    // old marker is gone.
+    const post = ap.read(agent, 'game-fresh-2');
+    expect(post).not.toBeNull();
+    expect((post?.lastSeen as Record<string, unknown> | null)?.marker).toBeUndefined();
     const api = (
       client as unknown as {
         api: {
@@ -131,7 +142,7 @@ describe('GameClient fresh flag', () => {
     expect(api.waitForUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('waitForUpdate() without fresh does NOT touch persistence', async () => {
+  it('waitForUpdate() without fresh preserves relayCursor and does NOT reset session cursors', async () => {
     const { ap, gc } = await loadFresh();
 
     const client = new gc.GameClient('http://localhost:8787', {
@@ -152,11 +163,13 @@ describe('GameClient fresh flag', () => {
 
     await client.waitForUpdate();
 
-    // Entry still there — default waitForUpdate must not clear it.
-    expect(ap.read(agent, 'game-fresh-3')).toEqual({
-      relayCursor: 7,
-      lastSeen: { marker: 'keep' },
-    });
+    // Phase 2: the differ updates `lastSeen` to reflect the fresh response
+    // (empty `{}` here), but the relay cursor is preserved — only a real
+    // server response or `fresh: true` moves the cursor. `resetSessionCursors`
+    // must not have been called on a non-fresh path.
+    const post = ap.read(agent, 'game-fresh-3');
+    expect(post).not.toBeNull();
+    expect(post?.relayCursor).toBe(7);
     const api = (
       client as unknown as {
         api: { resetSessionCursors: ReturnType<typeof vi.fn> };

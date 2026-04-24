@@ -13,6 +13,7 @@
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
 import { ethers } from 'ethers';
 import * as agentPersistence from './agent-persistence.js';
+import { AgentStateDiffer } from './agent-state-differ.js';
 import { ApiClient } from './api-client.js';
 import { processState } from './pipeline.js';
 import type {
@@ -54,6 +55,15 @@ export class GameClient {
    * and writes go through `~/.coordination/agent-state.json`.
    */
   private scopeId: string | null = null;
+  /**
+   * Per-client top-level-key diff. Only applied to state-fetching methods
+   * when a scope is active (scope rule, matches persistence). The baseline
+   * round-trips through `agent-persistence` so `coga state` invoked from
+   * separate shell processes against the same `(agent, scope)` correctly
+   * dedups the second call. In-memory is just a hot-path optimization; the
+   * disk copy is the source of truth.
+   */
+  private differ: AgentStateDiffer = new AgentStateDiffer();
 
   constructor(serverUrl: string, options?: GameClientOptions) {
     this.api = new ApiClient(serverUrl);
@@ -94,6 +104,14 @@ export class GameClient {
       return;
     }
     if (this.scopeId === scopeId) return;
+    // Scope change — reset every per-scope piece of state so the old
+    // game's cursor/baseline can't contaminate the new scope's first
+    // fetch. `ApiClient.setScope` below then hydrates the new scope's
+    // persisted cursor (if any) via `loadPersistedCursor` on the next
+    // state call; same goes for the differ, which reloads from the
+    // new scope's persisted `lastSeen` at entry.
+    this.api.resetSessionCursors();
+    this.differ.reset();
     this.scopeId = scopeId;
     // Skip persistence entirely when we have no agent identity.
     if (!this.agentAddress) return;
@@ -104,6 +122,10 @@ export class GameClient {
   clearScope(): void {
     this.scopeId = null;
     this.api.clearScope();
+    // An unscoped GameClient still has a differ instance but no caller
+    // path reads from it — `applyAgentDiff` short-circuits on null scope.
+    // Reset for hygiene: a later re-scope starts from a clean baseline.
+    this.differ.reset();
   }
 
   /**
@@ -213,14 +235,16 @@ export class GameClient {
       // a delta. The disk clear is a no-op when we have no scope yet
       // (which matches pre-Phase-1 behaviour for unscoped callers).
       this.api.resetSessionCursors();
+      this.differ.reset();
       if (this.agentAddress && this.scopeId) {
         agentPersistence.clear(this.agentAddress, this.scopeId);
       }
     }
+    this.loadPersistedLastSeen();
     const raw = await this.api.getState();
     const processed = this.processResponse(raw);
     this.maybeUpgradeScopeFromState(processed);
-    return processed;
+    return this.applyAgentDiff(processed);
   }
 
   /**
@@ -240,14 +264,16 @@ export class GameClient {
       // entry gone, leaves the just-reset in-memory cursor at 0 so the
       // follow-up getState() refetches the full envelope.
       this.api.resetSessionCursors();
+      this.differ.reset();
       if (this.agentAddress && this.scopeId) {
         agentPersistence.clear(this.agentAddress, this.scopeId);
       }
     }
+    this.loadPersistedLastSeen();
     const raw = await this.api.waitForUpdate();
     const processed = this.processResponse(raw);
     this.maybeUpgradeScopeFromState(processed);
-    return processed;
+    return this.applyAgentDiff(processed);
   }
 
   /**
@@ -268,10 +294,11 @@ export class GameClient {
    */
   async callTool(toolName: string, args: Record<string, unknown> = {}): Promise<StateResponse> {
     await this.ensureAuth();
+    this.loadPersistedLastSeen();
     const raw = (await this.api.callTool(toolName, args)) as StateResponse;
     const processed = this.processResponse(raw);
     this.maybeUpgradeScopeFromState(processed);
-    return processed;
+    return this.applyAgentDiff(processed);
   }
 
   /**
@@ -282,11 +309,12 @@ export class GameClient {
    */
   async callToolRaw(toolName: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
     await this.ensureAuth();
+    this.loadPersistedLastSeen();
     try {
       const raw = (await this.api.callTool(toolName, args)) as StateResponse;
       const processed = this.processResponse(raw);
       this.maybeUpgradeScopeFromState(processed);
-      return { ok: true, data: processed };
+      return { ok: true, data: this.applyAgentDiff(processed) };
     } catch (err: unknown) {
       // ApiClient throws `API error <status>: <body>` — try to parse the body.
       const msg = err instanceof Error ? err.message : String(err);
@@ -323,11 +351,12 @@ export class GameClient {
     scope?: string;
   }): Promise<StateResponse> {
     await this.ensureAuth();
+    this.loadPersistedLastSeen();
     try {
       const raw = (await this.api.callTool('plugin_relay', { relay })) as StateResponse;
       const processed = this.processResponse(raw);
       this.maybeUpgradeScopeFromState(processed);
-      return processed;
+      return this.applyAgentDiff(processed);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // 5xx = relay unreachable; parse status from "API error <status>: ..."
@@ -415,5 +444,57 @@ export class GameClient {
     if (!hasRelay) return rest;
     const { envelopeExtensions } = processState(raw);
     return { ...rest, ...envelopeExtensions } as StateResponse;
+  }
+
+  /**
+   * Apply the top-level-key differ as the final step of a state-returning
+   * method. Only active when a scope is set (persistence scope rule:
+   * unscoped commands like `coga lobbies` return raw state with no dedup).
+   *
+   * The baseline round-trips through disk: before the call, `GameClient`
+   * hydrates the differ from the persisted `lastSeen`; after the call,
+   * it writes the updated `lastSeen` back. That's what lets `coga state`
+   * from two separate shell processes dedup against each other.
+   */
+  private applyAgentDiff(result: StateResponse): StateResponse {
+    // Unscoped callers opt out of dedup entirely. Matches Phase 1's
+    // persistence-scope rule: `coga lobbies`, `coga wallet`, identity
+    // commands — their output is raw, not diffed. Only game/lobby-scoped
+    // calls get the stable baseline that makes dedup correct.
+    if (!this.agentAddress || !this.scopeId) return result;
+    const diffed = this.differ.diff(result);
+    // Persist the updated baseline so the next `coga state` process
+    // inherits it. Best-effort: a disk error must not fail the agent's
+    // state fetch — worst case we lose one round-trip of dedup.
+    try {
+      const entry = agentPersistence.read(this.agentAddress, this.scopeId);
+      const relayCursor = entry && typeof entry.relayCursor === 'number' ? entry.relayCursor : 0;
+      agentPersistence.write(this.agentAddress, this.scopeId, {
+        relayCursor,
+        lastSeen: this.differ.getLastSeen(),
+      });
+    } catch (err) {
+      process.stderr.write(
+        `agent-persistence: failed to write lastSeen (${
+          err instanceof Error ? err.message : String(err)
+        })\n`,
+      );
+    }
+    return diffed as StateResponse;
+  }
+
+  /**
+   * Hydrate the differ's baseline from disk for the active scope, if any.
+   * Called at entry of every state-returning method so a freshly-spawned
+   * process inherits the last observation from prior invocations.
+   */
+  private loadPersistedLastSeen(): void {
+    if (!this.agentAddress || !this.scopeId) return;
+    const entry = agentPersistence.read(this.agentAddress, this.scopeId);
+    if (!entry) return;
+    // Rebuild the differ with the persisted baseline. Cheap: the diff is
+    // stateful only on the single `lastSeen` field; constructor validates
+    // shape (non-object falls back to null).
+    this.differ = new AgentStateDiffer(entry.lastSeen as Record<string, unknown> | null);
   }
 }
