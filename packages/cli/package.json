@@ -37,6 +37,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.0.0",
+    "proper-lockfile": "^4.1.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -45,6 +46,7 @@
     "@coordination-games/game-oathbreaker": "*",
     "@coordination-games/plugin-chat": "*",
     "@types/node": "^22.19.15",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/ws": "^8.18.1",
     "commander": "^14.0.2",
     "ethers": "^6.16.0",
