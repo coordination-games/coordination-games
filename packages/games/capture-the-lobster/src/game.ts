@@ -156,6 +156,13 @@ export interface CtlGameState {
   allKills: { killerId: string; victimId: string; reason: string; turn: number }[];
   /** Post-move positions for units that died this turn (for animation: move → die → respawn) */
   lastDeathPositions?: Record<string, { q: number; r: number }>;
+  /**
+   * Absolute ms timestamp (Date.now() scale) when the current turn's timer
+   * expires. Set by the plugin's action handlers whenever a new
+   * `turnTimeoutDeadline` is scheduled; used by `getStateForAgent` to derive
+   * `timeRemainingSeconds`. Undefined before the game is in progress.
+   */
+  turnDeadlineMs?: number;
 }
 
 /** Compute turn limit based on map radius */
@@ -647,7 +654,10 @@ export function getStateForAgent(
     visibleOccupants,
     yourFlag: { status: yourFlagStatus },
     enemyFlag: { status: enemyFlagStatus },
-    timeRemainingSeconds: state.config.turnTimerSeconds,
+    timeRemainingSeconds:
+      state.turnDeadlineMs === undefined
+        ? 0
+        : Math.max(0, Math.floor((state.turnDeadlineMs - Date.now()) / 1000)),
     moveSubmitted,
     score,
   };

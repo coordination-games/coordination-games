@@ -96,12 +96,21 @@ export type CtlAction =
   | { type: 'move'; path: Direction[] }
   | { type: 'turn_timeout' };
 
-/** Build an absolute turn-timeout deadline `seconds` from now. */
-function turnTimeoutDeadline(seconds: number): GameDeadline<CtlAction> {
+/**
+ * Schedule the next turn-timeout `seconds` from now. Returns both the
+ * engine-facing `GameDeadline` (used to set the DO alarm) and the updated
+ * state with `turnDeadlineMs` pinned to the same `at` timestamp — so
+ * `getStateForAgent` can derive real `timeRemainingSeconds` without drift
+ * between what the engine knows and what the agent sees.
+ */
+function scheduleNextTurn(
+  state: CtlGameState,
+  seconds: number,
+): { state: CtlGameState; deadline: GameDeadline<CtlAction> } {
+  const at = Date.now() + seconds * 1000;
   return {
-    kind: 'absolute',
-    at: Date.now() + seconds * 1000,
-    action: { type: 'turn_timeout' },
+    state: { ...state, turnDeadlineMs: at },
+    deadline: { kind: 'absolute', at, action: { type: 'turn_timeout' } },
   };
 }
 
@@ -577,10 +586,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
     // game_start: set phase to in_progress, return deadline for first turn
     if (action.type === 'game_start') {
       const started: CtlGameState = { ...state, phase: 'in_progress' as const };
-      return {
-        state: started,
-        deadline: turnTimeoutDeadline(state.config.turnTimerSeconds ?? 30),
-      };
+      return scheduleNextTurn(started, state.config.turnTimerSeconds ?? 30);
     }
 
     // turn_timeout: fill empty moves for alive units, resolve turn
@@ -599,10 +605,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       if (isGameOver(resolved)) {
         return { state: resolved, deadline: { kind: 'none' } };
       }
-      return {
-        state: resolved,
-        deadline: turnTimeoutDeadline(resolved.config.turnTimerSeconds ?? 30),
-      };
+      return scheduleNextTurn(resolved, resolved.config.turnTimerSeconds ?? 30);
     }
 
     // move: submit move, check if all submitted, maybe resolve
@@ -618,10 +621,7 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
         if (isGameOver(resolved)) {
           return { state: resolved, deadline: { kind: 'none' } };
         }
-        return {
-          state: resolved,
-          deadline: turnTimeoutDeadline(resolved.config.turnTimerSeconds ?? 30),
-        };
+        return scheduleNextTurn(resolved, resolved.config.turnTimerSeconds ?? 30);
       }
 
       return { state: current }; // no deadline change — timer keeps ticking
