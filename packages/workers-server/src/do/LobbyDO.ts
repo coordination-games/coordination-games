@@ -753,6 +753,24 @@ export class LobbyDO extends DurableObject<Env> {
       await this.saveState();
       await this.updateLobbyPhaseInD1();
       await this.broadcastUpdate();
+
+      // 5. Close LobbyDO player WSes so clients re-route via /ws/player and
+      // land on the new GameRoomDO with a fresh cursor. Without this, a CLI
+      // ticket that raced past the D1 flip in step 4 would have landed on
+      // GameRoomDO and missed the `game_start` broadcast that fired before
+      // any subscribers were attached — client hangs on an idle socket whose
+      // `meta.sinceIdx` lives in a different namespace than its persisted
+      // cursor, until the next broadcast (turn_timeout ~30s). Mirror the
+      // `handleDisband` pattern: the web frontend's `onclose` falls back to
+      // HTTP polling and LobbyPage pivots to `/game/:id` via gameId, and
+      // CLI's `waitForWsWakeup` resolves on close and re-routes via
+      // `getState()`.
+      for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
+        try {
+          ws.close(1000, 'Handoff to game');
+        } catch {}
+      }
+
       console.log(
         `[LobbyDO] ${this._meta.gameType} game ${gameId} created from lobby ${this._meta.lobbyId}`,
       );
