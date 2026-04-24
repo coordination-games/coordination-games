@@ -142,11 +142,36 @@ export function useSpectatorStream(
   // async resolutions (HTTP fetches, WS messages from a closing socket)
   // check this before applying state.
   const genRef = useRef(0);
+  // Generation of the current `snapshot`. When this disagrees with the
+  // active `genRef`, the next applyPayload replaces (fresh stream) instead
+  // of merging (continuation of the same stream).
+  const snapshotGenRef = useRef(0);
 
-  // Apply a payload uniformly from any transport.
+  // Apply a payload uniformly from any transport. Relay entries are
+  // accumulated across payloads: the server sends only entries new since
+  // our `sinceIdx` cursor, so each update is a DELTA of relay messages. We
+  // merge by `envelope.index` to preserve the full history that consumers
+  // (chat plugin, etc.) expect. State and meta are always replaced with the
+  // latest server-authoritative values.
   const applyPayload = useCallback((payload: SpectatorPayload, gen: number) => {
     if (gen !== genRef.current) return;
-    setSnapshot(payload);
+    const continuingStream = snapshotGenRef.current === gen;
+    snapshotGenRef.current = gen;
+    setSnapshot((prev) => {
+      if (payload.type !== 'state_update') return payload;
+      // Fresh stream (gameId/mode just changed): replace, don't merge with
+      // relay from the previous game.
+      if (!continuingStream || !prev || prev.type !== 'state_update') return payload;
+      const prevRelay = (prev as SpectatorStateUpdatePayload).relay;
+      const incoming = payload.relay ?? [];
+      if (prevRelay.length === 0) return payload;
+      // Merge + dedupe by envelope.index. Keep stable sort by index ascending.
+      const byIndex = new Map<number, RelayEnvelopeWire>();
+      for (const m of prevRelay) byIndex.set(m.index, m);
+      for (const m of incoming) byIndex.set(m.index, m);
+      const merged = Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
+      return { ...payload, relay: merged };
+    });
     sinceIdxRef.current = payload.meta.sinceIdx;
     setSinceIdx(payload.meta.sinceIdx);
   }, []);

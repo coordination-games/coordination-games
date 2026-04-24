@@ -50,27 +50,26 @@ export default function ReplayPage() {
   const animationDuration = plugin?.animationDuration ?? 0;
   const playInterval = animationDuration + 700; // animation + read time
 
-  // Auto-play logic — uses setTimeout chain so each turn waits for animations
+  // Auto-play logic — uses setTimeout chain so each turn waits for animations.
+  // `currentTurn` is in the dep array so the effect re-arms after each advance;
+  // without it, the effect runs once per play-press and never reschedules.
   useEffect(() => {
-    if (isPlaying && totalTurns > 0) {
-      playTimeoutRef.current = setTimeout(() => {
-        setCurrentTurn((prev) => {
-          if (prev >= totalTurns - 1) {
-            setIsPlaying(false);
-            return prev;
-          }
-          setAnimate(true);
-          return prev + 1;
-        });
-      }, playInterval);
+    if (!isPlaying || totalTurns === 0) return;
+    if (currentTurn >= totalTurns - 1) {
+      setIsPlaying(false);
+      return;
     }
+    playTimeoutRef.current = setTimeout(() => {
+      setAnimate(true);
+      setCurrentTurn((prev) => prev + 1);
+    }, playInterval);
     return () => {
       if (playTimeoutRef.current) {
         clearTimeout(playTimeoutRef.current);
         playTimeoutRef.current = null;
       }
     };
-  }, [isPlaying, totalTurns, playInterval]);
+  }, [isPlaying, totalTurns, playInterval, currentTurn]);
 
   // Navigation — scrubbing disables animation
   const goPrev = useCallback(() => {
