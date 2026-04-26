@@ -1,0 +1,17 @@
+{
+  "name": "@coordination-games/plugin-reasoning",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --skipLibCheck",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@coordination-games/engine": "*"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}
