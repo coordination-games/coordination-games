@@ -8,6 +8,18 @@ async function request<T>(path: string): Promise<T> {
   return res.json();
 }
 
+async function requestWithHeaders<T>(path: string, headers: HeadersInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    cache: 'no-store',
+    headers,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body || res.statusText}`);
+  }
+  return res.json();
+}
+
 export interface GameSummary {
   gameId: string;
   gameType: string;
@@ -87,4 +99,66 @@ export async function fetchLobby(id: string): Promise<LobbySummary> {
 
 export async function fetchLobbiesList(): Promise<LobbySummary[]> {
   return request<LobbySummary[]>('/lobbies');
+}
+
+export interface InspectLobbySummary {
+  lobby_id: string;
+  game_id: string | null;
+  game_type: string;
+  team_size: number;
+  phase: string;
+  created_at: string;
+}
+
+export interface InspectGameRow {
+  game_id: string;
+  game_type: string;
+  finished: number | boolean;
+  created_at: string;
+}
+
+export interface InspectAlarmEntry extends Record<string, unknown> {
+  deltaMs: number;
+}
+
+export interface InspectGameDiagnostics {
+  now: number;
+  meta: unknown;
+  progress: unknown;
+  actionLogLength: number;
+  snapshotCount: number;
+  alarm: {
+    slot: number | null;
+    slotDelta: number | null;
+    earliestQueued: number | null;
+    queue: InspectAlarmEntry[];
+  };
+  websockets: number;
+  gameState: unknown;
+  isOver: boolean | null;
+  pluginProgress: number | null;
+}
+
+export interface InspectError {
+  error: string;
+  body?: string;
+}
+
+export interface InspectResponse {
+  sessionId: string;
+  lobby: InspectLobbySummary | null;
+  gameRow: InspectGameRow | null;
+  gameId: string | null;
+  gameInspect: InspectGameDiagnostics | InspectError | null;
+  now: number;
+}
+
+export async function fetchInspect(
+  sessionId: string,
+  adminToken: string,
+): Promise<InspectResponse> {
+  return requestWithHeaders<InspectResponse>(
+    `/admin/session/${encodeURIComponent(sessionId)}/inspect`,
+    { 'X-Admin-Token': adminToken },
+  );
 }
