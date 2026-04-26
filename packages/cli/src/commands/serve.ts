@@ -1,79 +1,88 @@
-import { Command } from "commander";
 import crypto from "node:crypto";
 import type { ToolPlugin } from "@coordination-games/engine";
+import type { Command } from "commander";
 
 export function registerServeCommand(program: Command) {
-  program
-    .command("serve")
-    .description("Start MCP server for AI tool integration")
-    .option("--stdio", "Use stdio transport (for Claude Code, Claude Desktop)")
-    .option("--http [port]", "Use HTTP transport (for OpenAI, other HTTP MCP clients)")
-    .option("--bot-mode", undefined, false)  // hidden: internal testing
-    .option("--key <key>", undefined)         // hidden: bot private key
-    .option("--name <name>", undefined)       // hidden: bot display name
-    .option("--with-rationale", undefined, false) // hidden: opt-in rationale plugin
-    .option("--server-url <url>", "Game server URL (default: from config)")
-    .action(async (opts) => {
-      // Dynamic import to avoid loading MCP deps when not needed
-      const { startMcpServer } = await import("../mcp-server.js");
-      const plugins: ToolPlugin[] = [];
-      if (opts.withRationale) {
-        const { RationalePlugin } = await import("@coordination-games/plugin-rationale");
-        plugins.push(RationalePlugin);
-      }
+	program
+		.command("serve")
+		.description("Start MCP server for AI tool integration")
+		.option("--stdio", "Use stdio transport (for Claude Code, Claude Desktop)")
+		.option(
+			"--http [port]",
+			"Use HTTP transport (for OpenAI, other HTTP MCP clients)",
+		)
+		.option("--bot-mode", undefined, false) // hidden: internal testing
+		.option("--key <key>", undefined) // hidden: bot private key
+		.option("--name <name>", undefined) // hidden: bot display name
+		.option("--with-reasoning", undefined, false) // hidden: opt-in reasoning plugin
+		.option("--server-url <url>", "Game server URL (default: from config)")
+		.action(async (opts) => {
+			// Dynamic import to avoid loading MCP deps when not needed
+			const { startMcpServer } = await import("../mcp-server.js");
+			const plugins: ToolPlugin[] = [];
+			if (opts.withReasoning) {
+				const { ReasoningPlugin } = await import(
+					"@coordination-games/plugin-reasoning"
+				);
+				plugins.push(ReasoningPlugin);
+			}
 
-      const httpPort = typeof opts.http === "string" ? parseInt(opts.http, 10) : undefined;
-      const mode: "stdio" | "http" = opts.http ? "http" : "stdio";
+			const httpPort =
+				typeof opts.http === "string" ? parseInt(opts.http, 10) : undefined;
+			const mode: "stdio" | "http" = opts.http ? "http" : "stdio";
 
-      if (opts.botMode) {
-        // Bot mode: use provided key (or generate ephemeral one)
-        const { loadConfig } = await import("../config.js");
-        const serverUrl = opts.serverUrl || loadConfig().serverUrl;
-        const key = opts.key || undefined;
-        const name = opts.name || `bot-${crypto.randomBytes(3).toString('hex')}`;
+			if (opts.botMode) {
+				// Bot mode: use provided key (or generate ephemeral one)
+				const { loadConfig } = await import("../config.js");
+				const serverUrl = opts.serverUrl || loadConfig().serverUrl;
+				const key = opts.key || undefined;
+				const name =
+					opts.name || `bot-${crypto.randomBytes(3).toString("hex")}`;
 
-        await startMcpServer(mode, {
-          serverUrl,
-          privateKey: key,
-          name,
-          botMode: true,
-          httpPort,
-          plugins,
-        });
-      } else {
-        // Normal mode: use local wallet from ~/.coordination/keys/
-        const { loadKey } = await import("../keys.js");
-        const { loadConfig, loadSession, saveSession } = await import("../config.js");
-        const { ApiClient } = await import("../api-client.js");
-        const wallet = loadKey();
-        const config = loadConfig();
-        const serverUrl = opts.serverUrl || config.serverUrl;
+				await startMcpServer(mode, {
+					serverUrl,
+					privateKey: key,
+					name,
+					botMode: true,
+					httpPort,
+					plugins,
+				});
+			} else {
+				// Normal mode: use local wallet from ~/.coordination/keys/
+				const { loadKey } = await import("../keys.js");
+				const { loadConfig, loadSession, saveSession } = await import(
+					"../config.js"
+				);
+				const { ApiClient } = await import("../api-client.js");
+				const wallet = loadKey();
+				const config = loadConfig();
+				const serverUrl = opts.serverUrl || config.serverUrl;
 
-        // Resolve registered name (check session cache, then server)
-        let name: string | undefined;
-        const session = loadSession();
-        if (session.handle) {
-          name = session.handle;
-        } else if (wallet) {
-          try {
-            const api = new ApiClient(serverUrl);
-            const data = await api.get(`/api/relay/status/${wallet.address}`);
-            if (data.registered && data.name) {
-              name = data.name;
-              session.handle = data.name;
-              saveSession(session);
-            }
-          } catch {}
-        }
+				// Resolve registered name (check session cache, then server)
+				let name: string | undefined;
+				const session = loadSession();
+				if (session.handle) {
+					name = session.handle;
+				} else if (wallet) {
+					try {
+						const api = new ApiClient(serverUrl);
+						const data = await api.get(`/api/relay/status/${wallet.address}`);
+						if (data.registered && data.name) {
+							name = data.name;
+							session.handle = data.name;
+							saveSession(session);
+						}
+					} catch {}
+				}
 
-        await startMcpServer(mode, {
-          serverUrl,
-          privateKey: wallet?.privateKey,
-          name,
-          botMode: false,
-          httpPort,
-          plugins,
-        });
-      }
-    });
+				await startMcpServer(mode, {
+					serverUrl,
+					privateKey: wallet?.privateKey,
+					name,
+					botMode: false,
+					httpPort,
+					plugins,
+				});
+			}
+		});
 }
