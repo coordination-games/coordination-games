@@ -30,7 +30,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        # See `test` job below for rationale on these flags.
+        # See `test` job below for reasoning on these flags.
         run: npm install --include=dev --legacy-peer-deps
 
       - name: Biome check (lint + format)

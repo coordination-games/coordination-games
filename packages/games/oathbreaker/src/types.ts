@@ -205,7 +205,7 @@ export interface OathState {
 
 /**
  * BigInt money type for OATHBREAKER payouts. All settlement math (entryCost
- * pot, per-player payouts, deltas) goes through this type. Rationale: float
+ * pot, per-player payouts, deltas) goes through this type. Reasoning: float
  * division (the old `dollarPerPoint = totalCreditsInvested / totalSupply`)
  * tripped the GameRoomDO zero-sum invariant and is rejected by canonicalEncode
  * (Phase 3.3). The unit is "credits" (whatever the smallest indivisible unit
