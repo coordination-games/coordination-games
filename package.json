@@ -1,37 +1,37 @@
 {
-  "name": "capture-the-lobster",
-  "version": "0.1.0",
-  "private": true,
-  "workspaces": [
-    "packages/*",
-    "packages/games/*",
-    "packages/plugins/*"
-  ],
-  "scripts": {
-    "build": "npm run build -w packages/engine && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/plugins/basic-chat -w packages/plugins/rationale -w packages/plugins/elo && npm run build -w packages/web -w packages/cli",
-    "test": "npm run test --workspaces --if-present",
-    "dev": "npm run dev --workspace=packages/workers-server",
-    "dev:web": "npm run dev --workspace=packages/web",
-    "build:contracts": "npm run build --workspace=packages/contracts",
-    "build:cli": "npm run build --workspace=packages/cli"
-  },
-  "dependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/express": "^4.17.25",
-    "@types/node": "^22.19.15",
-    "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^6.0.1",
-    "autoprefixer": "^10.4.27",
-    "dotenv": "^17.4.1",
-    "framer-motion": "^12.38.0",
-    "postcss": "^8.5.8",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.1"
-  },
-  "devDependencies": {
-    "@esbuild/linux-x64": "^0.27.0",
-    "@tailwindcss/postcss": "^4.2.2",
-    "esbuild": "^0.27.0",
-    "tailwindcss": "^3.4.19"
-  }
+	"name": "capture-the-lobster",
+	"version": "0.1.0",
+	"private": true,
+	"workspaces": [
+		"packages/*",
+		"packages/games/*",
+		"packages/plugins/*"
+	],
+	"scripts": {
+		"build": "npm run build -w packages/engine && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/plugins/basic-chat -w packages/plugins/reasoning -w packages/plugins/elo && npm run build -w packages/web -w packages/cli",
+		"test": "npm run test --workspaces --if-present",
+		"dev": "npm run dev --workspace=packages/workers-server",
+		"dev:web": "npm run dev --workspace=packages/web",
+		"build:contracts": "npm run build --workspace=packages/contracts",
+		"build:cli": "npm run build --workspace=packages/cli"
+	},
+	"dependencies": {
+		"@types/better-sqlite3": "^7.6.13",
+		"@types/express": "^4.17.25",
+		"@types/node": "^22.19.15",
+		"@types/ws": "^8.18.1",
+		"@vitejs/plugin-react": "^6.0.1",
+		"autoprefixer": "^10.4.27",
+		"dotenv": "^17.4.1",
+		"framer-motion": "^12.38.0",
+		"postcss": "^8.5.8",
+		"typescript": "^5.9.3",
+		"vite": "^8.0.1"
+	},
+	"devDependencies": {
+		"@esbuild/linux-x64": "^0.27.0",
+		"@tailwindcss/postcss": "^4.2.2",
+		"esbuild": "^0.27.0",
+		"tailwindcss": "^3.4.19"
+	}
 }
