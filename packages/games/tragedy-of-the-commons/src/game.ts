@@ -4,12 +4,14 @@ import type {
   ResourceInventory,
   ResourceType,
   TragedyAction,
+  TragedyBoardTile,
   TragedyConfig,
   TragedyEcosystem,
   TragedyOutcome,
   TragedyPlayerState,
   TragedyRegion,
   TragedyState,
+  TragedyTerrain,
   TragedyTradeOffer,
 } from './types.js';
 
@@ -33,6 +35,7 @@ const RESOURCE_TYPES: readonly ResourceType[] = [
   'energy',
 ];
 const RESOURCE_TYPE_SET = new Set<string>(RESOURCE_TYPES);
+const PRODUCTION_WHEEL = [5, 8, 10, 6, 11, 9, 4, 3, 12, 2, 5, 8, 10, 6, 11, 9, 4, 3, 12];
 
 const SETTLEMENT_COST: Partial<ResourceInventory> = {
   grain: 1,
@@ -233,6 +236,108 @@ function getBaseEcosystems(): TragedyEcosystem[] {
   ];
 }
 
+function terrainForRegion(region: TragedyRegion): TragedyTerrain {
+  if (region.id === 'commons-heart') return 'commons';
+  if (region.primaryResource === 'timber') return 'forest';
+  if (region.primaryResource === 'ore') return 'mountains';
+  if (region.primaryResource === 'water' || region.primaryResource === 'fish') return 'rivers';
+  return 'plains';
+}
+
+function boardTile(
+  q: number,
+  r: number,
+  terrain: TragedyTerrain,
+  productionNumber: number,
+  ecosystemIds: string[] = [],
+  region?: TragedyRegion,
+): TragedyBoardTile {
+  const tileEcosystemIds = region ? region.ecosystemIds : ecosystemIds;
+  return {
+    id: `${q},${r}`,
+    q,
+    r,
+    terrain,
+    productionNumber,
+    revealed: true,
+    ecosystemIds: [...tileEcosystemIds],
+    ...(region
+      ? {
+          regionId: region.id,
+          regionName: region.name,
+          primaryResource: region.primaryResource,
+        }
+      : {}),
+  };
+}
+
+function getBaseBoardTiles(regions: TragedyRegion[]): TragedyBoardTile[] {
+  const regionById = new Map(regions.map((region) => [region.id, region]));
+  const regionTileSpecs: Array<{ q: number; r: number; regionId: string }> = [
+    { q: 0, r: 0, regionId: 'commons-heart' },
+    { q: -1, r: 0, regionId: 'mistbarrow' },
+    { q: -1, r: 1, regionId: 'riverwake' },
+    { q: 1, r: -1, regionId: 'sunspine-basin' },
+    { q: 0, r: -1, regionId: 'ironcrest' },
+    { q: 1, r: 0, regionId: 'monsoon-reach' },
+  ];
+  const keyed = new Map<string, TragedyBoardTile>();
+
+  for (const [index, spec] of regionTileSpecs.entries()) {
+    const region = regionById.get(spec.regionId);
+    if (!region) continue;
+    keyed.set(
+      `${spec.q},${spec.r}`,
+      boardTile(
+        spec.q,
+        spec.r,
+        terrainForRegion(region),
+        PRODUCTION_WHEEL[index] ?? 0,
+        region.ecosystemIds,
+        region,
+      ),
+    );
+  }
+
+  const nativeCommonsHorizon: Array<{
+    q: number;
+    r: number;
+    terrain: TragedyTerrain;
+    ecosystemIds: string[];
+  }> = [
+    { q: -2, r: 0, terrain: 'forest', ecosystemIds: ['old-growth-ring'] },
+    { q: -2, r: 1, terrain: 'forest', ecosystemIds: ['old-growth-ring'] },
+    { q: -2, r: 2, terrain: 'wetland', ecosystemIds: ['sunspine-aquifer'] },
+    { q: -1, r: -1, terrain: 'forest', ecosystemIds: ['old-growth-ring'] },
+    { q: -1, r: 2, terrain: 'wetland', ecosystemIds: ['sunspine-aquifer', 'silver-tide-fishery'] },
+    { q: 0, r: -2, terrain: 'mountains', ecosystemIds: [] },
+    { q: 0, r: 1, terrain: 'commons', ecosystemIds: ['sunspine-aquifer'] },
+    { q: 0, r: 2, terrain: 'rivers', ecosystemIds: ['silver-tide-fishery'] },
+    { q: 1, r: -2, terrain: 'mountains', ecosystemIds: [] },
+    { q: 1, r: 1, terrain: 'rivers', ecosystemIds: ['silver-tide-fishery'] },
+    { q: 2, r: -2, terrain: 'wasteland', ecosystemIds: [] },
+    { q: 2, r: -1, terrain: 'rivers', ecosystemIds: ['silver-tide-fishery'] },
+    { q: 2, r: 0, terrain: 'wetland', ecosystemIds: ['silver-tide-fishery'] },
+  ];
+
+  for (const [index, spec] of nativeCommonsHorizon.entries()) {
+    const key = `${spec.q},${spec.r}`;
+    if (keyed.has(key)) continue;
+    keyed.set(
+      key,
+      boardTile(
+        spec.q,
+        spec.r,
+        spec.terrain,
+        PRODUCTION_WHEEL[(regionTileSpecs.length + index) % PRODUCTION_WHEEL.length] ?? 0,
+        spec.ecosystemIds,
+      ),
+    );
+  }
+
+  return [...keyed.values()].sort((left, right) => left.r - right.r || left.q - right.q);
+}
+
 function createPlayers(playerIds: string[], regions: TragedyRegion[]): TragedyPlayerState[] {
   return playerIds.map((id, index) => {
     const region = regions[index % regions.length];
@@ -288,6 +393,10 @@ function clonePlayer(player: TragedyPlayerState): TragedyPlayerState {
 
 function cloneTradeOffer(offer: TragedyTradeOffer): TragedyTradeOffer {
   return { ...offer, give: { ...offer.give }, receive: { ...offer.receive } };
+}
+
+function cloneBoardTile(tile: TragedyBoardTile): TragedyBoardTile {
+  return { ...tile, ecosystemIds: [...tile.ecosystemIds] };
 }
 
 function applyProduction(state: TragedyState): TragedyState {
@@ -498,6 +607,7 @@ export function createInitialState(config: TragedyConfig): TragedyState {
     phase: 'waiting',
     players: createPlayers(config.playerIds, regions),
     regions,
+    boardTiles: getBaseBoardTiles(regions),
     ecosystems: getBaseEcosystems(),
     activeTrades: [],
     submittedActions: makeSubmittedActions(config.playerIds),
@@ -604,6 +714,7 @@ export interface TragedyPlayerView {
   you: TragedyPlayerState;
   scoreboard: Array<{ id: string; vp: number; influence: number; regionsControlled: number }>;
   regions: TragedyRegion[];
+  boardTiles: TragedyBoardTile[];
   ecosystems: Array<TragedyEcosystem & { status: EcosystemStatus }>;
   activeTrades: TragedyTradeOffer[];
   submitted: boolean;
@@ -615,6 +726,7 @@ export interface TragedySpectatorView {
   phase: TragedyState['phase'];
   players: Array<TragedyPlayerState & { totalResources: number }>;
   regions: TragedyRegion[];
+  boardTiles: TragedyBoardTile[];
   ecosystems: Array<TragedyEcosystem & { status: EcosystemStatus }>;
   activeTrades: TragedyTradeOffer[];
   winner: string | null;
@@ -637,6 +749,7 @@ export function getPlayerView(state: TragedyState, playerId: string): TragedyPla
       regionsControlled: item.regionsControlled.length,
     })),
     regions: state.regions.map(cloneRegion),
+    boardTiles: state.boardTiles.map(cloneBoardTile),
     ecosystems: state.ecosystems.map((ecosystem) => ({
       ...cloneEcosystem(ecosystem),
       status: ecosystemStatus(ecosystem),
@@ -660,6 +773,7 @@ export function getSpectatorView(
       totalResources: totalResources(player.resources),
     })),
     regions: state.regions.map(cloneRegion),
+    boardTiles: state.boardTiles.map(cloneBoardTile),
     ecosystems: state.ecosystems.map((ecosystem) => ({
       ...cloneEcosystem(ecosystem),
       status: ecosystemStatus(ecosystem),

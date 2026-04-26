@@ -16,6 +16,7 @@ export type {
   ResourceInventory,
   ResourceType,
   TragedyAction,
+  TragedyBoardTile,
   TragedyConfig,
   TragedyEcosystem,
   TragedyOutcome,
@@ -24,6 +25,7 @@ export type {
   TragedyPlayerState,
   TragedyRegion,
   TragedyState,
+  TragedyTerrain,
   TragedyTradeOffer,
 } from './types.js';
 export { DEFAULT_TRAGEDY_CONFIG, EMPTY_INVENTORY } from './types.js';

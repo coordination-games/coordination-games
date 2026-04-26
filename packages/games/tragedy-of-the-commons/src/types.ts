@@ -32,6 +32,28 @@ export type EcosystemKind = 'fishery' | 'forest' | 'aquifer' | 'wetland';
 
 export type ExtractionLevel = 'low' | 'medium' | 'high';
 
+export type TragedyTerrain =
+  | 'plains'
+  | 'forest'
+  | 'mountains'
+  | 'rivers'
+  | 'commons'
+  | 'wetland'
+  | 'wasteland';
+
+export interface TragedyBoardTile {
+  id: string;
+  q: number;
+  r: number;
+  terrain: TragedyTerrain;
+  productionNumber: number;
+  revealed: boolean;
+  ecosystemIds: string[];
+  regionId?: string;
+  regionName?: string;
+  primaryResource?: ResourceType;
+}
+
 export interface TragedyRegion {
   id: string;
   name: string;
@@ -91,6 +113,7 @@ export interface TragedyState {
   phase: TragedyPhase;
   players: TragedyPlayerState[];
   regions: TragedyRegion[];
+  boardTiles: TragedyBoardTile[];
   ecosystems: TragedyEcosystem[];
   activeTrades: TragedyTradeOffer[];
   submittedActions: Record<string, TragedyAction | null>;
