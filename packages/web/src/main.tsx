@@ -12,6 +12,7 @@ import { TragedyOfTheCommonsWebPlugin } from './games/tragedy-of-the-commons/web
 import GamePage from './pages/GamePage';
 import GamesPage from './pages/GamesPage';
 import HomePage from './pages/HomePage';
+import InspectorPage from './pages/InspectorPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import LobbiesPage from './pages/LobbiesPage';
 import LobbyPage from './pages/LobbyPage';
@@ -41,6 +42,7 @@ const router = createBrowserRouter([
       { path: '/lobbies', element: <LobbiesPage /> },
       { path: '/lobby/:id', element: <LobbyPage /> },
       { path: '/game/:id', element: <GamePage /> },
+      { path: '/inspect/:gameId', element: <InspectorPage /> },
       { path: '/leaderboard', element: <LeaderboardPage /> },
       { path: '/replay/:id', element: <ReplayPage /> },
     ],

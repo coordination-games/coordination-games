@@ -29,9 +29,10 @@ export default function Layout() {
   const { branding } = useActiveGame();
   const lobbyMatch = useMatch('/lobby/:id');
   const gameMatch = useMatch('/game/:id');
+  const inspectMatch = useMatch('/inspect/:gameId');
   const replayMatch = useMatch('/replay/:id');
-  const inGame = !!(lobbyMatch || gameMatch || replayMatch);
-  const fullBleedGameSurface = !!(gameMatch || replayMatch);
+  const inGame = !!(lobbyMatch || gameMatch || inspectMatch || replayMatch);
+  const fullBleedGameSurface = !!(gameMatch || inspectMatch || replayMatch);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bone)' }}>
