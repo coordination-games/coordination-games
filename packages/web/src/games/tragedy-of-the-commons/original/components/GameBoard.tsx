@@ -53,7 +53,7 @@ function getBoardLayout(
 
 export function GameBoard() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const shellRef = useRef<HTMLDivElement | null>(null);
+  const shellRef = useRef<HTMLButtonElement | null>(null);
   const drawRef = useRef<(() => void) | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
