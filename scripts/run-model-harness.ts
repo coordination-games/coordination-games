@@ -25,7 +25,7 @@ const SERVER = process.env.GAME_SERVER ?? 'http://127.0.0.1:3101';
 const GAME_TYPE = process.env.GAME_TYPE ?? 'tragedy-of-the-commons';
 const BOT_COUNT = Number.parseInt(process.env.BOT_COUNT ?? '4', 10);
 const TEAM_SIZE = Number.parseInt(process.env.TEAM_SIZE ?? '2', 10);
-const MAX_ROUNDS = Number.parseInt(process.env.HARNESS_ROUNDS ?? '3', 10);
+const MAX_ROUNDS = Number.parseInt(process.env.HARNESS_ROUNDS ?? '24', 10);
 const PROVIDER_NAME = process.env.PROVIDER ?? 'scripted';
 const MODEL = process.env.MODEL ?? process.env.MINIMAX_MODEL ?? 'MiniMax-M2.7-highspeed';
 
@@ -37,7 +37,7 @@ Environment:
   GAME_TYPE         Game slug (default tragedy-of-the-commons)
   BOT_COUNT         Number of agents (default 4)
   TEAM_SIZE         Lobby team size (default 2)
-  HARNESS_ROUNDS   Max decision rounds (default 3)
+  HARNESS_ROUNDS   Max game decision cycles before stopping (default 24; lower for smoke tests)
   PROVIDER         scripted | openai-compatible | minimax (default scripted)
   OPENAI_BASE_URL   OpenAI-compatible base URL (MiniMax: https://api.minimax.io/v1)
   OPENAI_API_KEY    API key for openai-compatible/minimax
@@ -336,6 +336,9 @@ async function main() {
   if (!gameId) throw new Error(`Lobby did not start a game: ${JSON.stringify(lobbyInspect.lobby)}`);
   console.log(`game=${gameId}`);
 
+  // Keep the local agent runtime active across server turn notifications. The
+  // game engine emits state/relay updates, but this harness owns model wakeups;
+  // HARNESS_ROUNDS is only a safety cap for local runs.
   for (let roundLoop = 0; roundLoop < MAX_ROUNDS; roundLoop++) {
     const gameInspect = await inspect(gameId);
     const diagnostics = isRecord(gameInspect.gameInspect) ? gameInspect.gameInspect : {};
