@@ -491,12 +491,13 @@ function applyProduction(state: TragedyState): TragedyState {
 
 function startRound(state: TragedyState): TragedyState {
   const round = state.round + 1;
-  const started = {
+  const started: TragedyState = {
     ...state,
     round,
     phase: 'playing' as const,
     activeTrades: [],
     submittedActions: makeSubmittedActions(state.players.map((player) => player.id)),
+    currentPlayerIndex: 0,
   };
   return applyProduction(started);
 }
