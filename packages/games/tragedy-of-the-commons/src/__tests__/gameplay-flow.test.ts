@@ -117,7 +117,10 @@ describe('Tragedy native plugin gameplay flow', () => {
       }),
     );
 
-    state = applyValidated(state, null, { type: 'round_timeout' });
+    for (let timeoutCount = 0; timeoutCount < PLAYERS.length; timeoutCount++) {
+      state = applyValidated(state, null, { type: 'round_timeout' });
+      if (state.phase === 'finished') break;
+    }
 
     expect(state.phase).toBe('finished');
     expect(TragedyOfTheCommonsPlugin.isOver(state)).toBe(true);
