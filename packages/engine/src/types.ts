@@ -70,6 +70,51 @@ export interface RelayEnvelope<TBody = unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// Agentic trust cards — compact, evidence-first projections
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounded pointer to evidence the current viewer is already allowed to know.
+ * The ref carries provenance without embedding raw chats, hidden strategy, or
+ * full private state in the agent/UI prompt surface.
+ */
+export interface TrustEvidenceRefV1 {
+  kind: string;
+  id: string;
+  visibility: 'public' | 'viewer-visible';
+  round?: number;
+  relayIndex?: number;
+  summary?: string;
+}
+
+/** A single compact trust signal. This is not a reputation score. */
+export interface TrustSignalV1 {
+  label: string;
+  stance: 'positive' | 'negative' | 'informational' | 'unknown';
+  summary: string;
+  confidence?: number;
+  evidenceRefs?: TrustEvidenceRefV1[];
+}
+
+/**
+ * Agent-facing trust card projection. Reducers may produce richer cards later;
+ * v1 keeps the shape intentionally small so it can travel in game state.
+ */
+export interface TrustCardV1 {
+  schemaVersion: 'trust-card/v1';
+  /** Current game player/agent id. Kept for UI lookup convenience. */
+  agentId: string;
+  /** Subject identity for future wallet/ERC-8004/DID mapping. */
+  subjectId: string;
+  headline: string;
+  summary: string;
+  signals: TrustSignalV1[];
+  caveats: string[];
+  evidenceRefs: TrustEvidenceRefV1[];
+  updatedAt?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Spectator context (passed to buildSpectatorView)
 // ---------------------------------------------------------------------------
 

@@ -33,6 +33,9 @@ import type {
   MerkleLeafData,
   RelayEnvelope,
   RelayScope,
+  TrustCardV1,
+  TrustEvidenceRefV1,
+  TrustSignalV1,
 } from '@coordination-games/engine';
 import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
 import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
@@ -107,6 +110,146 @@ interface ActionEntry {
 interface DeadlineEntry {
   action: unknown;
   deadlineMs: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function text(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+function finiteNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function visibleArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function sumVisibleResources(value: unknown): number {
+  if (!isRecord(value)) return 0;
+  return Object.values(value).reduce(
+    (total, next) => total + (typeof next === 'number' && Number.isFinite(next) ? next : 0),
+    0,
+  );
+}
+
+function trustLabelFromAction(actionType: string): string {
+  if (actionType === 'extract_commons') return 'Commons extraction receipt';
+  if (actionType === 'build_settlement') return 'Settlement-building receipt';
+  if (actionType === 'offer_trade') return 'Trade offer receipt';
+  if (actionType === 'pass') return 'Pass receipt';
+  return 'Viewer-visible game receipt';
+}
+
+function createTrustSignal(
+  label: string,
+  stance: TrustSignalV1['stance'],
+  summary: string,
+  evidenceRef: TrustEvidenceRefV1,
+  confidence: number,
+): TrustSignalV1 {
+  return {
+    label,
+    stance,
+    summary,
+    confidence,
+    evidenceRefs: [evidenceRef],
+  };
+}
+
+function buildVisibleTrustCards(
+  state: unknown,
+  meta: GameMeta,
+  progressCounter: number | null,
+): TrustCardV1[] {
+  if (meta.gameType !== 'tragedy-of-the-commons' || !isRecord(state)) return [];
+  const players = visibleArray(state.players).filter(isRecord);
+  if (players.length === 0) return [];
+  const round = finiteNumber(state.round, progressCounter ?? 0);
+  const phase = text(state.phase, meta.finished ? 'finished' : 'playing');
+  return players.flatMap((player): TrustCardV1[] => {
+    const agentId = text(player.id);
+    if (!agentId) return [];
+    const actionType = text(player.lastAction);
+    const influence = finiteNumber(player.influence);
+    const vp = finiteNumber(player.vp);
+    const totalResources = finiteNumber(
+      player.totalResources,
+      sumVisibleResources(player.resources),
+    );
+    const regionsControlled = visibleArray(player.regionsControlled).filter(
+      (region): region is string => typeof region === 'string',
+    );
+    const evidenceRef: TrustEvidenceRefV1 = {
+      kind: 'game-state',
+      id: `${meta.gameId}:round:${round}:agent:${agentId}`,
+      visibility: 'viewer-visible',
+      round,
+      summary: `Viewer-visible ${phase} snapshot for ${meta.handleMap[agentId] ?? agentId}.`,
+    };
+    const signals: TrustSignalV1[] = [
+      createTrustSignal(
+        'Public stewardship position',
+        influence > 0 ? 'positive' : 'informational',
+        `${meta.handleMap[agentId] ?? agentId} has visible influence ${influence} and ${vp} VP in round ${round}.`,
+        evidenceRef,
+        0.62,
+      ),
+      createTrustSignal(
+        'Resource pressure context',
+        totalResources > 10 ? 'informational' : 'unknown',
+        `Visible resource total is ${totalResources}; interpret actions against commons pressure, not as a standalone score.`,
+        evidenceRef,
+        0.52,
+      ),
+    ];
+    if (actionType) {
+      signals.push(
+        createTrustSignal(
+          trustLabelFromAction(actionType),
+          actionType === 'build_settlement'
+            ? 'positive'
+            : actionType === 'extract_commons'
+              ? 'informational'
+              : 'unknown',
+          `Latest viewer-visible action type is ${actionType}.`,
+          evidenceRef,
+          0.58,
+        ),
+      );
+    }
+    return [
+      {
+        schemaVersion: 'trust-card/v1',
+        agentId,
+        subjectId: agentId,
+        headline: 'Viewer-visible trust context',
+        summary: `${meta.handleMap[agentId] ?? agentId}: ${regionsControlled.length} visible region${regionsControlled.length === 1 ? '' : 's'}, influence ${influence}, VP ${vp}.`,
+        signals,
+        caveats: [
+          'Compact projection over viewer-visible game state only; not a final reputation score.',
+          'Does not include private DMs, hidden strategy, model reasoning, or full per-tick state.',
+        ],
+        evidenceRefs: [evidenceRef],
+        updatedAt: Date.now(),
+      },
+    ];
+  });
+}
+
+function withVisibleTrustCards(
+  state: unknown,
+  meta: GameMeta,
+  progressCounter: number | null,
+): unknown {
+  if (!isRecord(state)) return state;
+  return {
+    ...state,
+    trustCards: buildVisibleTrustCards(state, meta, progressCounter),
+  };
 }
 
 /**
@@ -1439,7 +1582,11 @@ export class GameRoomDO extends DurableObject<Env> {
       };
     }
     const finished = this._plugin.isOver(this._state);
-    const visible = this._plugin.getVisibleState(this._state, playerId);
+    const visible = withVisibleTrustCards(
+      this._plugin.getVisibleState(this._state, playerId),
+      this._meta,
+      this._progress.counter,
+    );
     const viewer: SpectatorViewer = { kind: 'player', playerId };
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
@@ -1523,6 +1670,7 @@ export class GameRoomDO extends DurableObject<Env> {
     }
     const idx = this.publicSnapshotIndex();
     const state = idx !== null ? this._spectatorSnapshots[idx] : null;
+    const visibleState = state !== null ? withVisibleTrustCards(state, this._meta, idx) : null;
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
     const relayViewer: SpectatorViewer = OBSERVATORY_DM_SPECTATOR_GAMES.has(this._meta.gameType)
@@ -1535,7 +1683,7 @@ export class GameRoomDO extends DurableObject<Env> {
       handles: this._meta.handleMap,
       finished: this._meta.finished,
       publicSnapshotIndex: idx,
-      state: state ?? null,
+      state: visibleState,
       viewer: relayViewer,
       relay: relayClient,
       relayTip,
