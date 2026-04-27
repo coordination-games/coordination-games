@@ -358,15 +358,33 @@ async function main() {
       // Fetch THIS bot's state (fresh, after previous turn advances)
       const stateEnvelope = await api(SERVER, '/api/player/state', { token: activeBot.token });
       const rawState = isRecord(stateEnvelope.state) ? stateEnvelope.state : stateEnvelope;
-      // Inject handles map so model can resolve UUIDs to human-readable names
+      // Extract handles map so model can resolve UUIDs to human-readable names
       const handles =
         isRecord(stateEnvelope.meta) && isRecord(stateEnvelope.meta.handles)
           ? (stateEnvelope.meta.handles as Record<string, string>)
           : {};
-      const visibleState = { ...rawState, handles };
-      const hasRelayMessages = Array.isArray(visibleState.relayMessages);
+      // Replace UUIDs with readable names in relay messages
+      const rawRelay = Array.isArray(rawState.relayMessages) ? rawState.relayMessages : [];
+      const enrichedRelay = rawRelay.map((msg: Record<string, unknown>) => {
+        if (!isRecord(msg)) return msg;
+        const sender = typeof msg.sender === 'string' ? msg.sender : '';
+        const resolved = handles[sender] ?? sender;
+        const scope = isRecord(msg.scope) ? { ...msg.scope } : msg.scope;
+        // Resolve recipientHandle in DM scope too
+        if (
+          isRecord(scope) &&
+          typeof scope.recipientHandle === 'string' &&
+          handles[scope.recipientHandle]
+        ) {
+          scope.recipientHandle = handles[scope.recipientHandle];
+        }
+        return { ...msg, sender: resolved, scope };
+      });
+      // Build visible state with handles and enriched relay messages
+      const visibleState = { ...rawState, handles, relayMessages: enrichedRelay };
+      const hasRelayMessages = enrichedRelay.length > 0;
       console.log(
-        `  ${activeBot.name}: relayMessages=${hasRelayMessages} count=${hasRelayMessages ? visibleState.relayMessages.length : 0}`,
+        `  ${activeBot.name}: relayMessages=${hasRelayMessages} count=${enrichedRelay.length}`,
       );
       const tools = Array.isArray(visibleState.currentPhase?.tools)
         ? visibleState.currentPhase.tools
