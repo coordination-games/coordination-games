@@ -1,9 +1,11 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatAgentName } from '../lib/format';
 import { useGameStore } from '../store';
 
 const MAX_VISIBLE_MESSAGES = 100;
 const NEAR_BOTTOM_THRESHOLD = 50;
+
+type FeedTab = 'public' | 'private';
 
 function isNearBottom(element: HTMLDivElement) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= NEAR_BOTTOM_THRESHOLD;
@@ -13,6 +15,7 @@ export function ChatFeed() {
   const messages = useGameStore((state) => state.messages);
   const agents = useGameStore((state) => state.gameState.agents);
   const pendingAgentInfo = useGameStore((state) => state.gameState.pendingAgentInfo);
+  const [activeTab, setActiveTab] = useState<FeedTab>('public');
   const feedRef = useRef<HTMLDivElement>(null);
   const scrollSnapshotRef = useRef({
     scrollTop: 0,
@@ -23,10 +26,21 @@ export function ChatFeed() {
   });
   const messageHeightsRef = useRef<Record<string, number>>({});
 
+  const publicMessages = useMemo(
+    () => messages.filter((message) => message.type !== 'private'),
+    [messages],
+  );
+  const privateMessages = useMemo(
+    () => messages.filter((message) => message.type === 'private'),
+    [messages],
+  );
+  const tabMessages = activeTab === 'private' ? privateMessages : publicMessages;
   const visibleMessages = useMemo(
     () =>
-      messages.length > MAX_VISIBLE_MESSAGES ? messages.slice(-MAX_VISIBLE_MESSAGES) : messages,
-    [messages],
+      tabMessages.length > MAX_VISIBLE_MESSAGES
+        ? tabMessages.slice(-MAX_VISIBLE_MESSAGES)
+        : tabMessages,
+    [tabMessages],
   );
   const visibleMessageIds = useMemo(
     () => visibleMessages.map((message) => message.id),
@@ -102,10 +116,14 @@ export function ChatFeed() {
   }
 
   const context = { agents, pendingAgentInfo };
+  const tabs: Array<{ id: FeedTab; label: string; count: number }> = [
+    { id: 'public', label: 'Public', count: publicMessages.length },
+    { id: 'private', label: 'Private', count: privateMessages.length },
+  ];
 
   return (
     <section className="border border-[var(--color-line)] rounded-[var(--radius-xl)] overflow-hidden bg-gradient-to-b from-[rgba(12,24,36,0.92)] to-[rgba(8,16,24,0.86)] shadow-[var(--shadow)] backdrop-blur-[16px] min-h-0 flex flex-col h-full">
-      <div className="flex justify-between items-start gap-5 p-6 px-7 border-b border-[var(--color-line)] bg-gradient-to-b from-[rgba(24,40,56,0.86)] to-[rgba(10,18,28,0.48)] shrink-0">
+      <div className="flex flex-col gap-5 p-6 px-7 border-b border-[var(--color-line)] bg-gradient-to-b from-[rgba(24,40,56,0.86)] to-[rgba(10,18,28,0.48)] shrink-0 sm:flex-row sm:justify-between sm:items-start">
         <div>
           <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--color-text-soft)] pl-1">
             Logged Dialogue
@@ -113,6 +131,25 @@ export function ChatFeed() {
           <h2 className="mt-1 font-serif text-xl font-semibold text-[var(--color-text)]">
             Negotiation Wire
           </h2>
+        </div>
+        <div className="inline-flex rounded-full border border-[rgba(233,220,190,0.14)] bg-[rgba(8,16,24,0.62)] p-1">
+          {tabs.map((tab) => {
+            const selected = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`rounded-full px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors ${
+                  selected
+                    ? 'bg-[rgba(221,180,105,0.22)] text-[var(--color-text)]'
+                    : 'text-[var(--color-text-soft)] hover:text-[var(--color-text)]'
+                }`}
+              >
+                {tab.label} <span className="opacity-70">{tab.count}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -123,7 +160,7 @@ export function ChatFeed() {
       >
         {visibleMessages.length === 0 ? (
           <div className="p-4 border border-dashed border-[rgba(233,220,190,0.12)] rounded-[18px] text-center text-[13px] leading-[1.5] text-[var(--color-text-muted)] bg-[rgba(10,20,30,0.36)]">
-            No messages yet.
+            No {activeTab} messages yet.
           </div>
         ) : (
           visibleMessages.map((msg) => {

@@ -59,12 +59,16 @@ import '@coordination-games/game-tragedy-of-the-commons';
 // accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO
 // can dispatch by relay type without spelling the literal string.
 import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
+// Side-effect import: registers the reasoning relay schema so Inspector/admin
+// diagnostics can surface explicit `share_reasoning` artifacts.
+import '@coordination-games/plugin-reasoning';
 
 // ---------------------------------------------------------------------------
 // WS tags
 // ---------------------------------------------------------------------------
 
 const TAG_SPECTATOR = 'spectator';
+const OBSERVATORY_DM_SPECTATOR_GAMES = new Set(['tragedy-of-the-commons']);
 // Player connections are tagged with their playerId string directly.
 
 // ---------------------------------------------------------------------------
@@ -379,10 +383,11 @@ export class GameRoomDO extends DurableObject<Env> {
   private async handleInspect(): Promise<Response> {
     await this.ensureLoaded();
     const mux = this.getAlarmMux();
-    const [alarmQueue, alarmSlot, snapshotCount] = await Promise.all([
+    const [alarmQueue, alarmSlot, snapshotCount, relayMessages] = await Promise.all([
       this.ctx.storage.get<AlarmEntry[]>(StorageAlarmMux.KEY).then((q) => q ?? []),
       this.ctx.storage.getAlarm(),
       this.ctx.storage.get<number>('snapshotCount'),
+      this.getRelayClient().visibleTo({ kind: 'admin' }),
     ]);
     const earliest = await mux.earliestWhen();
     const now = Date.now();
@@ -402,6 +407,7 @@ export class GameRoomDO extends DurableObject<Env> {
       },
       websockets: wsCount,
       gameState: this._state,
+      relayMessages,
       isOver: this._plugin && this._state !== null ? this._plugin.isOver(this._state) : null,
       pluginProgress:
         this._plugin && this._state !== null ? this._plugin.getProgressCounter(this._state) : null,
@@ -941,10 +947,15 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     if (relayObj.type === CHAT_RELAY_TYPE) {
-      const scopeError = validateChatScope(
-        relayObj.scope as string | undefined,
-        this._plugin?.chatScopes,
-      );
+      // Extract scope string from either string or object format
+      const rawScope = relayObj.scope;
+      const scopeString =
+        typeof rawScope === 'string'
+          ? rawScope
+          : typeof rawScope === 'object' && rawScope !== null && 'recipientHandle' in rawScope
+            ? ((rawScope as Record<string, unknown>).recipientHandle as string)
+            : undefined;
+      const scopeError = validateChatScope(scopeString, this._plugin?.chatScopes);
       if (scopeError) {
         return Response.json(
           { error: { code: 'INVALID_CHAT_SCOPE', message: scopeError } },
@@ -954,11 +965,15 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     try {
-      const scope = resolveWireScope(
-        relayObj.scope as string | undefined,
-        playerId,
-        this._meta.teamMap,
-      );
+      // Extract scope string from either string or object format
+      const rawScope2 = relayObj.scope;
+      const scopeString2 =
+        typeof rawScope2 === 'string'
+          ? rawScope2
+          : typeof rawScope2 === 'object' && rawScope2 !== null && 'recipientHandle' in rawScope2
+            ? ((rawScope2 as Record<string, unknown>).recipientHandle as string)
+            : undefined;
+      const scope = resolveWireScope(scopeString2, playerId, this._meta.teamMap);
       const partial = {
         type: relayObj.type as string,
         data: relayObj.data ?? null,
@@ -1032,8 +1047,10 @@ export class GameRoomDO extends DurableObject<Env> {
     }
     // Phase 7.1 — when chat is publicly visible (`'all'` scope) also bump
     // every spectator WS so the unified payload gains the new envelope.
-    // Team/DM chat stays hidden from spectators per `isVisible`.
-    if (scope.kind === 'all') {
+    // Tragedy uses the spectator route as a privileged observatory surface in
+    // the local demo, so it also receives DM relays there to match the old
+    // Agent-Games observatory/admin behavior.
+    if (scope.kind === 'all' || OBSERVATORY_DM_SPECTATOR_GAMES.has(this._meta.gameType)) {
       await this.broadcastSpectatorPayload();
     }
   }
@@ -1109,6 +1126,14 @@ export class GameRoomDO extends DurableObject<Env> {
           kind: 'deadline',
           payload: { action: result.deadline.action, deadlineMs },
         });
+      }
+    }
+
+    // Publish any system relay messages from the game plugin
+    if (result.relayMessages && result.relayMessages.length > 0) {
+      const relayClient = this.getRelayClient();
+      for (const envelope of result.relayMessages) {
+        await relayClient.publish(envelope);
       }
     }
 
@@ -1418,6 +1443,11 @@ export class GameRoomDO extends DurableObject<Env> {
     const viewer: SpectatorViewer = { kind: 'player', playerId };
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
+    // Inject relay messages into player view so agents can see chat history
+    const playerRelay = await relayClient.visibleTo(viewer);
+    if (typeof visible === 'object' && visible !== null && !Array.isArray(visible)) {
+      (visible as Record<string, unknown>).relayMessages = playerRelay;
+    }
     // Today every game has one game phase. When GamePhase[] lands this
     // becomes the current GamePhase's {id, name, tools}.
     const currentPhase = {
@@ -1495,6 +1525,10 @@ export class GameRoomDO extends DurableObject<Env> {
     const state = idx !== null ? this._spectatorSnapshots[idx] : null;
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
+    const relayViewer: SpectatorViewer = OBSERVATORY_DM_SPECTATOR_GAMES.has(this._meta.gameType)
+      ? { kind: 'admin' }
+      : viewer;
+
     return buildSpectatorPayload({
       gameId: this._meta.gameId,
       gameType: this._meta.gameType,
@@ -1502,7 +1536,7 @@ export class GameRoomDO extends DurableObject<Env> {
       finished: this._meta.finished,
       publicSnapshotIndex: idx,
       state: state ?? null,
-      viewer,
+      viewer: relayViewer,
       relay: relayClient,
       relayTip,
       sinceIdx,

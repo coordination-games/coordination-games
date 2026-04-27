@@ -135,6 +135,7 @@ export interface InspectGameDiagnostics {
   };
   websockets: number;
   gameState: unknown;
+  relayMessages?: unknown[];
   isOver: boolean | null;
   pluginProgress: number | null;
 }
@@ -155,10 +156,10 @@ export interface InspectResponse {
 
 export async function fetchInspect(
   sessionId: string,
-  adminToken: string,
+  inspectorKey: string,
 ): Promise<InspectResponse> {
   return requestWithHeaders<InspectResponse>(
     `/admin/session/${encodeURIComponent(sessionId)}/inspect`,
-    { 'X-Admin-Token': adminToken },
+    { 'X-Admin-Token': inspectorKey },
   );
 }

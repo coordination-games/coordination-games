@@ -1,4 +1,19 @@
-import type { AgentInfo, ToolPlugin } from '@coordination-games/engine';
+import {
+  type AgentInfo,
+  registerPluginRelayTypes,
+  type ToolPlugin,
+} from '@coordination-games/engine';
+import { z } from 'zod';
+
+export const REASONING_RELAY_TYPE = 'reasoning';
+
+const ReasoningMessageSchema = z
+  .object({
+    body: z.string(),
+    stage: z.string().optional(),
+    tags: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough();
 
 export interface RelayMessage {
   type: string;
@@ -40,7 +55,7 @@ function isRelayMessage(value: unknown): value is RelayMessage {
 
 export function formatReasoningMessage(message: string, scope = 'all', stage?: string) {
   return {
-    type: 'reasoning',
+    type: REASONING_RELAY_TYPE,
     data: {
       body: message,
       ...(stage ? { stage } : {}),
@@ -52,7 +67,7 @@ export function formatReasoningMessage(message: string, scope = 'all', stage?: s
 
 export function extractReasoningEntries(relayMessages: RelayMessage[]): ReasoningEntry[] {
   return relayMessages
-    .filter((msg) => msg.type === 'reasoning')
+    .filter((msg) => msg.type === REASONING_RELAY_TYPE)
     .map((msg) => {
       const data = isRecord(msg.data) ? msg.data : {};
       const tags = isRecord(data.tags) ? data.tags : {};
@@ -77,6 +92,7 @@ export const ReasoningPlugin: ToolPlugin = {
   version: '0.1.0',
   modes: [{ name: 'reasoning', consumes: [], provides: ['reasoning'] }],
   purity: 'pure',
+  relayTypes: { [REASONING_RELAY_TYPE]: ReasoningMessageSchema },
   agentEnvelopeKeys: { reasoning: 'reasoning' },
   tools: [
     {
@@ -127,3 +143,5 @@ export const ReasoningPlugin: ToolPlugin = {
     return { error: `Unknown tool: ${tool}` };
   },
 };
+
+registerPluginRelayTypes(ReasoningPlugin);

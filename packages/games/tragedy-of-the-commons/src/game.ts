@@ -67,6 +67,72 @@ function roundTimeoutDeadline(turnTimerSeconds: number): GameDeadline<TragedyAct
   };
 }
 
+function turnTimeoutDeadline(turnTimerSeconds: number): GameDeadline<TragedyAction> {
+  return roundTimeoutDeadline(turnTimerSeconds);
+}
+
+function isPlayersTurn(state: TragedyState, playerId: string): boolean {
+  const currentPlayer = state.players[state.currentPlayerIndex];
+  return currentPlayer?.id === playerId;
+}
+
+function advanceTurn(state: TragedyState): ActionResult<TragedyState, TragedyAction> {
+  const nextIndex = (state.currentPlayerIndex + 1) % state.players.length;
+
+  // If we've gone full circle, resolve the round
+  if (nextIndex === 0) {
+    const completed = resolveRound(state);
+    return advanceOrFinish(completed);
+  }
+
+  // Move to next player's turn
+  const nextPlayer = state.players[nextIndex];
+  const nextState: TragedyState = {
+    ...state,
+    currentPlayerIndex: nextIndex,
+  };
+
+  const relayMessages: RelayEnvelope[] = [];
+
+  // Broadcast turn change to all players
+  const turnChangeRelay: RelayEnvelope = {
+    type: 'messaging',
+    index: -1,
+    sender: 'system',
+    scope: { kind: 'all' },
+    data: {
+      body: `Turn passes to ${nextPlayer?.id ?? 'next player'}.`,
+    },
+    pluginId: 'basic-chat',
+    turn: state.round,
+    timestamp: Date.now(),
+  };
+  relayMessages.push(turnChangeRelay);
+
+  // Targeted DM to the player whose turn it is
+  if (nextPlayer) {
+    const turnDm: RelayEnvelope = {
+      type: 'messaging',
+      index: -1,
+      sender: 'system',
+      scope: { kind: 'dm', recipientHandle: nextPlayer.id },
+      data: {
+        body: `It is now your turn. You are player ${nextPlayer.id}.`,
+      },
+      pluginId: 'basic-chat',
+      turn: state.round,
+      timestamp: Date.now(),
+    };
+    relayMessages.push(turnDm);
+  }
+
+  return {
+    state: nextState,
+    deadline: turnTimeoutDeadline(state.config.turnTimerSeconds),
+    relayMessages,
+  };
+}
+
 function cloneResources(resources: ResourceInventory): ResourceInventory {
   return { ...resources };
 }
@@ -435,10 +501,6 @@ function startRound(state: TragedyState): TragedyState {
   return applyProduction(started);
 }
 
-function allPlayersSubmitted(state: TragedyState): boolean {
-  return state.players.every((player) => state.submittedActions[player.id] !== null);
-}
-
 function resolveTrades(
   players: TragedyPlayerState[],
   submittedByPlayer: Array<{ playerId: string; action: TragedyAction }>,
@@ -575,16 +637,39 @@ function resolveRound(state: TragedyState): TragedyState {
 }
 
 function advanceOrFinish(state: TragedyState): ActionResult<TragedyState, TragedyAction> {
+  const relayMessages: RelayEnvelope[] = [];
+
+  // Halftime mark: when we cross the midpoint
+  const halftime = Math.floor(state.config.maxRounds / 2);
+  if (state.round === halftime && halftime > 0) {
+    const halftimeRelay: RelayEnvelope = {
+      type: 'messaging',
+      index: -1,
+      sender: 'system',
+      scope: { kind: 'all' },
+      data: {
+        body: `Halftime! Round ${state.round} of ${state.config.maxRounds}. Plan your strategy for the second half.`,
+      },
+      pluginId: 'basic-chat',
+      turn: state.round,
+      timestamp: Date.now(),
+    };
+    relayMessages.push(halftimeRelay);
+  }
+
   if (state.round >= state.config.maxRounds) {
     return {
       state: { ...state, phase: 'finished' },
       deadline: { kind: 'none' },
+      ...(relayMessages.length > 0 ? { relayMessages } : {}),
     };
   }
 
+  const started = startRound(state);
   return {
-    state: startRound(state),
+    state: started,
     deadline: roundTimeoutDeadline(state.config.turnTimerSeconds),
+    ...(relayMessages.length > 0 ? { relayMessages } : {}),
   };
 }
 
@@ -611,6 +696,7 @@ export function createInitialState(config: TragedyConfig): TragedyState {
     ecosystems: getBaseEcosystems(),
     activeTrades: [],
     submittedActions: makeSubmittedActions(config.playerIds),
+    currentPlayerIndex: 0,
     winner: null,
     config,
   };
@@ -630,7 +716,10 @@ export function validateAction(
   }
 
   if (playerId === null || state.phase !== 'playing') return false;
-  if (state.submittedActions[playerId] !== null) return false;
+
+  // Check if it's this player's turn
+  if (!isPlayersTurn(state, playerId)) return false;
+
   const player = state.players.find((item) => item.id === playerId);
   if (!player) return false;
 
@@ -668,29 +757,42 @@ export function applyAction(
   action: TragedyAction,
 ): ActionResult<TragedyState, TragedyAction> {
   if (action.type === 'game_start') {
+    const started = startRound(state);
     return {
-      state: startRound(state),
-      deadline: roundTimeoutDeadline(state.config.turnTimerSeconds),
+      state: started,
+      deadline: turnTimeoutDeadline(started.config.turnTimerSeconds),
     };
   }
 
   if (action.type === 'round_timeout') {
-    const completed = resolveRound({
+    // Timeout for current player - auto-pass
+    const currentPlayer = state.players[state.currentPlayerIndex];
+    if (!currentPlayer) {
+      return { state };
+    }
+
+    const timedOutState: TragedyState = {
       ...state,
-      submittedActions: Object.fromEntries(
-        Object.entries(state.submittedActions).map(([id, submitted]) => [
-          id,
-          submitted ?? { type: 'pass' },
-        ]),
-      ),
-    });
-    return advanceOrFinish(completed);
+      submittedActions: {
+        ...state.submittedActions,
+        [currentPlayer.id]: { type: 'pass' },
+      },
+    };
+
+    return advanceTurn(timedOutState);
   }
 
   if (!playerId) {
     return { state };
   }
 
+  // Validate it's this player's turn
+  const currentPlayer = state.players[state.currentPlayerIndex];
+  if (!currentPlayer || currentPlayer.id !== playerId) {
+    return { state };
+  }
+
+  // Record the action and advance to next player
   const nextState: TragedyState = {
     ...state,
     submittedActions: {
@@ -699,12 +801,7 @@ export function applyAction(
     },
   };
 
-  if (!allPlayersSubmitted(nextState)) {
-    return { state: nextState };
-  }
-
-  const completed = resolveRound(nextState);
-  return advanceOrFinish(completed);
+  return advanceTurn(nextState);
 }
 
 export interface TragedyPlayerView {
@@ -718,6 +815,8 @@ export interface TragedyPlayerView {
   ecosystems: Array<TragedyEcosystem & { status: EcosystemStatus }>;
   activeTrades: TragedyTradeOffer[];
   submitted: boolean;
+  isYourTurn: boolean;
+  currentPlayer: { id: string; handle: string };
 }
 
 export interface TragedySpectatorView {
@@ -756,6 +855,11 @@ export function getPlayerView(state: TragedyState, playerId: string): TragedyPla
     })),
     activeTrades: state.activeTrades.map(cloneTradeOffer),
     submitted: state.submittedActions[playerId] !== null,
+    isYourTurn: isPlayersTurn(state, playerId),
+    currentPlayer: {
+      id: state.players[state.currentPlayerIndex]?.id ?? '',
+      handle: state.players[state.currentPlayerIndex]?.id ?? 'unknown',
+    },
   };
 }
 

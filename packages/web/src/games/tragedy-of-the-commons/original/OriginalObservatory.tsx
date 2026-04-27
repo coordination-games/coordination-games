@@ -403,19 +403,32 @@ function relayToMessage(
   fallbackPhase: string,
 ): ChatMessage | null {
   if (!isRecord(relay)) return null;
+  if (text(relay.type) !== 'messaging') return null;
   const data = isRecord(relay.data) ? relay.data : {};
   const nestedMessage = isRecord(data.message) ? data.message : {};
-  const content = text(nestedMessage.content) || text(data.content) || text(data.text);
+  const content =
+    text(nestedMessage.content) || text(data.body) || text(data.content) || text(data.text);
   if (!content) return null;
   const scope = isRecord(relay.scope) ? relay.scope : {};
-  const kind = text(scope.kind, 'all');
+  const kind = isRecord(relay.scope) ? text(scope.kind, 'all') : text(relay.scope, 'all');
   const recipient = text(scope.recipientHandle) || text(nestedMessage.recipient);
+  const sender = text(nestedMessage.sender, text(data.sender, text(relay.sender, 'table')));
+  const withoutDmPrefix = recipient
+    ? content.replace(
+        new RegExp(`^DM to ${recipient.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*`),
+        '',
+      )
+    : content;
+  const cleanContent = withoutDmPrefix.replace(
+    new RegExp(`^${sender.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*`),
+    '',
+  );
   return {
     id: `relay-${numberValue(relay.index, Date.now())}`,
-    sender: text(nestedMessage.sender, text(data.sender, text(relay.sender, 'table'))),
+    sender,
     ...(recipient ? { recipient } : {}),
-    content,
-    type: kind === 'dm' ? 'private' : text(relay.type).includes('diary') ? 'diary' : 'public',
+    content: cleanContent,
+    type: kind === 'dm' ? 'private' : 'public',
     round: numberValue(relay.turn, fallbackRound),
     phase: fallbackPhase,
     timestamp: numberValue(relay.timestamp, Date.now()),

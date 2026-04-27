@@ -117,6 +117,7 @@ export interface TragedyState {
   ecosystems: TragedyEcosystem[];
   activeTrades: TragedyTradeOffer[];
   submittedActions: Record<string, TragedyAction | null>;
+  currentPlayerIndex: number;
   winner: string | null;
   config: TragedyConfig;
 }

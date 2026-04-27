@@ -117,6 +117,7 @@ export type GameDeadline<TAction> =
 export interface ActionResult<TState, TAction> {
   state: TState;
   deadline?: GameDeadline<TAction>;
+  relayMessages?: RelayEnvelope[];
 }
 
 /**

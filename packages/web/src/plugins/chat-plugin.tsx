@@ -1,12 +1,12 @@
 /**
  * ChatSlotPlugin — frontend half of basic-chat (Phase 5.1).
  *
- * Renders the chat panel into the `lobby:panel` and `game:panel` slots.
+ * Renders the chat panel into the `lobby:panel` slot.
  * Filters the host's `relayMessages` by `CHAT_RELAY_TYPE` (imported from
  * the chat plugin package — no magic string lives in this file) and hands
  * the result to the existing presentational `ChatPanel` component.
  *
- * The shell (LobbyPage / GamePage) just renders `<SlotHost name="..." />`
+ * The shell (LobbyPage) renders `<SlotHost name="..." />`
  * with the relay payload it already had to extract for state display. If
  * basic-chat is removed from the bundle, this plugin's import breaks and
  * the chat slot disappears — the page renders without it (the tests for
@@ -58,6 +58,5 @@ export const ChatSlotPlugin: WebToolPlugin = {
   id: 'basic-chat',
   slots: {
     'lobby:panel': ChatSlotPanel,
-    'game:panel': ChatSlotPanel,
   },
 };

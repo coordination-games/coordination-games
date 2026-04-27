@@ -16,6 +16,7 @@
     "@coordination-games/game-oathbreaker": "*",
     "@coordination-games/game-tragedy-of-the-commons": "*",
     "@coordination-games/plugin-chat": "*",
+    "@coordination-games/plugin-reasoning": "*",
     "viem": "^2.0.0",
     "zod": "^4.3.6"
   },
