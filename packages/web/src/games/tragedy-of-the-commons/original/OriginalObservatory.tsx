@@ -22,6 +22,9 @@ import {
   type GameState,
   type HexTile,
   initialGameState,
+  type TrustCard,
+  type TrustEvidenceRef,
+  type TrustSignal,
   useGameStore,
   type VisibleBehaviorTag,
 } from './store';
@@ -152,6 +155,87 @@ function resourceType(value: unknown, fallback: ResourceType = 'grain'): Resourc
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function parseTrustEvidenceRef(value: unknown): TrustEvidenceRef | null {
+  if (!isRecord(value)) return null;
+  const kind = text(value.kind);
+  const id = text(value.id);
+  const visibility = text(value.visibility);
+  if (!kind || !id || (visibility !== 'public' && visibility !== 'viewer-visible')) return null;
+  const ref: TrustEvidenceRef = { kind, id, visibility };
+  if (typeof value.round === 'number' && Number.isFinite(value.round)) ref.round = value.round;
+  if (typeof value.relayIndex === 'number' && Number.isFinite(value.relayIndex)) {
+    ref.relayIndex = value.relayIndex;
+  }
+  const summary = text(value.summary);
+  if (summary) ref.summary = summary;
+  return ref;
+}
+
+function parseTrustSignal(value: unknown): TrustSignal | null {
+  if (!isRecord(value)) return null;
+  const label = text(value.label);
+  const stance = text(value.stance);
+  const summary = text(value.summary);
+  if (!label || !summary) return null;
+  if (
+    stance !== 'positive' &&
+    stance !== 'negative' &&
+    stance !== 'informational' &&
+    stance !== 'unknown'
+  ) {
+    return null;
+  }
+  const refs = Array.isArray(value.evidenceRefs)
+    ? value.evidenceRefs
+        .map(parseTrustEvidenceRef)
+        .filter((ref): ref is TrustEvidenceRef => Boolean(ref))
+    : [];
+  const signal: TrustSignal = { label, stance, summary };
+  if (typeof value.confidence === 'number' && Number.isFinite(value.confidence)) {
+    signal.confidence = value.confidence;
+  }
+  if (refs.length > 0) signal.evidenceRefs = refs;
+  return signal;
+}
+
+function parseTrustCard(value: unknown): TrustCard | null {
+  if (!isRecord(value)) return null;
+  if (value.schemaVersion !== 'trust-card/v1') return null;
+  const agentId = text(value.agentId);
+  const subjectId = text(value.subjectId, agentId);
+  const headline = text(value.headline);
+  const summary = text(value.summary);
+  if (!agentId || !subjectId || !headline || !summary) return null;
+  const signals = Array.isArray(value.signals)
+    ? value.signals.map(parseTrustSignal).filter((signal): signal is TrustSignal => Boolean(signal))
+    : [];
+  const evidenceRefs = Array.isArray(value.evidenceRefs)
+    ? value.evidenceRefs
+        .map(parseTrustEvidenceRef)
+        .filter((ref): ref is TrustEvidenceRef => Boolean(ref))
+    : [];
+  const card: TrustCard = {
+    schemaVersion: 'trust-card/v1',
+    agentId,
+    subjectId,
+    headline,
+    summary,
+    signals,
+    caveats: stringArray(value.caveats),
+    evidenceRefs,
+  };
+  if (typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)) {
+    card.updatedAt = value.updatedAt;
+  }
+  return card;
+}
+
+function parseTrustCards(value: unknown): TrustCard[] {
+  return Array.isArray(value)
+    ? value.map(parseTrustCard).filter((card): card is TrustCard => Boolean(card))
     : [];
 }
 
@@ -665,6 +749,7 @@ function buildOriginalState(
       commitments,
       attestations,
       behaviorTags: buildBehaviorTags(players, ecosystems, round),
+      trustCards: parseTrustCards(state.trustCards),
       trustMatrix: buildTrustMatrix(players),
       winnerId: text(state.winner) || null,
       agentIdentities: buildIdentities(players, handles, gameId),

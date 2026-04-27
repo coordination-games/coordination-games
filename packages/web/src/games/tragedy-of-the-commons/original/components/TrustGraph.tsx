@@ -9,7 +9,7 @@ import {
   SPECTRUM_SIZE,
   type TypologyResult,
 } from '../lib/trustTypology';
-import { useGameStore, type VisibleBehaviorTag } from '../store';
+import { type TrustCard, useGameStore, type VisibleBehaviorTag } from '../store';
 
 interface TrailEntry {
   round: number;
@@ -322,6 +322,7 @@ function FocusView({
   onBack,
   recentCommitmentSummary,
   recentTags,
+  trustCard,
 }: {
   agentId: string;
   currentPosition: TypologyResult;
@@ -330,6 +331,7 @@ function FocusView({
   onBack: () => void;
   recentCommitmentSummary: string[];
   recentTags: string[];
+  trustCard: TrustCard | null;
 }) {
   const inspectedRow = inspectTile?.row ?? currentPosition.row;
   const inspectedCol = inspectTile?.col ?? currentPosition.col;
@@ -439,6 +441,50 @@ function FocusView({
           </ul>
         </div>
       )}
+
+      {trustCard && (
+        <div className="rounded-[14px] border border-[rgba(221,180,105,0.18)] p-5 bg-[rgba(17,29,41,0.66)]">
+          <div className="font-mono text-[10px] tracking-[0.2em] uppercase text-[var(--color-gold)]">
+            Agentic Trust Card
+          </div>
+          <div className="mt-2 font-serif text-[17px] text-[var(--color-text)]">
+            {trustCard.headline}
+          </div>
+          <p className="mt-2 text-[13px] leading-[1.55] text-[var(--color-text-muted)]">
+            {trustCard.summary}
+          </p>
+          {trustCard.signals.length > 0 && (
+            <ul className="mt-3 space-y-2 text-[12px] leading-[1.45] text-[var(--color-text-muted)]">
+              {trustCard.signals.slice(0, 3).map((signal) => (
+                <li key={`${signal.label}-${signal.summary}`}>
+                  <span className="font-mono text-[9px] tracking-[0.14em] uppercase text-[var(--color-text-soft)]">
+                    {signal.stance}
+                    {typeof signal.confidence === 'number'
+                      ? ` · ${Math.round(signal.confidence * 100)}%`
+                      : ''}
+                  </span>
+                  <div className="mt-0.5 text-[var(--color-text)]">{signal.label}</div>
+                  <div>{signal.summary}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {trustCard.evidenceRefs.length > 0 && (
+            <div className="mt-3 rounded-[12px] border border-[rgba(233,220,190,0.1)] px-3 py-2 text-[11px] leading-[1.45] text-[var(--color-text-soft)]">
+              Evidence refs:{' '}
+              {trustCard.evidenceRefs
+                .slice(0, 2)
+                .map((ref) => ref.summary ?? ref.id)
+                .join(' · ')}
+            </div>
+          )}
+          {trustCard.caveats.length > 0 && (
+            <div className="mt-3 text-[11px] leading-[1.45] text-[var(--color-text-soft)]">
+              {trustCard.caveats[0]}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -450,6 +496,7 @@ export function TrustGraph() {
   const pendingAgentInfo = useGameStore((state) => state.gameState.pendingAgentInfo);
   const commitments = useGameStore((state) => state.gameState.commitments);
   const behaviorTags = useGameStore((state) => state.gameState.behaviorTags);
+  const trustCards = useGameStore((state) => state.gameState.trustCards);
   const round = useGameStore((state) => state.gameState.round);
 
   const nameContext = useMemo(
@@ -502,6 +549,10 @@ export function TrustGraph() {
   }, [displayAgents, agentsMap, trustMatrix, commitments, behaviorTags]);
 
   const activePosition = selectedId ? positions[selectedId] : null;
+  const activeTrustCard = useMemo(
+    () => trustCards.find((card) => card.agentId === selectedId) ?? null,
+    [selectedId, trustCards],
+  );
   const trails = useAgentTrail(
     selectedId,
     round,
@@ -578,6 +629,7 @@ export function TrustGraph() {
                 }}
                 recentCommitmentSummary={recentCommitmentSummary}
                 recentTags={recentTags}
+                trustCard={activeTrustCard}
               />
             ) : (
               <Spectrum

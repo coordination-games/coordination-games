@@ -72,6 +72,35 @@ export interface VisibleBehaviorTag {
   description: string;
 }
 
+export interface TrustEvidenceRef {
+  kind: string;
+  id: string;
+  visibility: 'public' | 'viewer-visible';
+  round?: number;
+  relayIndex?: number;
+  summary?: string;
+}
+
+export interface TrustSignal {
+  label: string;
+  stance: 'positive' | 'negative' | 'informational' | 'unknown';
+  summary: string;
+  confidence?: number;
+  evidenceRefs?: TrustEvidenceRef[];
+}
+
+export interface TrustCard {
+  schemaVersion: 'trust-card/v1';
+  agentId: string;
+  subjectId: string;
+  headline: string;
+  summary: string;
+  signals: TrustSignal[];
+  caveats: string[];
+  evidenceRefs: TrustEvidenceRef[];
+  updatedAt?: number;
+}
+
 export interface CrisisState {
   name?: string;
   type?: string;
@@ -148,6 +177,7 @@ export interface GameState {
   commitments: Commitment[];
   attestations: Attestation[];
   behaviorTags: VisibleBehaviorTag[];
+  trustCards: TrustCard[];
   trustMatrix: { agents: string[]; matrix: number[][] } | null;
   winnerId: string | null;
   agentIdentities: Record<string, AgentIdentity>;
@@ -192,6 +222,7 @@ export const initialGameState: GameState = {
   commitments: [],
   attestations: [],
   behaviorTags: [],
+  trustCards: [],
   trustMatrix: null,
   winnerId: null,
   agentIdentities: {},
