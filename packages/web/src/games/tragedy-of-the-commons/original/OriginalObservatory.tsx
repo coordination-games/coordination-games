@@ -497,6 +497,7 @@ function relayToMessage(
   const kind = isRecord(relay.scope) ? text(scope.kind, 'all') : text(relay.scope, 'all');
   const recipient = text(scope.recipientHandle) || text(nestedMessage.recipient);
   const sender = text(nestedMessage.sender, text(data.sender, text(relay.sender, 'table')));
+  if (sender === 'system') return null;
   const withoutDmPrefix = recipient
     ? content.replace(
         new RegExp(`^DM to ${recipient.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*`),
@@ -672,20 +673,6 @@ function buildOriginalState(
   const messages = payload.relay
     .map((relay) => relayToMessage(relay, round, phase))
     .filter((message): message is ChatMessage => Boolean(message));
-  const syntheticMessages: ChatMessage[] =
-    messages.length > 0
-      ? messages
-      : [
-          {
-            id: `system-${gameId}-${round}`,
-            sender: 'observatory',
-            content: `Lucian spectator stream hydrated the full commons observatory for round ${round}.`,
-            type: 'system',
-            round,
-            phase,
-            timestamp: Date.now(),
-          },
-        ];
   const hexGrid = buildHexGrid(boardTiles);
   const productionWheel =
     hexGrid.length > 0 ? hexGrid.map((tile) => tile.productionNumber) : DEFAULT_PRODUCTION_WHEEL;
@@ -756,7 +743,7 @@ function buildOriginalState(
       attestationReadiness: buildAttestationReadiness(players, round, score),
       participationReadiness: buildParticipationReadiness(players),
     },
-    messages: syntheticMessages,
+    messages,
   };
 }
 
