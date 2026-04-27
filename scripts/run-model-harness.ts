@@ -167,11 +167,11 @@ class OpenAICompatibleProvider implements ModelProvider {
           {
             role: 'system',
             content:
-              'You are an autonomous game-playing agent in a Tragedy of the Commons negotiation game.\n\nReturn ONLY compact JSON with this exact shape:\n{"reasoning":"private decision trace, not chat","publicMessage":"short natural public negotiation message to all players","privateMessage":"short direct message to one other player","dmRecipient":"exact player name/handle you want to DM (optional)","action":{"type":"pass"}}\n\nValid actions with exact schemas:\n- pass: {"type":"pass"}\n- extract_commons: {"type":"extract_commons","ecosystemId":"<id>","level":"low|medium|high"}\n- build_settlement: {"type":"build_settlement","regionId":"<id>"}\n- offer_trade: {"type":"offer_trade","to":"<playerId>","give":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0},"receive":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0}}\n\nRules:\n1. Use ONLY the fields listed above for each action type.\n2. Do not invent extra fields or use wrong types.\n3. Prefer simple legal actions over complex invalid ones.\n4. publicMessage/privateMessage must read like chat between agents, not action justifications.\n5. Do not include provider reasoning in chat messages.\n6. READ the relayMessages in your state carefully. The handles map converts UUIDs to player names. Reference what other players said — respond to proposals, counter-offers, threats, and alliances. Be conversational and strategic.\n7. dmRecipient: use the EXACT player name/handle (e.g. "Alicia Commons 89c33958") if you want to send a private DM. If omitted, no DM is sent.\n8. Coordinate with other players: propose extraction limits, warn about defectors, negotiate trades, form coalitions.',
+              'You are an autonomous game-playing agent in a Tragedy of the Commons negotiation game.\n\nReturn ONLY compact JSON with this exact shape:\n{"reasoning":"private decision trace, not chat","publicMessage":"short natural public negotiation message to all players","privateMessage":"short direct message to one other player","dmRecipient":"exact player name/handle you want to DM (optional)","action":{"type":"pass"}}\n\nValid actions with exact schemas:\n- pass: {"type":"pass"}\n- extract_commons: {"type":"extract_commons","ecosystemId":"<id>","level":"low|medium|high"}\n- build_settlement: {"type":"build_settlement","regionId":"<id>"}\n- offer_trade: {"type":"offer_trade","to":"<playerId>","give":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0},"receive":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0}}\n\nRules:\n1. Use ONLY the fields listed above for each action type.\n2. Do not invent extra fields or use wrong types.\n3. Prefer simple legal actions over complex invalid ones.\n4. publicMessage/privateMessage must read like chat between agents, not action justifications.\n5. Do not include provider reasoning in chat messages.\n6. READ the relayMessages in your state carefully. The handles map converts UUIDs to player names. Reference what other players said — respond to proposals, counter-offers, threats, and alliances. Be conversational and strategic.\n7. If trustCards are present, treat them as compact evidence summaries over viewer-visible game state only. They are not final reputation scores, and they do not reveal private DMs, hidden strategy, or model reasoning. Use their evidence refs and caveats to inform questions, caution, and cooperation strategy.\n8. dmRecipient: use the EXACT player name/handle (e.g. "Alicia Commons 89c33958") if you want to send a private DM. If omitted, no DM is sent.\n9. Coordinate with other players: propose extraction limits, warn about defectors, negotiate trades, form coalitions.',
           },
           {
             role: 'user',
-            content: `Agent: ${input.bot.name}\nRound: ${input.round}\nAvailable tools:\n${jsonPrompt(input.tools)}\nVisible state:\n${jsonPrompt(input.visibleState)}\n\nIMPORTANT: Your visible state contains relayMessages (chat from other players) and a handles map (UUID→name). READ THEM. Respond to what others said. Reference their proposals by name.\n\nChoose one legal action. publicMessage goes to all players. privateMessage + dmRecipient go to one specific player (use their EXACT name from handles/scoreboard). Negotiate over restraint, trades, alliances, warnings, or mutual monitoring. Do not include provider reasoning in chat messages.`,
+            content: `Agent: ${input.bot.name}\nRound: ${input.round}\nAvailable tools:\n${jsonPrompt(input.tools)}\nVisible state:\n${jsonPrompt(input.visibleState)}\n\nIMPORTANT: Your visible state contains relayMessages (chat from other players), a handles map (UUID→name), and may contain trustCards. READ THEM. Respond to what others said. Reference their proposals by name. Use trustCards only as compact, viewer-visible evidence summaries with caveats — not as hidden knowledge or final reputation scores.\n\nChoose one legal action. publicMessage goes to all players. privateMessage + dmRecipient go to one specific player (use their EXACT name from handles/scoreboard). Negotiate over restraint, trades, alliances, warnings, or mutual monitoring. Do not include provider reasoning in chat messages.`,
           },
         ],
       }),
@@ -275,6 +275,26 @@ function chatRelayFor(
       tags: { provider: provider.name, model: MODEL, runId: RUN_ID, source: 'model-harness' },
     },
   };
+}
+
+function resolveDmTarget(
+  bots: HarnessBot[],
+  activeBot: HarnessBot,
+  requestedRecipient: string | undefined,
+): HarnessBot | undefined {
+  const trimmedRecipient = requestedRecipient?.trim();
+  if (trimmedRecipient) {
+    const requestedTarget = bots.find(
+      (bot) =>
+        bot.name === trimmedRecipient ||
+        bot.playerId === trimmedRecipient ||
+        bot.name.includes(trimmedRecipient) ||
+        bot.playerId.includes(trimmedRecipient),
+    );
+    if (requestedTarget && requestedTarget.playerId !== activeBot.playerId) return requestedTarget;
+  }
+
+  return bots.find((bot) => bot.playerId !== activeBot.playerId);
 }
 
 async function callTool(bot: HarnessBot, toolName: string, args: Record<string, unknown>) {
@@ -397,15 +417,11 @@ async function main() {
       // Publish public chat relay
       await callTool(activeBot, 'plugin_relay', { relay: chatRelayFor(decision, provider) });
 
-      // DM routing: match against BOTH name AND playerId
-      if (decision.dmRecipient) {
-        const dmTarget = bots.find(
-          (b) =>
-            b.name === decision.dmRecipient ||
-            b.playerId === decision.dmRecipient ||
-            b.name.includes(decision.dmRecipient ?? '') ||
-            (decision.dmRecipient && b.playerId.includes(decision.dmRecipient)),
-        );
+      // DM routing: match against BOTH name AND playerId. If the model produced
+      // a private message but omitted a recipient, send it to a real peer instead
+      // of silently dropping the private chat path during local harness runs.
+      if (decision.privateMessage.trim()) {
+        const dmTarget = resolveDmTarget(bots, activeBot, decision.dmRecipient);
         if (dmTarget) {
           await callTool(activeBot, 'plugin_relay', {
             relay: chatRelayFor(decision, provider, dmTarget.name, decision.privateMessage),
@@ -414,7 +430,7 @@ async function main() {
             `  ${activeBot.name}: DM to ${dmTarget.name} (playerId=${dmTarget.playerId})`,
           );
         } else {
-          console.log(`  ${activeBot.name}: DM recipient "${decision.dmRecipient}" not found`);
+          console.log(`  ${activeBot.name}: no valid DM recipient found`);
         }
       }
 

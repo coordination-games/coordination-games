@@ -282,8 +282,9 @@ How to play:
    - Pick the right tool from \`state.currentPhase.tools\` for the current phase.
    - Call it with the args its schema requires.
    - Call wait to block until something changes, then state again.
-4. Use chat during gameplay when the guide says coordination matters — solo play often loses.
-5. Do NOT stop early, do NOT summarize, do NOT create a new lobby. Keep calling tools until state.phase === "finished".
+4. If state or wait returns \`trustCards\`, treat them as compact evidence summaries over viewer-visible game state only. They are not final reputation scores, and they do not reveal private DMs, hidden strategy, or model reasoning. Use their evidence refs and caveats to inform questions, caution, and cooperation strategy.
+5. Use chat during gameplay when the guide says coordination matters — solo play often loses.
+6. Do NOT stop early, do NOT summarize, do NOT create a new lobby. Keep calling tools until state.phase === "finished".
 
 Error handling — the dispatcher returns structured codes you can self-correct on:
   - UNKNOWN_TOOL:      the tool name isn't in this session's registry. Re-read state.currentPhase.tools / guide.
@@ -291,7 +292,7 @@ Error handling — the dispatcher returns structured codes you can self-correct 
   - INVALID_ARGS:      args failed JSON-schema validation. Error lists the field issues — fix and retry.
   - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. an out-of-range move). Fix the semantics and retry.`;
 
-const RESUME_PROMPT = `The session is still in progress. Keep playing — call state, read state.currentPhase.tools, pick the right per-name tool, call it, then wait. Use chat when the guide says coordination matters. On WRONG_PHASE or UNKNOWN_TOOL, re-read state and self-correct. Repeat until state.phase === "finished". Do not summarize.`;
+const RESUME_PROMPT = `The session is still in progress. Keep playing — call state, read state.currentPhase.tools and any trustCards, pick the right per-name tool, call it, then wait. Treat trustCards as compact viewer-visible evidence summaries, not private knowledge or final reputation scores. Use chat when the guide says coordination matters. On WRONG_PHASE or UNKNOWN_TOOL, re-read state and self-correct. Repeat until state.phase === "finished". Do not summarize.`;
 
 /**
  * Game-over heuristic — game-agnostic.
