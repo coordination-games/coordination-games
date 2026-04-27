@@ -167,11 +167,11 @@ class OpenAICompatibleProvider implements ModelProvider {
           {
             role: 'system',
             content:
-              'You are an autonomous game-playing agent in a Tragedy of the Commons negotiation game.\n\nReturn ONLY compact JSON with this exact shape:\n{"reasoning":"private decision trace, not chat","publicMessage":"short natural public negotiation message to all players","privateMessage":"short direct message to one other player","dmRecipient":"exact player name/handle you want to DM (optional)","action":{"type":"pass"}}\n\nValid actions with exact schemas:\n- pass: {"type":"pass"}\n- extract_commons: {"type":"extract_commons","ecosystemId":"<id>","level":"low|medium|high"}\n- build_settlement: {"type":"build_settlement","regionId":"<id>"}\n- offer_trade: {"type":"offer_trade","to":"<playerId>","give":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0},"receive":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0}}\n\nRules:\n1. Use ONLY the fields listed above for each action type.\n2. Do not invent extra fields or use wrong types.\n3. Prefer simple legal actions over complex invalid ones.\n4. publicMessage/privateMessage must read like chat between agents, not action justifications.\n5. Do not include provider reasoning in chat messages.\n6. You see messages directed to you in your state. Do NOT acknowledge or respond to every message you see. Write original messages that advance your strategy.\n7. dmRecipient: use the EXACT player name/handle from the scoreboard if you want to send a private DM. If omitted, no DM is sent.',
+              'You are an autonomous game-playing agent in a Tragedy of the Commons negotiation game.\n\nReturn ONLY compact JSON with this exact shape:\n{"reasoning":"private decision trace, not chat","publicMessage":"short natural public negotiation message to all players","privateMessage":"short direct message to one other player","dmRecipient":"exact player name/handle you want to DM (optional)","action":{"type":"pass"}}\n\nValid actions with exact schemas:\n- pass: {"type":"pass"}\n- extract_commons: {"type":"extract_commons","ecosystemId":"<id>","level":"low|medium|high"}\n- build_settlement: {"type":"build_settlement","regionId":"<id>"}\n- offer_trade: {"type":"offer_trade","to":"<playerId>","give":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0},"receive":{"grain":0,"timber":0,"ore":0,"fish":0,"water":0,"energy":0}}\n\nRules:\n1. Use ONLY the fields listed above for each action type.\n2. Do not invent extra fields or use wrong types.\n3. Prefer simple legal actions over complex invalid ones.\n4. publicMessage/privateMessage must read like chat between agents, not action justifications.\n5. Do not include provider reasoning in chat messages.\n6. READ the relayMessages in your state carefully. The handles map converts UUIDs to player names. Reference what other players said — respond to proposals, counter-offers, threats, and alliances. Be conversational and strategic.\n7. dmRecipient: use the EXACT player name/handle (e.g. "Alicia Commons 89c33958") if you want to send a private DM. If omitted, no DM is sent.\n8. Coordinate with other players: propose extraction limits, warn about defectors, negotiate trades, form coalitions.',
           },
           {
             role: 'user',
-            content: `Agent: ${input.bot.name}\nRound: ${input.round}\nAvailable tools:\n${jsonPrompt(input.tools)}\nVisible state:\n${jsonPrompt(input.visibleState)}\nChoose one legal action. publicMessage goes to all players. privateMessage + dmRecipient go to one specific player (use their exact name from the scoreboard). Be proactive and original — do not just acknowledge messages you see. Negotiate over restraint, trades, alliances, warnings, or mutual monitoring. Do not include provider reasoning in chat messages.`,
+            content: `Agent: ${input.bot.name}\nRound: ${input.round}\nAvailable tools:\n${jsonPrompt(input.tools)}\nVisible state:\n${jsonPrompt(input.visibleState)}\n\nIMPORTANT: Your visible state contains relayMessages (chat from other players) and a handles map (UUID→name). READ THEM. Respond to what others said. Reference their proposals by name.\n\nChoose one legal action. publicMessage goes to all players. privateMessage + dmRecipient go to one specific player (use their EXACT name from handles/scoreboard). Negotiate over restraint, trades, alliances, warnings, or mutual monitoring. Do not include provider reasoning in chat messages.`,
           },
         ],
       }),
@@ -357,7 +357,13 @@ async function main() {
 
       // Fetch THIS bot's state (fresh, after previous turn advances)
       const stateEnvelope = await api(SERVER, '/api/player/state', { token: activeBot.token });
-      const visibleState = isRecord(stateEnvelope.state) ? stateEnvelope.state : stateEnvelope;
+      const rawState = isRecord(stateEnvelope.state) ? stateEnvelope.state : stateEnvelope;
+      // Inject handles map so model can resolve UUIDs to human-readable names
+      const handles =
+        isRecord(stateEnvelope.meta) && isRecord(stateEnvelope.meta.handles)
+          ? (stateEnvelope.meta.handles as Record<string, string>)
+          : {};
+      const visibleState = { ...rawState, handles };
       const hasRelayMessages = Array.isArray(visibleState.relayMessages);
       console.log(
         `  ${activeBot.name}: relayMessages=${hasRelayMessages} count=${hasRelayMessages ? visibleState.relayMessages.length : 0}`,
