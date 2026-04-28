@@ -1674,15 +1674,19 @@ export class GameRoomDO extends DurableObject<Env> {
         this.ctx.storage.get<number>('stateVersion'),
       ]);
 
-      // Drop the legacy prevProgressState key from older games.
-      this.ctx.storage.delete('prevProgressState').catch(() => {});
-      // Phase 4.4: drop the legacy single-array 'relay' key. Envelopes
-      // now live under 'relay:<paddedIndex>' + 'relay:tip'. No migration
-      // (per the no-backwards-compat rule for pre-launch).
-      this.ctx.storage.delete('relay').catch(() => {});
-      // Phase 3.2: drop the legacy 'deadline' key from pre-multiplexer games.
-      // Deadlines now live in `alarm:queue` as `{ kind: 'deadline', ... }`.
-      this.ctx.storage.delete('deadline').catch(() => {});
+      // Drop legacy keys from older games. Awaiting these keeps Miniflare/DO
+      // storage calls bound to the current request instead of surfacing opaque
+      // internal errors while agents are polling state.
+      for (const legacyKey of ['prevProgressState', 'relay', 'deadline']) {
+        try {
+          await this.ctx.storage.delete(legacyKey);
+        } catch (error) {
+          console.warn('[GameRoomDO] Failed to drop legacy storage key', {
+            key: legacyKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       if (!meta) {
         this._loaded = true;
