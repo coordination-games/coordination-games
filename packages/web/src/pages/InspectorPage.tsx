@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { InspectError, InspectGameDiagnostics, InspectResponse } from '../api';
 import { fetchInspect } from '../api';
+import { cleanAgentDisplayName } from '../games/tragedy-of-the-commons/original/lib/format';
 
 const INSPECTOR_KEY_STORAGE_KEY = 'coordination-games.inspector-key';
 const LEGACY_KEY_STORAGE_KEY = 'coordination-games.admin-token';
@@ -71,6 +72,19 @@ function readPlayers(state: unknown): InspectorPlayer[] {
   });
 }
 
+function shortId(value: string): string {
+  return value.length > 16 ? `${value.slice(0, 12)}...` : value;
+}
+
+function displayAgentName(playerId: string, handles: Record<string, string>): string {
+  return cleanAgentDisplayName(handles[playerId] ?? shortId(playerId));
+}
+
+function resourceTotal(resources: ResourceInventory | undefined): number {
+  if (!resources) return 0;
+  return Object.values(resources).reduce((total, value) => total + (value ?? 0), 0);
+}
+
 function readSubmittedActions(state: unknown): Record<string, unknown> {
   const submittedActions = toRecord(state).submittedActions;
   return isRecord(submittedActions) ? submittedActions : {};
@@ -115,7 +129,24 @@ function readReasoningEntries(
 function summarizeAction(action: unknown): string {
   if (action === null || action === undefined) return 'waiting';
   if (!isRecord(action)) return String(action);
-  return typeof action.type === 'string' ? action.type : 'submitted';
+  if (action.type === 'offer_trade') return 'offered trade';
+  if (action.type === 'extract_commons') return 'extracted commons';
+  if (action.type === 'build_settlement') return 'built settlement';
+  if (action.type === 'pass') return 'held position';
+  if (action.type === 'round_timeout') return 'timed out';
+  if (action.type === 'game_start') return 'game started';
+  return typeof action.type === 'string' ? action.type.replace(/_/g, ' ') : 'submitted';
+}
+
+function eventTypeLabel(type: string): string {
+  if (type === 'game.session.inspect') return 'Session loaded';
+  if (type === 'game.phase.change') return 'Phase changed';
+  if (type === 'game.round.current') return 'Round update';
+  if (type === 'game.action') return 'Action submitted';
+  if (type === 'commons.ecosystem.health') return 'Commons health update';
+  if (type === 'reasoning') return 'Published reasoning';
+  if (type === 'messaging') return 'Message';
+  return type.replace(/[._]/g, ' ');
 }
 
 function summarizeRelayScope(relay: Record<string, unknown>): string {
@@ -123,7 +154,9 @@ function summarizeRelayScope(relay: Record<string, unknown>): string {
   if (typeof scope === 'string') return scope === 'all' ? 'public' : `dm → ${scope}`;
   const scopeRecord = toRecord(scope);
   const kind = typeof scopeRecord.kind === 'string' ? scopeRecord.kind : 'all';
-  if (kind === 'dm') return `dm → ${String(scopeRecord.recipientHandle ?? 'unknown')}`;
+  if (kind === 'dm') {
+    return `dm → ${cleanAgentDisplayName(String(scopeRecord.recipientHandle ?? 'unknown'))}`;
+  }
   if (kind === 'team') return `team ${String(scopeRecord.teamId ?? '')}`.trim();
   return 'public';
 }
@@ -131,6 +164,7 @@ function summarizeRelayScope(relay: Record<string, unknown>): string {
 function buildEvents(
   inspect: InspectResponse | null,
   diagnostics: InspectGameDiagnostics | null,
+  handles: Record<string, string>,
 ): InspectorEvent[] {
   const state = toRecord(diagnostics?.gameState);
   const events: InspectorEvent[] = [];
@@ -153,7 +187,13 @@ function buildEvents(
       type: 'game.session.inspect',
       category: 'game',
       summary: `${inspect.gameId ?? inspect.sessionId} loaded from Inspector endpoint`,
-      data: inspect,
+      data: {
+        sessionId: inspect.sessionId,
+        gameId: inspect.gameId,
+        lobbyId: inspect.lobby?.lobby_id ?? null,
+        gameType: inspect.gameRow?.game_type ?? inspect.lobby?.game_type ?? null,
+        now: inspect.now,
+      },
     });
   }
 
@@ -185,7 +225,7 @@ function buildEvents(
       timestamp: stateTs,
       type: 'game.action',
       category: 'action',
-      summary: `${playerId}: ${summarizeAction(action)}`,
+      summary: `${displayAgentName(playerId, handles)} ${summarizeAction(action)}`,
       data: { playerId, action },
     });
   }
@@ -196,8 +236,8 @@ function buildEvents(
     events.push({
       id: `ecosystem-${String(ecosystem.id ?? name)}`,
       timestamp: stateTs,
-      type: 'trust.ecosystem.health',
-      category: 'trust',
+      type: 'commons.ecosystem.health',
+      category: 'game',
       summary: `${String(name)} health ${health ?? '—'}`,
       data: ecosystem,
     });
@@ -208,6 +248,7 @@ function buildEvents(
     const relayData = toRecord(relayRecord.data);
     const type = typeof relayRecord.type === 'string' ? relayRecord.type : 'relay.message';
     const sender = typeof relayRecord.sender === 'string' ? relayRecord.sender : 'table';
+    const senderLabel = sender === 'table' ? 'Table' : displayAgentName(sender, handles);
     const scopeSummary = summarizeRelayScope(relayRecord);
     const body =
       typeof relayData.body === 'string'
@@ -223,7 +264,7 @@ function buildEvents(
           : now,
       type,
       category: type.includes('reasoning') ? 'reasoning' : type === 'messaging' ? 'chat' : 'game',
-      summary: `${sender} · ${scopeSummary}: ${body}`.slice(0, 160),
+      summary: `${senderLabel} · ${scopeSummary}: ${body}`.slice(0, 160),
       data: relay,
     });
   }
@@ -261,6 +302,27 @@ function JsonViewer({ value }: { value: unknown }) {
     <pre className="max-h-96 max-w-full overflow-auto rounded-md border border-[#30363d] bg-[#0d1117] p-3 text-[11px] leading-relaxed text-[#c9d1d9]">
       {stringify(value)}
     </pre>
+  );
+}
+
+function JsonSection({
+  title,
+  value,
+  open = false,
+}: {
+  title: string;
+  value: unknown;
+  open?: boolean;
+}) {
+  return (
+    <details className="mb-3 rounded-md border border-[#30363d] bg-[#0d1117]" open={open}>
+      <summary className="cursor-pointer px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-[#8b949e] hover:text-[#c9d1d9]">
+        {title}
+      </summary>
+      <div className="border-t border-[#30363d] p-2">
+        <JsonViewer value={value} />
+      </div>
+    </details>
   );
 }
 
@@ -337,7 +399,10 @@ export default function InspectorPage() {
   const players = useMemo(() => readPlayers(gameState), [gameState]);
   const submittedActions = useMemo(() => readSubmittedActions(gameState), [gameState]);
   const handles = useMemo(() => readHandleMap(diagnostics?.meta), [diagnostics]);
-  const events = useMemo(() => buildEvents(inspect, diagnostics), [inspect, diagnostics]);
+  const events = useMemo(
+    () => buildEvents(inspect, diagnostics, handles),
+    [inspect, diagnostics, handles],
+  );
   const filteredEvents = useMemo(
     () => events.filter((event) => eventMatchesFilter(event, filter)),
     [events, filter],
@@ -346,10 +411,6 @@ export default function InspectorPage() {
   const selectedAgent = selectedAgentId
     ? (players.find((player) => player.id === selectedAgentId) ?? null)
     : null;
-  const selectedAgentReasoning = useMemo(
-    () => (selectedAgent ? readReasoningEntries(diagnostics, selectedAgent.id) : []),
-    [diagnostics, selectedAgent],
-  );
   const allAgentReasoning = useMemo(() => readReasoningEntries(diagnostics, null), [diagnostics]);
 
   const toggleEventExpansion = useCallback((event: InspectorEvent) => {
@@ -377,7 +438,8 @@ export default function InspectorPage() {
             TRAGEDY INSPECTOR
           </h1>
           <p className="mt-1 text-[11px] text-[#8b949e]">
-            Agent traces, event stream, trust/state inspection, replay and Lucian runtime data.
+            Technical diagnostics for one live game: event timeline, published reasoning, raw state,
+            and runtime health.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs text-[#8b949e]">
@@ -416,7 +478,7 @@ export default function InspectorPage() {
           type="button"
           onClick={() => setSelectedEvent(null)}
         >
-          Clear Selection
+          Clear selected event
         </button>
         <button
           className="rounded-md border border-[#30363d] bg-[#21262d] px-3 py-1 text-xs transition hover:border-[#58a6ff] hover:text-[#58a6ff]"
@@ -509,8 +571,8 @@ export default function InspectorPage() {
                 >
                   <div className="font-semibold text-[#c9d1d9]">All agents</div>
                   <div className="mt-1 text-[11px] text-[#8b949e]">
-                    Full table · {players.length} agents · {allAgentReasoning.length} reasoning
-                    traces
+                    Full table · {players.length} agents · {allAgentReasoning.length} published
+                    notes
                   </div>
                 </button>
                 {players.map((player) => (
@@ -528,7 +590,7 @@ export default function InspectorPage() {
                     }`}
                   >
                     <div className="font-semibold text-[#c9d1d9]">
-                      {handles[player.id] ?? player.id}
+                      {displayAgentName(player.id, handles)}
                     </div>
                     <div className="mt-1 text-[11px] text-[#8b949e]">
                       VP {player.vp ?? 0} · Influence {player.influence ?? 0} ·{' '}
@@ -622,15 +684,15 @@ export default function InspectorPage() {
                             {expanded ? '▾' : '▸'} {formatTime(event.timestamp)}
                           </span>
                           <span className="shrink-0 font-semibold text-[#c9d1d9]">
-                            {event.type}
+                            {eventTypeLabel(event.type)}
                           </span>
                           <span className="min-w-0 flex-1 break-words text-[#8b949e]">
                             {event.summary}
                           </span>
                         </button>
                         {expanded && (
-                          <div className="border-t border-[#30363d] px-3 py-2">
-                            <JsonViewer value={event.data} />
+                          <div className="border-t border-[#30363d] px-3 py-2 text-[11px] text-[#8b949e]">
+                            Raw payload is selected in the right rail for inspection.
                           </div>
                         )}
                       </article>
@@ -645,6 +707,130 @@ export default function InspectorPage() {
             <div>
               {selectedAgentId === null ? (
                 <div className="grid gap-4">
+                  <section className="grid gap-3 xl:grid-cols-3">
+                    <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-3">
+                      <div className="mb-3 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
+                        Visible Agents
+                      </div>
+                      <div className="grid gap-2">
+                        {players.length === 0 ? (
+                          <EmptyState>No agent identities registered.</EmptyState>
+                        ) : (
+                          players.slice(0, 6).map((player) => (
+                            <article
+                              key={`identity-${player.id}`}
+                              className="rounded-md border border-[#30363d] bg-[#0d1117] p-3 text-xs"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-semibold text-[#c9d1d9]">
+                                    {displayAgentName(player.id, handles)}
+                                  </div>
+                                  <div className="mt-1 font-mono text-[11px] text-[#8b949e]">
+                                    ID: {shortId(player.id)}
+                                  </div>
+                                </div>
+                                <span className="rounded-full border border-[#30363d] bg-[#21262d] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[#58a6ff]">
+                                  visible
+                                </span>
+                              </div>
+                              <div className="mt-2 text-[11px] text-[#8b949e]">
+                                Human label first; raw ID stays available for debugging.
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-3">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
+                          Visible Standing
+                        </div>
+                        <span className="font-mono text-[10px] text-[#8b949e]">
+                          {players.length} visible
+                        </span>
+                      </div>
+                      <div className="grid gap-2">
+                        {players.length === 0 ? (
+                          <EmptyState>No attestation data available.</EmptyState>
+                        ) : (
+                          players
+                            .slice()
+                            .sort((left, right) => (right.vp ?? 0) - (left.vp ?? 0))
+                            .slice(0, 6)
+                            .map((player, index) => (
+                              <article
+                                key={`attestation-${player.id}`}
+                                className="rounded-md border border-[#30363d] bg-[#0d1117] p-3 text-xs"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="break-all font-semibold text-[#c9d1d9]">
+                                    {displayAgentName(player.id, handles)}
+                                  </span>
+                                  <span className="rounded-full border border-[#d29922] bg-[rgba(210,153,34,0.12)] px-2 py-0.5 text-[10px] text-[#d29922]">
+                                    #{index + 1}
+                                  </span>
+                                </div>
+                                <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[#8b949e]">
+                                  <span>
+                                    Score{' '}
+                                    <strong className="text-[#c9d1d9]">{player.vp ?? 0}</strong>
+                                  </span>
+                                  <span>
+                                    Influence{' '}
+                                    <strong className="text-[#c9d1d9]">
+                                      {player.influence ?? 0}
+                                    </strong>
+                                  </span>
+                                  <span>{summarizeAction(submittedActions[player.id])}</span>
+                                </div>
+                              </article>
+                            ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-3">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
+                          Board Presence
+                        </div>
+                        <span className="font-mono text-[10px] text-[#8b949e]">
+                          {players.length}/{players.length} active
+                        </span>
+                      </div>
+                      <div className="grid gap-2">
+                        {players.length === 0 ? (
+                          <EmptyState>No participation data available.</EmptyState>
+                        ) : (
+                          players.slice(0, 6).map((player) => (
+                            <article
+                              key={`participation-${player.id}`}
+                              className="rounded-md border border-[#30363d] bg-[#0d1117] p-3 text-xs"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="truncate font-semibold text-[#c9d1d9]">
+                                    {displayAgentName(player.id, handles)}
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-[#8b949e]">
+                                    Resources {resourceTotal(player.resources)} · Regions{' '}
+                                    {(player.regionsControlled ?? []).length}
+                                  </div>
+                                </div>
+                                <span className="rounded-full bg-[rgba(63,185,80,0.16)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[#7ee787]">
+                                  active
+                                </span>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </section>
+
                   <div>
                     <h2 className="mb-3 text-lg font-semibold text-[#c9d1d9]">All agents</h2>
                     <div className="grid min-w-0 gap-2 md:grid-cols-2">
@@ -656,11 +842,11 @@ export default function InspectorPage() {
                           className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-left transition hover:border-[#58a6ff]"
                         >
                           <div className="font-semibold text-[#c9d1d9]">
-                            {handles[player.id] ?? player.id}
+                            {displayAgentName(player.id, handles)}
                           </div>
                           <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[#8b949e]">
                             <span>
-                              VP <strong className="text-[#c9d1d9]">{player.vp ?? 0}</strong>
+                              Score <strong className="text-[#c9d1d9]">{player.vp ?? 0}</strong>
                             </span>
                             <span>
                               INF{' '}
@@ -673,39 +859,8 @@ export default function InspectorPage() {
                     </div>
                   </div>
 
-                  <section>
-                    <h3 className="mb-2 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
-                      Reasoning / all model traces
-                    </h3>
-                    {allAgentReasoning.length === 0 ? (
-                      <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-xs text-[#8b949e]">
-                        No reasoning artifacts received yet.
-                      </div>
-                    ) : (
-                      <div className="grid gap-2">
-                        {allAgentReasoning.map((relay) => {
-                          const data = toRecord(relay.data);
-                          const body = typeof data.body === 'string' ? data.body : '—';
-                          const sender =
-                            typeof relay.sender === 'string' ? relay.sender : 'unknown';
-                          const stage = typeof data.stage === 'string' ? data.stage : 'reasoning';
-                          return (
-                            <article
-                              key={`all-${String(relay.index ?? stage)}-${sender}-${body.slice(0, 24)}`}
-                              className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-xs"
-                            >
-                              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.14em] text-[#f778ba]">
-                                <span>{handles[sender] ?? sender}</span>
-                                <span className="text-[#8b949e]">
-                                  {stage} · turn {String(relay.turn ?? '—')}
-                                </span>
-                              </div>
-                              <p className="break-words text-[#c9d1d9]">{body}</p>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <section className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-xs text-[#8b949e]">
+                    Full reasoning is available in Events → Reasoning.
                   </section>
                 </div>
               ) : !selectedAgent ? (
@@ -714,7 +869,7 @@ export default function InspectorPage() {
                 <div className="grid gap-4">
                   <div>
                     <h2 className="mb-3 text-lg font-semibold text-[#c9d1d9]">
-                      {handles[selectedAgent.id] ?? selectedAgent.id}
+                      {displayAgentName(selectedAgent.id, handles)}
                     </h2>
                     <div className="grid min-w-0 gap-2 sm:grid-cols-3 lg:grid-cols-6">
                       {Object.entries(selectedAgent.resources ?? {}).map(([name, value]) => (
@@ -738,38 +893,8 @@ export default function InspectorPage() {
                     </p>
                   </div>
 
-                  <section>
-                    <h3 className="mb-2 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
-                      Reasoning / model trace
-                    </h3>
-                    {selectedAgentReasoning.length === 0 ? (
-                      <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-xs text-[#8b949e]">
-                        No reasoning artifacts from this agent yet. When the runtime receives
-                        `share_reasoning` relays or model trace summaries, they appear here.
-                      </div>
-                    ) : (
-                      <div className="grid gap-2">
-                        {selectedAgentReasoning.map((relay) => {
-                          const data = toRecord(relay.data);
-                          const body = typeof data.body === 'string' ? data.body : '—';
-                          const stage = typeof data.stage === 'string' ? data.stage : 'reasoning';
-                          return (
-                            <article
-                              key={`${String(relay.index ?? stage)}-${body.slice(0, 24)}`}
-                              className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-xs"
-                            >
-                              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.14em] text-[#58a6ff]">
-                                <span>{stage}</span>
-                                <span className="text-[#8b949e]">
-                                  turn {String(relay.turn ?? '—')}
-                                </span>
-                              </div>
-                              <p className="break-words text-[#c9d1d9]">{body}</p>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <section className="rounded-lg border border-[#30363d] bg-[#161b22] p-3 text-xs text-[#8b949e]">
+                    Full reasoning is available in Events → Reasoning.
                   </section>
 
                   <section>
@@ -795,33 +920,21 @@ export default function InspectorPage() {
         </section>
 
         <aside className="min-w-0 overflow-y-auto border-l border-[#30363d] bg-[#161b22] p-3">
-          <h2 className="mb-2 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
-            State Inspector
-          </h2>
-          <JsonViewer value={gameState ?? null} />
+          <JsonSection title="State inspector" value={gameState ?? null} open />
 
-          <h2 className="mb-2 mt-4 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
-            Trust Matrix
-          </h2>
-          {ecosystems.length === 0 ? (
-            <EmptyState>No trust data</EmptyState>
-          ) : (
-            <JsonViewer value={ecosystems} />
-          )}
+          <JsonSection
+            title="Ecosystems raw state"
+            value={ecosystems.length === 0 ? { message: 'No ecosystem data' } : ecosystems}
+          />
 
-          <h2 className="mb-2 mt-4 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
-            Selected Event
-          </h2>
-          {selectedEvent ? (
-            <JsonViewer value={selectedEvent} />
-          ) : (
-            <EmptyState>Click an event to inspect</EmptyState>
-          )}
+          <JsonSection
+            title="Selected event"
+            value={selectedEvent ?? { message: 'Click an event to inspect' }}
+            open={Boolean(selectedEvent)}
+          />
 
-          <h2 className="mb-2 mt-4 text-[11px] uppercase tracking-[0.14em] text-[#8b949e]">
-            Runtime Diagnostics
-          </h2>
-          <JsonViewer
+          <JsonSection
+            title="Runtime diagnostics"
             value={{
               meta: diagnostics?.meta ?? null,
               progress: diagnostics?.progress ?? null,
