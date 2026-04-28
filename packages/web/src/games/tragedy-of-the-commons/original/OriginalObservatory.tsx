@@ -1,16 +1,14 @@
 import { type CSSProperties, useEffect, useMemo } from 'react';
-import AttestationStatusCard from './components/AttestationStatusCard';
 import { ChatFeed } from './components/ChatFeed';
 import { CommitmentLedger } from './components/CommitmentLedger';
 import { CrisisBanner } from './components/CrisisBanner';
 import { GameBoard } from './components/GameBoard';
-import IdentityCard from './components/IdentityCard';
-import ParticipationCard from './components/ParticipationCard';
 import { PowerTable } from './components/PowerTable';
 import { TopBar } from './components/TopBar';
 import { TrustGraph } from './components/TrustGraph';
 import { WorldHealthSidebar } from './components/WorldHealthSidebar';
 import { AGENT_COLORS } from './lib/colors';
+import { cleanAgentDisplayName } from './lib/format';
 import {
   type AgentIdentity,
   type AgentParticipationReadiness,
@@ -394,6 +392,7 @@ function buildAgents(
   const regionById = new Map(regions.map((region) => [region.id, region]));
   return Object.fromEntries(
     players.map((player, index) => {
+      const displayName = cleanAgentDisplayName(handles[player.id] ?? `Player ${index + 1}`);
       const locations = player.regionsControlled.flatMap((regionId) => {
         const tile = tileByRegionId.get(regionId);
         if (!tile) return [];
@@ -410,7 +409,7 @@ function buildAgents(
         player.id,
         {
           id: player.id,
-          name: handles[player.id] ?? player.id,
+          name: displayName,
           strategy: regionById.get(player.regionsControlled[0] ?? '')?.name ?? 'commons steward',
           color: AGENT_COLORS[index % AGENT_COLORS.length] ?? AGENT_COLORS[0] ?? '#ddb469',
           resources: player.resources,
@@ -524,6 +523,7 @@ function buildCommitments(
   players: CommonsPlayer[],
   activeTrades: unknown[],
   round: number,
+  handles: Record<string, string>,
 ): Commitment[] {
   const tradeCommitments = activeTrades.flatMap((trade, index) => {
     if (!isRecord(trade)) return [];
@@ -540,18 +540,21 @@ function buildCommitments(
     ];
   });
   if (tradeCommitments.length > 0) return tradeCommitments;
-  return players.slice(0, 6).map((player) => ({
-    id: `commons-memory-${player.id}-${round}`,
-    type: 'public_memory',
-    promisor: player.id,
-    counterparties: players
-      .filter((candidate) => candidate.id !== player.id)
-      .slice(0, 2)
-      .map((candidate) => candidate.id),
-    resolutionStatus: player.influence > 0 ? 'fulfilled' : 'pending',
-    summary: `${player.id} is publicly accountable for stewardship across ${player.regionsControlled.length || 1} region${player.regionsControlled.length === 1 ? '' : 's'}.`,
-    dueByRound: round + 1,
-  }));
+  return players.slice(0, 6).map((player, index) => {
+    const displayName = cleanAgentDisplayName(handles[player.id] ?? `Player ${index + 1}`);
+    return {
+      id: `commons-memory-${player.id}-${round}`,
+      type: 'public_memory',
+      promisor: player.id,
+      counterparties: players
+        .filter((candidate) => candidate.id !== player.id)
+        .slice(0, 2)
+        .map((candidate) => candidate.id),
+      resolutionStatus: player.influence > 0 ? 'fulfilled' : 'pending',
+      summary: `${displayName} is visibly accountable for stewardship across ${player.regionsControlled.length || 1} region${player.regionsControlled.length === 1 ? '' : 's'}.`,
+      dueByRound: round + 1,
+    };
+  });
 }
 
 function buildAttestations(commitments: Commitment[], round: number): Attestation[] {
@@ -581,7 +584,7 @@ function buildIdentities(
       {
         agentId: player.id,
         walletAddress: pseudoWallet(player.id),
-        name: handles[player.id] ?? player.id,
+        name: cleanAgentDisplayName(handles[player.id] ?? `Player ${index + 1}`),
         mcpEndpoint: `games.coop/${gameId}/agents/${player.id}`,
         capabilities: ['trade', 'extract_commons', 'build_settlement', 'attest'],
         registeredAt: Date.now() - index * 1000,
@@ -656,11 +659,13 @@ function buildOriginalState(
     : [];
   if (boardTiles.length === 0 || (players.length === 0 && ecosystems.length === 0)) return null;
 
-  const handles = {
-    ...parseHandles(state.handles),
-    ...parseHandles(payload.meta.handles),
-    ...shellHandles,
-  };
+  const handles = Object.fromEntries(
+    Object.entries({
+      ...parseHandles(state.handles),
+      ...parseHandles(payload.meta.handles),
+      ...shellHandles,
+    }).map(([id, name]) => [id, cleanAgentDisplayName(name)]),
+  );
   const round = numberValue(state.round);
   const phase = text(state.phase, text(payload.meta.finished) === 'true' ? 'finished' : 'playing');
   const score = commonsScore(ecosystems);
@@ -668,7 +673,7 @@ function buildOriginalState(
     boardTiles.flatMap((tile) => (tile.regionId ? [[tile.regionId, tile] as const] : [])),
   );
   const activeTrades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
-  const commitments = buildCommitments(players, activeTrades, round);
+  const commitments = buildCommitments(players, activeTrades, round, handles);
   const attestations = buildAttestations(commitments, round);
   const messages = payload.relay
     .map((relay) => relayToMessage(relay, round, phase))
@@ -728,7 +733,12 @@ function buildOriginalState(
       pendingAgentInfo: Object.fromEntries(
         players.map((player) => [
           player.id,
-          { name: handles[player.id] ?? player.id, strategy: 'commons steward' },
+          {
+            name:
+              cleanAgentDisplayName(handles[player.id] ?? '') ||
+              `Player ${players.findIndex((candidate) => candidate.id === player.id) + 1}`,
+            strategy: 'commons steward',
+          },
         ]),
       ),
       agentOrder: players.map((player) => player.id),
@@ -806,18 +816,6 @@ export function OriginalObservatory({ gameId, source, handles, isLive }: Observa
         </div>
         <div className="col-span-3 max-[1500px]:col-auto h-[580px] max-[1500px]:h-auto max-[1500px]:min-h-[380px]">
           <TrustGraph />
-        </div>
-      </div>
-
-      <div className="mt-8 grid grid-cols-12 gap-8 items-start max-[1500px]:grid-cols-1 pb-12">
-        <div className="col-span-4 max-[1500px]:col-auto">
-          <IdentityCard />
-        </div>
-        <div className="col-span-4 max-[1500px]:col-auto">
-          <AttestationStatusCard />
-        </div>
-        <div className="col-span-4 max-[1500px]:col-auto">
-          <ParticipationCard />
         </div>
       </div>
     </div>
