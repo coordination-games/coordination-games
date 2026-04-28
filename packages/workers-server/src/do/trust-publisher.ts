@@ -105,7 +105,7 @@ export async function publishTrustEvidenceBundle(
     apiKey: input.env.LIGHTHOUSE_API_KEY,
     canonicalJson,
     digest,
-    fetcher: input.fetcher ?? fetch,
+    fetcher: input.fetcher ?? defaultFetcher,
   });
 
   if (!uploaded.ok) {
@@ -125,7 +125,7 @@ export async function publishTrustEvidenceBundle(
 
   const gatewayUrl = `${LIGHTHOUSE_GATEWAY_BASE}/${uploaded.cid}`;
   const gateway = isEnabled(input.env.TRUST_IPFS_VERIFY_GATEWAY)
-    ? await verifyGateway(gatewayUrl, input.fetcher ?? fetch)
+    ? await verifyGateway(gatewayUrl, input.fetcher ?? defaultFetcher)
     : { status: 'pending' as const };
   const status = gateway.status === 'available' ? 'available' : 'uploaded';
   const record = createRecord(
@@ -187,6 +187,8 @@ function createRecord(
 function isEnabled(value: string | undefined): boolean {
   return value === 'true' || value === '1' || value === 'yes';
 }
+
+const defaultFetcher: typeof fetch = (input, init) => fetch(input, init);
 
 async function uploadToLighthouse(input: {
   readonly apiKey: string;
