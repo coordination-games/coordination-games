@@ -10,6 +10,8 @@
     "smoke:spectator": "GAME_SERVER=http://localhost:8787 tsx ../../scripts/smoke-spectator-delay.ts"
   },
   "dependencies": {
+    "@agentic-trust/cg-adapter": "file:../../../agentic-trust/packages/cg-adapter",
+    "@agentic-trust/core": "file:../../../agentic-trust/packages/core",
     "@cloudflare/workers-types": "^4.20250407.0",
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
