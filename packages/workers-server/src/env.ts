@@ -18,4 +18,10 @@ export interface Env {
   // Optional — set via `wrangler secret put ADMIN_TOKEN` to enable
   // GET /api/admin/session/:id/tools. Header: X-Admin-Token: <value>.
   ADMIN_TOKEN?: string;
+  // Optional — set via `wrangler secret put LIGHTHOUSE_API_KEY` and
+  // TRUST_IPFS_PUBLISH_ENABLED=true to publish privacy-safe trust evidence
+  // bundles from the server-side worker/DO pipeline. Never expose this to web.
+  LIGHTHOUSE_API_KEY?: string;
+  TRUST_IPFS_PUBLISH_ENABLED?: string;
+  TRUST_IPFS_VERIFY_GATEWAY?: string;
 }

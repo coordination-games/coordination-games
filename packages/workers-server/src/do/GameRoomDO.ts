@@ -49,7 +49,8 @@ import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlem
 import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
-import { withVisibleTrustCards } from './trust-cards.js';
+import { buildVisibleTrustArtifacts, withVisibleTrustCards } from './trust-cards.js';
+import { publishTrustEvidenceBundle } from './trust-publisher.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
@@ -1160,6 +1161,7 @@ export class GameRoomDO extends DurableObject<Env> {
       const snapshotCtx = { handles: this._meta.handleMap, relayMessages: snapshotRelay };
       const snapshot = this._plugin.buildSpectatorView(this._state, prevState, snapshotCtx);
       this._spectatorSnapshots.push(snapshot);
+      this.ctx.waitUntil(this.publishTrustEvidenceSnapshot(snapshot));
 
       // Update cached summary in D1
       this.writeSummaryToD1();
@@ -1215,6 +1217,36 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.broadcastUpdates();
 
     return { success: true, progressCounter: this._progress.counter };
+  }
+
+  private async publishTrustEvidenceSnapshot(snapshot: unknown): Promise<void> {
+    if (!this._meta) return;
+    const artifacts = buildVisibleTrustArtifacts(snapshot, this._meta, this._progress.counter);
+    if (artifacts.envelopes.length === 0) return;
+    try {
+      const { record } = await publishTrustEvidenceBundle({
+        storage: this.ctx.storage,
+        env: this.env,
+        gameId: this._meta.gameId,
+        gameType: this._meta.gameType,
+        progressCounter: this._progress.counter,
+        envelopes: artifacts.envelopes,
+      });
+      if (record.status === 'failed') {
+        console.warn('[GameRoomDO] Trust evidence publish failed', {
+          gameId: record.gameId,
+          progressCounter: record.progressCounter,
+          publisher: record.publisher,
+          error: record.error,
+        });
+      }
+    } catch (error) {
+      console.warn('[GameRoomDO] Trust evidence publish pipeline error', {
+        gameId: this._meta.gameId,
+        progressCounter: this._progress.counter,
+        error: error instanceof Error ? error.message : 'Unknown trust publish error',
+      });
+    }
   }
 
   /**
