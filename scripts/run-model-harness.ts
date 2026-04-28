@@ -156,6 +156,23 @@ function jsonPrompt(value: unknown): string {
   return JSON.stringify(value, null, 2).slice(0, 12_000);
 }
 
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message;
+  return String(error);
+}
+
+function isMessagingRelay(message: unknown): message is Record<string, unknown> {
+  return isRecord(message) && message.type === 'messaging';
+}
+
+function isSystemRelay(message: Record<string, unknown>): boolean {
+  return message.sender === 'system';
+}
+
+function isDmRelay(message: Record<string, unknown>): boolean {
+  return isRecord(message.scope) && message.scope.kind === 'dm';
+}
+
 function relayFeedStateForModelPrompt(
   visibleState: unknown,
   wakeContext: WakeContext | undefined,
@@ -244,9 +261,8 @@ class ScriptedProvider implements ModelProvider {
 }
 
 class OpenAICompatibleProvider implements ModelProvider {
-  readonly name = 'openai-compatible';
-
   constructor(
+    readonly name: 'openai-compatible' | 'minimax',
     private readonly baseUrl: string,
     private readonly apiKey: string,
     private readonly model: string,
@@ -294,9 +310,18 @@ class OpenAICompatibleProvider implements ModelProvider {
     });
     const bodyText = await response.text();
     if (!response.ok) {
-      throw new Error(`model ${response.status}: ${bodyText.slice(0, 500)}`);
+      throw new Error(
+        `${this.name} ${this.model} HTTP ${response.status} for ${input.bot.name} ${input.mode} round ${input.round}: ${bodyText.slice(0, 500)}`,
+      );
     }
-    const body = JSON.parse(bodyText) as unknown;
+    let body: unknown;
+    try {
+      body = JSON.parse(bodyText) as unknown;
+    } catch (error) {
+      throw new Error(
+        `${this.name} ${this.model} returned invalid JSON for ${input.bot.name} ${input.mode} round ${input.round}: ${formatError(error)}; body=${bodyText.slice(0, 500)}`,
+      );
+    }
     const choice = isRecord(body)
       ? Array.isArray(body.choices)
         ? body.choices[0]
@@ -328,11 +353,11 @@ function createProvider(): ModelProvider {
     const apiKey = process.env.OPENAI_API_KEY ?? process.env.MINIMAX_API_KEY;
     if (!apiKey) {
       throw new Error(
-        'OPENAI_API_KEY or MINIMAX_API_KEY is required for openai-compatible provider',
+        'OPENAI_API_KEY or MINIMAX_API_KEY is required for openai-compatible/minimax provider',
       );
     }
     const baseUrl = process.env.OPENAI_BASE_URL ?? 'https://api.minimax.io/v1';
-    return new OpenAICompatibleProvider(baseUrl, apiKey, MODEL);
+    return new OpenAICompatibleProvider(PROVIDER_NAME, baseUrl, apiKey, MODEL);
   }
   throw new Error(`Unknown PROVIDER=${PROVIDER_NAME}`);
 }
@@ -612,18 +637,31 @@ async function runCommunicationSweeps(
       console.log(
         `  ${bot.name}: communication wake relays=${newWakeRelays.length} reason=${wakeContext.reason} sweep=${sweep + 1}`,
       );
-      const decision = await provider.decide({
-        bot,
-        visibleState: communicationState,
-        tools: context.tools,
-        round,
-        mode: 'communication',
-        wakeContext,
-      });
+      let decision: ModelDecision;
+      try {
+        decision = await provider.decide({
+          bot,
+          visibleState: communicationState,
+          tools: context.tools,
+          round,
+          mode: 'communication',
+          wakeContext,
+        });
+      } catch (error) {
+        throw new Error(
+          `communication decision failed for ${bot.name} round=${round} sweep=${sweep + 1} relayCursor=${previousCursor}->${context.nextRelayCursor}: ${formatError(error)}`,
+        );
+      }
       pendingDecisions.push({ bot, decision, privateReplyTo: wakeContext.privateReplyTo });
     }
     for (const { bot, decision, privateReplyTo } of pendingDecisions) {
-      await publishDecisionMessages(bot, bots, decision, provider, privateReplyTo);
+      try {
+        await publishDecisionMessages(bot, bots, decision, provider, privateReplyTo);
+      } catch (error) {
+        throw new Error(
+          `communication publish failed for ${bot.name} round=${round} sweep=${sweep + 1}: ${formatError(error)}`,
+        );
+      }
     }
     const responses = pendingDecisions.length;
     if (responses === 0) break;
@@ -727,26 +765,39 @@ async function main() {
         `  ${activeBot.name}: relayFeed=${turnFeedRelays.length} totalVisibleRelay=${context.relayMessages.length}`,
       );
       const turnWakeContext = buildWakeContext(activeBot, bots, turnFeedRelays);
-      const decision = await provider.decide({
-        bot: activeBot,
-        visibleState,
-        tools: context.tools,
-        round,
-        mode: 'turn',
-        wakeContext: {
-          reason: 'turn',
-          summary: `${activeBot.name} is taking an action turn with ${turnFeedRelays.length} new relay feed item(s) after its last delivered relay cursor.`,
-          privateReplyTo: turnWakeContext.privateReplyTo,
-          messages: turnFeedRelays,
-        },
-      });
-      await publishDecisionMessages(
-        activeBot,
-        bots,
-        decision,
-        provider,
-        turnWakeContext.privateReplyTo,
-      );
+      let decision: ModelDecision;
+      try {
+        decision = await provider.decide({
+          bot: activeBot,
+          visibleState,
+          tools: context.tools,
+          round,
+          mode: 'turn',
+          wakeContext: {
+            reason: 'turn',
+            summary: `${activeBot.name} is taking an action turn with ${turnFeedRelays.length} new relay feed item(s) after its last delivered relay cursor.`,
+            privateReplyTo: turnWakeContext.privateReplyTo,
+            messages: turnFeedRelays,
+          },
+        });
+      } catch (error) {
+        throw new Error(
+          `turn decision failed for ${activeBot.name} round=${round} relayCursor=${previousCursor}->${context.nextRelayCursor}: ${formatError(error)}`,
+        );
+      }
+      try {
+        await publishDecisionMessages(
+          activeBot,
+          bots,
+          decision,
+          provider,
+          turnWakeContext.privateReplyTo,
+        );
+      } catch (error) {
+        throw new Error(
+          `turn publish failed for ${activeBot.name} round=${round}: ${formatError(error)}`,
+        );
+      }
 
       // Submit the game action (only if it's their turn)
       const isYourTurn = visibleState.isYourTurn === true;
@@ -792,6 +843,8 @@ async function main() {
   const relayMessages = Array.isArray(finalDiagnostics.relayMessages)
     ? finalDiagnostics.relayMessages
     : [];
+  const messagingRelays = relayMessages.filter(isMessagingRelay);
+  const modelChatMessages = messagingRelays.filter((message) => !isSystemRelay(message));
   console.log(
     JSON.stringify(
       {
@@ -803,16 +856,10 @@ async function main() {
         reasoningMessages: relayMessages.filter(
           (message) => isRecord(message) && message.type === 'reasoning',
         ).length,
-        chatMessages: relayMessages.filter(
-          (message) => isRecord(message) && message.type === 'messaging',
-        ).length,
-        dmMessages: relayMessages.filter(
-          (message) =>
-            isRecord(message) &&
-            message.type === 'messaging' &&
-            isRecord(message.scope) &&
-            message.scope.kind === 'dm',
-        ).length,
+        chatMessages: modelChatMessages.length,
+        publicMessages: modelChatMessages.filter((message) => !isDmRelay(message)).length,
+        dmMessages: modelChatMessages.filter(isDmRelay).length,
+        systemMessages: messagingRelays.filter(isSystemRelay).length,
       },
       null,
       2,
@@ -821,6 +868,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
+  console.error(formatError(err));
   process.exit(1);
 });
