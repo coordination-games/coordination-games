@@ -214,7 +214,7 @@ describe('TragedyOfTheCommonsSpectatorView', () => {
     expect(screen.getByText('Power Table')).toBeTruthy();
     expect(screen.getByText('Dialogue')).toBeTruthy();
     expect(screen.getByText('Promises')).toBeTruthy();
-    expect(screen.getByText('Agentic Trust Cards')).toBeTruthy();
+    expect(screen.getByText('Trust Spectrum')).toBeTruthy();
     expect(screen.queryByText('Agent Identities')).toBeNull();
     expect(screen.queryByText('Attestation Status')).toBeNull();
     expect(screen.queryByText('Agent Participation')).toBeNull();
