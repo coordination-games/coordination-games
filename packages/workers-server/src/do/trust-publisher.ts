@@ -87,7 +87,9 @@ export async function publishTrustEvidenceBundle(
 
   await input.storage.put(bundleKey, { bundle, canonicalJson });
 
-  if (!isEnabled(input.env.TRUST_IPFS_PUBLISH_ENABLED) || !input.env.LIGHTHOUSE_API_KEY) {
+  const lighthouseApiKey = normalizeSecret(input.env.LIGHTHOUSE_API_KEY);
+
+  if (!isEnabled(input.env.TRUST_IPFS_PUBLISH_ENABLED) || !lighthouseApiKey) {
     const record = createRecord(
       input,
       createdAt,
@@ -102,7 +104,7 @@ export async function publishTrustEvidenceBundle(
   }
 
   const uploaded = await uploadToLighthouse({
-    apiKey: input.env.LIGHTHOUSE_API_KEY,
+    apiKey: lighthouseApiKey,
     canonicalJson,
     digest,
     fetcher: input.fetcher ?? defaultFetcher,
@@ -188,6 +190,11 @@ function isEnabled(value: string | undefined): boolean {
   return value === 'true' || value === '1' || value === 'yes';
 }
 
+function normalizeSecret(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 const defaultFetcher: typeof fetch = (input, init) => fetch(input, init);
 
 async function uploadToLighthouse(input: {
@@ -210,7 +217,9 @@ async function uploadToLighthouse(input: {
     });
 
     if (!response.ok) {
-      return { ok: false, error: `Lighthouse upload failed with HTTP ${response.status}` };
+      const details = await readSafeErrorDetails(response);
+      const suffix = details ? `: ${details}` : '';
+      return { ok: false, error: `Lighthouse upload failed with HTTP ${response.status}${suffix}` };
     }
 
     const payload = await response.json();
@@ -259,4 +268,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function sanitizeError(error: unknown): string {
   if (error instanceof Error && error.message) return error.message.slice(0, 200);
   return 'Unknown Lighthouse upload error';
+}
+
+async function readSafeErrorDetails(response: Response): Promise<string> {
+  const text = (await response.text()).trim();
+  if (!text) return '';
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isRecord(parsed)) {
+      const fields = ['error', 'details', 'message']
+        .map((key) => parsed[key])
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim());
+      if (fields.length > 0) return fields.join('; ').slice(0, 240);
+    }
+  } catch {
+    // Fall through to a bounded raw preview.
+  }
+
+  return text.slice(0, 240);
 }

@@ -37,6 +37,12 @@ function buildEnvelopes() {
   ).envelopes;
 }
 
+function readAuthorizationHeader(init: Parameters<typeof fetch>[1]): string | undefined {
+  const headers = init?.headers;
+  if (!headers) return undefined;
+  return new Headers(headers).get('Authorization') ?? undefined;
+}
+
 describe('trust evidence publisher', () => {
   it('prepares and stores canonical trust evidence when Lighthouse is not enabled', async () => {
     const storage = makeMemoryStorage();
@@ -92,12 +98,76 @@ describe('trust evidence publisher', () => {
 
     expect(fetcherMock).toHaveBeenCalledTimes(1);
     expect(capturedInit).toMatchObject({ method: 'POST' });
+    expect(readAuthorizationHeader(capturedInit)).toBe('Bearer test-key');
     expect(result.record).toMatchObject({
       status: 'uploaded',
       publisher: 'lighthouse',
       cid: 'bafkreiworkertrustcid',
       uri: 'ipfs://bafkreiworkertrustcid',
       gatewayStatus: 'pending',
+    });
+  });
+
+  it('trims Lighthouse API keys before upload', async () => {
+    const storage = makeMemoryStorage();
+    let capturedInit: Parameters<typeof fetch>[1];
+    const fetcherMock = vi.fn(
+      async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        capturedInit = init;
+        return Response.json({ Hash: 'bafkreitrimmedkey' }, { status: 200 });
+      },
+    );
+
+    const result = await publishTrustEvidenceBundle({
+      storage,
+      env: {
+        TRUST_IPFS_PUBLISH_ENABLED: 'true',
+        LIGHTHOUSE_API_KEY: '  test-key  ',
+      },
+      gameId: meta.gameId,
+      gameType: meta.gameType,
+      progressCounter: 12,
+      envelopes: buildEnvelopes(),
+      now: '2026-04-28T16:33:00.000Z',
+      fetcher: fetcherMock as unknown as typeof fetch,
+    });
+
+    expect(result.record.status).toBe('uploaded');
+    expect(readAuthorizationHeader(capturedInit)).toBe('Bearer test-key');
+  });
+
+  it('stores sanitized Lighthouse error details on upload failure', async () => {
+    const storage = makeMemoryStorage();
+    const fetcherMock = vi.fn(async () =>
+      Response.json(
+        {
+          details: 'Authentication service returned error 401',
+          error: 'Authentication failed',
+          success: false,
+        },
+        { status: 401 },
+      ),
+    );
+
+    const result = await publishTrustEvidenceBundle({
+      storage,
+      env: {
+        TRUST_IPFS_PUBLISH_ENABLED: 'true',
+        LIGHTHOUSE_API_KEY: 'test-key',
+      },
+      gameId: meta.gameId,
+      gameType: meta.gameType,
+      progressCounter: 13,
+      envelopes: buildEnvelopes(),
+      now: '2026-04-28T16:34:00.000Z',
+      fetcher: fetcherMock as unknown as typeof fetch,
+    });
+
+    expect(result.record).toMatchObject({
+      status: 'failed',
+      publisher: 'lighthouse',
+      error:
+        'Lighthouse upload failed with HTTP 401: Authentication failed; Authentication service returned error 401',
     });
   });
 

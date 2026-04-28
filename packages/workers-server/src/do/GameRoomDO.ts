@@ -50,7 +50,7 @@ import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectat
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
 import { buildVisibleTrustArtifacts, withVisibleTrustCards } from './trust-cards.js';
-import { publishTrustEvidenceBundle } from './trust-publisher.js';
+import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-publisher.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
@@ -385,12 +385,14 @@ export class GameRoomDO extends DurableObject<Env> {
   private async handleInspect(): Promise<Response> {
     await this.ensureLoaded();
     const mux = this.getAlarmMux();
-    const [alarmQueue, alarmSlot, snapshotCount, relayMessages] = await Promise.all([
-      this.ctx.storage.get<AlarmEntry[]>(StorageAlarmMux.KEY).then((q) => q ?? []),
-      this.ctx.storage.getAlarm(),
-      this.ctx.storage.get<number>('snapshotCount'),
-      this.getRelayClient().visibleTo({ kind: 'admin' }),
-    ]);
+    const [alarmQueue, alarmSlot, snapshotCount, relayMessages, trustPublishRecords] =
+      await Promise.all([
+        this.ctx.storage.get<AlarmEntry[]>(StorageAlarmMux.KEY).then((q) => q ?? []),
+        this.ctx.storage.getAlarm(),
+        this.ctx.storage.get<number>('snapshotCount'),
+        this.getRelayClient().visibleTo({ kind: 'admin' }),
+        this.ctx.storage.list<TrustPublishRecord>({ prefix: 'trustPublish:' }),
+      ]);
     const earliest = await mux.earliestWhen();
     const now = Date.now();
     const wsCount = this.ctx.getWebSockets().length;
@@ -410,6 +412,10 @@ export class GameRoomDO extends DurableObject<Env> {
       websockets: wsCount,
       gameState: this._state,
       relayMessages,
+      trustPublishRecords: [...trustPublishRecords.entries()].map(([key, record]) => ({
+        key,
+        ...record,
+      })),
       isOver: this._plugin && this._state !== null ? this._plugin.isOver(this._state) : null,
       pluginProgress:
         this._plugin && this._state !== null ? this._plugin.getProgressCounter(this._state) : null,
