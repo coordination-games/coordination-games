@@ -2,13 +2,18 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatAgentName } from '../lib/format';
 import { useGameStore } from '../store';
 
-const MAX_VISIBLE_MESSAGES = 100;
 const NEAR_BOTTOM_THRESHOLD = 50;
 
 type FeedTab = 'public' | 'private';
 
 function isNearBottom(element: HTMLDivElement) {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= NEAR_BOTTOM_THRESHOLD;
+}
+
+function messageTypeLabel(type: string) {
+  if (type === 'private') return 'Private chat';
+  if (type === 'diary') return 'Private note';
+  return 'Public chat';
 }
 
 export function ChatFeed() {
@@ -35,13 +40,7 @@ export function ChatFeed() {
     [messages],
   );
   const tabMessages = activeTab === 'private' ? privateMessages : publicMessages;
-  const visibleMessages = useMemo(
-    () =>
-      tabMessages.length > MAX_VISIBLE_MESSAGES
-        ? tabMessages.slice(-MAX_VISIBLE_MESSAGES)
-        : tabMessages,
-    [tabMessages],
-  );
+  const visibleMessages = tabMessages;
   const visibleMessageIds = useMemo(
     () => visibleMessages.map((message) => message.id),
     [visibleMessages],
@@ -123,16 +122,16 @@ export function ChatFeed() {
 
   return (
     <section className="border border-[var(--color-line)] rounded-[var(--radius-xl)] overflow-hidden bg-gradient-to-b from-[rgba(12,24,36,0.92)] to-[rgba(8,16,24,0.86)] shadow-[var(--shadow)] backdrop-blur-[16px] min-h-0 flex flex-col h-full">
-      <div className="flex flex-col gap-5 p-6 px-7 border-b border-[var(--color-line)] bg-gradient-to-b from-[rgba(24,40,56,0.86)] to-[rgba(10,18,28,0.48)] shrink-0 sm:flex-row sm:justify-between sm:items-start">
-        <div>
+      <div className="flex min-w-0 flex-col gap-5 border-b border-[var(--color-line)] bg-gradient-to-b from-[rgba(24,40,56,0.86)] to-[rgba(10,18,28,0.48)] p-6 px-7 shrink-0 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--color-text-soft)] pl-1">
-            Logged Dialogue
+            Live dialogue
           </div>
           <h2 className="mt-1 font-serif text-xl font-semibold text-[var(--color-text)]">
-            Negotiation Wire
+            Dialogue
           </h2>
         </div>
-        <div className="inline-flex rounded-full border border-[rgba(233,220,190,0.14)] bg-[rgba(8,16,24,0.62)] p-1">
+        <div className="flex max-w-full flex-wrap rounded-full border border-[rgba(233,220,190,0.14)] bg-[rgba(8,16,24,0.62)] p-1">
           {tabs.map((tab) => {
             const selected = activeTab === tab.id;
             return (
@@ -156,11 +155,11 @@ export function ChatFeed() {
       <div
         ref={feedRef}
         onScroll={handleScroll}
-        className="p-6 flex flex-col gap-5 overflow-y-auto custom-scrollbar flex-1"
+        className="p-5 sm:p-6 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1"
       >
         {visibleMessages.length === 0 ? (
           <div className="p-4 border border-dashed border-[rgba(233,220,190,0.12)] rounded-[18px] text-center text-[13px] leading-[1.5] text-[var(--color-text-muted)] bg-[rgba(10,20,30,0.36)]">
-            No {activeTab} messages yet.
+            No {activeTab === 'private' ? 'private chats' : 'public chats'} yet.
           </div>
         ) : (
           visibleMessages.map((msg) => {
@@ -171,10 +170,10 @@ export function ChatFeed() {
               <div
                 key={msg.id}
                 data-message-id={msg.id}
-                className="p-5 rounded-[16px] border border-[rgba(233,220,190,0.08)] bg-gradient-to-b from-[rgba(14,26,39,0.86)] to-[rgba(8,16,24,0.78)]"
+                className="min-w-0 rounded-[16px] border border-[rgba(233,220,190,0.08)] bg-gradient-to-b from-[rgba(14,26,39,0.86)] to-[rgba(8,16,24,0.78)] p-4 sm:p-5"
               >
-                <div className="flex justify-between gap-2.5 items-start">
-                  <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-col gap-3">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <div
                       className={`inline-flex items-center px-2 py-1.5 rounded-full font-mono text-[10px] tracking-[0.12em] uppercase leading-none border whitespace-nowrap ${
                         isPrivate
@@ -184,23 +183,28 @@ export function ChatFeed() {
                             : 'text-[#b4dbe0] bg-[rgba(99,165,167,0.16)] border-[rgba(99,165,167,0.22)]'
                       }`}
                     >
-                      {msg.type}
+                      {messageTypeLabel(msg.type)}
                     </div>
-                    <div className="font-serif text-[18px] text-[var(--color-text)] min-w-0 whitespace-nowrap overflow-hidden text-ellipsis">
-                      {formatAgentName(msg.sender, context)}
-                      {isPrivate &&
-                        msg.recipient &&
-                        ` → ${formatAgentName(msg.recipient, context)}`}
+                    <div className="min-w-0 flex-1 basis-[14rem] font-serif text-[16px] leading-snug text-[var(--color-text)]">
+                      <span className="break-words">{formatAgentName(msg.sender, context)}</span>
+                      {isPrivate && msg.recipient && (
+                        <>
+                          <span className="mx-1 text-[var(--color-text-soft)]">→</span>
+                          <span className="break-words">
+                            {formatAgentName(msg.recipient, context)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-text-soft)]">
+                      Round {msg.round}
                     </div>
                   </div>
-                  <div className="font-mono text-[10px] tracking-[0.14em] uppercase text-[var(--color-text-soft)] text-right shrink-0">
-                    R{msg.round}
+                  <div
+                    className={`text-[13px] leading-[1.6] text-[var(--color-text-muted)] break-words whitespace-pre-wrap ${isDiary ? 'italic' : ''}`}
+                  >
+                    {msg.content}
                   </div>
-                </div>
-                <div
-                  className={`mt-2.5 text-[13px] leading-[1.52] text-[var(--color-text-muted)] break-words ${isDiary ? 'italic' : ''}`}
-                >
-                  {msg.content}
                 </div>
               </div>
             );

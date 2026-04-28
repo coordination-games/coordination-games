@@ -212,12 +212,12 @@ describe('TragedyOfTheCommonsSpectatorView', () => {
     expect(screen.getByText('The Shared World')).toBeTruthy();
     expect(screen.getAllByText('Commons Pressure').length).toBeGreaterThan(0);
     expect(screen.getByText('Power Table')).toBeTruthy();
-    expect(screen.getByText('Negotiation Wire')).toBeTruthy();
-    expect(screen.getByText('Promises And Proof')).toBeTruthy();
-    expect(screen.getByText('Trust Spectrum')).toBeTruthy();
-    expect(screen.getByText('Agent Identities')).toBeTruthy();
-    expect(screen.getByText('Attestation Status')).toBeTruthy();
-    expect(screen.getByText('Agent Participation')).toBeTruthy();
+    expect(screen.getByText('Dialogue')).toBeTruthy();
+    expect(screen.getByText('Promises')).toBeTruthy();
+    expect(screen.getByText('Agentic Trust Cards')).toBeTruthy();
+    expect(screen.queryByText('Agent Identities')).toBeNull();
+    expect(screen.queryByText('Attestation Status')).toBeNull();
+    expect(screen.queryByText('Agent Participation')).toBeNull();
     expect(screen.queryByText('Bot Demo')).toBeNull();
     expect(screen.queryByText('AI Demo')).toBeNull();
 

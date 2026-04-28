@@ -11,6 +11,26 @@ function statusClass(status: string | undefined) {
   return 'text-[var(--color-text-muted)] bg-[rgba(233,220,190,0.08)] border-[rgba(233,220,190,0.12)]';
 }
 
+function commitmentStatusLabel(status: string | undefined) {
+  if (status === 'fulfilled' || status === 'receive' || status === 'fulfill') return 'Kept';
+  if (status === 'breached' || status === 'breach' || status === 'contest') return 'Broken';
+  if (status === 'attested') return 'Confirmed';
+  return 'Open';
+}
+
+function proofStatusLabel(status: string | undefined) {
+  if (status === 'fulfilled' || status === 'receive' || status === 'fulfill') return 'Confirmed';
+  if (status === 'breached' || status === 'breach' || status === 'contest') return 'Disputed';
+  if (status === 'attested') return 'Observed';
+  return 'Not checked yet';
+}
+
+function roundLabel(phase: string | undefined) {
+  const match = phase?.match(/^round_(\d+)$/);
+  if (match?.[1]) return `Round ${match[1]}`;
+  return phase ? phase.replace(/_/g, ' ') : 'Current round';
+}
+
 export function CommitmentLedger() {
   const commitments = useGameStore((state) => state.gameState.commitments);
   const attestations = useGameStore((state) => state.gameState.attestations);
@@ -25,15 +45,15 @@ export function CommitmentLedger() {
       <div className="flex justify-between items-start gap-5 p-6 px-7 border-b border-[var(--color-line)] bg-gradient-to-b from-[rgba(24,40,56,0.86)] to-[rgba(10,18,28,0.48)] shrink-0 max-[1600px]:flex-col max-[1600px]:items-start">
         <div>
           <div className="font-mono text-[10px] tracking-[0.24em] uppercase text-[var(--color-text-soft)] pl-1">
-            Attested Commitment Ledger
+            Visible promises
           </div>
           <h2 className="mt-1 font-serif text-xl font-semibold text-[var(--color-text)]">
-            Promises And Proof
+            Promises
           </h2>
         </div>
         <div className="mt-1 text-[12px] leading-[1.55] text-[var(--color-text-muted)] text-right max-w-[240px] max-[1600px]:text-left">
           {commitments.length > 0
-            ? `${commitments.length} commitments tracked in public memory.`
+            ? `${commitments.length} visible promises tracked.`
             : 'Dialogue listener is waiting for explicit promises.'}
         </div>
       </div>
@@ -49,7 +69,7 @@ export function CommitmentLedger() {
                 No commitments have been extracted yet.
               </div>
             ) : (
-              topCommitments.map((item) => (
+              topCommitments.map((item, index) => (
                 <article
                   key={item.id}
                   className="p-5 rounded-[16px] border border-[rgba(233,220,190,0.08)] bg-gradient-to-b from-[rgba(14,26,39,0.84)] to-[rgba(8,16,24,0.76)]"
@@ -58,10 +78,10 @@ export function CommitmentLedger() {
                     <span
                       className={`inline-flex items-center px-2 py-1 rounded-full font-mono text-[10px] tracking-[0.12em] uppercase border ${statusClass(item.resolutionStatus)}`}
                     >
-                      {item.resolutionStatus || 'pending'}
+                      {commitmentStatusLabel(item.resolutionStatus)}
                     </span>
                     <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[var(--color-text-soft)]">
-                      {item.id}
+                      Promise #{index + 1}
                     </span>
                   </div>
                   <div className="mt-2 font-serif text-[17px] text-[var(--color-text)]">
@@ -71,7 +91,7 @@ export function CommitmentLedger() {
                     {formatAgentName(item.promisor, context)}
                     {item.counterparties && item.counterparties.length > 0
                       ? ` -> ${item.counterparties.map((id) => formatAgentName(id, context)).join(', ')}`
-                      : ' -> table'}
+                      : ' -> Table'}
                   </div>
                 </article>
               ))
@@ -89,7 +109,7 @@ export function CommitmentLedger() {
                 No attestations have been published yet.
               </div>
             ) : (
-              topAttestations.map((item) => (
+              topAttestations.map((item, index) => (
                 <article
                   key={item.id}
                   className="p-5 rounded-[16px] border border-[rgba(233,220,190,0.08)] bg-gradient-to-b from-[rgba(14,26,39,0.84)] to-[rgba(8,16,24,0.76)]"
@@ -98,18 +118,17 @@ export function CommitmentLedger() {
                     <span
                       className={`inline-flex items-center px-2 py-1 rounded-full font-mono text-[10px] tracking-[0.12em] uppercase border ${statusClass(item.verdict)}`}
                     >
-                      {item.verdict || 'attested'}
+                      {proofStatusLabel(item.verdict)}
                     </span>
                     <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[var(--color-text-soft)]">
-                      {item.commitmentId || item.id}
+                      Proof #{index + 1}
                     </span>
                   </div>
                   <div className="mt-2 font-serif text-[17px] text-[var(--color-text)]">
                     {formatAgentName(item.actor, context)}
                   </div>
                   <div className="mt-1 text-[13px] text-[var(--color-text-muted)]">
-                    {(item.phase || 'phase').replace(/_/g, ' ')} · weight{' '}
-                    {Number(item.weight || 0).toFixed(2)}
+                    {roundLabel(item.phase)} · visible promise check
                   </div>
                 </article>
               ))
