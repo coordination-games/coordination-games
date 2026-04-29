@@ -29,6 +29,10 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 - [Deploy](operations/deploy.md) — Cloudflare Pages (`ctl-web`) + Workers (`ctl-server`), both manual, `CLOUDFLARE_API_TOKEN` requirement
 - [Admin Endpoints](operations/admin-endpoints.md) — `ADMIN_TOKEN`-gated inspect/kill for stuck lobbies and games
 
+## Reference
+
+- [CLI Reference](reference/cli.md) — Auto-generated CLI reference for `coga` — every command, arg, and flag.
+
 ## Plans & Specs
 
 Design docs and not-yet-built proposals live in `docs/plans/`, not in the wiki. The wiki describes current repo state; plans describe intended future state. See `docs/plans/` for:
