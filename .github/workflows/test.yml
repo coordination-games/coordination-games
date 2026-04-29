@@ -30,7 +30,7 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        # See `test` job below for rationale on these flags.
+        # See `test` job below for reasoning on these flags.
         run: npm install --include=dev --legacy-peer-deps
 
       - name: Biome check (lint + format)
@@ -49,6 +49,7 @@ jobs:
           npm run build -w packages/plugins/basic-chat
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
+          npm run build -w packages/games/tragedy-of-the-commons
 
       # Per-package typecheck. Each package is invoked individually so the
       # failure surface in the PR log points at the offending package.
@@ -77,6 +78,10 @@ jobs:
       - name: Typecheck — games/oathbreaker
         run: npx tsc --noEmit
         working-directory: packages/games/oathbreaker
+
+      - name: Typecheck — games/tragedy-of-the-commons
+        run: npx tsc --noEmit
+        working-directory: packages/games/tragedy-of-the-commons
 
       - name: Typecheck — plugins/basic-chat
         run: npx tsc --noEmit
@@ -108,6 +113,7 @@ jobs:
           npm run build -w packages/plugins/basic-chat
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
+          npm run build -w packages/games/tragedy-of-the-commons
 
       # contracts workspace has a pre-existing hardhat dependency issue;
       # excluded from CI until fixed separately.
@@ -125,4 +131,5 @@ jobs:
                    -w packages/cli \
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
+                   -w packages/games/tragedy-of-the-commons \
                    -w packages/plugins/basic-chat

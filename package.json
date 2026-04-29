@@ -9,10 +9,11 @@
   ],
   "scripts": {
     "prepare": "git config core.hooksPath .githooks || true",
-    "build": "npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker && npm run build -w packages/web -w packages/cli",
+    "build": "npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat -w packages/plugins/reasoning && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons && npm run build -w packages/web -w packages/cli",
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/workers-server",
     "dev:web": "npm run dev --workspace=packages/web",
+    "harness:model": "tsx scripts/run-model-harness.ts",
     "build:contracts": "npm run build --workspace=packages/contracts",
     "build:cli": "npm run build --workspace=packages/cli",
     "lint": "biome lint .",
@@ -34,7 +35,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
-    "@esbuild/linux-x64": "^0.27.0",
+    "@rollup/rollup-darwin-arm64": "^4.52.4",
     "@tailwindcss/postcss": "^4.2.2",
     "esbuild": "^0.27.0",
     "tailwindcss": "^3.4.19"

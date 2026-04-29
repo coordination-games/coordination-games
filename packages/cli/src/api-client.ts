@@ -86,7 +86,7 @@ export function flattenStateEnvelope(raw: unknown): StateResponse {
  * loop hold immediately. The built-in's graceful `.close()` leaves the
  * TCP socket in CLOSE_WAIT for up to 30s on Cloudflare Workers, which
  * blocks CLI process exit. See `wiki/architecture/data-flow.md`
- * "Change Notification" for the CF-specific rationale.
+ * "Change Notification" for the CF-specific reasoning.
  */
 function waitForWsWakeup(url: string, timeoutMs: number, sinceIdxAtConnect: number): Promise<void> {
   return new Promise((resolve) => {

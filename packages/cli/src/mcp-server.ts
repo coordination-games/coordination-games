@@ -11,8 +11,10 @@
  * first API call. No auth tools are exposed to agents.
  */
 
+import type { ToolPlugin } from '@coordination-games/engine';
 import { CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { OathbreakerPlugin } from '@coordination-games/game-oathbreaker';
+import { TragedyOfTheCommonsPlugin } from '@coordination-games/game-tragedy-of-the-commons';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -25,6 +27,7 @@ export interface ServeOptions {
   privateKey?: string;
   name?: string;
   httpPort?: number;
+  plugins?: ToolPlugin[];
 }
 
 function createMcpServerWithClient(options?: ServeOptions): {
@@ -41,8 +44,8 @@ function createMcpServerWithClient(options?: ServeOptions): {
     version: '0.1.0',
   });
   registerGameTools(server, client, {
-    plugins: [BasicChatPlugin],
-    games: [CaptureTheLobsterPlugin, OathbreakerPlugin],
+    plugins: [BasicChatPlugin, ...(options?.plugins ?? [])],
+    games: [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsPlugin],
   });
   return { server, client };
 }

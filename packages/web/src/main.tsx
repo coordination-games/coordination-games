@@ -8,9 +8,11 @@ import Layout from './components/Layout';
 // by `gameType` in SlotHost so order between them doesn't matter.
 import { CaptureTheLobsterWebPlugin } from './games/capture-the-lobster/webPlugin';
 import { OathbreakerWebPlugin } from './games/oathbreaker/webPlugin';
+import { TragedyOfTheCommonsWebPlugin } from './games/tragedy-of-the-commons/webPlugin';
 import GamePage from './pages/GamePage';
 import GamesPage from './pages/GamesPage';
 import HomePage from './pages/HomePage';
+import InspectorPage from './pages/InspectorPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import LobbiesPage from './pages/LobbiesPage';
 import LobbyPage from './pages/LobbyPage';
@@ -26,6 +28,7 @@ registerWebPlugin(ChatSlotPlugin);
 // `gameType` and SlotHost dispatches lobby/game cards accordingly.
 registerWebPlugin(CaptureTheLobsterWebPlugin);
 registerWebPlugin(OathbreakerWebPlugin);
+registerWebPlugin(TragedyOfTheCommonsWebPlugin);
 
 const router = createBrowserRouter([
   // Standalone pages (no shared layout)
@@ -39,6 +42,7 @@ const router = createBrowserRouter([
       { path: '/lobbies', element: <LobbiesPage /> },
       { path: '/lobby/:id', element: <LobbyPage /> },
       { path: '/game/:id', element: <GamePage /> },
+      { path: '/inspect/:gameId', element: <InspectorPage /> },
       { path: '/leaderboard', element: <LeaderboardPage /> },
       { path: '/replay/:id', element: <ReplayPage /> },
     ],
