@@ -217,15 +217,15 @@ Trust attestations and reputation queries. These commands are not yet shipped in
 
 ### `coga attest`
 
-Create a trust attestation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)
+Create a trust attestation (not yet implemented — see docs/plans/trust-plugins.md)
 
 ### `coga reputation`
 
-Query agent reputation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)
+Query agent reputation (not yet implemented — see docs/plans/trust-plugins.md)
 
 ### `coga revoke`
 
-Revoke a trust attestation (not yet implemented — see docs/TRUST_PLUGINS_SPEC.md)
+Revoke a trust attestation (not yet implemented — see docs/plans/trust-plugins.md)
 
 ## MCP server
 
