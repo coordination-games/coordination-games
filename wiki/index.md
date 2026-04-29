@@ -17,12 +17,17 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 
 ## Development
 
-- [npm Workspace Bugs](development/npm-workspace-bugs.md) — devDependencies not installed, @types ghost installs
+- [npm Workspace Bugs](development/npm-workspace-bugs.md) — devDependencies not installed, @types ghost installs, `npm pack --dry-run` discipline
 - [Adding a Game](development/adding-a-game.md) — checklist, what you get for free, lobby config patterns
 - [Adding a Plugin](development/adding-a-plugin.md) — server + web halves, capability subsetting, where to register, real abstraction gaps
-- [Bot System](development/bot-system.md) — Haiku bots via Agent SDK, auth bypass, generic harness
+- [Bot System](development/bot-system.md) — Haiku bots via Agent SDK, auth bypass, generic harness, fill-bots PATH gotcha
 - [Hex Grid Rendering](development/hex-grid-rendering.md) — flat-top coords, Wesnoth assets, forest layering, map scaling
 - [Biome](development/biome.md) — workspace lint + format config, npm scripts, editor integration
+
+## Operations
+
+- [Deploy](operations/deploy.md) — Cloudflare Pages (`ctl-web`) + Workers (`ctl-server`), both manual, `CLOUDFLARE_API_TOKEN` requirement
+- [Admin Endpoints](operations/admin-endpoints.md) — `ADMIN_TOKEN`-gated inspect/kill for stuck lobbies and games
 
 ## Plans & Specs
 
