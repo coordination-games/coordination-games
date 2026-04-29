@@ -98,5 +98,5 @@ Any plugin opting into the envelope via `agentEnvelopeKeys` gets dedup for free.
 - `packages/cli/src/__tests__/agent-state-differ.test.ts` — `_unchangedKeys`, `_removedKeys`, baseline-hydration coverage.
 - `wiki/architecture/plugin-pipeline.md` — how `messaging` ends up in the pipeline output map in the first place.
 - `wiki/architecture/mcp-not-on-server.md` — the bare-wrapper rule, why the differ lives in `GameClient`.
-- `wiki/architecture/data-flow.md` — relay cursor, how delta-prefixed keys carry only-new items.
+- `wiki/architecture/relay-and-cursor.md` — relay cursor, how delta-prefixed keys carry only-new items.
 - `docs/plans/agent-envelope-fix.md` — the original handoff that pushed dedup down out of MCP.

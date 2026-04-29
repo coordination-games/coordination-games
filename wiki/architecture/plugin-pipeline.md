@@ -50,6 +50,6 @@ The design pressure that pinned typed dependencies (rather than explicit `depend
 - `packages/plugins/basic-chat/src/index.ts:122` — the only shipped `ToolPlugin`.
 - `packages/engine/src/__tests__/plugin-loader.test.ts` — topo-sort, cycle-detection, and same-type-merge fixtures.
 - `wiki/architecture/agent-envelope.md` — `agentEnvelopeKeys` (the plugin → envelope projection).
-- `wiki/architecture/data-flow.md` — what `relayMessages` is (and isn't) before it reaches the pipeline.
+- `wiki/architecture/relay-and-cursor.md` — what `relayMessages` is (and isn't) before it reaches the pipeline; how `sinceIdx` makes `relayMessages` a delta on every call after the first.
 - `wiki/architecture/mcp-not-on-server.md` — why the runner lives in the CLI process, not the server.
 - `docs/plans/trust-plugins.md` — proposed multi-plugin chain that exercises every edge case above.

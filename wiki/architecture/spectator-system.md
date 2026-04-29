@@ -82,5 +82,5 @@ interface SpectatorPlugin {
 - `packages/web/src/games/registry.ts` — registered spectator plugins.
 - `packages/web/src/pages/ReplayPage.tsx` — generic replay shell; consumes `plugin.animationDuration` (line 50) for auto-play pacing.
 - `wiki/architecture/engine-philosophy.md` — why `getProgressCounter` is the only progress signal the framework reads.
-- `wiki/architecture/data-flow.md` — relay scopes, `RelayClient.visibleTo`, what `SpectatorContext.relayMessages` is filtered against.
+- `wiki/architecture/relay-and-cursor.md` — relay scopes, `RelayClient.visibleTo`, what `SpectatorContext.relayMessages` is filtered against.
 - `wiki/development/ctl-animations.md` — CtL's animation system (what it does with `prevGameState`, `animate`, and `deathPositions`).

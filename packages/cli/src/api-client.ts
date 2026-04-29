@@ -85,8 +85,9 @@ export function flattenStateEnvelope(raw: unknown): StateResponse {
  * `.terminate()` the socket — a force-destroy that releases the event
  * loop hold immediately. The built-in's graceful `.close()` leaves the
  * TCP socket in CLOSE_WAIT for up to 30s on Cloudflare Workers, which
- * blocks CLI process exit. See `wiki/architecture/data-flow.md`
- * "Change Notification" for the CF-specific rationale.
+ * blocks CLI process exit. See `wiki/architecture/relay-and-cursor.md`
+ * for the CF-specific rationale (hibernatable WS billing, why state
+ * doesn't ride the wake frame).
  */
 function waitForWsWakeup(url: string, timeoutMs: number, sinceIdxAtConnect: number): Promise<void> {
   return new Promise((resolve) => {

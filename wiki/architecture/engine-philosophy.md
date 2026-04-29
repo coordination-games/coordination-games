@@ -62,6 +62,7 @@ The single `games` Map lives at `packages/engine/src/registry.ts:16`; the single
 - `packages/workers-server/src/chain/alarm-multiplexer.ts` — `StorageAlarmMux`, the queue invariants.
 - `packages/workers-server/src/do/LobbyDO.ts` — generic phase runner, no game-specific code.
 - `packages/engine/src/registry.ts` — the single `games` Map and tool-collision check.
-- `wiki/architecture/data-flow.md` — state vs relay, what `getVisibleState` is allowed to filter.
+- `wiki/architecture/overview.md` — state vs relay, what `getVisibleState` is allowed to filter.
+- `wiki/architecture/relay-and-cursor.md` — relay channel mechanics, cursor pattern, WS-as-notification.
 - `wiki/architecture/spectator-system.md` — how `getProgressCounter` drives snapshots and delay.
 - `docs/building-a-game.md` — tutorial for implementing `CoordinationGame` end-to-end.

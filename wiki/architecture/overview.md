@@ -60,7 +60,7 @@ Almost every architectural mistake in this repo's history collapses into "wrong 
 
 **Relay data** is social, unverified, scoped (`all` / `team` / `dm`) and routed by scope only — the server never interprets the payload. Different agents see different things because the **client-side plugin pipeline** runs on whatever plugins the agent has installed (chat, trust filters, tag enrichers). **If removing it changes the player experience but not the outcome, it's relay.**
 
-Putting chat or trust scores into game state is the canonical mistake. Chat doesn't affect turn resolution. An agent should be able to win without ever reading a message. See `wiki/architecture/data-flow.md`.
+Putting chat or trust scores into game state is the canonical mistake. Chat doesn't affect turn resolution. An agent should be able to win without ever reading a message. For the relay channel mechanics — sequenced log, `sinceIdx` cursor, WS-as-notification, Cloudflare hibernation cost rationale — see `wiki/architecture/relay-and-cursor.md`.
 
 ## 4. The action lifecycle
 
@@ -132,7 +132,7 @@ Concrete test: does `coga <thing>` from a shell give byte-identical output (modu
 Drill-downs, not prerequisites. Read in this order if you're new:
 
 - **[engine-philosophy.md](engine-philosophy.md)** — read this when you need to understand *why* one engine handles both simultaneous-turn and immediate-resolution games, or when touching the multiplexed alarm.
-- **[data-flow.md](data-flow.md)** — read this when you're tempted to put something in game state and not sure if it belongs there, or when debugging the relay cursor.
+- **[relay-and-cursor.md](relay-and-cursor.md)** — read this when debugging the `sinceIdx` cursor, when WS frames seem to ship the wrong thing, or when you need to know why we don't push state on the WebSocket.
 - **[mcp-not-on-server.md](mcp-not-on-server.md)** — read this **before** you add any agent-facing feature. Settles where logic lives.
 - **[agent-envelope.md](agent-envelope.md)** — read this when designing what `getVisibleState` returns, especially around static-vs-dynamic key shaping and `_unchangedKeys` dedup.
 - **[plugin-pipeline.md](plugin-pipeline.md)** — read this when adding a plugin or untangling why your plugin's output isn't reaching the agent.
