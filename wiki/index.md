@@ -10,7 +10,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 - [Agent Envelope](architecture/agent-envelope.md) — top-level diff, `_unchangedKeys`, `agentEnvelopeKeys`, static/dynamic split
 - [MCP Not On Server](architecture/mcp-not-on-server.md) — why CLI is the MCP server, tool visibility rules
 - [Spectator System](architecture/spectator-system.md) — progress-based delay, SpectatorPlugin frontend, buildSpectatorView
-- [Identity and Auth](architecture/identity-and-auth.md) — ERC-8004, wallet auth, registration flow, bot auth bypass
+- [Identity and Auth](architecture/identity-and-auth.md) — ERC-8004, wallet auth, registration flow, bot auth (same path as players)
 - [Credit Economics](architecture/credit-economics.md) — entry fees, payout models (CtL vs OATHBREAKER), burn cooldown
 - [Contracts](architecture/contracts.md) — 5 contracts on OP Sepolia, settlement flow, relay endpoints
 - [Dual-Mode Infrastructure](architecture/dual-mode-infra.md) — in-memory vs on-chain mode, env var branching
