@@ -1,6 +1,10 @@
 # Trust Plugin Suite Spec
 
-## Status: Designed, Not Built
+> **Superseded — see `agentic-trust-vision.md`.** This doc captures an earlier design (EAS-on-chain-first, numeric scores 1-100, "vibes for spam prevention") that we moved away from in the agentic-trust design conversations of late April 2026. Kept here for historical reference and because the EAS migration notes may be useful when we revisit on-chain anchoring.
+>
+> Current direction: D1-first cross-game persistence, `AttestationV1` as the single primitive, projector plugins as consumers, IPFS/on-chain deferred. See `agentic-trust-vision.md` for the destination, `agentic-trust-followup.md` for the implementation roadmap, and `djimo-pr37-cleanup.md` for Djimo's PR #37 handoff.
+
+## Status: Superseded (was: Designed, Not Built)
 
 Five composable plugins for trust/reputation. EAS attestations on Optimism. Existing EAS code in `relay.ts` (lines ~398-663) needs migration into plugin form.
 
