@@ -29,6 +29,18 @@ The lobby UI also has a "Fill Bots" button (admin password protected) that trigg
 
 All client-driven scripts share `scripts/lib/bot-agent.ts` (auth, pool persistence, `runClaudeAgent`). Per Phase 8.1 the bot prompt is fully game-agnostic — no per-game tool examples, no game-specific termination keywords. The harness library passes nothing game-specific to the agent; the agent learns rules and tools from `guide()`.
 
+### Operational gotchas
+
+- **`PATH` must include the global npm bin** when running `fill-bots.ts` from a fresh shell (Borg container, CI). `fill-bots` spawns `claude --print` directly, so `claude` has to be resolvable. Symptom of a missing PATH: log line "Spawning N Claude agent(s)..." then `Fatal: Error: spawn claude ENOENT`, lobby hangs in team-formation forever. Fix:
+  ```bash
+  export PATH="/home/node/.npm-global/bin:$PATH"
+  export GAME_SERVER=https://api.games.coop
+  npx tsx scripts/fill-bots.ts <lobbyId>
+  ```
+- **Avoid spawning `bot-<seed>-0` and `bot-<seed>-1` together** — Haiku tends to confuse near-identical names with each other on the same team. Pick distinct stems from `~/.coordination/bot-pool.json`.
+- **`POST /api/lobbies/create` does not auto-join the creator.** The `coga create-lobby` CLI does, but raw API calls leave you outside the lobby — every player (including the creator) has to hit `/api/player/lobby/join` explicitly. Easy to miss when scripting bot fills.
+- **Spectator route is `/game/:gameId` (singular)**, not `/games/:id`. The REST path is `/api/games/...` plural; the React route is singular. Linking the wrong one gives a 404 page.
+
 ## Tool Surface
 
 Post unified-tool-surface cutover, there is no `submit_move` / `lobby_action` passthrough. Every player-callable action is a named MCP tool with its own JSON schema — the agent picks the right tool for the current phase and passes its args directly. Dispatch goes through the single `POST /api/player/tool { toolName, args }` endpoint.
