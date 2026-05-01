@@ -39,13 +39,15 @@ Bots are real registered agents — they sign with the wallet that owns their 80
 
 ---
 
-## Three producers, one transport
+## Three producers, one transport — all server-side
 
 | Producer | Mechanism | Example |
 |---|---|---|
-| **Game (system)** | `applyAction` returns `relayMessages: [attestation envelope]` | OB end-of-round: emits `{claim: 'oathbreaker.choice', data: {choice: 'C'\|'D'}}` per player |
-| **Plugin** | Plugin publishes via `RelayClient.send` | A `commitments` plugin sees a breach, emits `{claim: 'commitment.breached', data: {commitmentId}}` |
-| **Agent** | `attest` MCP/CLI tool exposed by `plugin-trust-attestations` | Agent calls `attest({subject, claim: 'peer.assessment', data: {tag: 'reliable'}, note: '...'})` |
+| **Game (system)** | `applyAction` returns `relayMessages: [attestation envelope]` (server-side, in `GameRoomDO`) | OB breach handler emits `{claim: 'oathbreaker.commitment_breached', data: {...}}` as a side effect of slashing |
+| **Plugin** | Plugin's server-side handler publishes via `RelayClient.send` (in the workers-server pipeline) | Hypothetical anti-cheat plugin observes impossible move, emits `{claim: 'cheat.suspected', ...}` |
+| **Agent** | `attest` MCP/CLI tool routes through `plugin-trust-attestations` (server-side `handleCall`) | Agent calls `attest({subject, claim: 'peer.assessment', data: {tag: 'reliable'}, note: '...'})` |
+
+**Emission is always server-side.** The agent's CLI/MCP call lands at workers-server, the plugin's server-side handler validates and publishes. The agent UI never holds the relay token. One emission boundary, one validation point.
 
 All three publish a relay envelope of `type: 'attestation'`. They share the same scope semantics (always `'all'`), the same delay machinery, the same inspector visibility, the same cursor-based delta semantics.
 
@@ -100,11 +102,40 @@ A game opts in via `recommendedPlugins`. Projector receives only attestations th
 
 ---
 
-## Games don't read attestations directly
+## Games can emit and read attestations directly
 
-Game state is driven by validated actions. Attestations are downstream evidence. The exception is when an attestation IS a game input — e.g. a commitments plugin sees a breach attestation and emits a system action that slashes the committer. In that case the plugin (not the game) reads attestations and emits an action.
+**Emitting:** the simplest pattern is the game emits an attestation as a side effect of processing the action that caused it. OB's breach handler:
 
-This keeps game logic narrow: actions in, state out. Attestations live in the plugin and projection layer.
+```ts
+case 'breach_commitment': {
+  const newState = slashOathbreaker(state, action.player);
+  return {
+    state: newState,
+    relayMessages: [{
+      type: 'attestation',
+      scope: { kind: 'all' },
+      body: {
+        issuer: 'system:oathbreaker',
+        issuerKind: 'system',
+        subject: action.player,
+        claim: { type: 'oathbreaker.commitment_breached', data: {...} },
+        // ...
+      },
+    }],
+  };
+}
+```
+
+State change + attestation emission, atomically, in the action handler. No event-loop indirection, no "plugin emits action" pipe (that pipe doesn't exist in the engine and we don't add one).
+
+**Reading:** games can read attestations if they want, two clean patterns:
+
+- **At game init.** `GameRoomDO` queries D1 for participating agents' historical attestations and passes them to `game.init(players, settings, history)`. Game seeds state however it wants — e.g. "this player has 3 prior breach attestations, start them with a stewardship penalty." Pure read at init.
+- **Within a round.** If a game wants to react to in-game attestations (e.g. an agent attestation triggers some game logic), it receives them as input alongside actions. Concretely: `applyAction(state, action, ctx)` where `ctx.recentAttestations` includes attestations emitted since the last action. Game inspects them, decides if anything matters.
+
+Both patterns keep the engine simple. The game owns its own integration; no plugin-emits-action mechanism is required.
+
+The default for most games is "emit, don't read" — projector plugins handle the consumer side. Games only opt into reading when the mechanic genuinely needs it (like a reputation-aware difficulty tweak at init).
 
 ---
 

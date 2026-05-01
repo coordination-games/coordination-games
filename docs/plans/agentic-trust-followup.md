@@ -63,7 +63,9 @@ No reads in this PR — just write-through.
 
 ### PR-C: Cross-game load at game start
 
-When a `GameRoomDO` initializes, query D1 for the participating agentIds' prior attestations. Inject those into the projector plugin's input stream alongside live attestations:
+When a `GameRoomDO` initializes, query D1 for the participating agentIds' prior attestations. Two consumers:
+
+**1. Projector plugins** receive historical alongside live as input:
 
 ```ts
 projector.handleData('project', new Map([
@@ -75,6 +77,19 @@ projector.handleData('project', new Map([
 The projector is the only thing that knows how to merge them — typically time-decay weight on historical, full weight on live, plus per-claim-type clustering.
 
 The `trust-projector-tragedy` plugin (Djimo's, post-merge) updates to consume both inputs. New games' projectors get cross-game evidence by default if they declare `consumes: ['attestations', 'attestations-historical']`.
+
+**2. The game itself**, optionally. Extend `game.init(players, settings, history)` so games that want to seed initial state from reputation can read it directly:
+
+```ts
+init(players, settings, history?: AttestationV1[]) {
+  // optional: a game can read history to set per-player starting state.
+  // most games ignore history and don't add the parameter.
+}
+```
+
+This is a strict addition — games that don't care don't change. OB might use it to apply a stewardship modifier; tragedy might ignore it; CtL won't take the param at all.
+
+We do NOT pass attestations into `applyAction` in this PR. If a future game needs to react to in-game attestations within a round (Pattern 2 from the vision doc), we'll extend `applyAction(state, action, ctx)` with a `ctx.recentAttestations` field. Don't build it until a game wants it.
 
 Pagination: at game start we fetch the last N=200 attestations per participant + a per-claim-type rollup (count, decayed_score). Bounded query, no scan-the-world.
 
@@ -109,7 +124,8 @@ attest({
 ```
 
 Behavior:
-- Issuer = caller's `agentId` (signed by their wallet at auth time, no spoofing).
+- All emission server-side. CLI/MCP call lands at workers-server, plugin's `handleCall` validates and publishes. Agent UI never holds the relay token.
+- Issuer = caller's `agentId` (verified via auth, no spoofing).
 - `issuerKind: 'agent'` enforced.
 - `scope: 'all'` enforced.
 - Self-attestation (`subject === issuer`) rejected.
@@ -124,12 +140,13 @@ The `attest` tool MUST also work via the `coga attest ...` shell command (per `C
 
 ### PR-E: OB system attestations + UI
 
-OB becomes the second game to emit attestations.
+OB becomes the second game to emit attestations. Per the simplified producer model, the game emits attestations directly from its action handlers — no plugin-emits-action pipe needed.
 
-- `packages/games/oathbreaker/src/game.ts` `applyAction` — at end of each round, emit one `AttestationV1` per player with claim `oathbreaker.choice` / data `{choice: 'C' | 'D'}`. Earlier discussion confirms this is the minimal viable system attestation — agents and humans both see "did this player cooperate or defect this round."
+- `packages/games/oathbreaker/src/game.ts` `applyAction` — at end of each round, the round-resolution handler returns one `AttestationV1` per player in `relayMessages` with claim `oathbreaker.choice` / data `{choice: 'C' | 'D'}`. Atomic with the state update. If/when OB grows commitment-breach mechanics later, the breach handler emits `oathbreaker.commitment_breached` the same way.
 - New plugin `packages/plugins/trust-projector-oathbreaker/` (or extend the generic projector — TBD which is cleaner) that builds OB-specific trust cards: cooperation rate, recent choices, sequence patterns. Consumes `attestations` + `attestations-historical`.
 - OB declares `recommendedPlugins: ['trust-projector-oathbreaker', 'trust-attestations', 'reasoning']`.
 - OB spectator/agent UI (`web/src/components/games/oathbreaker/`) renders `state.trustCards` per player — at minimum: cooperation rate, last 3 *agent-authored* peer notes (text), confidence indicators.
+- (Optional, deferred) OB's `init(players, settings, history)` could read past attestations to set per-player starting state (e.g. stewardship modifier). Not in v1; add when there's a designed mechanic that needs it.
 
 ---
 
