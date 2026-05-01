@@ -49,7 +49,7 @@ import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlem
 import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
-import { buildVisibleTrustArtifacts, withVisibleTrustCards } from './trust-cards.js';
+import { buildVisibleTrustArtifacts } from './trust-cards.js';
 import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-publisher.js';
 
 // Side-effect imports: each calls registerGame() on module load
@@ -64,6 +64,10 @@ import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
 // Side-effect import: registers the reasoning relay schema so Inspector/admin
 // diagnostics can surface explicit `share_reasoning` artifacts.
 import '@coordination-games/plugin-reasoning';
+import {
+  ATTESTATION_RELAY_TYPE,
+  TrustProjectorTragedyPlugin,
+} from '@coordination-games/plugin-trust-projector-tragedy';
 
 // ---------------------------------------------------------------------------
 // WS tags
@@ -982,6 +986,9 @@ export class GameRoomDO extends DurableObject<Env> {
             ? ((rawScope2 as Record<string, unknown>).recipientHandle as string)
             : undefined;
       const scope = resolveWireScope(scopeString2, playerId, this._meta.teamMap);
+      if (relayObj.type === ATTESTATION_RELAY_TYPE && scope.kind !== 'all') {
+        return Response.json({ error: 'attestation relay scope must be all' }, { status: 400 });
+      }
       const partial = {
         type: relayObj.type as string,
         data: relayObj.data ?? null,
@@ -1227,7 +1234,13 @@ export class GameRoomDO extends DurableObject<Env> {
 
   private async publishTrustEvidenceSnapshot(snapshot: unknown): Promise<void> {
     if (!this._meta) return;
-    const artifacts = buildVisibleTrustArtifacts(snapshot, this._meta, this._progress.counter);
+    const relayMessages = await this.getRelayClient().visibleTo({ kind: 'admin' });
+    const artifacts = buildVisibleTrustArtifacts(
+      snapshot,
+      this._meta,
+      this._progress.counter,
+      relayMessages,
+    );
     if (artifacts.envelopes.length === 0) return;
     try {
       const { record } = await publishTrustEvidenceBundle({
@@ -1478,16 +1491,16 @@ export class GameRoomDO extends DurableObject<Env> {
       };
     }
     const finished = this._plugin.isOver(this._state);
-    const visible = withVisibleTrustCards(
-      this._plugin.getVisibleState(this._state, playerId),
-      this._meta,
-      this._progress.counter,
-    );
     const viewer: SpectatorViewer = { kind: 'player', playerId };
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
     // Inject relay messages into player view so agents can see chat history
     const playerRelay = await relayClient.visibleTo(viewer);
+    const visible = this.applyTrustProjector(
+      this._plugin.getVisibleState(this._state, playerId),
+      this._progress.counter,
+      playerRelay,
+    );
     if (typeof visible === 'object' && visible !== null && !Array.isArray(visible)) {
       (visible as Record<string, unknown>).relayMessages = playerRelay;
     }
@@ -1566,12 +1579,14 @@ export class GameRoomDO extends DurableObject<Env> {
     }
     const idx = this.publicSnapshotIndex();
     const state = idx !== null ? this._spectatorSnapshots[idx] : null;
-    const visibleState = state !== null ? withVisibleTrustCards(state, this._meta, idx) : null;
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
     const relayViewer: SpectatorViewer = OBSERVATORY_DM_SPECTATOR_GAMES.has(this._meta.gameType)
       ? { kind: 'admin' }
       : viewer;
+    const spectatorRelay = await relayClient.visibleTo(relayViewer);
+    const visibleState =
+      state !== null ? this.applyTrustProjector(state, idx, spectatorRelay) : null;
 
     return buildSpectatorPayload({
       gameId: this._meta.gameId,
@@ -1587,6 +1602,37 @@ export class GameRoomDO extends DurableObject<Env> {
       stateVersion: this._stateVersion,
       knownStateVersion,
     });
+  }
+
+  private applyTrustProjector(
+    state: unknown,
+    progressCounter: number | null,
+    relayMessages: readonly RelayEnvelope[],
+  ): unknown {
+    if (!this._meta || typeof state !== 'object' || state === null || Array.isArray(state))
+      return state;
+    const projected = TrustProjectorTragedyPlugin.handleData(
+      'trust-cards',
+      new Map<string, unknown>([
+        ['game-state', state],
+        ['relay-messages', relayMessages],
+        [
+          'game-meta',
+          {
+            gameId: this._meta.gameId,
+            gameType: this._meta.gameType,
+            handleMap: this._meta.handleMap,
+            finished: this._meta.finished,
+            progressCounter,
+          },
+        ],
+      ]),
+    );
+    const envelopeKey = TrustProjectorTragedyPlugin.agentEnvelopeKeys?.['trust-cards'];
+    if (!envelopeKey) return state;
+    const trustCards = projected.get('trust-cards');
+    if (trustCards === undefined) return state;
+    return { ...(state as Record<string, unknown>), [envelopeKey]: trustCards };
   }
 
   private async broadcastUpdates(): Promise<void> {

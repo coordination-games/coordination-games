@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildVisibleTrustCards, withVisibleTrustCards } from './trust-cards.js';
+import { buildVisibleTrustArtifacts, buildVisibleTrustCards } from './trust-cards.js';
 
 const tragedyMeta = {
   gameId: 'game-1',
@@ -10,7 +10,7 @@ const tragedyMeta = {
 };
 
 describe('visible tragedy trust cards', () => {
-  it('uses the agentic-trust adapter while preserving the engine wire shape', () => {
+  it('uses the in-repo trust projector while preserving the engine wire shape', () => {
     const cards = buildVisibleTrustCards(
       {
         round: 2,
@@ -43,7 +43,7 @@ describe('visible tragedy trust cards', () => {
       'Latest visible action',
     ]);
     expect(cards[0]?.evidenceRefs[0]).toMatchObject({
-      kind: 'tragedy.turn.outcome',
+      kind: 'tragedy.visible-state',
       visibility: 'viewer-visible',
       round: 2,
     });
@@ -62,15 +62,11 @@ describe('visible tragedy trust cards', () => {
     expect(buildVisibleTrustCards({ players: [] }, tragedyMeta, 1)).toEqual([]);
   });
 
-  it('adds trustCards without mutating the original visible state object', () => {
+  it('returns projection artifacts without mutating the original visible state object', () => {
     const visible = { round: 1, players: [{ id: 'alice', influence: 1, vp: 0 }] };
-    const withCards = withVisibleTrustCards(visible, tragedyMeta, 1);
+    const artifacts = buildVisibleTrustArtifacts(visible, tragedyMeta, 1);
 
-    expect(withCards).not.toBe(visible);
     expect(visible).not.toHaveProperty('trustCards');
-    expect(withCards).toMatchObject({
-      round: 1,
-      trustCards: [{ agentId: 'alice' }],
-    });
+    expect(artifacts.cards).toMatchObject([{ agentId: 'alice' }]);
   });
 });
