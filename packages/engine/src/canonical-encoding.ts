@@ -154,6 +154,8 @@ function fromCanonical(value: unknown): unknown {
 // Public API
 // ---------------------------------------------------------------------------
 
+import { keccak256, stringToBytes } from 'viem';
+
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 
@@ -170,6 +172,22 @@ export function canonicalEncode(value: unknown): Uint8Array {
   // sorted order, so the resulting string is lex-sorted.
   const json = JSON.stringify(canonical);
   return TEXT_ENCODER.encode(json);
+}
+
+/**
+ * Encode a value to deterministic JSON text.
+ *
+ * This is the string-level companion to `canonicalEncode` for evidence bundles
+ * and other payloads that need a stable JSON representation before hashing or
+ * uploading. It shares the engine encoder's strict POJO/number policy.
+ */
+export function canonicalizeJson(value: unknown): string {
+  return TEXT_DECODER.decode(canonicalEncode(value));
+}
+
+/** Hash the engine canonical JSON representation with Keccak-256. */
+export function keccak256CanonicalJson(value: unknown): `0x${string}` {
+  return keccak256(stringToBytes(canonicalizeJson(value)));
 }
 
 /**

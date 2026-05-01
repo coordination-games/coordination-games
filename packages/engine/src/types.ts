@@ -114,6 +114,47 @@ export interface TrustCardV1 {
   updatedAt?: number;
 }
 
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
+/** Raw trust event emitted by games, plugins, or agents before projection. */
+export interface AttestationV1 {
+  schemaVersion: 'attestation/v1';
+  id: string;
+  issuer: string;
+  issuerKind: 'agent' | 'system' | 'plugin';
+  subject: string;
+  claim: {
+    type: string;
+    data: JsonObject;
+  };
+  note?: string;
+  confidence?: number;
+  round?: number;
+  issuedAt?: string;
+  evidenceRefs?: TrustEvidenceRefV1[];
+}
+
+/** Publishable evidence envelope used by the optional IPFS/Lighthouse path. */
+export interface TrustEvidenceEnvelopeV1 {
+  schemaVersion: 'trust-evidence/v1';
+  id: string;
+  eventType: string;
+  category: 'identity' | 'behavior' | 'capability' | 'outcome' | 'attestation' | 'policy';
+  subject: string;
+  issuer: string;
+  issuedAt: string;
+  payload: JsonObject;
+  privacy: {
+    publishable: true;
+    redaction: 'none-needed' | 'redacted' | 'aggregated';
+    containsPrivateChat: false;
+    containsHiddenState: false;
+  };
+  evidenceRefs?: TrustEvidenceRefV1[];
+}
+
 // ---------------------------------------------------------------------------
 // Spectator context (passed to buildSpectatorView)
 // ---------------------------------------------------------------------------
