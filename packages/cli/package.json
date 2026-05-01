@@ -47,6 +47,7 @@
     "@coordination-games/game-tragedy-of-the-commons": "*",
     "@coordination-games/plugin-chat": "*",
     "@coordination-games/plugin-reasoning": "*",
+    "@coordination-games/plugin-trust-projector-tragedy": "*",
     "@types/node": "^22.19.15",
     "@types/proper-lockfile": "^4.1.4",
     "@types/ws": "^8.18.1",
