@@ -4,7 +4,6 @@ import {
   ATTESTATION_RELAY_TYPE,
   isAttestation,
   projectTragedyTrust,
-  projectTrustCards,
   TrustProjectorTragedyPlugin,
 } from '../index.js';
 
@@ -117,9 +116,14 @@ describe('trust-projector-tragedy', () => {
     );
 
     expect(TrustProjectorTragedyPlugin.agentEnvelopeKeys?.['trust-cards']).toBe('trustCards');
-    expect(outputs?.get('trust-cards')).toEqual(
-      projectTrustCards({ state: tragedyState, relayMessages: [relay] }).cards,
-    );
+    const cards = outputs?.get('trust-cards');
+    expect(cards).toMatchObject([
+      {
+        schemaVersion: 'trust-card/v1',
+        agentId: 'player-1',
+        evidenceRefs: [{ id: 'attestation-1' }],
+      },
+    ]);
   });
 
   it('does not project non-tragedy states', () => {
