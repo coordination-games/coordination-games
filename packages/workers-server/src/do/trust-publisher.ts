@@ -1,6 +1,9 @@
-import type { TrustEvidenceEnvelopeV1 } from '@agentic-trust/core';
-import { canonicalizeJson, keccak256CanonicalJson } from '@agentic-trust/core';
 import type { DurableObjectStorage } from '@cloudflare/workers-types';
+import {
+  canonicalizeJson,
+  keccak256CanonicalJson,
+  type TrustEvidenceEnvelopeV1,
+} from '@coordination-games/engine';
 
 import type { Env } from '../env.js';
 
