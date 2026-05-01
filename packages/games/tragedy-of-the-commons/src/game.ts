@@ -1,4 +1,11 @@
-import type { ActionResult, GameDeadline, RelayEnvelope } from '@coordination-games/engine';
+import {
+  type ActionResult,
+  type AttestationV1,
+  type GameDeadline,
+  type JsonObject,
+  keccak256CanonicalJson,
+  type RelayEnvelope,
+} from '@coordination-games/engine';
 import type {
   ExtractionLevel,
   ResourceInventory,
@@ -49,6 +56,9 @@ const EXTRACTION_PROFILES: Record<ExtractionLevel, { yield: number; pressure: nu
   medium: { yield: 2, pressure: 3 },
   high: { yield: 3, pressure: 6 },
 };
+
+const TRUST_PROJECTOR_PLUGIN_ID = 'trust-projector-tragedy';
+const ATTESTATION_RELAY_TYPE = 'attestation';
 
 const STARTING_RESOURCES: ResourceInventory = {
   grain: 2,
@@ -130,6 +140,91 @@ function advanceTurn(state: TragedyState): ActionResult<TragedyState, TragedyAct
     state: nextState,
     deadline: turnTimeoutDeadline(state.config.turnTimerSeconds),
     relayMessages,
+  };
+}
+
+function withRelayMessages(
+  result: ActionResult<TragedyState, TragedyAction>,
+  relayMessages: RelayEnvelope[],
+): ActionResult<TragedyState, TragedyAction> {
+  if (relayMessages.length === 0) return result;
+  return {
+    ...result,
+    relayMessages: [...(result.relayMessages ?? []), ...relayMessages],
+  };
+}
+
+function actionPayload(action: TragedyAction): JsonObject {
+  if (action.type === 'extract_commons') {
+    return { ecosystemId: action.ecosystemId, level: action.level };
+  }
+  if (action.type === 'build_settlement') {
+    return { regionId: action.regionId };
+  }
+  if (action.type === 'offer_trade') {
+    return {
+      to: action.to,
+      give: jsonResourceBundle(action.give),
+      receive: jsonResourceBundle(action.receive),
+    };
+  }
+  return {};
+}
+
+function jsonResourceBundle(resources: Partial<ResourceInventory>): JsonObject {
+  const out: JsonObject = {};
+  for (const resource of RESOURCE_TYPES) {
+    const amount = resources[resource];
+    if (typeof amount === 'number' && Number.isSafeInteger(amount)) out[resource] = amount;
+  }
+  return out;
+}
+
+function createActionAttestationRelay(input: {
+  readonly state: TragedyState;
+  readonly player: TragedyPlayerState;
+  readonly action: TragedyAction;
+  readonly note?: string;
+}): RelayEnvelope<AttestationV1> {
+  const data: JsonObject = {
+    gameType: 'tragedy-of-the-commons',
+    round: input.state.round,
+    actor: input.player.id,
+    actionType: input.action.type,
+    action: actionPayload(input.action),
+    before: {
+      resources: jsonResourceBundle(input.player.resources),
+      influence: input.player.influence,
+      vp: input.player.vp,
+      regionsControlled: [...input.player.regionsControlled],
+    },
+  };
+  const attestation: AttestationV1 = {
+    schemaVersion: 'attestation/v1',
+    id: keccak256CanonicalJson({
+      gameType: 'tragedy-of-the-commons',
+      round: input.state.round,
+      subject: input.player.id,
+      claimType: 'tragedy.round_choice.v1',
+      data,
+    }),
+    issuer: 'tragedy-of-the-commons:system',
+    issuerKind: 'system',
+    subject: input.player.id,
+    claim: { type: 'tragedy.round_choice.v1', data },
+    confidence: 1,
+    round: input.state.round,
+    ...(input.note ? { note: input.note } : {}),
+  };
+  return {
+    type: ATTESTATION_RELAY_TYPE,
+    index: -1,
+    sender: 'system',
+    scope: { kind: 'all' },
+    data: attestation,
+    pluginId: TRUST_PROJECTOR_PLUGIN_ID,
+    turn: input.state.round,
+    timestamp: Date.now(),
   };
 }
 
@@ -780,7 +875,14 @@ export function applyAction(
       },
     };
 
-    return advanceTurn(timedOutState);
+    return withRelayMessages(advanceTurn(timedOutState), [
+      createActionAttestationRelay({
+        state,
+        player: currentPlayer,
+        action: { type: 'pass' },
+        note: 'Round timer expired; system recorded a pass for the current player.',
+      }),
+    ]);
   }
 
   if (!playerId) {
@@ -802,7 +904,9 @@ export function applyAction(
     },
   };
 
-  return advanceTurn(nextState);
+  return withRelayMessages(advanceTurn(nextState), [
+    createActionAttestationRelay({ state, player: currentPlayer, action }),
+  ]);
 }
 
 export interface TragedyPlayerView {

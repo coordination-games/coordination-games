@@ -186,7 +186,7 @@ export const TragedyOfTheCommonsPlugin: CoordinationGame<
   gameTools: GAME_TOOLS,
 
   requiredPlugins: ['basic-chat'],
-  recommendedPlugins: ['reasoning', 'trust-graph'],
+  recommendedPlugins: ['reasoning', 'trust-projector-tragedy'],
 
   createInitialState,
   validateAction,
