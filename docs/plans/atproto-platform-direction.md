@@ -4,7 +4,7 @@
 
 **Frame:** We are building **a coordination social platform**. Games are the first AppView. Other AppViews (governance, deliberation, prediction markets, multi-party agreements) follow on the same infrastructure. The platform's value proposition centers on *legibility*: nothing is expected to be secret from the platform itself; every coordination action is observable by the server, eventually visible to spectators (with delay for fairness), and available to researchers. This is the platform-as-research-substrate stance, aligned with the `.coop` cooperative ethos.
 
-We adopt ATProto for the platform layer. ERC-8004 anchors identity. Encryption exists only to enforce spectator delay during a game, not to keep secrets from the platform.
+We adopt ATProto for the platform layer. ERC-8004 anchors identity. There is no encryption at the platform level — privacy is implemented as **release scheduling**: the PDS we operate filters its public read/subscribe surface so that records authored while a player is in a game don't become publicly visible until the game's spectator-delay window passes. The engine has full internal access; the public sees the spectator-delayed view.
 
 ## Vision and layering
 
@@ -43,7 +43,7 @@ Before the layered concepts, the physical picture. Most confusion about "what do
 │  │              │  │              │  │                          │  │
 │  │  chat msg    │  │  chat msg    │  │  game tick records       │  │
 │  │  move        │  │  move        │  │  outcome records         │  │
-│  │  profile     │  │  profile     │  │  session.reveal records  │  │
+│  │  profile     │  │  profile     │  │  archive records         │  │
 │  │  follows     │  │  follows     │  │  group definitions       │  │
 │  └──────────────┘  └──────────────┘  └──────────────────────────┘  │
 │                                                                      │
@@ -51,23 +51,25 @@ Before the layered concepts, the physical picture. Most confusion about "what do
 └────────────────────────────────────────────────────────────────────┘
                   │                              │
                   ▼                              ▼
-        ┌──────────────────┐           ┌──────────────────┐
-        │ Engine subscriber│           │ Spectator client │
-        │ filters by NSID  │           │ filters by game  │
-        │ + game-relevant  │           │ subscribes to    │
-        │ DID set          │           │ session.reveal   │
-        │                  │           │ for delayed      │
-        │ Decrypts inbound │           │ decryption       │
-        │ Validates        │           │                  │
-        │ Writes canonical │           │                  │
-        │ records to       │           │                  │
-        │ engine's repo    │           │                  │
-        └──────────────────┘           └──────────────────┘
+        ┌──────────────────────┐       ┌────────────────────┐
+        │ Engine (in same DO)  │       │ External subscriber│
+        │  internal full-read  │       │  (spectator,       │
+        │  validates, applies, │       │   researcher,      │
+        │  serves getMyView,   │       │   AppView)         │
+        │  writes own records, │       │  reads PUBLIC      │
+        │  releases per game-  │       │  firehose only     │
+        │  context schedule    │       │                    │
+        └──────────────────────┘       └────────────────────┘
 ```
 
-**There is one PDS.** It hosts every agent's repo (alice's, bob's, the engine's, every other player). Each repo is an MST (Merkle Search Tree) of records authored and signed by that agent. Records are immutable once written.
+**There is one PDS.** It hosts every agent's repo (alice's, bob's, the engine's, every other player). Each repo is an MST (Merkle Search Tree) of records authored and signed by that agent. Records are immutable once written. Records are stored **plaintext** — there is no platform-level encryption.
 
-**There is one firehose.** Every commit to any repo is broadcast on the `subscribeRepos` WebSocket in arrival order. Subscribers (engine, spectator clients, AppViews, third-party tools) filter by what they care about.
+**There are two read surfaces against this PDS:**
+
+1. **Public firehose / public reads** — exposed via `subscribeRepos`, `getRecord`, `listRecords`. **Filtered by game-context release schedule.** Records authored by a player while they're in a game don't appear here until the game's spectator-delay window passes. Out-of-game records and engine-authored public records appear immediately.
+2. **Internal engine access** — the engine, running inside the same Cloudflare DO as the PDS, reads everything as it's written. No filtering. Used to drive validation, state machine, real-time delivery to participants, and authoring of engine canonical records.
+
+This makes the spectator-delay primitive *a property of the read surface*, not of the records themselves. Records live plaintext; the PDS just doesn't expose them publicly until the engine has released them.
 
 **There are no separate "rooms," "channels," or "relays" as physical things.** Those are all logical views, derived by filtering the firehose.
 
@@ -82,18 +84,17 @@ A load-bearing distinction. Two kinds of things, two different transports:
 
 **Live game state is not a record.** The engine's canonical state lives in DO memory + storage (today's `_state` and `_actionLog`); it's served on demand via XRPC. There is no "live encrypted tick record" that participants subscribe to and decrypt — that was the wrong mental model. State is a query, not an event.
 
-**Events on the firehose include:**
+**Events on the public firehose include (after release):**
 
-- Player records (chat, moves) — encrypted to the engine if in-game, plaintext otherwise.
-- Engine `coop.games.game.tick` records — published *with spectator delay*, plaintext, contain the projected spectator view of what happened in that delay window plus strongRefs to original player records.
+- Player records (chat, moves) — plaintext. While the author is in a game, held by the PDS until the spectator-delay window passes; then released to the public firehose.
+- Engine `coop.games.game.tick` records — projected spectator view of state per game's delay schedule, plaintext, contain strongRefs to player records the tick covers.
 - Engine `coop.games.game.outcome` — plaintext, on game-end, anchored on-chain.
-- Engine `coop.games.session.key` — at game start, declares the engine's per-game public key for clients to encrypt against.
-- Engine `coop.games.session.reveal` — at game-end, releases the per-game private key for post-game verification.
-- Group definitions, profiles, follows, etc. — normal records.
+- Engine `coop.games.game.archive` — post-game canonical archive of the full game's signed events. Plaintext, public.
+- Group definitions (for persistent groups), profiles, follows, etc. — normal records, public.
 
 **State queries (XRPC against the engine):**
 
-- `coop.games.engine.getMyView({ gameId })` — fog-filtered current state for the caller. Engine computes from in-memory canonical state.
+- `coop.games.engine.getMyView({ gameId })` — fog-filtered current state for the caller, including any messages addressed to groups they're members of.
 - `coop.games.engine.getSpectatorView({ gameId })` — current public-delayed projected state.
 - `coop.games.engine.validateMove({ gameId, action })` — dry-run validation, returns `{ valid, error? }` without writing.
 
@@ -101,91 +102,96 @@ WS-doorbell-on-state-change is unchanged: engine pushes a small wake frame to su
 
 ### What "writing to a room" actually means
 
-A "room" (e.g., `<gameId>.participants`) is a **group**, which is itself just a record:
+> **Audience and game-context are orthogonal.** Audience says *who to tell*. Game-context says *when everyone else can see*. Audience is delivery routing, not access control. Read this twice.
 
-```
-NSID:    coop.games.audience.group
-Author:  engine (the engine signs the group definition)
-Body:    {
-  groupId: "<gameId>.participants",
-  members: [didA, didB, didC, ...],
-  createdAt: ...
-}
-```
-
-This group record lives in the engine's repo, like any other record.
-
-When alice "writes a chat message to the participants room," she creates a record like:
+When alice writes a chat message addressed to the participants room of a game:
 
 ```
 NSID:    coop.games.chat.message
 Author:  alice (her session key signs)
-Lives in: alice's repo (in the engine-hosted PDS)
+Lives in: alice's repo (in the engine-hosted PDS), plaintext
 Body: {
   audience: {
     inGame: "<gameId>",
     to: { kind: "group", groupId: "<gameId>.participants" }
   },
-  content: <encrypted-to-engine>(plaintext: { text: "GG" })
+  text: "GG"
 }
 ```
 
-The record physically lives in **alice's repo**. The audience is metadata: `inGame` tells the engine "this is part of game X, decrypt and process under that game's keys"; `to` tells the engine "deliver this to the participants group when serving state." Encryption is to the **engine** as the sole recipient — the audience is *routing for delivery*, not the encryption target.
+The record physically lives in **alice's repo**, plaintext, no encryption. The audience field is purely metadata:
+
+- **`inGame`**: declares this record belongs to a game. The PDS uses this to decide whether the record is held back from the public firehose until spectator delay passes (yes if `inGame` is set; no otherwise).
+- **`to`**: declares who alice wants to *notify in real time*. The engine uses this to decide who gets a WS doorbell + has the message included in their `getMyView` response. Does **not** gate read access — once the record is released to the public firehose, anyone can read it.
 
 ### How recipients see it
 
-In-game records have one decryption point: the engine. Recipients (other participants) receive content via authenticated state-read against the engine, not by decrypting records themselves.
+There are two delivery mechanisms, and they're independent:
 
-- **Engine** subscribes to the firehose, sees alice's encrypted commit, decrypts with its per-game privkey, processes (validation, applyAction if it's a state-input record, route-to-recipients-on-state-query if it's chat or other relay).
-- **Other participants** call `getMyView({ gameId })` and the engine returns their current view including any new content delivered to groups they're members of. Real-time via WS doorbell + getMyView refetch.
-- **Spectators** subscribe to engine's `coop.games.game.tick` records on the firehose — these are plaintext, delayed, and include the projected version of player content from that delay window. No decryption needed on the spectator side.
+1. **Real-time, in-group**: if you're a member of the audience target (a group, or the named recipient agent for a DM), the engine includes the message in your `getMyView` response and pushes you a WS doorbell. Immediate, no delay. The engine determines membership via game state (for game-derived groups) or via group records (for persistent groups).
+2. **Eventual public**: for in-game records, after the game's spectator-delay window passes, the PDS releases the record to the public firehose. Anyone (out-of-group teammates, opposing teams, spectators, researchers) sees it then. For out-of-game records, the public firehose carries them immediately.
 
-For out-of-game records (`audience.inGame` unset): plaintext, served and read normally — anyone can fetch from the author's repo or pick up via firehose. The platform doesn't pretend out-of-game DMs are secret.
+**There is no "private forever" delivery.** Even DMs and team chat eventually become public, just delayed. This is the platform's stance: nothing is secret; spectator-fairness is a delay primitive, not a secrecy primitive.
+
+For out-of-game records (`audience.inGame` unset): plaintext, on the public firehose immediately. The audience field still routes notifications (engine pushes the recipient via WS), but doesn't gate visibility.
 
 ### Walkthroughs of the four key flows
 
-**The encryption posture:** in-game records are encrypted to a single recipient — the engine — using a per-game ephemeral keypair generated by the engine at game start. The engine publishes the public key in `coop.games.session.key`; clients encrypt with it; engine decrypts with the private key (held in DO storage). After game-end, engine publishes the private key publicly via `coop.games.session.reveal`, enabling post-game verification of every original encrypted player record.
+**The privacy posture:** records are plaintext in player repos. The PDS exposes a *public read surface* (firehose, getRecord, listRecords) that filters by game-context release schedule: a record authored while its author is in a game stays out of the public surface until the game's spectator-delay window passes. The engine, running inside the same DO as the PDS, has full internal read access. No encryption anywhere.
 
-**Participants do not decrypt records.** They receive content via authenticated state queries against the engine. **Spectators do not decrypt records.** They read engine's already-projected plaintext tick records from the firehose. The engine is the sole decryption point, period.
+**Participants do not decrypt records.** They receive in-real-time content via `getMyView` from the engine; the engine knows what to include based on each viewer's group memberships. **Spectators do not decrypt records.** They subscribe to the public firehose, which already filters out unreleased records and includes engine-authored canonical records.
 
 **(1) Alice sends "GG" chat to all game participants:**
 
 ```
 1. Alice's CLI computes audience from current context:
    { inGame: "abc", to: group("abc.participants") }
-2. CLI encrypts body with the engine's per-game pubkey K_pub_abc (NaCl box / ECIES).
-3. Alice's session key signs the (encrypted) record.
-4. CLI calls com.atproto.repo.createRecord against the PDS:
+2. CLI signs record with alice's session key (no encryption).
+3. CLI calls com.atproto.repo.createRecord against the PDS:
      POST /xrpc/com.atproto.repo.createRecord
      { repo: alice.did, collection: "coop.games.chat.message", record: {...} }
-5. PDS validates (lexicon, audience permitted for alice). Engine (running inside
-   the PDS DO) decrypts the body with K_priv_abc, runs any plugin-side validation.
-6. PDS appends to alice's repo, broadcasts the encrypted commit on the firehose.
-7. Engine updates its in-memory state to reflect "alice's chat to participants
-   pending delivery" — the message is held in canonical state.
-8. Engine pushes a WS doorbell to participants. Bob's client refetches getMyView,
-   sees "alice: GG" in the recent-chat slice for participants.
-9. Engine queues the chat for the next spectator-tick on the spectator-delay
-   schedule (see flow 3).
+4. PDS validates (lexicon). Engine (in the same DO) reads the plaintext body
+   internally, runs any plugin-side validation.
+5. PDS appends to alice's repo. Because audience.inGame is set, the PDS holds
+   this record back from the public firehose / public reads — it won't appear
+   to non-engine subscribers until after the game's spectator-delay window.
+6. Engine resolves audience.to: group("abc.participants") via game.getGroups(state)
+   → list of participant DIDs (alice, bob, carol, ...).
+7. Engine pushes a WS doorbell to those participant DIDs.
+8. Bob's client refetches getMyView({ gameId: "abc" }) — engine returns bob's
+   fog-filtered state plus "alice: GG" in the recent-messages-for-my-groups slice
+   (since bob is in participants).
+9. After the spectator-delay window for the tick this chat falls into, the PDS
+   releases alice's record to the public firehose. Spectators (and any other
+   external reader) can now see it. The engine's coop.games.game.tick record
+   for that tick (also published on delay) includes it in the spectator
+   projection.
 ```
 
 **(2) Alice submits a move (state-input record):**
 
 ```
 1. Same audience structure: { inGame: "abc", to: group("abc.participants") }.
-2. CLI encrypts to K_pub_abc, signs, createRecord.
-3. PDS receives. Engine decrypts. Engine runs validateAction(state, alice, action):
+2. CLI signs (no encryption), createRecord against the PDS.
+3. PDS validates lexicon. Engine reads the plaintext body internally and runs
+   validateAction(state, alice, action):
    - On reject: createRecord returns structured error (NOT_YOUR_TURN, etc.).
      Record never appended to alice's repo. Alice's CLI surfaces the error.
    - On accept: engine runs applyAction, updates _state, pushes _actionLog,
      bumps stateVersion, advances progress counter, schedules any deadline,
      possibly kicks settlement if game is over.
-4. Engine pushes WS doorbell to all participants.
-5. Each participant's getMyView returns the new fog-filtered state.
-6. Engine queues the move for the next spectator-tick (flow 3).
+4. PDS appends to alice's repo. Because audience.inGame is set, record stays
+   out of the public firehose / public reads until spectator delay passes.
+5. Engine resolves audience.to via game.getGroups(state) → participant DIDs.
+6. Engine pushes WS doorbell to participants.
+7. Each participant's getMyView returns the new fog-filtered state plus any
+   new in-group messages.
+8. After spectator-delay, the PDS releases this record to the public firehose,
+   and the engine's coop.games.game.tick record (also published on delay)
+   includes the projected event.
 ```
 
-This is identical to today's `applyActionInternal` flow, plus a decryption step at the front and a different write boundary (`createRecord` vs `POST /action`). Behavior, state mutations, and timing are unchanged.
+This is identical to today's `applyActionInternal` flow plus the public-firehose-release-on-delay step. Behavior, state mutations, and timing for participants are unchanged.
 
 **(3) Engine publishes a delayed spectator-tick:**
 
@@ -193,18 +199,20 @@ This is identical to today's `applyActionInternal` flow, plus a decryption step 
 1. After the spectator-delay window for game-time T elapses, engine assembles a
    coop.games.game.tick record from in-memory state:
      - Calls the same buildSpectatorView(state, prevState, ctx) used today.
-     - Includes plaintext copies of player records that were processed in window T,
-       projected per game's spectator policy (fog-stripped, hidden-info revealed,
-       team-private content optionally redacted or revealed per game rules).
-     - Includes strongRefs to the original encrypted player records for verification.
+     - Includes the projected events from window T (per game's spectator policy:
+       fog-stripped, hidden-info revealed or kept, team-private content treated
+       per game rules, etc.).
+     - Includes strongRefs to the original player records that drove the tick
+       (those records are also being released to the public firehose at the
+       same time — anyone can fetch and verify against player signatures).
 2. Engine publishes:
      NSID: coop.games.game.tick
      Author: engine
-     audience: { to: group("abc.spectators") }    // plaintext, no encryption
      body: { tickNumber: T, projectedState, projectedEvents: [...], originalRefs: [...] }
-3. PDS appends to engine's repo, broadcasts on firehose.
+3. PDS appends to engine's repo, broadcasts on the public firehose.
 4. Spectator clients subscribed to engine's game.tick records render directly.
-   No decryption, no key handling.
+   They can additionally fetch the referenced player records (now released)
+   for full verification.
 ```
 
 Spectator clients are trivial: subscribe + render. The projection logic (`buildSpectatorView`) doesn't move — it stays in the game plugin and runs server-side at tick-write time. Only the *output target* changes: instead of "stuffed into HTTP response on demand," it's "written into a record on schedule."
@@ -213,10 +221,13 @@ Spectator clients are trivial: subscribe + render. The projection logic (`buildS
 
 ```
 1. Alice DMs bob about something unrelated to any game.
-2. Audience: { to: { kind: "agent", recipient: bob.did } }   // no inGame, no encryption.
-3. Plaintext record in alice's repo.
-4. Bob's client sees the firehose commit; renders.
-5. Server, future spectators, researchers all see it. The platform doesn't pretend DMs are secret.
+2. Audience: { to: { kind: "agent", recipient: bob.did } }   // no inGame.
+3. Plaintext record in alice's repo. PDS appends and broadcasts immediately
+   (audience.inGame is unset, no release-schedule gate).
+4. Engine sees audience.to: agent(bob), pushes WS doorbell to bob.
+5. Bob's client renders. Engine doesn't gate read access; anyone subscribed
+   to alice's repo or the public firehose can also see it. Audience.to is
+   notification routing, not access control.
 ```
 
 ### What the engine actually IS in this picture
@@ -292,10 +303,9 @@ coop.games.lobby.session
 coop.games.lobby.join
 coop.games.game.tick                      # engine-authored canonical state record
 coop.games.game.outcome                   # engine-authored final outcome
-coop.games.audience.group                 # group definition
-coop.games.audience.member                # group membership
-coop.games.session.keys                   # wrapped encryption keys (per-game)
-coop.games.session.reveal                 # time-locked key release for spectator delay
+coop.games.audience.group                 # persistent group definition (out-of-game rooms)
+coop.games.audience.member                # persistent group membership change
+coop.games.game.archive                   # post-game canonical archive of full game history
 
 # First-party plugins
 coop.games.chat.message
@@ -326,57 +336,88 @@ Lexicon validation is enforced at the PDS write boundary — malformed records a
 
 ## Audience model
 
-The platform makes nothing secret. Server has full visibility; spectators have delayed visibility; researchers eventually see everything. **Encryption exists only to enforce spectator delay during a game.**
+The platform makes nothing secret. The server has full visibility; everyone else has delayed visibility for in-game content; everything is eventually public.
 
-### Two orthogonal dimensions
+> **Audience and game-context are orthogonal. Read this carefully.**
+>
+> - **Audience field** = "who do you want to *notify in real time*." It's delivery routing. The engine uses it to decide who gets a WS doorbell and what's included in their `getMyView` response. Audience does NOT gate read access.
+> - **Game-context (`inGame` field)** = "when does the rest of the world get to see this." It's the release-schedule gate. While the author is in a game, the PDS holds the record back from the public read surfaces (firehose, getRecord, listRecords). Once the game's spectator-delay window passes, the record is released to the public.
+>
+> Even DMs are not "private" in the access-control sense. A DM in-game is real-time-delivered to its recipient via the engine, but eventually appears on the public firehose after spectator delay. Out-of-game DMs are public on the firehose immediately. The only "private forever" mechanism on this platform is "don't write the record."
+
+### The two fields
 
 ```
 audience: {
-  inGame?: gameId,                                 // optional: scope to a game (triggers encryption)
-  to: { kind: 'group', groupId: string }           // recipient: a group, OR
-    | { kind: 'agent', recipient: did }            //            a single agent
+  inGame?: gameId,                                 // optional: marks record as in-game (release-schedule gate)
+  to: { kind: 'group', groupId: string }           // notify-in-real-time target: a group, OR
+    | { kind: 'agent', recipient: did }            //                              a specific agent
 }
 ```
 
-- **`inGame`**: if set, the record body is encrypted to the game's session key. The engine (a participant) decrypts inbound and publishes plaintext spectator-view records on its own delay schedule — spectators consume those, never the encrypted originals. If unset, the record is plaintext.
-- **`to`**: the recipient — either a group (e.g., game participants, a team, an out-of-game room) or a specific agent (DM). Not optional. Records are always addressed to someone.
+- **`inGame`** triggers the PDS to hold the record back from public read surfaces until the spectator-delay window passes. No effect on internal engine access. No effect on real-time delivery to the audience.
+- **`to`** tells the engine who to notify. For a group, the engine pushes WS + includes content in `getMyView` for current group members. For an agent, only that agent. The engine resolves group membership against game state (game-derived groups) or against persistent group records (out-of-game rooms).
 
-There is no global "all" audience. A group always has bounded membership, even if that group is "all participants of game X." Ambient public broadcast would be spammy.
+There is no global "all" audience. A group always has bounded membership. Ambient public broadcast would be spammy. The closest thing to "broadcast" is the public firehose, which carries everything eventually.
 
 ### Common patterns
 
-| Use case | Audience | Encrypted? |
+| Use case | Audience | When can which party see it |
 |---|---|---|
-| Game chat to all participants | `inGame: X, to: group(X.participants)` | Yes (in-game) |
-| Team chat | `inGame: X, to: group(X.team-red)` | Yes (in-game) |
-| In-game DM | `inGame: X, to: agent(didY)` | Yes (in-game) |
-| Out-of-game DM | `to: agent(didY)` | No (plaintext) |
-| Out-of-game group/room | `to: group(some-room)` | No (plaintext) |
-| Engine participant-tick (live) | `inGame: X, to: group(X.participants)` | Yes (in-game) |
-| Engine spectator-tick (delayed) | `to: group(X.spectators)` | No (plaintext, projected) |
+| Game chat to all participants | `inGame: X, to: group(X.participants)` | Participants: real-time. Public: after spectator delay. |
+| Team chat | `inGame: X, to: group(X.team-red)` | Team-red: real-time. Public (incl. opposing team): after spectator delay. |
+| In-game DM | `inGame: X, to: agent(didY)` | didY: real-time. Public: after spectator delay. |
+| Out-of-game DM | `to: agent(didY)` | didY: real-time (notified). Public: immediately on firehose. |
+| Out-of-game group/room | `to: group(some-room)` | Room members: real-time (notified). Public: immediately. |
+| Engine spectator-tick | `to: group(X.spectators)` | Public: at scheduled delay. |
+| Engine outcome | `to: group(X.spectators)` | Public: on game-end. Anchored on-chain. |
+| Engine post-game archive | `to: group(X.spectators)` | Public: after game-end. |
 
-Groups derived from a game lobby (`<gameId>.participants`, `<gameId>.team-red`, etc.) are auto-created by the engine when the lobby opens and dissolved or archived when the game ends.
+A user's PDS will contain a mixture of records — some held back during the user's active games, others publicly visible from the moment of writing. The PDS handles release-schedule gating transparently; from the user's perspective, they just `createRecord` and the platform handles when others see it.
 
-A user's PDS will contain a mixture of plaintext and encrypted records depending on context. This is fine.
+### Where group membership comes from
 
-### Encryption pattern (in-game records only)
+Two sources, depending on group kind:
 
-The model is intentionally minimal: **in-game records are encrypted to one recipient — the engine.** Audience-group routing is done by the engine in plaintext after decryption, not by encrypting separately to each group.
+**1. Game-derived groups** (`<gameId>.participants`, `<gameId>.team-red`, `<gameId>.judges`, etc.) — membership is a function of the game's current state, NOT a separate record. The game plugin owns this:
 
-1. **Per-game keypair.** At game start, the engine generates an ephemeral keypair `(K_pub_game, K_priv_game)`. Engine publishes `K_pub_game` in a `coop.games.session.key` record (plaintext, audience: `to: group(X.participants)` so participants discover it). Engine retains `K_priv_game` in DO storage.
-2. **Client encrypts.** When a participant publishes any record with `audience.inGame === gameId`, their client encrypts the body with `K_pub_game` (NaCl box / ECIES). One encryption per record, one recipient.
-3. **Engine decrypts.** Engine receives the record via PDS write or firehose subscription, decrypts with `K_priv_game`, runs validation and routing per the inner `audience.to` field. State updates apply; chat content gets routed to the appropriate group's view delivery.
-4. **No participant decryption.** Other participants don't decrypt; they query state via `getMyView`. The engine determines who sees what.
-5. **Spectator delay** is enforced by *when the engine writes the tick record*, not by key release. Tick records are plaintext from the start; they just don't get written until the delay window elapses.
-6. **Post-game verification.** After the outcome anchors on-chain, the engine publishes `K_priv_game` in a `coop.games.session.reveal` record (plaintext, audience: `to: group(X.spectators)`). Anyone can now decrypt the original encrypted player records on alice's, bob's, etc. repos and verify each player's signature matches what the engine reported.
+```typescript
+interface CoordinationGame<TState, ...> {
+  // existing
+  getTeamForPlayer(state, playerId): teamId | null;
 
-Player records are signed on the *plaintext* before encryption (signature is inside the encrypted blob). Decryption preserves signature verification.
+  // new generalization:
+  getGroups(state): Record<groupId, did[]>;
+  // returns all game-relevant groups, e.g.
+  // { "participants": [alice, bob, carol],
+  //   "team-red": [alice, bob],
+  //   "team-blue": [carol] }
+}
+```
 
-What this model does not need:
+The engine resolves `audience.to: group("<gameId>.team-red")` by calling `game.getGroups(state)["team-red"]`. Single source of truth: the game state. Group dissolution at game-end is automatic — there's no separate group record to clean up.
 
-- **No per-tick subkeys.** The previous HKDF-per-tick scheme was solving "spectator delay via timed key release," which we no longer need (delay is in when records get written, not when keys get released).
-- **No multi-recipient encryption.** Engine is the sole recipient; one `box(plaintext, K_pub_game)` per record.
-- **No key-rotation mid-game.** Per-game keypair is good for the lifetime of one game.
+**2. Persistent groups** (out-of-game rooms, communities, ad-hoc chat) — explicit records:
+
+```
+NSID: coop.games.audience.group
+Author: <whoever creates the room>
+Body: {
+  groupId: "homies-2026",
+  members: [didA, didB, didC],
+  metadata: { name: "Homies", description: "..." }
+}
+```
+
+Membership changes via new authored records (replacing prior version, or via `coop.games.audience.member` add/remove records authored by the group's owner).
+
+The engine maintains an in-memory index of persistent group memberships, populated from these records on the firehose.
+
+### No encryption
+
+There is no platform-level encryption. Records are stored plaintext in the PDS. Privacy comes entirely from the PDS's release-schedule gate on its public read surfaces, which we control because we operate the PDS.
+
+If a future deployment supports BYO-PDS for sovereign players during gameplay, encryption-to-engine becomes necessary for that path (because we wouldn't control the federated PDS's read access). For v1, all players use the engine-hosted PDS, and no encryption is needed.
 
 ## Engine
 
@@ -384,17 +425,18 @@ What this model does not need:
 
 The engine is one ATProto agent (`engine.games.coop`, an ERC-8004-registered actor) that:
 
-1. **Generates a per-game keypair** at game start. Publishes the pubkey in `coop.games.session.key` so clients can encrypt in-game records to it.
-2. **Receives writes via PDS** (running inside the same DO). Each `createRecord` call hits the engine; it decrypts in-game records with the per-game privkey before further processing.
+1. **Operates the PDS.** Running inside the same Cloudflare DO, it has full internal read access to every record on every repo it hosts. Public read surfaces (firehose, getRecord, listRecords) are filtered by release schedule.
+2. **Receives writes via `createRecord`.** Each call hits the engine; it reads the record's plaintext body and runs validation.
 3. **Validates synchronously**: lexicon-level schema + game-state-level rules (the loaded game's `validateAction` for state-input record types).
 4. **Routes per game logic**:
    - State-input records: validate, run `applyAction`, mutate canonical state in DO memory, push to `_actionLog`.
-   - Relay records (chat, plugin events): route content to the appropriate audience-group's view delivery (engine returns these to participants via `getMyView`).
+   - Relay records (chat, plugin events): resolve `audience.to` against game-derived groups (`game.getGroups(state)`) or persistent group records, push WS doorbells to current members, include content in their `getMyView` responses.
 5. **Serves authenticated state queries** via XRPC: `getMyView`, `getSpectatorView`, `validateMove`. Computes from in-memory canonical state; fog-filters per game's rules.
-6. **Writes spectator-tick records** to its own repo on the spectator-delay schedule. Plaintext, projected via the game plugin's `buildSpectatorView`. Public.
-7. **Anchors outcome on-chain** when the game ends. Publishes `coop.games.session.reveal` containing the per-game privkey for post-game verification.
+6. **Manages release schedule.** For records authored while the author is in a game, holds them back from public read surfaces until the spectator-delay window passes; then releases. Out-of-game records are released on append.
+7. **Writes spectator-tick records** to its own repo on the spectator-delay schedule. Plaintext, projected via the game plugin's `buildSpectatorView`.
+8. **Anchors outcome on-chain** when the game ends, then publishes `coop.games.game.archive` containing the canonical history of the game (all signed player records, projected events, outcome) for permanent public reference.
 
-The engine has no privileged categories at the protocol level. Its role is determined by the game's lexicon manifest, which declares which NSIDs are state inputs. Records the manifest doesn't list flow through the firehose without engine canonicalization.
+The engine has no privileged categories at the protocol level. Its role is determined by the game's lexicon manifest, which declares which NSIDs are state inputs. Records the manifest doesn't list flow through the engine's relay routing without contributing to canonical state.
 
 ### Single engine, all games
 
@@ -449,7 +491,7 @@ The engine layer changes much less than the protocol terminology suggests. Most 
 | Per-player fog view delivery | `GET /api/player/state` HTTP response | XRPC `coop.games.engine.getMyView` — same function, atproto-shaped endpoint. |
 | Spectator-delayed delivery | `GET /api/spectator` HTTP response built per request | `coop.games.game.tick` records on the firehose, written at the delay schedule. |
 | Relay log (chat, plugin events, etc.) | `relay:NNN` rows in DO storage; published via `relayClient.publish` | Records on the firehose; engine subscribes and routes. The "relay log" becomes "the firehose, filtered." |
-| Player action submission | `POST /api/player/action` → `applyActionInternal` | `com.atproto.repo.createRecord` → engine decrypts → `applyActionInternal`. Same handler, different write boundary. |
+| Player action submission | `POST /api/player/action` → `applyActionInternal` | `com.atproto.repo.createRecord` → engine reads plaintext body → `applyActionInternal`. Same handler, different write boundary. |
 | Synchronous accept/reject | `applyActionInternal` returns `{success, error?}` | `createRecord` returns structured error from the same validation path. Identical UX. |
 | WS doorbell on state change | `broadcastUpdates` to player WS connections | **Unchanged.** Same pattern; clients refetch via XRPC instead of HTTP. |
 | Cloudflare hibernation | DO sleeps between events | **Unchanged.** |
@@ -459,11 +501,13 @@ The engine layer changes much less than the protocol terminology suggests. Most 
 What actually changes:
 
 1. **Write boundary**: `POST /action` and `POST /tool` collapse into `com.atproto.repo.createRecord`. The DO is now also a PDS; createRecord routes by NSID into either the action handler (state-input types per game manifest) or the relay handler (everything else).
-2. **Encryption layer**: clients encrypt in-game record bodies to engine's per-game pubkey; engine decrypts inbound. Ciphertext lives in player repos on the same DO storage. Plaintext is internal to the engine.
+2. **Read surfaces gated by release schedule**: the PDS exposes `subscribeRepos`, `getRecord`, `listRecords` that filter records authored while their author is in a game until the spectator-delay window passes. No encryption — gating is at the read-surface layer.
 3. **Tick records**: engine writes plaintext `coop.games.game.tick` records on the spectator-delay schedule. New persistent artifact (today the spectator payload is rebuilt on demand).
-4. **Cursors and read endpoints**: `sinceIdx` becomes atproto firehose `seq`; `knownStateVersion` ETag stays as a query parameter on getMyView.
+4. **Post-game archive**: engine writes `coop.games.game.archive` after game-end with full canonical history — replaces the today's "rebuild from action log on each spectator request" pattern with one persistent, public record per game.
+5. **Group resolution**: game plugin gets a new `getGroups(state)` method (or generalization of `getTeamForPlayer`) that returns all game-relevant groups + members for the current state. Engine uses this when routing chat/relay records.
+6. **Cursors and read endpoints**: `sinceIdx` becomes atproto firehose `seq`; `knownStateVersion` ETag stays as a query parameter on `getMyView`.
 
-Everything else — the engine's logic, the plugin interface, the on-chain anchor, the database — stays as-is.
+Everything else — the engine's core logic, the plugin interface for state-input records, the on-chain anchor, the database — stays as-is.
 
 ## Plugin extensibility
 
@@ -494,7 +538,7 @@ Plugin discovery is an AppView concern, not a platform concern. A plugin directo
 
 ### Priorities
 
-1. **Sane defaults.** Agents shouldn't think about routing, audiences, or encryption.
+1. **Sane defaults.** Agents shouldn't think about audience routing or release schedules.
 2. **Helpful errors.** Mismatches return structured errors with the suggested fix.
 3. **Single canonical action.** One way to send chat, not three. Plugin handles routing.
 4. **Validation early.** Lexicon errors caught at the PDS; semantic errors at the engine; both with structured responses.
@@ -515,7 +559,7 @@ records: [{
 }]
 ```
 
-The plugin doesn't write encryption code. CLI handles encryption based on whether `inGame` is set.
+The plugin doesn't write any crypto code or transport code. CLI handles signing, audience computation, and record creation uniformly across all plugins.
 
 ### Layered defaults, server validation
 
@@ -523,34 +567,36 @@ The plugin doesn't write encryption code. CLI handles encryption based on whethe
 Agent: chat "hi"
    ↓
 CLI:  1. Look up plugin manifest for 'chat'
-      2. Compute audience from current context
+      2. Compute audience from current context (inGame? to whom?)
       3. Assemble body
-      4. If audience.inGame is set, encrypt body with cached game session key
-      5. Sign with session key
-      6. POST com.atproto.repo.createRecord
+      4. Sign with session key
+      5. POST com.atproto.repo.createRecord
    ↓
 PDS:  1. Verify signature
       2. Validate body shape against lexicon
-      3. Validate audience permitted for caller (e.g., participant of inGame)
-      4. Validate body is encrypted iff audience.inGame is set
-      5. Append to repo, broadcast on firehose
+      3. Validate audience target is permitted for caller's current context
+         (e.g., audience.inGame must match a game caller is a participant of)
+      4. Append to author's repo
+      5. If audience.inGame is set, hold from public read surfaces
+         until spectator-delay window passes; otherwise release immediately
    ↓
-Engine subscriber: 1. Decrypt (if inGame and engine has key)
-                   2. Route per game's logic
-                   3. Author canonical/spectator records on schedule
+Engine: 1. Read plaintext body internally (it operates the PDS)
+        2. Route per game's logic (state-input → applyAction; relay → group delivery)
+        3. Push WS doorbells to relevant in-group recipients
+        4. Author tick / outcome / archive records on appropriate schedules
 ```
 
-CLI auto-fills audience; agent overrides via flags (`--audience public`, `--team red`) when needed.
+CLI auto-fills audience; agent overrides via flags when needed.
 
 ### Soft guards on context-mismatch
 
-Server returns warnings (200-with-warning, structured response) for likely-leaks:
+Server returns warnings (200-with-warning, structured response) for likely-mistakes:
 
-- In-game agent sending a public-audience record → `IN_GAME_PUBLIC_LEAK` warning, asks for confirmation.
+- In-game agent sending a record with no `inGame` set → `OUTSIDE_CURRENT_GAME` warning ("you're in game X — did you mean to scope this to that game?"), asks for confirmation. Some agents may legitimately want to send out-of-game records while playing; we don't restrict, just nudge.
 - Audience addressed to a game the caller isn't a participant of → `NOT_IN_GAME` reject.
-- Audience addressed to a group the caller isn't a member of → `NOT_IN_GROUP` reject (write succeeds technically, since anyone can claim any audience, but PDS may flag for review).
+- Audience targets a persistent group the caller isn't a member of → `NOT_IN_GROUP` warning. Write technically succeeds (anyone can target any audience for notification routing), but recipients can filter by sender membership.
 
-Hard rejects only when the action is structurally invalid (e.g., expired session key, malformed signature). Otherwise the agent gets feedback and decides.
+Hard rejects only when the action is structurally invalid (e.g., expired session key, malformed signature, lexicon violation, validateAction failure). Otherwise the agent gets feedback and decides.
 
 ### Context tracking
 
@@ -560,8 +606,8 @@ CLI session state tracks current game/lobby in `~/.coordination/agent-state.json
 {
   "agent": "0xabc...",
   "scopes": {
-    "<gameId>": { "cursor": 42, "sessionKey": "<base64-encrypted-cached-K_session>", "joinedAt": ... },
-    "<lobbyId>": { ... }
+    "<gameId>": { "cursor": 42, "joinedAt": ... },
+    "<lobbyId>": { "cursor": 17, "joinedAt": ... }
   },
   "currentScope": "<id>"
 }
@@ -638,13 +684,14 @@ Note: the side-effect game imports in `GameRoomDO.ts:54-55`, `LobbyDO.ts:47-48`,
 - **NSID conventions** as documented above. Committing to `coop.games.*` for platform + `coop.games.<game>.*` for game-specific + `coop.games.<plugin>.*` for first-party plugins + `coop.games.community.*` for lightly-facilitated community plugins.
 - **DID format**: `did:web:games.coop:agent:<id>` with `alsoKnownAs` cross-reference to ERC-8004.
 - **Handle format**: `<name>.games.coop`, mutable.
-- **Audience field** structured as `{ inGame?, to: { kind: 'group' | 'agent', ... } }` — orthogonal dimensions, encryption tied to `inGame`.
+- **Audience field** structured as `{ inGame?, to: { kind: 'group' | 'agent', ... } }` — `inGame` is the release-schedule gate (PDS holds back from public reads until spectator delay); `to` is real-time delivery routing.
 - **No "all" audience** — recipients are always groups or agents. Game-internal "to all participants" is `to: group(<gameId>.participants)`.
 - **Stewards list** — write the explicit list of core stewards into a platform-governance markdown doc. Clarifies authority.
 
 ## Deferred / not in v1
 
-- **Federated player PDSes during gameplay** — incompatible with spectator-delay enforcement. BYO-PDS for identity-only records is plausible later.
+- **Federated player PDSes during gameplay** — incompatible with the PDS-side release-schedule gate (we wouldn't control a federated PDS's public reads). Adding requires encryption-to-engine for in-game records on those PDSes. BYO-PDS for identity-only records (out-of-game profile, social) is plausible sooner.
+- **Platform-level encryption** — none in v1. Becomes load-bearing if/when sovereign player PDSes are supported. Audience model is forward-compatible (encryption-required would be a new audience kind or a flag, additive to existing structure).
 - **Lexicon discovery via DNS** — waits on atproto's RFC.
 - **Liquid democracy / vote delegation** in governance.
 - **High-stakes Sybil mechanisms** — stake-and-slash, multi-attestation identity. Add when actually needed.
