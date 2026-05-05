@@ -691,15 +691,55 @@ Note: the side-effect game imports in `GameRoomDO.ts:54-55`, `LobbyDO.ts:47-48`,
 - **No "all" audience** — recipients are always groups or agents. Game-internal "to all participants" is `to: group(<gameId>.participants)`.
 - **Stewards list** — write the explicit list of core stewards into a platform-governance markdown doc. Clarifies authority.
 
+## Primitives worth proposing to atproto community
+
+These don't depend on us shipping them; they're worth contributing back to atproto regardless. Standalone value, generic across use cases.
+
+- **`community.lexicon.sealed_publication`** — generic *delayed self-publication via delegated decrypter* primitive. Encrypted envelope + scoped, time-bound delegation grant + signed inner record. PDS verifies delegation and accepts third-party-submitted inner record on author's behalf. Use cases beyond games: sealed-bid auctions, time-locked announcements, fairness primitives, anonymous tips with later reveal, commitment schemes. We'd PR the lexicon and propose the PDS behavior as a standardized extension.
+- **OAuth scoped/programmatic consent flow** — atproto's OAuth direction supports scoped tokens but the standard reference flow assumes browser consent. A client-signed assertion flow (RFC 7523-style) for programmatic clients (agents, hot-wallet CLIs) is a natural extension. We'd contribute reference patterns or library code that lets agents authenticate programmatically without browser hijinks.
+
+These contributions stand on their own. If atproto adopts them, our v2 federated path is built on community-blessed primitives. If not, we still benefit from designing toward standard shapes.
+
 ## Deferred / not in v1
 
 - **Federated player PDSes during gameplay** — not supported in v1. The PDS-side release-schedule gate only works for PDSes we operate; a publicly-readable federated PDS would broadcast a player's in-game records on its own firehose in real-time, breaking spectator-fairness for anyone subscribing to that PDS directly. The "leaks via webcam" analogy applies: we can't *prevent* a participant from running a leaky PDS, but we don't have to support it as a first-class path. **BYO-PDS for identity-only records (out-of-game profile, social, follows)** is plausible sooner — those records aren't subject to spectator-fairness and follow standard atproto semantics.
-- **Platform-level encryption** — none in v1. If/when we support BYO-PDS during gameplay, the realistic mechanism is **encryption-to-engine** (in-game record bodies encrypted to the engine's per-game pubkey at write time; engine decrypts internally, publishes projected/delayed plaintext on its own schedule; post-game key reveal for verification). Opt-in: only federated participants need to encrypt; players on our PDS still write plaintext. Audience model is forward-compatible — encryption-required becomes a property derived from "is this record on a federated PDS" without changing the schema.
 
-  Two other paths for BYO-during-gameplay we considered and rejected:
+- **Recommended v2 federated mechanism: sealed-publication primitive.** When/if BYO-PDS during gameplay becomes a goal, the cleanest pattern is a generic *delayed self-publication via delegated decrypter* primitive that we'd propose to atproto's community lexicon namespace. Rough shape:
 
-  - **Engine authors all in-game records with embedded player signatures** (player repos hold zero in-game records; players submit actions via XRPC; engine packages them with sigs into its own tick records). Works without encryption, but loses "every action is in the author's repo" property for in-game and is a bigger architectural shift than option 1.
-  - **Trusted-execution / time-lock / threshold-encryption** schemes are research-grade and not realistic for v1 or near-v1. Mention only for completeness.
+  ```
+  NSID: community.lexicon.sealed_publication
+  Author: alice (her sig on the envelope)
+  Body: {
+    ciphertext: <encrypted inner record + alice's inner sig>,
+    recipient:  <decrypter DID, e.g. engine.games.coop>,
+    delegation: {
+      decrypter:  did,
+      scope:      { collection: "coop.games.chat.message" },
+      validFrom:  <ISO timestamp>,
+      validUntil: <ISO timestamp>,
+      grantSig:   <alice's sig over the delegation fields>
+    }
+  }
+  ```
+
+  Flow: alice publishes envelope → engine decrypts and processes immediately → at T+delay engine submits the pre-signed inner record + delegation grant to alice's PDS → PDS verifies the grant and accepts the record as alice-authored → public firehose sees a normal alice record at T+delay.
+
+  Properties:
+  - **Capability-based, not OAuth-based.** The delegation is alice's own signature on a structured grant, embedded in the envelope. Verifying it requires alice's pubkey — no token state, no refresh, no per-record consent.
+  - **Time-bounded** by `validUntil`; engine can't sit on the inner record forever.
+  - **Scope-limited** to specific NSIDs; engine can't write arbitrary other records on alice's behalf.
+  - **Generic primitive.** Reusable beyond games: sealed-bid auctions (envelope reveals after auction closes), time-locked announcements, fairness primitives in multi-party protocols, anonymous tips with later reveal. Worth proposing to atproto regardless of whether we ship federated PDS support ourselves.
+  - **Requires PDS extension.** Stock atproto PDSes don't accept third-party submissions of records bearing delegation grants. We'd PR the lexicon to `community.lexicon.*` and propose the PDS behavior as a standardized extension. Adoption curve is real; stock PDSes will reject sealed-publication-style submissions until they support the extension.
+
+- **Standards-compatible alternative: OAuth-scoped delegation.** If sealed-publication isn't yet supported by alice's federated PDS, the path that works against stock atproto today is OAuth-scoped delegation. Atproto's OAuth 2.1 + DPoP allows scoped, time-bound write tokens. Alice grants the engine a scoped token ("may publish `coop.games.*` records on my repo, expiring in N days"); engine submits via standard `createRecord` authenticated with the token. This is **per-relationship interactive consent** (one approval at game-join, not per-record), and for hot-wallet/agent use cases the consent can be signed programmatically (JWT-bearer-assertion-style flow) without a browser — atproto OAuth doesn't strictly require browser flow, that's just a UX convention for human consent.
+
+  OAuth-scoped delegation works with stock atproto today. Sealed-publication is cleaner once standardized. Pick based on what's available when v2 lands.
+
+- **Two paths for v2, not unified.** When v2 federated support ships, hosted players (on our PDS) keep using PDS-side release-scheduling for plaintext records (no encryption overhead, no extra round trips); federated players use sealed-publication or OAuth-scoped delegation. Two paths, but each is appropriate for its case. Unifying everyone on sealed-publication would mean every record pays per-record encryption + decryption + republish overhead in the hot path, even for hosted players where PDS-side gating works trivially.
+
+- **Other paths considered and rejected for federated:**
+  - **Engine authors all in-game records with embedded player signatures** (player repos hold zero in-game records; players submit actions via XRPC; engine packages them with sigs into its own tick records). Works with stock atproto; loses "every action is in the author's repo" property for in-game and is a bigger architectural shift than the sealed-publication or OAuth-delegation routes.
+  - **Trusted-execution environments / time-lock encryption / threshold-encryption** schemes are research-grade and not realistic for v1 or near-v1. Mention only for completeness.
 - **Lexicon discovery via DNS** — waits on atproto's RFC.
 - **Liquid democracy / vote delegation** in governance.
 - **High-stakes Sybil mechanisms** — stake-and-slash, multi-attestation identity. Add when actually needed.
