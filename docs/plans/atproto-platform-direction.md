@@ -1,208 +1,410 @@
-# ATProto and Platform-Layer Direction (Captured Thinking, Not a Roadmap)
+# Coordination Platform: Design Direction
 
-**Status:** Deferred. This document captures design conclusions from a long exploratory conversation. It is **not** a commitment to action and **not** a staged execution plan. The author's expectation is that if this direction is pursued, it will be done as a clean-sweep rewrite at the appropriate moment, not as incremental migration.
+**Status:** Forward-direction design, not a roadmap. Defines the destination shape; execution is expected to be a clean-sweep rewrite at the appropriate moment, consistent with the pre-launch "no backwards-compat shims" policy.
 
-**Why this exists:** the conversation traced a path from "should we adopt atproto for legibility?" through a series of architectural reframings ending at "we're building a coordination social platform; games are one AppView." Several genuine insights about our current architecture surfaced along the way, including discipline violations that contradict our stated principles. This doc is the record of the thinking and the audit findings, so future work can build on them instead of re-deriving them.
+**Frame:** We are building **a coordination social platform**. Games are the first AppView. Other AppViews (governance, deliberation, prediction markets, multi-party agreements) follow on the same infrastructure. The platform's value proposition centers on *legibility*: nothing is expected to be secret from the platform itself; every coordination action is observable by the server, eventually visible to spectators (with delay for fairness), and available to researchers. This is the platform-as-research-substrate stance, aligned with the `.coop` cooperative ethos.
 
-## Starting question
+We adopt ATProto for the platform layer. ERC-8004 anchors identity. Encryption exists only to enforce spectator delay during a game, not to keep secrets from the platform.
 
-Has anyone done a blockchain-anchored ATProto implementation, and could/should we add ATProto to our chat or platform?
-
-External landscape (2025–2026): Frequency × Free Our Feeds is the only serious blockchain-anchored ATProto implementation, anchoring CIDs to Frequency (a Polkadot parachain). Bluesky itself explicitly avoids cryptocurrency dependencies. There is no Ethereum-anchored ATProto in production.
-
-The question morphed almost immediately. The interesting framing was not "use Bluesky" but "do we add ATProto to *our* coordination network?" — i.e., make our platform ATProto-shaped (or wire-compatible).
-
-## Architectural reframings, in order
-
-Each reframing was a sharpening, not a separate idea — they built on each other.
-
-### 1. We are already ATProto-shaped
-
-Mapping our current shapes to ATProto primitives revealed near-isomorphism:
-
-| Current | ATProto equivalent |
-|---|---|
-| Agent envelope (signed) | Signed commit |
-| Relay log + `sinceIdx` cursor | Firehose + cursor |
-| Canonical JSON encoding | DAG-CBOR (different bytes, same determinism) |
-| ERC-8004 identity | DID:plc / DID:web equivalent |
-| Plugin pipeline | Lexicon validation + AppView |
-| Spectator-delayed payload | AppView curated firehose |
-| `RelayEnvelope.scope` (all/team/dm) | Audience field on records |
-| Canonical-vs-working state split | PDS-vs-public-firehose split |
-
-The implication: adopting ATProto is mostly a **rename and wire-format choice**, not an architectural rewrite. We arrived at ATProto's shape independently — that's a sign the design is correct, not a sign we should rename everything to match.
-
-### 2. Identity composes with ERC-8004 cleanly
-
-The wallet-vs-DID problem turned out to be packaging conventions, not cryptography. ATProto supports `secp256k1` natively, so wallet keys are valid ATProto signing keys. The friction is that browser wallets sign via EIP-191/712 wrappers and don't expose raw signing — this is solved by **session keys** with wallet delegation (the pattern ERC-4337 / EIP-7702 / passkey wallets converge on).
-
-For DID: a custom `did:erc8004` method is doable but unnecessary. `did:web:games.coop:agent:<agentId>` resolves to a DID document generated from on-chain ERC-8004 state, with `alsoKnownAs: ["erc8004:10:<agentId>"]` declaring the chain root. Stock ATProto resolvers handle `did:web` natively. The chain is the trust root; the served DID document is a verifiable shim.
-
-This pattern matches `did:plc`'s posture (Bluesky's centralized log) but with a real cryptographic root underneath instead of a corporate operator. Arguably a better implementation of the same shape.
-
-The contract already supports identity migration: `CoordinationRegistry.registerExisting(agentId, ...)` (see `packages/contracts/contracts/CoordinationRegistry.sol:67-80`) lets a player bring an existing ERC-8004 NFT into our registry by proving `ownerOf`. So existing 8004 IDs port in cleanly.
-
-### 3. The engine is one agent among many; the lobby is an aggregator
-
-Per-lobby agents would be wrong (gas cost per game, registry sprawl, less ATProto-native — Bluesky doesn't mint a repo per post). One global `engine.games.coop` ERC-8004 agent authors all games, with games as records in its repo (`coop.games.game/<gameId>`). Concurrent games are concurrent writes to different paths in the engine's MST.
-
-The lobby is an **aggregator pattern** (real-world ATProto AppViews work this way):
-
-- Player repos own raw moves (records signed by the player)
-- Lobby/engine subscribes to participants' firehoses, validates, canonicalizes via `applyAction`
-- Engine publishes canonical tick records to its own repo with `strongRef` pins to the player moves
-- On-chain anchor commits the engine's outcome record CID, transitively pinning every referenced move CID
-
-Multi-writer lobby repos (one repo, N verification methods) were rejected — they're cute but require inventing non-standard ATProto. Aggregator pattern is pure ATProto.
-
-Per-game-mode engine agents (one for CtL, one for OATHBREAKER) are a reasonable future split if reputation surfaces should diverge per game type. Federation later (other operators run their own engines) follows the same mechanism — `engine.someothersite.com` as a parallel agent.
-
-### 4. There are no privileged categories at the protocol level
-
-Several iterations sharpened this:
-
-- Started with "engine canonicalizes state, relays advisory chat" — wrong.
-- Moved to "engine has state-input NSIDs and observer NSIDs" — still wrong.
-- Landed at: **the engine has only one role — consume records of types the loaded game declares as state inputs, validate, canonicalize, output records under its own NSIDs.** Everything else is just records on the firehose. The engine doesn't observe, route, or filter chat. It doesn't know chat exists.
-
-The state-vs-relay distinction is **not a protocol distinction**. It's a per-game declaration: a game's manifest says "I subscribe to types X, Y, Z as state inputs." Records of those types contribute to canonical state and to the on-chain anchor. Records of any other type (chat, bot status, community-defined plugins) ride the same firehose, the engine ignores them, and other subscribers (clients, plugins, AppViews) pick what to consume.
-
-This means **community plugins are first-class.** A community publishes records under their own NSID (`com.alice.snark.coordinate`); the engine never sees them; other clients/plugins/games can choose to consume them. The platform supports unknown types organically — that's the whole point.
-
-### 5. Records and relays are different layers
-
-A trap I kept falling into: thinking "records live in the lobby relay." Wrong.
-
-**Records live in actor repos.** They're owned by the actor, signed by the actor, persistent independent of any relay. A relay is a *subscription endpoint that aggregates many repos' firehoses into one* — a derived view, not a storage location. Records exist whether or not any relay aggregates them.
-
-A given chat record from Alice is in Alice's repo. It appears in:
-- The platform's global firehose (always)
-- Any game-scoped relay where Alice is a participant (filtered view)
-- Anyone's user-firehose subscription to Alice
-- Friends' "Alice's recent activity" views
-
-After a game ends, the record is still in Alice's repo — game lifecycle has nothing to do with record existence.
-
-### 6. Game-scoped relays are filtered views, not storage
-
-Once records-live-in-repos is internalized, "the lobby's relay" becomes "a filter expression": `participants ∈ [didA, didB, ...] ∧ types ∈ [...] ∧ time ∈ [game-start, game-end]`. Same machinery, different `WHERE` clause. There's exactly one PDS, exactly one source of truth (each actor's repo), and arbitrary many filtered subscription endpoints.
-
-This collapses a chunk of mental complexity. Lobby relays aren't a separate abstraction. They're a query.
-
-### 7. The platform layer exists, and games are one AppView
-
-This was the final reframe and it changed everything. Chat, groups, DMs, audiences, identity — these are **platform primitives** that exist independently of any game. A user can chat with another user without being in a game. A group can be created without being attached to a game. The firehose flows whether games are running or not.
-
-`audience: 'all'` does not mean "public to game participants." It means **public, period.** Privacy is only a concern for non-`all` audiences (DMs, groups). Groups are platform records, owned by some agent (which may be a game-engine agent, but doesn't have to be), with read-gating enforced by the PDS.
-
-This means we're not building "a games platform" — we're building **a coordination social platform**, with games as the first AppView. Other AppViews (debate, governance, prediction markets, multi-party agreements) are categorically the same kind of thing as games: programs that consume subsets of the platform firehose and produce canonical interpretation records.
-
-## What we landed on (no commitment)
-
-If the eventual move is a clean-sweep rewrite, the destination shape is:
-
-- **Platform layer** (ATProto-compatible): identity (DID + ERC-8004 root), agent repos with MST commit chains, signed records with NSID + audience, PDS hosting, firehose subscription, groups as platform records, read-gating.
-- **Game layer** (sits on top): each game is a plugin that declares its subscribed state-input types and its groups. The engine consumes those types, validates them, canonicalizes via `applyAction`, publishes ticks/outcomes as records. On-chain anchoring still uses our `GameAnchor` contract — the anchor commits the outcome record CID, transitively pinning state-input records.
-- **Generic audience model**: `{kind:'all'} | {kind:'dm', recipient: did} | {kind:'group', groupId}` replaces `RelayEnvelope.scope`. Game declares groups (e.g., CtL: `teamRed`, `teamBlue`); chat plugin uses them; nobody knows about chat at the engine level.
-- **Domain shift**: a separate platform-level domain (suggested: `coordination.coop`, alternatives: `agora.coop`, `compact.coop`) hosts identity (`@alice.coordination.coop`). `games.coop` becomes the games-AppView frontend. Other AppViews live at their own .coop domains.
-
-## Discipline audit findings (current code)
-
-A code audit was done to test whether the codebase actually follows the generic-platform / pluggable-game contract we purport to follow. Findings (see Task #11 output for file:line specifics):
-
-### Game-specific code in supposedly-generic infra
-
-- **`GameRoomDO.ts:54-55` and `LobbyDO.ts:47-48`** — side-effect imports of every game (`import '@coordination-games/game-ctl'; import '@coordination-games/game-oathbreaker'`). Adding a game requires editing core DO files. Mirrored in `cli/mcp-server.ts:14-15`, `cli/commands/game.ts:4-5`, `web/main.tsx:9-10`, `web/games/registry.ts:1-10`. ~6–8 file edits per new game in non-game packages.
-- **`cli/game-client.ts:13, 418`** — `if (gameType === OATH_GAME_ID) { teamSize 4-20 } else { 2-6 }`. Game-aware code in shared client. The user explicitly flagged this as broken and confusing for agents.
-- **`cli/mcp-tools.ts:44-45, 299, 379, 386, 396`**, **`cli/commands/game.ts:4-5, 269-270`** — game-id literals scattered through CLI help strings, validation, and defaults.
-
-### Chat is privileged in the engine
-
-- **`packages/engine/src/chat-scope.ts`** — a whole engine-package file dedicated to chat scope semantics. The engine should not know what chat is.
-- **`packages/engine/src/types.ts:309-319`** — `CoordinationGame.chatScopes?: ReadonlyArray<'all' | 'team' | 'dm'>` on the game-plugin contract. Chat is privileged on the engine interface; no equivalent hook exists for any other plugin's audience semantics.
-- **`GameRoomDO.ts:60, 942-953`** and **`LobbyDO.ts:53, 481-489`** — both DOs explicitly check `if (relayObj.type === CHAT_RELAY_TYPE) { validateChatScope(...) }` inside `handleTool`. The only place core branches on a specific envelope type literal.
-- **`cli/pipeline.ts:16-18`** — `DEFAULT_PLUGINS = [BasicChatPlugin]`. The "generic" pipeline silently injects chat as a default. Future plugin authors can't reach in.
-
-### Spectator/projection logic is clean
-
-- `spectator-payload.ts`, `relay-client.ts:isVisible`, `runtime.ts:handleRelay`, `cli/pipeline.ts:runPipeline` are all generic. No game-specific or chat-specific branching.
-- Plugins self-select on `env.type` in `handleRelay`. Pipeline core is fine.
-
-### Verdict
-
-We mostly hold the line in server-side core (relay-client, spectator-payload, runtime, tool-dispatcher) — but **chat is privileged in the engine package and in both DOs**, and **side-effect imports leak game wiring across the codebase**. These contradict our stated principles directly. They're concrete cleanup the codebase deserves *regardless of any future protocol decision*.
-
-## State-vs-relay unification analysis
-
-Two paths through the system today:
-
-- **Action path** (`/api/player/action` → `GameRoomDO.applyActionInternal`, line 1069): validates synchronously via `plugin.validateAction` (returns `{success: false, error}` on reject), runs `plugin.applyAction`, pushes to `_actionLog` (Merkle source), updates state, increments `_stateVersion`, builds spectator snapshot, broadcasts.
-- **Publish path** (`/api/player/tool` → `relayClient.publish`, line 97 of `relay-client.ts`): structural validation against zod schema, append to `relay:{paddedIdx}`, bump `relay:tip`. **No state mutation, no Merkle push, no state-version bump.**
-
-**The wire is already unified** at `/api/player/tool` (the worker dispatcher routes by `declarer: 'game' | 'lobby' | 'plugin'`). The DO-internal split is habit.
-
-### Load-bearing distinctions (must preserve in any unification)
-
-1. **Synchronous accept/reject for state-input records.** `applyAction` returns a verdict to the player; `publish` does not. A unified model needs a per-record-type validator hook with a synchronous reject contract — but this generalizes naturally as "if the game subscribes to this type, run its validator synchronously and return verdict; if not, structural validate and append opaque."
-2. **`stateVersion` ETag optimization.** Skipping full state payload when only chat advanced is real bandwidth savings. Collapses naturally if `stateVersion` bumps iff the record's type is in the game's subscribed-state-inputs set.
-3. **`movesRoot` (on-chain anchor) covers actions only.** Generalizes as: the game's subscribed-state-input types are what contributes to `movesRoot`. Same code path (`buildActionMerkleTree` in `GameRoomDO.ts:744-749, 1216`), generalized filter. **Server-side**, confirmed.
-
-### Incidental distinctions (can collapse)
-
-- `/action` vs `/tool` HTTP routes — already unified at the worker dispatcher; the DO-internal split is pure habit.
-- `relay:{idx}` vs `actionLog[]` storage layouts — trivially unifiable into one indexed log keyed by `record:{idx}` with a `kind` discriminator, or further generalized to type-discriminator only.
-- `_stateVersion` and `_progress.counter` are adjacent monotonics that already bump together in `applyActionInternal:1121, 1141`. Both derivable from the unified log.
-- Engine state IS already a derived view of the action log per `types.ts:124-128` ("Deterministic — applyAction must produce the same output for the same input"). The state-as-derived-view model already holds conceptually; unification just makes it explicit.
-
-### Generalized unified flow (if/when implemented)
+## Vision and layering
 
 ```
-record arrives at /api/player/tool
-  → engine asks: "does the loaded game's manifest list this type as a state input?"
-       → yes:
-            → run game.validate(record, state) synchronously
-            → reject? return {success: false, error}
-            → accept: append to log, run game.apply, bump stateVersion, snapshot, broadcast
-       → no:
-            → validate against type's zod schema only (structural)
-            → append to log as opaque relay record
-            → no stateVersion bump
+┌──────────────────────────────────────────────────────────────┐
+│  AppViews                                                     │
+│  ┌──────────────┐ ┌──────────────┐ ┌────────────┐ ┌────────┐ │
+│  │ games.coop   │ │ govern.coop  │ │ research.* │ │ ...    │ │
+│  └──────────────┘ └──────────────┘ └────────────┘ └────────┘ │
+├──────────────────────────────────────────────────────────────┤
+│  Platform                                                     │
+│  Identity (DID + ERC-8004) | Records (PDS) | Firehose | Groups│
+├──────────────────────────────────────────────────────────────┤
+│  Trust roots                                                  │
+│  Ethereum/OP (ERC-8004 registry, anchoring) | DNS (did:web)   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-`movesRoot` is built from `log.filter(r => game.stateInputTypes.has(r.type))`.
+- **Trust roots** are external: the on-chain registry is the canonical source of identity; DNS resolves DIDs.
+- **Platform** is one ATProto deployment hosting a PDS (Personal Data Server), firehose (`com.atproto.sync.subscribeRepos`), and shared primitives (groups, audiences, lexicons).
+- **AppViews** consume the platform firehose and produce canonical interpretations. The games AppView is at `games.coop`; future AppViews live at their own domains.
 
-## Open questions
+## Identity
 
-These were raised but not resolved:
+### DIDs and ERC-8004
 
-1. **Domain choice.** `coordination.coop` (descriptive, future-proof) vs `agora.coop` (evocative, short) vs others. User-facing identity (`@alice.X.coop`) makes this load-bearing.
-2. **Group gating model.** Reads gated by PDS membership lookup (real privacy). Writes — anyone can sign a record claiming any audience; protections are content-filter-based (annoyance-grade only). Whether this is sufficient for adversarial coordination games is open.
-3. **Group ownership.** Groups as records authored by an owning agent (engine, user, etc.). Ownership transfer, multi-owner, dissolution mechanics — undecided.
-4. **Identity migration story.** Existing players at `games.coop` would need to migrate to `coordination.coop` (or whichever) handles. ERC-8004 IDs port via `registerExisting`. Handle migration is the user-facing UX question.
-5. **Whether community plugins/AppViews can be incentivized.** ERC-8004 + credit economics give us a substrate; specific designs for "community-built game receives a cut of credit flow" undecided.
-6. **What rate of clean-sweep risk we tolerate.** The pre-launch policy explicitly endorses clean rewrites. Post-launch this stance reverses. Timing of any platform-layer extraction matters.
-7. **Whether team-private chat is even necessary in CtL/OB**, or if public-team-coordination is more interesting thematically.
+Every agent is registered in the on-chain `CoordinationRegistry` (ERC-8004 + name + initial credits). The on-chain entry is the trust root.
 
-## Why we stopped here
+**DID format:** `did:web:games.coop:agent:<agentId>` where `<agentId>` is the numeric ERC-8004 token ID.
 
-Two reasons:
+**DID document** is served at `https://games.coop/.well-known/did/agent/<agentId>/did.json`. Generated from on-chain state on every fetch (with short TTL caching). Includes:
 
-1. **The ROI of full ATProto adoption depends on the platform-layer framing being right**, and we're not yet sure it is. If we're "a games platform that happens to be ATProto-shaped," wire-compat is speculative value. If we're "a coordination social platform with games as one AppView," wire-compat is foundational. The author's not yet committed to the second framing.
-2. **The unification cleanup work stands alone** and is good regardless. The discipline violations contradict our own stated principles. They should be fixed whether or not we ever adopt ATProto. But the user's read is that the eventual execution is more likely to be a single clean-sweep rewrite than a staged sequence of small PRs — which is consistent with our "no backwards-compat shims" pre-launch policy.
+- `verificationMethod` — wallet pubkey from registry (rotates per on-chain rotation), plus current session keys
+- `alsoKnownAs` — `[handle URI, "erc8004:<chainId>:<agentId>"]`
+- `service` — atproto PDS endpoint
 
-## What this doc is for
+Anyone wanting to verify against the chain directly reads the registry and computes the expected DID document. Stock atproto `did:web` resolvers handle the served version. The chain is the trust root; the served document is a verifiable shim.
 
-A reference for whoever (future-us or future-collaborators) picks this up. The conversation produced more clarity than execution intent. Captured here so the clarity isn't lost.
+### Handles
+
+`<name>.games.coop` resolved via DNS TXT (`_atproto.<name>.games.coop` → DID) or `/.well-known/atproto-did`. Handles are mutable; DIDs are stable. A user's records persist across handle changes; future migration to `<name>.govern.coop` or `<name>.alice.com` is a single DNS record change.
+
+### Session keys
+
+Wallets sign EIP-191/712 wrappers, not raw bytes. Browser wallets don't expose raw signing. Pattern: at session start, generate a fresh secp256k1 keypair; wallet signs a one-time delegation authorizing that session key to act for the agent until `expires`; session key signs all atproto records during the session.
+
+The DID document's `verificationMethod` array includes both the wallet pubkey (`#root`) and current session keys (`#session-<expiry>`). Session keys age out; wallet roots trust.
+
+This is the same convergent pattern ERC-4337 / EIP-7702 / passkey wallets use. CLI today holds session keys directly (no wallet UX); future browser/MetaMask integration uses delegation.
+
+### Migrating in existing ERC-8004 IDs
+
+`CoordinationRegistry.registerExisting(agentId, ...)` accepts an existing ERC-8004 NFT, verifies `ownerOf`, registers it under our registry. Players bringing identity from another platform retain their agent ID.
+
+## Records and lexicons
+
+### Repo model
+
+Every agent has one PDS-hosted repo addressed by their DID. Records live in the author's repo, signed by the author's session key (verified against the DID's `verificationMethod`). Records are immutable once written; updates produce new records that supersede prior versions.
+
+Repos are MSTs (Merkle Search Trees). Atproto's standard sync semantics apply: `com.atproto.sync.subscribeRepos` for the firehose, `com.atproto.sync.getRecord` for individual records, `strongRef` (`{uri, cid}`) for content-pinned cross-references.
+
+The PDS is engine-hosted today (one shared PDS at `games.coop`). BYO-PDS for identity-level records is a future extension; in-game records always go to the engine PDS so the engine can enforce spectator-delay (federated player PDSes during gameplay are incompatible with fair play and not supported).
+
+### NSID conventions
+
+NSIDs follow atproto reverse-domain notation. We own `games.coop` → we own `coop.games.*`.
+
+Concrete namespace plan:
+
+```
+# Platform-level (used across games)
+coop.games.actor.profile
+coop.games.actor.registration
+coop.games.lobby.session
+coop.games.lobby.join
+coop.games.game.tick                      # engine-authored canonical state record
+coop.games.game.outcome                   # engine-authored final outcome
+coop.games.audience.group                 # group definition
+coop.games.audience.member                # group membership
+coop.games.session.keys                   # wrapped encryption keys (per-game)
+coop.games.session.reveal                 # time-locked key release for spectator delay
+
+# First-party plugins
+coop.games.chat.message
+coop.games.wiki.entry
+coop.games.wiki.comment
+
+# Game-specific
+coop.games.ctl.move
+coop.games.ctl.config
+coop.games.oathbreaker.pledge
+coop.games.oathbreaker.config
+
+# Community-shared (lightly facilitated)
+coop.games.community.*                    # PR'd to a community lexicon repo, lightly reviewed by stewards
+
+# Community plugins on their own domain
+com.alicegames.snark.taunt
+dev.bobplugins.vision.share
+```
+
+Convention: category groups by purpose (atproto pattern), not by which plugin owns it. Game-specific records use the game name as category. Community plugins live under their own domain; if a community plugin earns blessing, its lexicons can move into `coop.games.community.*`.
+
+### Lexicons
+
+Each NSID has a lexicon JSON document defining the record schema. We host lexicons we author at known URLs; the community lexicon repo hosts community-shared schemas. Atproto's draft lexicon-resolution RFC will eventually automate discovery via DNS TXT; until then, consumers know NSIDs ahead of time and bundle schemas.
+
+Lexicon validation is enforced at the PDS write boundary — malformed records are rejected with structured errors. Beyond schema correctness, business-rule validation (e.g., "is this a valid move for game state?") is the AppView's responsibility, not the PDS's.
+
+## Audience model
+
+The platform makes nothing secret. Server has full visibility; spectators have delayed visibility; researchers eventually see everything. **Encryption exists only to enforce spectator delay during a game.**
+
+### Two orthogonal dimensions
+
+```
+audience: {
+  inGame?: gameId,                                 // optional: scope to a game (triggers encryption)
+  to: { kind: 'group', groupId: string }           // recipient: a group, OR
+    | { kind: 'agent', recipient: did }            //            a single agent
+}
+```
+
+- **`inGame`**: if set, the record body is encrypted to the game's session key. The engine releases per-tick decryption keys on the spectator-delay schedule. If unset, the record is plaintext.
+- **`to`**: the recipient — either a group (e.g., game participants, a team, an out-of-game room) or a specific agent (DM). Not optional. Records are always addressed to someone.
+
+There is no global "all" audience. A group always has bounded membership, even if that group is "all participants of game X." Ambient public broadcast would be spammy.
+
+### Common patterns
+
+| Use case | Audience | Encrypted? |
+|---|---|---|
+| Game chat to all participants | `inGame: X, to: group(X.participants)` | Yes (in-game) |
+| Team chat | `inGame: X, to: group(X.team-red)` | Yes (in-game) |
+| In-game DM | `inGame: X, to: agent(didY)` | Yes (in-game) |
+| Out-of-game DM | `to: agent(didY)` | No (plaintext) |
+| Out-of-game group/room | `to: group(some-room)` | No (plaintext) |
+| Engine canonical tick | `inGame: X, to: group(X.participants)` | Yes (in-game) |
+| Engine session-key reveal | `to: group(X.spectators)` | No |
+
+Groups derived from a game lobby (`<gameId>.participants`, `<gameId>.team-red`, etc.) are auto-created by the engine when the lobby opens and dissolved or archived when the game ends.
+
+A user's PDS will contain a mixture of plaintext and encrypted records depending on context. This is fine.
+
+### Encryption pattern (in-game records only)
+
+1. **Session key.** At game start, the engine generates `K_session` and wraps it once per participant via NaCl box (or ECIES) using their pubkey. Wrapped keys are published as `coop.games.session.keys` (audience: `to: group(X.participants)`, plaintext envelope, ciphertext payload per recipient).
+2. **Per-tick subkey.** `K_tick = HKDF(K_session, tickNumber)`. Deterministic, derivable by anyone with `K_session`. Records during tick `T` are AES-GCM encrypted with `K_T`.
+3. **Live decryption.** Participants cache `K_session` after unwrapping. They derive `K_T` for any tick they observe. Live decryption, no extra round trips.
+4. **Spectator delay.** After the delay window for tick `T` passes, the engine publishes `coop.games.session.reveal` containing `K_T` (audience: `to: group(X.spectators)`, plaintext). Spectators decrypt all tick-T records.
+5. **Game-end full reveal.** After the game ends and the outcome anchors on-chain, the engine publishes `K_session` publicly. Anyone can derive all `K_T` and verify every record's signature. Full post-hoc verifiability.
+
+Player records are signed on the *plaintext* (signature is inside the encrypted blob). Decryption preserves signature verification.
+
+## Engine
+
+### Role
+
+The engine is one ATProto agent (`engine.games.coop`, an ERC-8004-registered actor) that:
+
+1. **Subscribes to the firehose** for `inGame` records of declared state-input NSIDs.
+2. **Decrypts** in-game records using its session key (it's a participant).
+3. **Validates synchronously**: lexicon-level schema (PDS layer, automatic) + game-state-level rules (the loaded game's `validateAction`).
+4. **Routes per game logic**:
+   - State-input records: validate, run `applyAction`, append to state log, anchor outcome on-chain.
+   - Other records (chat, plugin records, etc.): decrypt for participants and route per recipient; queue for spectator-delayed reveal via key release.
+5. **Authors canonical records**: tick records, outcome records, key reveals — all in the engine's repo.
+
+The engine has no privileged categories at the protocol level. Its role is determined by the game's lexicon manifest, which declares which NSIDs are state inputs. Records the manifest doesn't list flow through the firehose without engine canonicalization.
+
+### Single engine, all games
+
+One global `engine.games.coop` agent authors all games. Concurrent games are concurrent paths in the engine's MST (`coop.games.game/<gameId>/...`). No per-lobby agents — gas cost, registry sprawl, and MST fragmentation outweigh any benefit.
+
+Per-game-mode engine agents (one for CtL, one for OATHBREAKER) are an option if reputation surfaces should diverge per game type. Federation (other operators run their own engine agents — `engine.someothersite.com`) follows the same protocol; the platform is open for it but doesn't require it.
+
+### Synchronous accept/reject
+
+Players write records via `com.atproto.repo.createRecord` to the engine-hosted PDS. The PDS hosts everyone's repos, so create-record calls hit the engine directly. The engine validates synchronously (lexicon + game state) and returns:
+
+- **Success**: record appended to player's repo; firehose broadcasts the (encrypted) commit.
+- **Lexicon validation failure**: structured error from PDS, no record written.
+- **Game-state validation failure**: structured error from engine (e.g., `NOT_YOUR_TURN`, `INVALID_MOVE`), no record written.
+
+Invalid records never land in the repo; player gets immediate feedback. This preserves the synchronous-accept-reject UX from the current `applyAction` flow without requiring a separate validation path.
+
+A query-only `coop.games.engine.validateMove` XRPC procedure lets clients dry-run validation against current state without writing — useful for client-side sanity checks before submission. Pure function, safe to expose.
+
+### Ordering
+
+The engine's PDS serializes record creation in arrival order at the DO. Single-writer-DO ordering is preserved — same primitive as today's `applyActionInternal`. There's no merged-firehose-from-many-PDSes race because all in-game writes go through the engine's PDS.
+
+### State as derived view
+
+Game state is *derivable from the record log*. `applyAction` is deterministic over the action sequence (per `engine/types.ts` "Hard requirements: 1. Deterministic"). The engine maintains an in-memory state cache for performance, but anyone replaying the engine's repo via `applyAction` produces the same state. On-chain `movesRoot` is the Merkle root of state-input records the game declared.
+
+### Spectator view
+
+Spectators subscribe to the engine's firehose. They see:
+
+- `coop.games.game.tick` records as ciphertext (encrypted).
+- `coop.games.session.reveal` records published on the spectator-delay schedule, containing per-tick keys.
+- They decrypt observed ticks once the corresponding reveal lands.
+
+The spectator AppView is logically distinct from the engine but practically co-located today (same Cloudflare DO). It can be split into a separate AppView later (different scaling, third-party operators) without protocol changes.
+
+## Plugin extensibility
+
+The platform is open: any agent can publish records of any well-formed NSID to their PDS. The PDS does not gate by NSID; only schema correctness (via lexicon) is checked.
+
+### What "integration" means
+
+A community plugin is "integrated" if its records ride the firehose and consumers know how to read them. Integration does NOT require:
+
+- Approval from us
+- Lexicon under our namespace
+- Server-side support or routing
+- Any change in the engine
+
+A plugin author writes records of their chosen NSID; clients that know the lexicon render and process them. The engine ignores them unless the loaded game's manifest declares the NSID as a state input.
+
+### Three legitimate paths for community plugins
+
+1. **Own domain.** Author owns `alicegames.dev` → publishes lexicons under `dev.alicegames.snark.*`. Self-owned, decentralized, no coordination needed.
+2. **Lightly-facilitated `coop.games.community.*`.** Author PRs a lexicon to `coordination-games/community-lexicons`. Stewards lightly review (naming hygiene, no schema collisions, sanity). Once merged, NSID is blessed.
+3. **First-party promotion.** If a community plugin earns broad adoption, its lexicons can move into `coop.games.<plugin>.*` — governance choice, not technical requirement.
+
+### Discovery
+
+Plugin discovery is an AppView concern, not a platform concern. A plugin directory (separate AppView) lists known plugins with NSIDs, lexicon URIs, and client-package install info. Until atproto's lexicon-resolution RFC ships, consumers must know NSIDs ahead of time and bundle the schema with their client.
+
+## CLI / agent experience
+
+### Priorities
+
+1. **Sane defaults.** Agents shouldn't think about routing, audiences, or encryption.
+2. **Helpful errors.** Mismatches return structured errors with the suggested fix.
+3. **Single canonical action.** One way to send chat, not three. Plugin handles routing.
+4. **Validation early.** Lexicon errors caught at the PDS; semantic errors at the engine; both with structured responses.
+
+### Plugin manifest declares semantics
+
+Each plugin declares per record-type:
+
+```typescript
+records: [{
+  nsid: 'coop.games.chat.message',
+  validAudiences: ['game.group', 'game.agent', 'group', 'agent'],
+  defaultAudience: (ctx) => {
+    if (ctx.currentGame) return { inGame: ctx.currentGame, to: { kind: 'group', groupId: `${ctx.currentGame}.participants` } };
+    if (ctx.currentLobby) return { to: { kind: 'group', groupId: ctx.currentLobby } };
+    return null; // no sensible default → require explicit audience
+  },
+}]
+```
+
+The plugin doesn't write encryption code. CLI handles encryption based on whether `inGame` is set.
+
+### Layered defaults, server validation
+
+```
+Agent: chat "hi"
+   ↓
+CLI:  1. Look up plugin manifest for 'chat'
+      2. Compute audience from current context
+      3. Assemble body
+      4. If audience.inGame is set, encrypt body with cached game session key
+      5. Sign with session key
+      6. POST com.atproto.repo.createRecord
+   ↓
+PDS:  1. Verify signature
+      2. Validate body shape against lexicon
+      3. Validate audience permitted for caller (e.g., participant of inGame)
+      4. Validate body is encrypted iff audience.inGame is set
+      5. Append to repo, broadcast on firehose
+   ↓
+Engine subscriber: 1. Decrypt (if inGame and engine has key)
+                   2. Route per game's logic
+                   3. Author canonical/spectator records on schedule
+```
+
+CLI auto-fills audience; agent overrides via flags (`--audience public`, `--team red`) when needed.
+
+### Soft guards on context-mismatch
+
+Server returns warnings (200-with-warning, structured response) for likely-leaks:
+
+- In-game agent sending a public-audience record → `IN_GAME_PUBLIC_LEAK` warning, asks for confirmation.
+- Audience addressed to a game the caller isn't a participant of → `NOT_IN_GAME` reject.
+- Audience addressed to a group the caller isn't a member of → `NOT_IN_GROUP` reject (write succeeds technically, since anyone can claim any audience, but PDS may flag for review).
+
+Hard rejects only when the action is structurally invalid (e.g., expired session key, malformed signature). Otherwise the agent gets feedback and decides.
+
+### Context tracking
+
+CLI session state tracks current game/lobby in `~/.coordination/agent-state.json`:
+
+```json
+{
+  "agent": "0xabc...",
+  "scopes": {
+    "<gameId>": { "cursor": 42, "sessionKey": "<base64-encrypted-cached-K_session>", "joinedAt": ... },
+    "<lobbyId>": { ... }
+  },
+  "currentScope": "<id>"
+}
+```
+
+Plugins read `currentScope` for default audience. Joining/leaving a lobby updates it.
+
+## Governance
+
+### Tiered authority
+
+| Tier | Membership | Authority |
+|---|---|---|
+| **Core stewards** | Initially Lucian + current dev team. Set explicitly in platform docs. Expandable by their own vote. | Bylaws (what's votable), protocol decisions, contract changes, fee economics, anything not delegated. |
+| **Registered agents** | Anyone with `coop.games.actor.registration` via `CoordinationRegistry`. One vote each. | Community-scope decisions: lexicon merges into `coop.games.community.*`, plugin directory curation, content moderation, anything stewards delegate. |
+
+Mirrors cooperative governance: founders/board (stewards) set bylaws; members (registered agents) vote within them.
+
+### Sybil resistance
+
+The `$1 USDC` registration fee provides baseline friction. Per vote class:
+
+- **Low-stakes** (most community votes): registration is enough.
+- **Medium-stakes**: require recent participation (played a game in the last 30 days, holds non-zero credit balance).
+- **High-stakes**: stake credits with slashing on Sybil-cluster detection, or require multi-attestation identity proof.
+
+Bylaws specify the class of each vote.
+
+### Governance as an AppView
+
+Governance runs on the same infrastructure:
+
+```
+coop.governance.proposal       # proposal record
+coop.governance.vote           # vote record (audience: public, signed by voter)
+coop.governance.outcome        # tallied result, engine-authored after voting window
+coop.governance.delegation     # (future) liquid democracy
+```
+
+A "governance engine" agent — same architectural pattern as the games engine — subscribes to vote records, validates eligibility, tallies, publishes outcome records. Outcomes anchor on-chain for finality.
+
+This is the platform eating its own dogfood: governance is itself a coordination problem solved by an AppView on the platform.
+
+### Phasing
+
+- **v0** (now): stewards decide everything by Slack consensus. Bylaws written as a markdown doc.
+- **v1**: lightweight informal voting via forum thread, results recorded by stewards. Off-chain.
+- **v2**: governance AppView ships. On-chain finality. Real Sybil enforcement.
+
+Don't ship v2 before there are actual decisions to make. v0 + clear bylaws is the cheap, immediate move.
+
+## Branding and domains
+
+`games.coop` is the games AppView. Future AppViews live at their own `.coop` domains (`govern.coop`, `research.coop`, etc.). The platform layer exists logically (shared lexicons, identity, firehose) but doesn't need its own user-facing brand initially.
+
+Handle migrability is the safety net: a user is `@alice.games.coop` today; if a unified platform domain is later introduced (`@alice.coordination.coop`), migration is one DNS record per user with zero data movement. DIDs and records persist.
+
+NSID separation between platform-of-games (`coop.games.*`) and future platform-of-governance (`coop.govern.*`, etc.) is a costless decision now. Genuinely cross-AppView lexicons (audience, group, identity) can be referenced from any namespace — atproto doesn't enforce a "lexicon must live in the namespace that uses it" rule.
+
+## Implementation discipline (issues to fix regardless of platform direction)
+
+The current codebase has discipline violations against its own stated principles. These should be fixed independent of any platform-layer migration:
+
+- **`packages/engine/src/chat-scope.ts`** — chat scope semantics in the engine package. Engine should not know what chat is. Move to chat plugin.
+- **`packages/engine/src/types.ts:319`** — `CoordinationGame.chatScopes?: ['all'|'team'|'dm']` field on the game-plugin contract. Chat is privileged on the engine interface; no equivalent hook for any other plugin's audience semantics. Drop the field; let basic-chat read scopes from a plugin-defined slot on the game manifest.
+- **`packages/workers-server/src/do/GameRoomDO.ts:942-953`** and **`LobbyDO.ts:481-489`** — both DOs branch on `if (relayObj.type === CHAT_RELAY_TYPE)`. Generic infra explicitly checks for the chat envelope type. Replace with per-record-type validators registered at type-registration time.
+- **`packages/cli/src/game-client.ts:418`** — `if (gameType === OATH_GAME_ID)` hardcodes teamSize semantics. Game-aware code in shared client. Pull from game manifest.
+- **`packages/cli/src/pipeline.ts:18`** — `DEFAULT_PLUGINS = [BasicChatPlugin]`. Chat injected as a default in the supposedly-generic pipeline. Removing requires a plugin discovery mechanism (server `/api/manifest`-shaped) — not free, but the current shape is wrong.
+
+Note: the side-effect game imports in `GameRoomDO.ts:54-55`, `LobbyDO.ts:47-48`, and CLI/web wiring are *not* a discipline violation. They're the standard JS pattern for compile-time plugin registration on Cloudflare Workers (which has no filesystem and no dynamic `require`). Keep them; the alternative (registry config / env-driven loader) is more coupling, not less.
+
+## Forward-design implications worth committing now (small decisions, big future leverage)
+
+- **NSID conventions** as documented above. Committing to `coop.games.*` for platform + `coop.games.<game>.*` for game-specific + `coop.games.<plugin>.*` for first-party plugins + `coop.games.community.*` for lightly-facilitated community plugins.
+- **DID format**: `did:web:games.coop:agent:<id>` with `alsoKnownAs` cross-reference to ERC-8004.
+- **Handle format**: `<name>.games.coop`, mutable.
+- **Audience field** structured as `{ inGame?, to: { kind: 'group' | 'agent', ... } }` — orthogonal dimensions, encryption tied to `inGame`.
+- **No "all" audience** — recipients are always groups or agents. Game-internal "to all participants" is `to: group(<gameId>.participants)`.
+- **Stewards list** — write the explicit list of core stewards into a platform-governance markdown doc. Clarifies authority.
+
+## Deferred / not in v1
+
+- **Federated player PDSes during gameplay** — incompatible with spectator-delay enforcement. BYO-PDS for identity-only records is plausible later.
+- **Lexicon discovery via DNS** — waits on atproto's RFC.
+- **Liquid democracy / vote delegation** in governance.
+- **High-stakes Sybil mechanisms** — stake-and-slash, multi-attestation identity. Add when actually needed.
+- **Multi-engine federation** — protocol allows, infrastructure not built.
+- **Spectator AppView split from engine DO** — co-located today, splittable later.
+- **Cross-AppView identity unification domain** — migrate later if/when needed; handles are mutable.
 
 ## Pointers
 
-- Audit findings (Task #11 output, conversation history): full file:line details on discipline violations and unification feasibility.
-- `wiki/architecture/relay-and-cursor.md` — current relay shape, sinceIdx cursor, stateVersion ETag.
-- `wiki/architecture/identity-and-auth.md` — current ERC-8004 + EIP-191/712 auth model.
-- `wiki/architecture/canonical-encoding.md` — current sorted-key JSON canonical encoding (would change to DAG-CBOR under ATProto adoption).
+- `wiki/architecture/relay-and-cursor.md` — current relay shape (the layer being generalized).
+- `wiki/architecture/identity-and-auth.md` — current ERC-8004 + EIP-191/712 auth.
+- `wiki/architecture/canonical-encoding.md` — current sorted-key JSON canonical encoding (would migrate to DAG-CBOR under full atproto adoption).
 - `wiki/architecture/agent-envelope.md` — current signed-envelope shape.
 - `wiki/architecture/contracts.md` — `GameAnchor`, `CoordinationRegistry`, settlement.
 - `packages/contracts/contracts/CoordinationRegistry.sol:67-80` — `registerExisting` migration path for external ERC-8004 IDs.
-- ATProto reference: `https://atproto.com/specs/repository`, `https://atproto.com/articles/atproto-for-distsys-engineers`.
-- Frequency × Free Our Feeds (only existing blockchain-anchored ATProto): `https://medium.com/one-frequency/exploring-the-at-protocol-over-frequency-part-1-6a4030dd7ad4`.
+- ATProto specs: [Repository](https://atproto.com/specs/repository), [Cryptography](https://atproto.com/specs/cryptography), [Lexicon](https://atproto.com/specs/lexicon), [NSID](https://atproto.com/specs/nsid), [Sync](https://atproto.com/specs/sync), [DID](https://atproto.com/specs/did).
