@@ -693,8 +693,13 @@ Note: the side-effect game imports in `GameRoomDO.ts:54-55`, `LobbyDO.ts:47-48`,
 
 ## Deferred / not in v1
 
-- **Federated player PDSes during gameplay** — incompatible with the PDS-side release-schedule gate (we wouldn't control a federated PDS's public reads). Adding requires encryption-to-engine for in-game records on those PDSes. BYO-PDS for identity-only records (out-of-game profile, social) is plausible sooner.
-- **Platform-level encryption** — none in v1. Becomes load-bearing if/when sovereign player PDSes are supported. Audience model is forward-compatible (encryption-required would be a new audience kind or a flag, additive to existing structure).
+- **Federated player PDSes during gameplay** — not supported in v1. The PDS-side release-schedule gate only works for PDSes we operate; a publicly-readable federated PDS would broadcast a player's in-game records on its own firehose in real-time, breaking spectator-fairness for anyone subscribing to that PDS directly. The "leaks via webcam" analogy applies: we can't *prevent* a participant from running a leaky PDS, but we don't have to support it as a first-class path. **BYO-PDS for identity-only records (out-of-game profile, social, follows)** is plausible sooner — those records aren't subject to spectator-fairness and follow standard atproto semantics.
+- **Platform-level encryption** — none in v1. If/when we support BYO-PDS during gameplay, the realistic mechanism is **encryption-to-engine** (in-game record bodies encrypted to the engine's per-game pubkey at write time; engine decrypts internally, publishes projected/delayed plaintext on its own schedule; post-game key reveal for verification). Opt-in: only federated participants need to encrypt; players on our PDS still write plaintext. Audience model is forward-compatible — encryption-required becomes a property derived from "is this record on a federated PDS" without changing the schema.
+
+  Two other paths for BYO-during-gameplay we considered and rejected:
+
+  - **Engine authors all in-game records with embedded player signatures** (player repos hold zero in-game records; players submit actions via XRPC; engine packages them with sigs into its own tick records). Works without encryption, but loses "every action is in the author's repo" property for in-game and is a bigger architectural shift than option 1.
+  - **Trusted-execution / time-lock / threshold-encryption** schemes are research-grade and not realistic for v1 or near-v1. Mention only for completeness.
 - **Lexicon discovery via DNS** — waits on atproto's RFC.
 - **Liquid democracy / vote delegation** in governance.
 - **High-stakes Sybil mechanisms** — stake-and-slash, multi-attestation identity. Add when actually needed.
