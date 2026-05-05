@@ -383,19 +383,22 @@ Two sources, depending on group kind:
 
 ```typescript
 interface CoordinationGame<TState, ...> {
-  // existing
-  getTeamForPlayer(state, playerId): teamId | null;
-
-  // new generalization:
-  getGroups(state): Record<groupId, did[]>;
-  // returns all game-relevant groups, e.g.
-  // { "participants": [alice, bob, carol],
-  //   "team-red": [alice, bob],
-  //   "team-blue": [carol] }
+  getGroups(state: TState): Record<string, did[]>;
+  // returns all game-relevant groups by groupId, e.g.
+  // { "participants": [alice, bob, carol, dave],
+  //   "team-red":     [alice, bob],
+  //   "team-blue":    [carol, dave] }
+  //
+  // Free-for-all games just return { "participants": [...] }
+  // and use audience.to: agent(did) for individual addressing.
+  //
+  // Replaces today's getTeamForPlayer + RelayScope { kind: 'team', teamId }.
 }
 ```
 
 The engine resolves `audience.to: group("<gameId>.team-red")` by calling `game.getGroups(state)["team-red"]`. Single source of truth: the game state. Group dissolution at game-end is automatic — there's no separate group record to clean up.
+
+**Notable simplification:** today's `getTeamForPlayer` requires a per-player return value, with the FFA convention "return the playerId itself" so team-scoped routing degenerates to per-player. Under `getGroups`, free-for-all games just don't declare team groups — DMs are addressed via `to: agent(did)` directly. The fake-team-of-one hack goes away.
 
 **2. Persistent groups** (out-of-game rooms, communities, ad-hoc chat) — explicit records:
 
