@@ -3,6 +3,8 @@
 **Status:** Draft  
 **Goal:** Restore the on-chain layer lost in the Cloudflare Workers migration. Chain is source of truth; D1 is a write-through cache. "Mock mode" implements the same interface for local dev — not a separate codepath.
 
+**Sibling plan:** `docs/plans/atproto-platform-direction.md` — the longer-term destination shape. This plan ships the bridge; atproto direction defines what comes after. See *Architecture Decision: CID-based anchoring* below for how the two relate.
+
 ---
 
 ## The Problem
@@ -47,6 +49,23 @@ When we migrated from Express (`packages/server`) to Cloudflare Workers (`packag
 **Working:** `init`, `fund`, `export-key`, `import-key`, `create-lobby` (CtL), `join`, `state`, `move`, `wait`, auth
 
 ---
+
+## Architecture Decision: CID-based anchoring (atproto alignment)
+
+**Direction-of-travel note.** This plan restores the on-chain layer that existed pre-Workers migration. It uses today's canonical-JSON encoding (`packages/engine/src/canonical-encoding.ts`) for `outcomeBytes` because that's what the existing contracts and CLI verifier expect. Under the atproto-platform direction (`docs/plans/atproto-platform-direction.md`), this gets replaced.
+
+**What changes under atproto direction:**
+
+- **Outcome anchor** = CID of the engine's `coop.games.game.outcome` record on PDS. Contract stores 32 bytes (sha256 portion of CID multihash).
+- **Transcript anchor** = CID of the final tick record. Each tick record carries `prevTickCid` (strongRef to previous tick), forming a hash chain. The action-log Merkle tree (current `movesRoot`) is replaced by walking back from the final tick CID through `prevTickCid` references.
+- **Encoding** = DAG-CBOR + sha256 multihash (atproto-native, SDK-provided), not sorted-key JSON.
+- **Contract interface stays 32 bytes.** The on-chain shape doesn't change; the *semantic meaning* of the bytes does (CID hash portion vs custom canonical-JSON hash). Solidity sha256 precompile still applies; verification cost unchanged.
+- **Lexicon `$type` is part of every CID**, so lexicon versioning composes cleanly — old anchored CIDs commit to records under their as-of-anchor lexicon.
+- **`canonicalEncode` becomes a debugging tool**, not the encoder of on-chain bytes. It can stay in the codebase for inspecting record shapes locally, but it stops feeding the JS↔EVM boundary.
+
+**When to cut over.** Pre-launch, no real users yet, "no backwards-compat shims" policy applies — when the atproto cutover lands, switch directly to CIDs and update contracts/verifiers in the same PR. No dual-write of canonical-JSON + CID. Until then, this plan ships canonical-JSON anchoring as the bridge.
+
+The onchain-reintegration plan below describes the canonical-JSON path. Treat anything that refers to `outcomeBytes`, `actionsRoot`, or `movesRoot` as "the pre-atproto shape; will become a CID under atproto direction." The phase ordering does not change — phases 0-4 are independent of the encoding choice.
 
 ## Architecture Decision: viem over ethers
 

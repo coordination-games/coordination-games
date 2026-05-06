@@ -1,6 +1,8 @@
 # Spectator System
 > Spectators see a delayed projection of the game; the delay is measured in the game's own progress units, applied at exactly one boundary, and frozen at game creation so a deploy can't retroactively reveal hidden state.
 
+> **Direction-of-travel note.** Under `docs/plans/atproto-platform-direction.md`, the spectator system shifts from "engine builds a snapshot per tick via `buildSpectatorView`, UI renders the snapshot" to "engine emits events per tick into a `coop.games.game.tick` record, UI consumes events via a per-game reducer." `buildSpectatorView` is removed; the two-state shape (canonical game state + projected spectator view) collapses into one canonical state + one event stream. Per-game animation cues (CtL's `deathPositions`, etc.) move from snapshot fields to events emitted by `applyAction`. The progress-counter-driven boundary, the spectator-delay primitive, and the per-game `spectatorDelay` config all carry forward; what changes is the *shape* of what crosses the boundary. The doc below describes today's behavior — work to it until the atproto cutover lands.
+
 ## Why
 
 A spectator is anyone watching without `X-Player-Id` — `/spectator`, the `/replay` shell, the public WS feed, the `/api/games` summary. None of them are entitled to see the live state, because the live state leaks the *cadence* of hidden actions: which players have submitted moves this turn, how long they sat thinking, when a turn flipped. If `broadcastUpdates` pushed every state mutation to the public WS, an observer with a stopwatch could infer turn timings even without seeing turn contents.
