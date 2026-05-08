@@ -24,12 +24,6 @@ import {
   type TragedyStructureLocation,
   type TragedyTerrain,
   type TragedyTradeOffer,
-  V2_BUILD_COST,
-  V2_EXTRACTION_CAPACITY,
-  V2_OIL_ENERGY_YIELD,
-  V2_SOLAR_ENERGY,
-  V2_STRUCTURE_VP,
-  V2_TIMBER_TO_ENERGY_RATIO,
   type TragedyV2Action,
   type TragedyV2Config,
   type TragedyV2Intersection,
@@ -42,6 +36,12 @@ import {
   type TragedyV2Structure,
   type TragedyV2StructureType,
   type TragedyV2Tile,
+  V2_BUILD_COST,
+  V2_EXTRACTION_CAPACITY,
+  V2_OIL_ENERGY_YIELD,
+  V2_SOLAR_ENERGY,
+  V2_STRUCTURE_VP,
+  V2_TIMBER_TO_ENERGY_RATIO,
 } from './types.js';
 
 type EcosystemStatus = 'flourishing' | 'stable' | 'strained' | 'collapsed';
@@ -74,6 +74,13 @@ const SETTLEMENT_COST: Partial<ResourceInventory> = {
 };
 
 const INTERSECTION_LOCATIONS: Record<string, { hexes: TragedyHexRef[] }> = {
+  northOuter: {
+    hexes: [
+      { q: 0, r: -2 },
+      { q: 1, r: -2 },
+      { q: 0, r: -1 },
+    ],
+  },
   northWest: {
     hexes: [
       { q: -1, r: 0 },
@@ -116,6 +123,20 @@ const INTERSECTION_LOCATIONS: Record<string, { hexes: TragedyHexRef[] }> = {
       { q: -1, r: 1 },
     ],
   },
+  westOuter: {
+    hexes: [
+      { q: -2, r: 0 },
+      { q: -2, r: 1 },
+      { q: -1, r: 0 },
+    ],
+  },
+  southOuter: {
+    hexes: [
+      { q: -1, r: 2 },
+      { q: 0, r: 1 },
+      { q: 0, r: 2 },
+    ],
+  },
 };
 
 const REGION_INTERSECTIONS: Record<string, keyof typeof INTERSECTION_LOCATIONS> = {
@@ -134,6 +155,13 @@ const INTERSECTION_RING: Array<keyof typeof INTERSECTION_LOCATIONS> = [
   'east',
   'south',
   'west',
+];
+
+const V2_INTERSECTION_IDS: Array<keyof typeof INTERSECTION_LOCATIONS> = [
+  ...INTERSECTION_RING,
+  'northOuter',
+  'westOuter',
+  'southOuter',
 ];
 
 const EXTRACTION_PROFILES: Record<ExtractionLevel, { yield: number; pressure: number }> = {
@@ -1362,50 +1390,48 @@ function createV2Tiles(ecosystems: TragedyEcosystem[]): TragedyV2Tile[] {
 }
 
 function createV2Intersections(): TragedyV2Intersection[] {
-  return INTERSECTION_RING.map((id) => ({
-    id,
-    hexes: cloneHexes(INTERSECTION_LOCATIONS[id]!.hexes),
-  }));
-}
-
-function nonAdjacentStarterSlots(playerCount: number): Array<keyof typeof INTERSECTION_LOCATIONS> {
-  if (playerCount <= 0) return [];
-  if (playerCount === 1) return [INTERSECTION_RING[0]!];
-  if (playerCount === 2) return [INTERSECTION_RING[0]!, INTERSECTION_RING[3]!];
-  if (playerCount === 3) return [INTERSECTION_RING[0]!, INTERSECTION_RING[2]!, INTERSECTION_RING[4]!];
-  throw new Error('V2 central ring supports at most 3 non-adjacent starter camps');
-}
-
-function createV2Players(
-  playerIds: string[],
-  intersections: TragedyV2Intersection[],
-): { players: TragedyV2PlayerState[]; structures: TragedyV2Structure[] } {
-  const slots = nonAdjacentStarterSlots(playerIds.length);
-  const intersectionsById = new Map(intersections.map((intersection) => [intersection.id, intersection]));
-  const structures: TragedyV2Structure[] = [];
-  const players = playerIds.map((id, index) => {
-    const intersectionId = slots[index];
-    const intersection = intersectionId ? intersectionsById.get(intersectionId) : undefined;
-    if (!intersectionId || !intersection) throw new Error('V2 setup requires a legal starter camp');
-    const structureId = `${id}-starter-camp`;
-    intersection.occupantStructureId = structureId;
-    structures.push({
-      id: structureId,
-      ownerId: id,
-      intersectionId,
-      type: 'camp',
-      extractionsThisRound: 0,
-    });
+  return V2_INTERSECTION_IDS.map((id) => {
+    const location = INTERSECTION_LOCATIONS[id];
+    if (!location) throw new Error(`missing V2 intersection location: ${id}`);
     return {
+      id,
+      hexes: cloneHexes(location.hexes),
+    };
+  });
+}
+
+function v2SeededHash(input: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function randomizedV2PlayerOrder(playerIds: string[], seed: string): string[] {
+  return [...playerIds].sort((left, right) => {
+    const leftHash = v2SeededHash(`${seed}:${left}`);
+    const rightHash = v2SeededHash(`${seed}:${right}`);
+    return leftHash - rightHash || comparePlayerId(left, right);
+  });
+}
+
+function createV2Players(playerIds: string[]): {
+  players: TragedyV2PlayerState[];
+  structures: TragedyV2Structure[];
+} {
+  return {
+    structures: [],
+    players: playerIds.map((id) => ({
       id,
       resources: cloneResources(STARTING_RESOURCES),
       influence: 0,
-      vp: V2_STRUCTURE_VP.camp,
-      ownedStructureIds: [structureId],
+      vp: 0,
+      ownedStructureIds: [],
       ownedRoadIds: [],
-    };
-  });
-  return { players, structures };
+    })),
+  };
 }
 
 function cloneV2Tile(tile: TragedyV2Tile): TragedyV2Tile {
@@ -1435,7 +1461,10 @@ function cloneV2Player(player: TragedyV2PlayerState): TragedyV2PlayerState {
 
 function averageV2TileHealthPercent(tiles: readonly TragedyV2Tile[]): number {
   const totals = tiles.reduce(
-    (acc, tile) => ({ health: acc.health + tile.health, maxHealth: acc.maxHealth + tile.maxHealth }),
+    (acc, tile) => ({
+      health: acc.health + tile.health,
+      maxHealth: acc.maxHealth + tile.maxHealth,
+    }),
     { health: 0, maxHealth: 0 },
   );
   if (totals.maxHealth <= 0) return 100;
@@ -1495,9 +1524,7 @@ function v2StructureAdjacentToTile(
   return intersection?.hexes.some((hex) => hex.q === tile.q && hex.r === tile.r) ?? false;
 }
 
-function v2NextUpgradeType(
-  structureType: TragedyV2StructureType,
-): TragedyV2StructureType | null {
+function v2NextUpgradeType(structureType: TragedyV2StructureType): TragedyV2StructureType | null {
   if (structureType === 'camp') return 'village';
   if (structureType === 'village') return 'city';
   if (structureType === 'solar-farm') return 'solar-array';
@@ -1510,7 +1537,9 @@ function v2FindExtractionStructure(
   tile: TragedyV2Tile,
   units: number,
 ): TragedyV2Structure | undefined {
-  const intersectionsById = new Map(state.intersections.map((intersection) => [intersection.id, intersection]));
+  const intersectionsById = new Map(
+    state.intersections.map((intersection) => [intersection.id, intersection]),
+  );
   return state.structures.find((structure) => {
     if (structure.ownerId !== player.id) return false;
     const capacity = V2_EXTRACTION_CAPACITY[structure.type];
@@ -1527,7 +1556,9 @@ function validateV2BuildRoad(
   const roadCost = V2_BUILD_COST.road ?? {};
   if (!canAfford(player.resources, roadCost)) return false;
   if (action.fromIntersectionId === action.toIntersectionId) return false;
-  const intersectionsById = new Map(state.intersections.map((intersection) => [intersection.id, intersection]));
+  const intersectionsById = new Map(
+    state.intersections.map((intersection) => [intersection.id, intersection]),
+  );
   const from = intersectionsById.get(action.fromIntersectionId);
   const to = intersectionsById.get(action.toIntersectionId);
   if (!from || !to || v2SharedHexCount(from, to) !== 2) return false;
@@ -1543,6 +1574,58 @@ function validateV2BuildRoad(
   return network.has(action.fromIntersectionId) || network.has(action.toIntersectionId);
 }
 
+function validateV2StartingCamp(
+  state: TragedyV2State,
+  player: TragedyV2PlayerState,
+  action: Extract<TragedyV2Action, { type: 'place_starting_camp' }>,
+): boolean {
+  if (player.ownedStructureIds.length > 0) return false;
+  const intersection = state.intersections.find((item) => item.id === action.intersectionId);
+  if (!intersection || intersection.occupantStructureId) return false;
+  const intersectionsById = new Map(state.intersections.map((item) => [item.id, item]));
+  return state.structures.every((structure) => {
+    const existing = intersectionsById.get(structure.intersectionId);
+    return !existing || v2SharedHexCount(intersection, existing) < 2;
+  });
+}
+
+function placeV2StartingCamp(
+  state: TragedyV2State,
+  playerId: string,
+  action: Extract<TragedyV2Action, { type: 'place_starting_camp' }>,
+): ActionResult<TragedyV2State, TragedyV2Action> {
+  const players = state.players.map(cloneV2Player);
+  const intersections = state.intersections.map(cloneV2Intersection);
+  const structures = state.structures.map(cloneV2Structure);
+  const player = players.find((item) => item.id === playerId);
+  const intersection = intersections.find((item) => item.id === action.intersectionId);
+  if (!player || !intersection) return { state };
+  const structureId = `${playerId}-starter-camp`;
+  intersection.occupantStructureId = structureId;
+  player.ownedStructureIds.push(structureId);
+  player.vp += V2_STRUCTURE_VP.camp;
+  structures.push({
+    id: structureId,
+    ownerId: playerId,
+    intersectionId: action.intersectionId,
+    type: 'camp',
+    extractionsThisRound: 0,
+  });
+  const placedState: TragedyV2State = { ...state, players, intersections, structures };
+  const allPlaced = players.every((item) => item.ownedStructureIds.length > 0);
+  if (allPlaced) {
+    const started = startV2Round(placedState);
+    return { state: started, deadline: v2RoundTimeoutDeadline(started.config.turnTimerSeconds) };
+  }
+  const nextIndex = players.findIndex((item) => item.ownedStructureIds.length === 0);
+  return {
+    state: {
+      ...placedState,
+      currentPlayerIndex: nextIndex >= 0 ? nextIndex : state.currentPlayerIndex,
+    },
+  };
+}
+
 function validateV2BuildStructure(
   state: TragedyV2State,
   player: TragedyV2PlayerState,
@@ -1553,12 +1636,14 @@ function validateV2BuildStructure(
   if (!canAfford(player.resources, structureCost)) return false;
   const intersection = state.intersections.find((item) => item.id === action.intersectionId);
   if (!intersection || intersection.occupantStructureId) return false;
-  const hasStarterException = player.ownedStructureIds.length === 0 && action.structureType === 'camp';
+  const hasStarterException =
+    player.ownedStructureIds.length === 0 && action.structureType === 'camp';
   if (hasStarterException) return true;
   return state.roads.some(
     (road) =>
       road.ownerId === player.id &&
-      (road.fromIntersectionId === action.intersectionId || road.toIntersectionId === action.intersectionId),
+      (road.fromIntersectionId === action.intersectionId ||
+        road.toIntersectionId === action.intersectionId),
   );
 }
 
@@ -1579,7 +1664,8 @@ function validateV2ExtractTile(
 export function createV2InitialState(config: TragedyV2Config): TragedyV2State {
   const ecosystems = getBaseEcosystems();
   const intersections = createV2Intersections();
-  const { players, structures } = createV2Players(config.playerIds, intersections);
+  const orderedPlayerIds = randomizedV2PlayerOrder(config.playerIds, config.seed);
+  const { players, structures } = createV2Players(orderedPlayerIds);
   return {
     round: 0,
     phase: 'waiting',
@@ -1623,10 +1709,9 @@ function startV2Round(state: TragedyV2State): TragedyV2State {
     round: state.round + 1,
     phase: 'playing',
     activeTrades: [],
-    submittedActions: makeV2SubmittedActions(state.players.map((player) => player.id)) as unknown as Record<
-      string,
-      TragedyAction | null
-    >,
+    submittedActions: makeV2SubmittedActions(
+      state.players.map((player) => player.id),
+    ) as unknown as Record<string, TragedyAction | null>,
     currentPlayerIndex: 0,
   };
   return applyV2Production(started);
@@ -1637,12 +1722,18 @@ export function validateV2Action(
   playerId: string | null,
   action: TragedyV2Action,
 ): boolean {
-  if (action.type === 'game_start') return playerId === null && state.phase === 'waiting';
+  if (action.type === 'game_start') {
+    return playerId === null && state.phase === 'waiting';
+  }
   if (action.type === 'round_timeout') return playerId === null && state.phase === 'playing';
-  if (playerId === null || state.phase !== 'playing') return false;
+  if (playerId === null) return false;
   if (state.players[state.currentPlayerIndex]?.id !== playerId) return false;
   const player = state.players.find((item) => item.id === playerId);
   if (!player) return false;
+  if (action.type === 'place_starting_camp') {
+    return state.phase === 'waiting' && validateV2StartingCamp(state, player, action);
+  }
+  if (state.phase !== 'playing') return false;
 
   if (action.type === 'build_road') return validateV2BuildRoad(state, player, action);
   if (action.type === 'build_structure') return validateV2BuildStructure(state, player, action);
@@ -1698,7 +1789,9 @@ function resolveV2Trades(
       if (!currentPlayer || !otherPlayer) continue;
       if (!canAfford(currentPlayer.resources, current.action.give)) continue;
       if (!canAfford(otherPlayer.resources, other.action.give)) continue;
-      if (!canFitTradeReceipt(currentPlayer.resources, current.action.give, current.action.receive)) {
+      if (
+        !canFitTradeReceipt(currentPlayer.resources, current.action.give, current.action.receive)
+      ) {
         continue;
       }
       if (!canFitTradeReceipt(otherPlayer.resources, other.action.give, other.action.receive)) {
@@ -1715,8 +1808,16 @@ function resolveV2Trades(
       currentPlayer.influence += 1;
       otherPlayer.influence += 1;
       completed.push(
-        { to: current.action.to, give: { ...current.action.give }, receive: { ...current.action.receive } },
-        { to: other.action.to, give: { ...other.action.give }, receive: { ...other.action.receive } },
+        {
+          to: current.action.to,
+          give: { ...current.action.give },
+          receive: { ...current.action.receive },
+        },
+        {
+          to: other.action.to,
+          give: { ...other.action.give },
+          receive: { ...other.action.receive },
+        },
       );
       used.add(i);
       used.add(j);
@@ -1803,7 +1904,11 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
 
     if (action.type === 'extract_tile') {
       const tile = tiles.find((item) => item.id === action.tileId);
-      if (!tile || tile.status === 'collapsed' || !v2AllowedResources(tile).includes(action.resource)) {
+      if (
+        !tile ||
+        tile.status === 'collapsed' ||
+        !v2AllowedResources(tile).includes(action.resource)
+      ) {
         continue;
       }
       const units = V2_EXTRACTION_UNITS[action.level];
@@ -1815,7 +1920,10 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
       const resource = tile.terrain === 'oil-field' ? 'energy' : action.resource;
       const accepted = addResource(player.resources, resource, amount);
       if (accepted > 0) {
-        const pressure = tile.terrain === 'oil-field' ? EXTRACTION_PROFILES.high.pressure : EXTRACTION_PROFILES[action.level].pressure;
+        const pressure =
+          tile.terrain === 'oil-field'
+            ? EXTRACTION_PROFILES.high.pressure
+            : EXTRACTION_PROFILES[action.level].pressure;
         pressureByTile.set(tile.id, (pressureByTile.get(tile.id) ?? 0) + pressure);
         if (tile.terrain === 'oil-field') {
           for (const adjacent of tiles) {
@@ -1830,7 +1938,11 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
 
     if (action.type === 'convert_timber_to_energy') {
       const timberCost = action.amount * V2_TIMBER_TO_ENERGY_RATIO;
-      if (Number.isSafeInteger(action.amount) && action.amount > 0 && player.resources.timber >= timberCost) {
+      if (
+        Number.isSafeInteger(action.amount) &&
+        action.amount > 0 &&
+        player.resources.timber >= timberCost
+      ) {
         player.resources.timber -= timberCost;
         addResource(player.resources, 'energy', action.amount);
       }
@@ -1839,7 +1951,10 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
 
   for (const tile of tiles) {
     const pressure = pressureByTile.get(tile.id) ?? 0;
-    tile.health = Math.max(0, Math.min(tile.maxHealth, tile.health + V2_RECOVERY_PER_ROUND - pressure));
+    tile.health = Math.max(
+      0,
+      Math.min(tile.maxHealth, tile.health + V2_RECOVERY_PER_ROUND - pressure),
+    );
     tile.status = v2TileStatus(tile);
   }
 
@@ -1881,8 +1996,10 @@ export function applyV2Action(
 ): ActionResult<TragedyV2State, TragedyV2Action> {
   if (!validateV2Action(state, playerId, action)) return { state };
   if (action.type === 'game_start') {
-    const started = startV2Round(state);
-    return { state: started, deadline: v2RoundTimeoutDeadline(started.config.turnTimerSeconds) };
+    return { state, deadline: v2RoundTimeoutDeadline(state.config.turnTimerSeconds) };
+  }
+  if (action.type === 'place_starting_camp' && playerId) {
+    return placeV2StartingCamp(state, playerId, action);
   }
   if (action.type === 'round_timeout') {
     const currentPlayer = state.players[state.currentPlayerIndex];

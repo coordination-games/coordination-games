@@ -357,6 +357,8 @@ Tragedy of the Commons is a free-for-all coordination game about shared scarcity
 - Roads: tile-edge connections between intersections (cost: 1 timber + 1 energy)
 
 ## Core loop
+- Setup starts with randomized player order. On your setup turn, use place_starting_camp to choose your free starting camp intersection.
+- After every player places a legal non-adjacent starting camp, round 1 begins automatically.
 - Each round begins with solar production and reset of extraction counters.
 - You may submit one action per round.
 - Extract tiles for short-term gain, but overuse degrades them.
@@ -365,13 +367,14 @@ Tragedy of the Commons is a free-for-all coordination game about shared scarcity
 - Offer bilateral trades; reciprocal offers in the same round settle automatically.
 
 ## Action types
-- \`offer_trade\`
-- \`build_road\`
-- \`build_structure\` (camp or solar-farm)
-- \`upgrade_structure\`
-- \`extract_tile\`
-- \`convert_timber_to_energy\`
-- \`pass\`
+- place_starting_camp (setup only)
+- offer_trade
+- build_road
+- build_structure (camp or solar-farm)
+- upgrade_structure
+- extract_tile
+- convert_timber_to_energy
+- pass
 
 ## Build costs
 - road: 1 timber + 1 energy
@@ -399,6 +402,20 @@ Highest VP wins when the round limit is reached. Influence is the tie-breaker. F
 `;
 
 const GAME_TOOLS_V2: ToolDefinition[] = [
+  {
+    name: 'place_starting_camp',
+    description:
+      'During setup, choose the intersection where your free starting camp will be placed. Camps cannot be adjacent to existing starting camps.',
+    mcpExpose: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        intersectionId: { type: 'string', description: 'Target empty intersection id.' },
+      },
+      required: ['intersectionId'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'offer_trade',
     description:
@@ -433,7 +450,7 @@ const GAME_TOOLS_V2: ToolDefinition[] = [
   {
     name: 'build_structure',
     description:
-      'Build a camp or solar-farm at an intersection. Must be connected to your road network (starter camp is exempt).',
+      'Build a new camp or solar-farm at an intersection. New camps after setup must connect to your road network.',
     mcpExpose: true,
     inputSchema: {
       type: 'object',
@@ -644,6 +661,12 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   },
 
   getPlayersNeedingAction(state: TragedyV2State): string[] {
+    if (state.phase === 'waiting') {
+      const currentPlayer = state.players[state.currentPlayerIndex];
+      return currentPlayer && currentPlayer.ownedStructureIds.length === 0
+        ? [currentPlayer.id]
+        : [];
+    }
     if (state.phase !== 'playing') return [];
     return state.players
       .filter((player) => state.submittedActions[player.id] === null)

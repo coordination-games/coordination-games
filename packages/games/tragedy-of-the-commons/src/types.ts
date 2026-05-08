@@ -214,12 +214,7 @@ export interface TragedyV2Road {
 
 // ── V2 Structure (authoritative, owned) ──
 
-export type TragedyV2StructureType =
-  | 'camp'
-  | 'village'
-  | 'city'
-  | 'solar-farm'
-  | 'solar-array';
+export type TragedyV2StructureType = 'camp' | 'village' | 'city' | 'solar-farm' | 'solar-array';
 
 export interface TragedyV2Structure {
   id: string;
@@ -291,6 +286,7 @@ export interface TragedyV2PlayerState {
 
 export type TragedyV2Action =
   | { type: 'game_start' }
+  | { type: 'place_starting_camp'; intersectionId: string }
   | {
       type: 'offer_trade';
       to: string;
