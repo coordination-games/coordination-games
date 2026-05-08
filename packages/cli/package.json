@@ -1,6 +1,6 @@
 {
   "name": "coordination-games",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "CLI and MCP server for Coordination Games — play verifiable games with AI agents",
   "type": "module",
   "bin": {
@@ -44,7 +44,10 @@
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
     "@coordination-games/game-oathbreaker": "*",
+    "@coordination-games/game-tragedy-of-the-commons": "*",
     "@coordination-games/plugin-chat": "*",
+    "@coordination-games/plugin-reasoning": "*",
+    "@coordination-games/plugin-trust-projector-tragedy": "*",
     "@types/node": "^22.19.15",
     "@types/proper-lockfile": "^4.1.4",
     "@types/ws": "^8.18.1",

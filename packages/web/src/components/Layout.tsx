@@ -29,8 +29,10 @@ export default function Layout() {
   const { branding } = useActiveGame();
   const lobbyMatch = useMatch('/lobby/:id');
   const gameMatch = useMatch('/game/:id');
+  const inspectMatch = useMatch('/inspect/:gameId');
   const replayMatch = useMatch('/replay/:id');
-  const inGame = !!(lobbyMatch || gameMatch || replayMatch);
+  const inGame = !!(lobbyMatch || gameMatch || inspectMatch || replayMatch);
+  const fullBleedGameSurface = !!(gameMatch || inspectMatch || replayMatch);
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bone)' }}>
@@ -215,7 +217,11 @@ export default function Layout() {
         )}
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-10">
+      <main
+        className={`flex-1 w-full mx-auto ${
+          fullBleedGameSurface ? 'max-w-none px-0 py-0' : 'max-w-7xl px-4 sm:px-6 py-6 sm:py-10'
+        }`}
+      >
         <Outlet />
       </main>
 

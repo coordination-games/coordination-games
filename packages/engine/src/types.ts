@@ -70,6 +70,92 @@ export interface RelayEnvelope<TBody = unknown> {
 }
 
 // ---------------------------------------------------------------------------
+// Agentic trust cards — compact, evidence-first projections
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounded pointer to evidence the current viewer is already allowed to know.
+ * The ref carries provenance without embedding raw chats, hidden strategy, or
+ * full private state in the agent/UI prompt surface.
+ */
+export interface TrustEvidenceRefV1 {
+  kind: string;
+  id: string;
+  visibility: 'public' | 'viewer-visible';
+  round?: number;
+  relayIndex?: number;
+  summary?: string;
+}
+
+/** A single compact trust signal. This is not a reputation score. */
+export interface TrustSignalV1 {
+  label: string;
+  stance: 'positive' | 'negative' | 'informational' | 'unknown';
+  summary: string;
+  confidence?: number;
+  evidenceRefs?: TrustEvidenceRefV1[];
+}
+
+/**
+ * Agent-facing trust card projection. Reducers may produce richer cards later;
+ * v1 keeps the shape intentionally small so it can travel in game state.
+ */
+export interface TrustCardV1 {
+  schemaVersion: 'trust-card/v1';
+  /** Current game player/agent id. Kept for UI lookup convenience. */
+  agentId: string;
+  /** Subject identity for future wallet/ERC-8004/DID mapping. */
+  subjectId: string;
+  headline: string;
+  summary: string;
+  signals: TrustSignalV1[];
+  caveats: string[];
+  evidenceRefs: TrustEvidenceRefV1[];
+  updatedAt?: number;
+}
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonObject = { [key: string]: JsonValue };
+
+/** Raw trust event emitted by games, plugins, or agents before projection. */
+export interface AttestationV1 {
+  schemaVersion: 'attestation/v1';
+  id: string;
+  issuer: string;
+  issuerKind: 'agent' | 'system' | 'plugin';
+  subject: string;
+  claim: {
+    type: string;
+    data: JsonObject;
+  };
+  note?: string;
+  confidence?: number;
+  round?: number;
+  issuedAt?: string;
+  evidenceRefs?: TrustEvidenceRefV1[];
+}
+
+/** Publishable evidence envelope used by the optional IPFS/Lighthouse path. */
+export interface TrustEvidenceEnvelopeV1 {
+  schemaVersion: 'trust-evidence/v1';
+  id: string;
+  eventType: string;
+  category: 'identity' | 'behavior' | 'capability' | 'outcome' | 'attestation' | 'policy';
+  subject: string;
+  issuer: string;
+  issuedAt: string;
+  payload: JsonObject;
+  privacy: {
+    publishable: true;
+    redaction: 'none-needed' | 'redacted' | 'aggregated';
+    containsPrivateChat: false;
+    containsHiddenState: false;
+  };
+  evidenceRefs?: TrustEvidenceRefV1[];
+}
+
+// ---------------------------------------------------------------------------
 // Spectator context (passed to buildSpectatorView)
 // ---------------------------------------------------------------------------
 
@@ -117,6 +203,7 @@ export type GameDeadline<TAction> =
 export interface ActionResult<TState, TAction> {
   state: TState;
   deadline?: GameDeadline<TAction>;
+  relayMessages?: RelayEnvelope[];
 }
 
 /**
@@ -242,6 +329,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    * `{type: tool.name, ...args}` before passing to validateAction/applyAction.
    */
   readonly gameTools?: ToolDefinition[];
+
+  /**
+   * Player-callable game tools for the current state. If omitted, `gameTools`
+   * is advertised as the static game-phase surface.
+   */
+  getCurrentGameTools?(state: TState, playerId: string | null): ToolDefinition[];
 
   /** Delay in progress units (turns for CtL, rounds for OATHBREAKER). Default 0. */
   spectatorDelay?: number;

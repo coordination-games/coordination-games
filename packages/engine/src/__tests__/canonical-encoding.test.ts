@@ -14,6 +14,8 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalDecode,
   canonicalEncode,
+  canonicalizeJson,
+  keccak256CanonicalJson,
   NonIntegerNumberError,
   NonPojoValueError,
 } from '../canonical-encoding.js';
@@ -109,6 +111,14 @@ describe('canonicalEncode — determinism (sorted-key)', () => {
   it('emits keys in lex-sort order in the JSON string', () => {
     const bytes = canonicalEncode({ z: 1, a: 2, m: 3 });
     expect(decode(bytes)).toBe('{"a":2,"m":3,"z":1}');
+  });
+
+  it('exposes deterministic JSON text and stable keccak hashes', () => {
+    expect(
+      canonicalizeJson({ z: true, a: { d: 4, c: [{ z: 1, a: 2 }] }, b: ['second', 'first'] }),
+    ).toBe('{"a":{"c":[{"a":2,"z":1}],"d":4},"b":["second","first"],"z":true}');
+    expect(keccak256CanonicalJson({ b: 2, a: 1 })).toBe(keccak256CanonicalJson({ a: 1, b: 2 }));
+    expect(keccak256CanonicalJson({ a: 1, b: 2 })).toMatch(/^0x[a-f0-9]{64}$/);
   });
 });
 

@@ -49,21 +49,32 @@ import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlem
 import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
 import { resolveGameId } from './resolve-gameid.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
+import { buildVisibleTrustArtifacts } from './trust-cards.js';
+import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-publisher.js';
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
+import '@coordination-games/game-tragedy-of-the-commons';
 // Phase 4.2 + 5.1: importing basic-chat (a) self-registers the chat relay
 // schema in the engine's relay-registry so `DOStorageRelayClient.publish`
 // accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO
 // can dispatch by relay type without spelling the literal string.
 import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
+// Side-effect import: registers the reasoning relay schema so Inspector/admin
+// diagnostics can surface explicit `share_reasoning` artifacts.
+import '@coordination-games/plugin-reasoning';
+import {
+  ATTESTATION_RELAY_TYPE,
+  TrustProjectorTragedyPlugin,
+} from '@coordination-games/plugin-trust-projector-tragedy';
 
 // ---------------------------------------------------------------------------
 // WS tags
 // ---------------------------------------------------------------------------
 
 const TAG_SPECTATOR = 'spectator';
+const OBSERVATORY_DM_SPECTATOR_GAMES = new Set(['tragedy-of-the-commons']);
 // Player connections are tagged with their playerId string directly.
 
 // ---------------------------------------------------------------------------
@@ -378,11 +389,14 @@ export class GameRoomDO extends DurableObject<Env> {
   private async handleInspect(): Promise<Response> {
     await this.ensureLoaded();
     const mux = this.getAlarmMux();
-    const [alarmQueue, alarmSlot, snapshotCount] = await Promise.all([
-      this.ctx.storage.get<AlarmEntry[]>(StorageAlarmMux.KEY).then((q) => q ?? []),
-      this.ctx.storage.getAlarm(),
-      this.ctx.storage.get<number>('snapshotCount'),
-    ]);
+    const [alarmQueue, alarmSlot, snapshotCount, relayMessages, trustPublishRecords] =
+      await Promise.all([
+        this.ctx.storage.get<AlarmEntry[]>(StorageAlarmMux.KEY).then((q) => q ?? []),
+        this.ctx.storage.getAlarm(),
+        this.ctx.storage.get<number>('snapshotCount'),
+        this.getRelayClient().visibleTo({ kind: 'admin' }),
+        this.ctx.storage.list<TrustPublishRecord>({ prefix: 'trustPublish:' }),
+      ]);
     const earliest = await mux.earliestWhen();
     const now = Date.now();
     const wsCount = this.ctx.getWebSockets().length;
@@ -401,6 +415,11 @@ export class GameRoomDO extends DurableObject<Env> {
       },
       websockets: wsCount,
       gameState: this._state,
+      relayMessages,
+      trustPublishRecords: [...trustPublishRecords.entries()].map(([key, record]) => ({
+        key,
+        ...record,
+      })),
       isOver: this._plugin && this._state !== null ? this._plugin.isOver(this._state) : null,
       pluginProgress:
         this._plugin && this._state !== null ? this._plugin.getProgressCounter(this._state) : null,
@@ -940,10 +959,15 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     if (relayObj.type === CHAT_RELAY_TYPE) {
-      const scopeError = validateChatScope(
-        relayObj.scope as string | undefined,
-        this._plugin?.chatScopes,
-      );
+      // Extract scope string from either string or object format
+      const rawScope = relayObj.scope;
+      const scopeString =
+        typeof rawScope === 'string'
+          ? rawScope
+          : typeof rawScope === 'object' && rawScope !== null && 'recipientHandle' in rawScope
+            ? ((rawScope as Record<string, unknown>).recipientHandle as string)
+            : undefined;
+      const scopeError = validateChatScope(scopeString, this._plugin?.chatScopes);
       if (scopeError) {
         return Response.json(
           { error: { code: 'INVALID_CHAT_SCOPE', message: scopeError } },
@@ -953,11 +977,18 @@ export class GameRoomDO extends DurableObject<Env> {
     }
 
     try {
-      const scope = resolveWireScope(
-        relayObj.scope as string | undefined,
-        playerId,
-        this._meta.teamMap,
-      );
+      // Extract scope string from either string or object format
+      const rawScope2 = relayObj.scope;
+      const scopeString2 =
+        typeof rawScope2 === 'string'
+          ? rawScope2
+          : typeof rawScope2 === 'object' && rawScope2 !== null && 'recipientHandle' in rawScope2
+            ? ((rawScope2 as Record<string, unknown>).recipientHandle as string)
+            : undefined;
+      const scope = resolveWireScope(scopeString2, playerId, this._meta.teamMap);
+      if (relayObj.type === ATTESTATION_RELAY_TYPE && scope.kind !== 'all') {
+        return Response.json({ error: 'attestation relay scope must be all' }, { status: 400 });
+      }
       const partial = {
         type: relayObj.type as string,
         data: relayObj.data ?? null,
@@ -1031,8 +1062,10 @@ export class GameRoomDO extends DurableObject<Env> {
     }
     // Phase 7.1 — when chat is publicly visible (`'all'` scope) also bump
     // every spectator WS so the unified payload gains the new envelope.
-    // Team/DM chat stays hidden from spectators per `isVisible`.
-    if (scope.kind === 'all') {
+    // Tragedy uses the spectator route as a privileged observatory surface in
+    // the local demo, so it also receives DM relays there to match the old
+    // Agent-Games observatory/admin behavior.
+    if (scope.kind === 'all' || OBSERVATORY_DM_SPECTATOR_GAMES.has(this._meta.gameType)) {
       await this.broadcastSpectatorPayload();
     }
   }
@@ -1111,6 +1144,14 @@ export class GameRoomDO extends DurableObject<Env> {
       }
     }
 
+    // Publish any system relay messages from the game plugin
+    if (result.relayMessages && result.relayMessages.length > 0) {
+      const relayClient = this.getRelayClient();
+      for (const envelope of result.relayMessages) {
+        await relayClient.publish(envelope);
+      }
+    }
+
     // Progress tick: derived from the game's own counter rather than a
     // boolean flag on ActionResult (Phase 4.6). Snapshot whenever the
     // counter advances (defensive >= guard so any rewind would be a no-op).
@@ -1133,6 +1174,7 @@ export class GameRoomDO extends DurableObject<Env> {
       const snapshotCtx = { handles: this._meta.handleMap, relayMessages: snapshotRelay };
       const snapshot = this._plugin.buildSpectatorView(this._state, prevState, snapshotCtx);
       this._spectatorSnapshots.push(snapshot);
+      this.ctx.waitUntil(this.publishTrustEvidenceSnapshot(snapshot));
 
       // Update cached summary in D1
       this.writeSummaryToD1();
@@ -1188,6 +1230,42 @@ export class GameRoomDO extends DurableObject<Env> {
     await this.broadcastUpdates();
 
     return { success: true, progressCounter: this._progress.counter };
+  }
+
+  private async publishTrustEvidenceSnapshot(snapshot: unknown): Promise<void> {
+    if (!this._meta) return;
+    const relayMessages = await this.getRelayClient().visibleTo({ kind: 'admin' });
+    const artifacts = buildVisibleTrustArtifacts(
+      snapshot,
+      this._meta,
+      this._progress.counter,
+      relayMessages,
+    );
+    if (artifacts.envelopes.length === 0) return;
+    try {
+      const { record } = await publishTrustEvidenceBundle({
+        storage: this.ctx.storage,
+        env: this.env,
+        gameId: this._meta.gameId,
+        gameType: this._meta.gameType,
+        progressCounter: this._progress.counter,
+        envelopes: artifacts.envelopes,
+      });
+      if (record.status === 'failed') {
+        console.warn('[GameRoomDO] Trust evidence publish failed', {
+          gameId: record.gameId,
+          progressCounter: record.progressCounter,
+          publisher: record.publisher,
+          error: record.error,
+        });
+      }
+    } catch (error) {
+      console.warn('[GameRoomDO] Trust evidence publish pipeline error', {
+        gameId: this._meta.gameId,
+        progressCounter: this._progress.counter,
+        error: error instanceof Error ? error.message : 'Unknown trust publish error',
+      });
+    }
   }
 
   /**
@@ -1413,16 +1491,26 @@ export class GameRoomDO extends DurableObject<Env> {
       };
     }
     const finished = this._plugin.isOver(this._state);
-    const visible = this._plugin.getVisibleState(this._state, playerId);
     const viewer: SpectatorViewer = { kind: 'player', playerId };
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
+    // Inject relay messages into player view so agents can see chat history
+    const playerRelay = await relayClient.visibleTo(viewer);
+    const visible = this.applyTrustProjector(
+      this._plugin.getVisibleState(this._state, playerId),
+      this._progress.counter,
+      playerRelay,
+    );
+    if (typeof visible === 'object' && visible !== null && !Array.isArray(visible)) {
+      (visible as Record<string, unknown>).relayMessages = playerRelay;
+    }
     // Today every game has one game phase. When GamePhase[] lands this
     // becomes the current GamePhase's {id, name, tools}.
     const currentPhase = {
       id: 'game',
       name: 'Game',
-      tools: this._plugin.gameTools ?? [],
+      tools:
+        this._plugin.getCurrentGameTools?.(this._state, playerId) ?? this._plugin.gameTools ?? [],
     };
     return buildSpectatorPayload({
       gameId: this._meta.gameId,
@@ -1494,20 +1582,58 @@ export class GameRoomDO extends DurableObject<Env> {
     const state = idx !== null ? this._spectatorSnapshots[idx] : null;
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
+    const relayViewer: SpectatorViewer = OBSERVATORY_DM_SPECTATOR_GAMES.has(this._meta.gameType)
+      ? { kind: 'admin' }
+      : viewer;
+    const spectatorRelay = await relayClient.visibleTo(relayViewer);
+    const visibleState =
+      state !== null ? this.applyTrustProjector(state, idx, spectatorRelay) : null;
+
     return buildSpectatorPayload({
       gameId: this._meta.gameId,
       gameType: this._meta.gameType,
       handles: this._meta.handleMap,
       finished: this._meta.finished,
       publicSnapshotIndex: idx,
-      state: state ?? null,
-      viewer,
+      state: visibleState,
+      viewer: relayViewer,
       relay: relayClient,
       relayTip,
       sinceIdx,
       stateVersion: this._stateVersion,
       knownStateVersion,
     });
+  }
+
+  private applyTrustProjector(
+    state: unknown,
+    progressCounter: number | null,
+    relayMessages: readonly RelayEnvelope[],
+  ): unknown {
+    if (!this._meta || typeof state !== 'object' || state === null || Array.isArray(state))
+      return state;
+    const projected = TrustProjectorTragedyPlugin.handleData(
+      'trust-cards',
+      new Map<string, unknown>([
+        ['game-state', state],
+        ['relay-messages', relayMessages],
+        [
+          'game-meta',
+          {
+            gameId: this._meta.gameId,
+            gameType: this._meta.gameType,
+            handleMap: this._meta.handleMap,
+            finished: this._meta.finished,
+            progressCounter,
+          },
+        ],
+      ]),
+    );
+    const envelopeKey = TrustProjectorTragedyPlugin.agentEnvelopeKeys?.['trust-cards'];
+    if (!envelopeKey) return state;
+    const trustCards = projected.get('trust-cards');
+    if (trustCards === undefined) return state;
+    return { ...(state as Record<string, unknown>), [envelopeKey]: trustCards };
   }
 
   private async broadcastUpdates(): Promise<void> {
@@ -1601,15 +1727,19 @@ export class GameRoomDO extends DurableObject<Env> {
         this.ctx.storage.get<number>('stateVersion'),
       ]);
 
-      // Drop the legacy prevProgressState key from older games.
-      this.ctx.storage.delete('prevProgressState').catch(() => {});
-      // Phase 4.4: drop the legacy single-array 'relay' key. Envelopes
-      // now live under 'relay:<paddedIndex>' + 'relay:tip'. No migration
-      // (per the no-backwards-compat rule for pre-launch).
-      this.ctx.storage.delete('relay').catch(() => {});
-      // Phase 3.2: drop the legacy 'deadline' key from pre-multiplexer games.
-      // Deadlines now live in `alarm:queue` as `{ kind: 'deadline', ... }`.
-      this.ctx.storage.delete('deadline').catch(() => {});
+      // Drop legacy keys from older games. Awaiting these keeps Miniflare/DO
+      // storage calls bound to the current request instead of surfacing opaque
+      // internal errors while agents are polling state.
+      for (const legacyKey of ['prevProgressState', 'relay', 'deadline']) {
+        try {
+          await this.ctx.storage.delete(legacyKey);
+        } catch (error) {
+          console.warn('[GameRoomDO] Failed to drop legacy storage key', {
+            key: legacyKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       if (!meta) {
         this._loaded = true;

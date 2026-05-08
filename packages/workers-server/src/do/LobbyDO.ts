@@ -46,6 +46,7 @@ import {
 // Side-effect imports — register game plugins with the engine registry
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
+import '@coordination-games/game-tragedy-of-the-commons';
 // Phase 4.2 + 5.1: importing basic-chat (a) self-registers the chat relay
 // schema in the engine's relay-registry so `DOStorageRelayClient.publish`
 // accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO

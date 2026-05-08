@@ -5,6 +5,8 @@
 export {
   canonicalDecode,
   canonicalEncode,
+  canonicalizeJson,
+  keccak256CanonicalJson,
   NonIntegerNumberError,
   NonPojoValueError,
 } from './canonical-encoding.js';
