@@ -183,6 +183,40 @@ const TRAGEDY_PLAYERS: { id: string; handle: string }[] = [
   { id: 'tp3', handle: 'carol' },
 ];
 
+const TRAGEDY_STARTING_PLACEMENTS: Record<string, string> = {
+  tp1: 'northWest',
+  tp2: 'north',
+  tp3: 'south',
+};
+
+type DriftAction = { type: string } & Record<string, unknown>;
+
+function applyTragedyAction(state: unknown, playerId: string | null, action: DriftAction): unknown {
+  const result = (
+    TragedyOfTheCommonsV2Plugin.applyAction as (
+      s: unknown,
+      p: string | null,
+      a: DriftAction,
+    ) => { state: unknown }
+  )(state, playerId, action);
+  return result.state;
+}
+
+function currentTragedyPlayerId(state: unknown): string {
+  const s = state as { players: Array<{ id: string }>; currentPlayerIndex: number };
+  const player = s.players[s.currentPlayerIndex];
+  if (!player) throw new Error('drift fixture: Tragedy current player missing');
+  return player.id;
+}
+
+function setTragedyCurrentPlayer(state: unknown, playerId: string): unknown {
+  const s = state as { players: Array<{ id: string }>; currentPlayerIndex: number };
+  const index = s.players.findIndex((player) => player.id === playerId);
+  if (index < 0) throw new Error(`drift fixture: Tragedy player ${playerId} missing`);
+  s.currentPlayerIndex = index;
+  return state;
+}
+
 function buildTragedyWaitingState(): unknown {
   const setup = TragedyOfTheCommonsV2Plugin.createConfig?.(
     TRAGEDY_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
@@ -193,15 +227,14 @@ function buildTragedyWaitingState(): unknown {
 }
 
 function buildTragedyPlayingState(): { state: unknown; playerId: string } {
-  const initial = buildTragedyWaitingState();
-  const result = (
-    TragedyOfTheCommonsV2Plugin.applyAction as (
-      s: unknown,
-      p: string | null,
-      a: { type: string },
-    ) => { state: unknown }
-  )(initial, null, { type: 'game_start' });
-  return { state: result.state, playerId: 'tp1' };
+  let state = applyTragedyAction(buildTragedyWaitingState(), null, { type: 'game_start' });
+  for (let index = 0; index < TRAGEDY_PLAYERS.length; index += 1) {
+    const playerId = currentTragedyPlayerId(state);
+    const intersectionId = TRAGEDY_STARTING_PLACEMENTS[playerId];
+    if (!intersectionId) throw new Error(`drift fixture: missing placement for ${playerId}`);
+    state = applyTragedyAction(state, playerId, { type: 'place_starting_camp', intersectionId });
+  }
+  return { state: setTragedyCurrentPlayer(state, 'tp1'), playerId: 'tp1' };
 }
 
 function buildTragedyStateWithRoad(): { state: unknown; playerId: string } {
@@ -219,7 +252,10 @@ function buildTragedyStateWithRoad(): { state: unknown; playerId: string } {
   const players = (state.players as Record<string, unknown>[]) ?? [];
   const tp1 = players.find((p) => p.id === 'tp1');
   if (tp1) {
-    tp1.ownedRoadIds = [...((tp1.ownedRoadIds as string[] | undefined) ?? []), 'road-northWest:northEast'];
+    tp1.ownedRoadIds = [
+      ...((tp1.ownedRoadIds as string[] | undefined) ?? []),
+      'road-northWest:northEast',
+    ];
   }
   return { state, playerId: 'tp1' };
 }
@@ -390,6 +426,18 @@ const DRIFT_FIXTURES: Record<string, Fixture> = {
   // -----------------------------------------------------------------
   // Tragedy of the Commons game tools
   // -----------------------------------------------------------------
+  'tragedy-of-the-commons.game:place_starting_camp': {
+    kind: 'game',
+    fixture: {
+      validSample: { intersectionId: 'northWest' },
+      buildState: () => {
+        const state = applyTragedyAction(buildTragedyWaitingState(), null, { type: 'game_start' });
+        return { state, playerId: currentTragedyPlayerId(state) };
+      },
+      game: TragedyOfTheCommonsV2Plugin,
+    },
+  },
+
   'tragedy-of-the-commons.game:offer_trade': {
     kind: 'game',
     fixture: {
@@ -539,10 +587,10 @@ describe('Tool drift — fixture coverage', () => {
     expect(dead, `Dead DRIFT_FIXTURES entries (no matching tool): ${dead.join(', ')}`).toEqual([]);
   });
 
-  it('discovered surface matches the expected 15-tool count', () => {
+  it('discovered surface matches the expected 16-tool count', () => {
     // If this breaks, either a tool was added (update the constant + fixtures)
     // or the existing surface shrank. Either change the constant intentionally.
-    expect(DISCOVERED).toHaveLength(15);
+    expect(DISCOVERED).toHaveLength(16);
   });
 });
 
