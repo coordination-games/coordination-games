@@ -1,68 +1,55 @@
 # Plugin Pipeline
+> Client-side plugins compose by capability type, not by plugin id; the loader topologically sorts them so adding a plugin can never silently land before its inputs.
 
-## Plugin Interface
+## Why
 
-```typescript
-interface ToolPlugin {
-  readonly id: string;
-  readonly version: string;
-  readonly modes: PluginMode[];       // consumes/provides declarations
-  readonly purity: 'pure' | 'stateful';
-  readonly tools?: ToolDefinition[];  // mcpExpose controls visibility
-  readonly agentEnvelopeKeys?: Record<string, string>; // capability → envelope key (optional)
-  handleData(mode: string, inputs: Map<string, any>): Map<string, any>;
-  handleCall?(tool: string, args: unknown, caller: AgentInfo): unknown;
-}
-```
+The pipeline runs *on the agent's machine* — it processes the relay messages the server hands the CLI on every `getState` and projects the results into the agent's response envelope. There are two reasons it has to be a real pipeline rather than a hardcoded function call:
 
-## Surfacing Output to the Agent
+1. **Plugins compose.** Today only `BasicChatPlugin` ships, but the design has always been "producer → enricher → filter" chains (e.g. extract-agents → trust-tagger → trust-filter, see `docs/plans/trust-plugins.md`). Hardcoding "chat first, then everything else" would make the chain brittle to reorder and impossible to extend without touching the runner.
+2. **The CLI is the only place this can run.** The plugin pipeline is a *client* concern — different agents have different plugins installed, and that's the point. A server-side pipeline would force one shape on every agent. So the runner sits next to `GameClient`, in `packages/cli/src/pipeline.ts`, and MCP inherits it as a wrapper. See `wiki/architecture/mcp-not-on-server.md`.
 
-`modes.provides` names a capability internal to the pipeline. To surface that capability on the agent-facing response, a plugin declares `agentEnvelopeKeys: { [capability]: envelopeKey }`. The CLI's `buildEnvelopeExtensions` (`packages/cli/src/pipeline.ts`) projects declared capabilities onto the top-level response at the chosen keys; undeclared capabilities stay internal (consumed by downstream plugins but not shown to agents).
+The design pressure that pinned typed dependencies (rather than explicit `dependsOn: ['chat']` lists) was that explicit-id dependencies couple every plugin author to every other plugin's id. Capability types invert that: a filter says "I take `messaging` and produce `messaging`" without knowing which plugin produced it, and the loader resolves the order. Multiple plugins providing the same type compose as a chain in topo order; that's how an enricher and a filter can both touch `messaging` without either knowing the other exists.
 
-BasicChatPlugin maps its `'messaging'` capability to the `newMessages` envelope key. By convention, delta-semantics fields use a `new` prefix; snapshot fields don't. See `wiki/architecture/agent-envelope.md` for the top-level diff that dedupes these keys on every call.
+## How
 
-## Type-Based Resolution
+**Plugin shape.** A `ToolPlugin` (`packages/engine/src/types.ts:449`) declares:
 
-Plugins declare `consumes` and `provides` — capability type names, not plugin IDs. The pipeline builder (`PluginLoader.buildPipeline()` in `packages/engine/src/plugin-loader.ts`) builds an edge `i → j` whenever step `j` consumes any type that step `i` provides, then runs **Kahn's algorithm** on that graph.
+- `id`, `version`, `purity`.
+- `modes: PluginMode[]` — each mode (`packages/engine/src/types.ts:499`) declares `consumes: string[]` and `provides: string[]`. Capability names are free-form strings (`messaging`, `agents`, `agent-tags`); the loader treats them as opaque keys.
+- `tools?` — MCP-exposed tools, registered separately by `packages/cli/src/mcp-tools.ts`. Independent of pipeline ordering.
+- `agentEnvelopeKeys?` — declares which provided capabilities are projected onto the top-level agent response. Authoritative explanation in `wiki/architecture/agent-envelope.md`; `pipeline.ts` only references the field.
+- `handleData(mode, inputs) → outputs` — the pipeline-step body.
 
-```
-basic-chat          consumes: —              provides: messaging
-extract-agents      consumes: —              provides: agents
-trust-tagger        consumes: agents         provides: agent-tags
-tag-propagator      consumes: messaging, agent-tags  provides: messaging
-trust-filter        consumes: messaging      provides: messaging
-```
+**Loader and topo sort.** `PluginLoader.buildPipeline()` (`packages/engine/src/plugin-loader.ts:106`) flattens active plugins into one `PipelineStep` per `(plugin, mode)`, then for every pair `(i, j)` adds an edge `i → j` if step `j` consumes any type step `i` provides (`:128-146`). Self-loops (`i === j`) are skipped intentionally — a single step that consumes and provides the same type is a filter, not a cycle. Kahn's algorithm (`:148-174`) emits the sorted step list; if processed count `!= steps.length`, the unprocessed steps are still in-degree-positive and the loader throws `Plugin dependency cycle detected: <id>:<mode> → ...` (`:182`).
 
-**No explicit dependencies.** Just types. If B consumes what A provides, A runs first.
+**Execution.** `PluginPipeline.execute(initial)` (`packages/engine/src/plugin-loader.ts:35`) walks the sorted steps with a single accumulator `Map<string, unknown>`:
 
-## Edge Cases
+- A producer (no `consumes`) gets the *full* accumulator as input — that's how it reads the raw `relay-messages` that `runPipeline` seeds (`packages/cli/src/pipeline.ts:38`).
+- A consumer gets a filtered map containing only its declared `consumes` keys.
+- Outputs are merged back into the accumulator, overwriting any prior key. This is the by-design path for filters: a `provides: ['messaging']` step that consumes `messaging` replaces the upstream value.
 
-- **Unresolved types:** Plugin consumes a type nobody provides → the consumer just receives no entry for that capability key. No warning, no skip — pipeline runs, plugin gets `undefined`.
-- **Type overwriting:** Multiple plugins provide same type → later step in the topo order overwrites the accumulated map entry (intentional for filters/enrichers).
-- **Cycles error fast.** Same-type cycles (two steps that each consume what the other provides) leave the queue empty before all steps are processed; `buildPipeline()` throws `Plugin dependency cycle detected: <id>:<mode> → ...`. There is no fallback ordering — a cycle is a configuration bug, not a tiebreak.
-- **Self-loops are allowed.** A single step that both consumes and provides the same type (`consumes: ['messaging'], provides: ['messaging']`) doesn't form a cycle — the edge-build skips `i === j`. Two same-type filters from different plugins, however, will cycle and error.
+**Registration on the client.** `initPipeline` (`packages/cli/src/pipeline.ts:24`) registers `DEFAULT_PLUGINS = [BasicChatPlugin]` plus any extras handed in. `GameClient.processResponse` (`packages/cli/src/game-client.ts:444`) calls `processState` (`packages/cli/src/pipeline.ts:60`), which runs the pipeline over `serverResponse.relayMessages` and hands the result map to `buildEnvelopeExtensions` (the `agentEnvelopeKeys` projection — see agent-envelope.md). The extensions are spliced onto the top-level response and the differ runs after.
 
-## Current Plugins
+**What ships today.** Exactly one client-side `ToolPlugin`: `BasicChatPlugin` (`packages/plugins/basic-chat/src/index.ts:122`). Its mode `{ name: 'messaging', consumes: [], provides: ['messaging'] }` makes it the producer that turns raw `RelayEnvelope`s of `type: 'messaging'` into `Message[]`. Server-side `ServerPlugin`s — ELO (`packages/workers-server/src/plugins/elo/index.ts`), Settlement (`packages/workers-server/src/plugins/settlement/index.ts`) — are a *separate* runtime (`ServerPluginRuntime`, `packages/workers-server/src/plugins/runtime.ts:48`); they do not go through `PluginPipeline` and don't have `consumes`/`provides`. Don't conflate the two.
 
-| Plugin | ID | Where | Notes |
-|---|---|---|---|
-| BasicChat | `basic-chat` | `packages/plugins/basic-chat/` (client + server halves) | Tier 2 relayed; provides `chat` tool |
-| ELO | `elo` | `packages/workers-server/src/plugins/elo/` | Tier 3 server-side; capability-injected via `ServerPluginRuntime` |
-| Settlement | `settlement` | `packages/workers-server/src/plugins/settlement/` | Tier 3 server-side; wraps the on-chain settlement state machine (Phase 5.3) |
+## Edge cases & gotchas
 
-## Trust Plugin Suite (Designed, Not Yet Built)
+- **Unresolved `consumes` is silent.** A consumer that declares `consumes: ['agent-tags']` when nobody provides `agent-tags` runs anyway — its `inputs` map just has no entry for that key, and `handleData` sees `undefined` on lookup. No warning, no skip. Helpful for "optional enrichment" plugins; trap for typos. The pipeline's only loud failure mode is a cycle.
+- **Cycles throw, including same-type pairs.** Two plugins both declaring `consumes: ['messaging'], provides: ['messaging']` form a 2-cycle (each builds an edge to the other). `buildPipeline` throws (`packages/engine/src/plugin-loader.ts:182`); there is no tiebreak. A single plugin with `consumes: ['messaging'], provides: ['messaging']` is fine — the self-loop is skipped (`:130`) and it runs once. So the trust-suite design (see `docs/plans/trust-plugins.md`) needs an ordering hint before it can ship two `messaging`-filter plugins together.
+- **Producers see the entire accumulator, not just `relay-messages`.** `PluginPipeline.execute` hands a producer `new Map(data)` (`:45`), not just the seeded entry. That's how a producer can layer on top of upstream producers, but it also means a producer's `inputs.get('relay-messages')` is the same object every consumer would see — don't mutate.
+- **Same-type providers merge by overwrite, in topo order.** Two independent steps that both `provides: ['agent-tags']` end up running in some valid topological order (the test suite covers this, `packages/engine/src/__tests__/plugin-loader.test.ts:93`). Whichever runs second overwrites the first's accumulator entry. If you wanted a *merge* you have to write the consumer to do it; the loader doesn't.
+- **Pipeline runs only when there are relay messages.** `GameClient.processResponse` short-circuits when `relayMessages` is empty or absent (`packages/cli/src/game-client.ts:447-448`) — no pipeline run, no envelope extensions for that response. Plugins that want to emit something every tick regardless of relay traffic don't fit the current shape.
+- **`getTools` is independent of `buildPipeline`.** Tool registration walks every active plugin's `tools` (`packages/engine/src/plugin-loader.ts:189`); a plugin with a tool but no modes still surfaces tools to the MCP layer. Don't assume a plugin only "exists" if it has pipeline steps.
 
-Five composable plugins for trust/reputation:
-1. `trust-graph` — tools only (attest, revoke, reputation). EAS on Optimism.
-2. `extract-agents` — producer, extracts unique agents from relay data
-3. `trust-graph-agent-tagger` — enricher, looks up on-chain trust scores per agent
-4. `agent-tags-to-message-tags` — enricher, copies agent tags onto messages
-5. `trust-score-filter` — filter, drops messages from `suspicious` agents
+## Pointers
 
-The trust graph calculation (PageRank over attestation edges) runs server-side. Clients request scores via REST. Plan: `docs/plans/trust-plugins.md`.
-
-## Server-Side Plugin Runtime
-
-Phase 4.3 added `ServerPluginRuntime` (`packages/workers-server/src/plugins/runtime.ts`) — the host that loads server-side halves of plugins (ELO, Settlement, basic-chat server piece) and injects `Capabilities` (relay client, settlement, persistence). See `packages/workers-server/src/plugins/capabilities.ts`.
-
-See: `packages/engine/src/plugin-loader.ts`, `packages/plugins/`, `packages/workers-server/src/plugins/`
+- `packages/engine/src/plugin-loader.ts` — `PluginLoader.buildPipeline` (line 106), `PluginPipeline.execute` (line 35), cycle error (line 182).
+- `packages/engine/src/types.ts:449` — `ToolPlugin` interface; `PluginMode` at line 499.
+- `packages/cli/src/pipeline.ts` — `initPipeline` (line 24), `runPipeline` (line 35), `processState` (line 60). Default plugin set at line 18.
+- `packages/cli/src/game-client.ts:444` — `processResponse`, the only caller of `processState` on the live path.
+- `packages/plugins/basic-chat/src/index.ts:122` — the only shipped `ToolPlugin`.
+- `packages/engine/src/__tests__/plugin-loader.test.ts` — topo-sort, cycle-detection, and same-type-merge fixtures.
+- `wiki/architecture/agent-envelope.md` — `agentEnvelopeKeys` (the plugin → envelope projection).
+- `wiki/architecture/relay-and-cursor.md` — what `relayMessages` is (and isn't) before it reaches the pipeline; how `sinceIdx` makes `relayMessages` a delta on every call after the first.
+- `wiki/architecture/mcp-not-on-server.md` — why the runner lives in the CLI process, not the server.
+- `docs/plans/trust-plugins.md` — proposed multi-plugin chain that exercises every edge case above.

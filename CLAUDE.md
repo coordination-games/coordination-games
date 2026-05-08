@@ -40,6 +40,17 @@ tar -xzf types-node-22.*.tgz
 cp -r "node v22.19/"* /path/to/project/node_modules/@types/node/
 ```
 
+## Pre-launch policy: no backwards-compat shims
+
+No real users yet. When refactoring or rewriting in this repo, **do not** write backwards-compatibility code — change the shape and update every consumer in the same PR. No dual-write, no API aliases, no migration scripts, no "2-step deploy" patterns.
+
+- D1 schema: drop and recreate, don't migrate.
+- Wire shapes (`RelayMessage`, agent envelope, etc.): change the type, fix every consumer, delete the old shape.
+- HTTP routes: rename or replace in one go, no aliases.
+- DO storage shape: just change it; in-flight DOs die cleanly.
+
+This stance reverses once real players are on prod. Until then, prefer clean rewrites over surface area.
+
 ## Environment
 
 - **Claude Agent SDK** uses local `~/.claude` credentials (Max plan). No API key needed.
