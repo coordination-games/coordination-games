@@ -36,6 +36,12 @@ export interface VisibleTragedyPlayerSnapshot {
   readonly influence: number;
   readonly victoryPoints: number;
   readonly totalResources: number;
-  readonly regionsControlled: number;
+  /** V0 compatibility metric. V2 summaries use structures/roads instead. */
+  readonly regionsControlled?: number;
+  readonly structureCount: number;
+  readonly roadCount: number;
+  readonly solarCount: number;
+  readonly extractionPressure: number;
+  readonly commonsHealthPercent: number;
   readonly lastAction?: string;
 }

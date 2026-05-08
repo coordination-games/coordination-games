@@ -33,6 +33,14 @@ function visibleArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return visibleArray(value).filter(isRecord);
+}
+
+function stringArray(value: unknown): string[] {
+  return visibleArray(value).filter((item): item is string => typeof item === 'string');
+}
+
 function sumVisibleResources(value: unknown): number {
   if (!isRecord(value)) return 0;
   let total = 0;
@@ -84,7 +92,7 @@ export function projectTragedyTrust(input: TrustProjectionInput): TrustProjectio
   const cards: TrustCardV1[] = [];
   const envelopes: TrustEvidenceEnvelopeV1[] = [];
   for (const player of players) {
-    const snapshot = snapshotPlayer(player, meta, attestations);
+    const snapshot = snapshotPlayer(player, input.state, meta, attestations);
     if (!snapshot) continue;
     const evidenceRefs = evidenceRefsFor(snapshot.playerId, attestations, round);
     const envelope = createEvidenceEnvelope(snapshot, meta, round, phase, observedAt, evidenceRefs);
@@ -107,14 +115,42 @@ function normalizeMeta(
 
 function snapshotPlayer(
   player: Record<string, unknown>,
+  state: unknown,
   meta: TrustProjectorMeta,
   attestations: readonly TragedyAttestation[],
 ): VisibleTragedyPlayerSnapshot | null {
   const playerId = text(player.id);
   if (!playerId) return null;
-  const regionsControlled = visibleArray(player.regionsControlled).filter(
-    (region): region is string => typeof region === 'string',
-  );
+  const stateRecord = isRecord(state) ? state : {};
+  const regionsControlled = stringArray(player.regionsControlled);
+  const ownedStructureIds = new Set(stringArray(player.ownedStructureIds));
+  const ownedRoadIds = new Set(stringArray(player.ownedRoadIds));
+  const playerStructures = recordArray(player.structures);
+  const playerRoads = recordArray(player.roads);
+  const playerTiles = recordArray(player.tiles);
+  const allStructures =
+    playerStructures.length > 0 ? playerStructures : recordArray(stateRecord.structures);
+  const allRoads = playerRoads.length > 0 ? playerRoads : recordArray(stateRecord.roads);
+  const allTiles = playerTiles.length > 0 ? playerTiles : recordArray(stateRecord.tiles);
+  const isV2 =
+    ownedStructureIds.size > 0 ||
+    ownedRoadIds.size > 0 ||
+    allStructures.length > 0 ||
+    allRoads.length > 0;
+  const myStructures = allStructures.filter((structure) => {
+    const structureId = text(structure.id);
+    return text(structure.ownerId) === playerId || ownedStructureIds.has(structureId);
+  });
+  const myRoads = allRoads.filter((road) => {
+    const roadId = text(road.id);
+    return text(road.ownerId) === playerId || ownedRoadIds.has(roadId);
+  });
+  const totalTileHealth = allTiles.reduce((sum, tile) => sum + finiteNumber(tile.health), 0);
+  const totalTileMaxHealth = allTiles.reduce((sum, tile) => sum + finiteNumber(tile.maxHealth), 0);
+  const commonsHealthPercent =
+    totalTileMaxHealth > 0
+      ? Math.round((totalTileHealth / totalTileMaxHealth) * 100)
+      : finiteNumber(stateRecord.commonsHealthPercent);
   const latestAction = [...attestations]
     .reverse()
     .find(
@@ -131,7 +167,21 @@ function snapshotPlayer(
     influence: finiteNumber(player.influence),
     victoryPoints: finiteNumber(player.vp, finiteNumber(player.victoryPoints)),
     totalResources: finiteNumber(player.totalResources, sumVisibleResources(player.resources)),
-    regionsControlled: regionsControlled.length,
+    ...(regionsControlled.length > 0 ? { regionsControlled: regionsControlled.length } : {}),
+    structureCount: isV2 ? myStructures.length : 0,
+    roadCount: isV2 ? myRoads.length : 0,
+    solarCount: isV2
+      ? myStructures.filter(
+          (structure) => structure.type === 'solar-farm' || structure.type === 'solar-array',
+        ).length
+      : 0,
+    extractionPressure: isV2
+      ? myStructures.reduce(
+          (sum, structure) => sum + finiteNumber(structure.extractionsThisRound),
+          0,
+        )
+      : 0,
+    commonsHealthPercent,
     ...(lastAction ? { lastAction } : {}),
   };
 }
@@ -183,7 +233,14 @@ function createEvidenceEnvelope(
       influence: snapshot.influence,
       victoryPoints: snapshot.victoryPoints,
       totalResources: snapshot.totalResources,
-      regionsControlled: snapshot.regionsControlled,
+      ...(snapshot.regionsControlled != null
+        ? { regionsControlled: snapshot.regionsControlled }
+        : {}),
+      structureCount: snapshot.structureCount,
+      roadCount: snapshot.roadCount,
+      solarCount: snapshot.solarCount,
+      extractionPressure: snapshot.extractionPressure,
+      commonsHealthPercent: snapshot.commonsHealthPercent,
       ...(snapshot.lastAction ? { lastAction: snapshot.lastAction } : {}),
     },
   };
@@ -235,7 +292,19 @@ function createTrustCard(
 
 function visibleTragedySummary(snapshot: VisibleTragedyPlayerSnapshot): string {
   const name = snapshot.displayName ?? snapshot.playerId;
-  return `${name} has ${snapshot.victoryPoints} VP, ${snapshot.influence} influence, ${snapshot.totalResources} visible resources, and controls ${snapshot.regionsControlled} regions.`;
+  if (hasV2Shape(snapshot)) {
+    return `${name} has ${snapshot.victoryPoints} VP, ${snapshot.influence} influence, ${snapshot.totalResources} visible resources, ${snapshot.structureCount} structures, ${snapshot.roadCount} roads, ${snapshot.solarCount} solar investments, ${snapshot.extractionPressure} extractions this round, and commons health is ${snapshot.commonsHealthPercent}%.`;
+  }
+  return `${name} has ${snapshot.victoryPoints} VP, ${snapshot.influence} influence, ${snapshot.totalResources} visible resources, and controls ${snapshot.regionsControlled ?? 0} regions.`;
+}
+
+function hasV2Shape(snapshot: VisibleTragedyPlayerSnapshot): boolean {
+  return (
+    snapshot.structureCount > 0 ||
+    snapshot.roadCount > 0 ||
+    snapshot.solarCount > 0 ||
+    snapshot.extractionPressure > 0
+  );
 }
 
 function createVisibleTragedySignals(
@@ -267,12 +336,57 @@ function createVisibleTragedySignals(
       evidenceRefs,
     });
   }
+  if (hasV2Shape(snapshot)) {
+    signals.push(
+      {
+        label: 'Structural network',
+        stance:
+          snapshot.structureCount > 0 || snapshot.roadCount > 0 ? 'positive' : 'informational',
+        summary: `${snapshot.structureCount} structures and ${snapshot.roadCount} roads are visible.`,
+        confidence: 0.7,
+        evidenceRefs,
+      },
+      {
+        label: 'Solar investment',
+        stance: snapshot.solarCount > 0 ? 'positive' : 'informational',
+        summary: `${snapshot.solarCount} solar installations are visible.`,
+        confidence: 0.65,
+        evidenceRefs,
+      },
+      {
+        label: 'Extraction pressure',
+        stance: snapshot.extractionPressure === 0 ? 'positive' : 'informational',
+        summary: `${snapshot.extractionPressure} total extractions this round across owned structures.`,
+        confidence: 0.6,
+        evidenceRefs,
+      },
+      {
+        label: 'Commons health',
+        stance:
+          snapshot.commonsHealthPercent >= 70
+            ? 'positive'
+            : snapshot.commonsHealthPercent >= 40
+              ? 'informational'
+              : 'negative',
+        summary: `Average tile health is ${snapshot.commonsHealthPercent}%.`,
+        confidence: 0.75,
+        evidenceRefs,
+      },
+    );
+  }
   return signals;
 }
 
 function actionStance(action: string): TrustSignalV1['stance'] {
   if (action === 'build_settlement' || action === 'tragedy.settlement_built.v1') return 'positive';
+  if (action === 'build_road' || action === 'tragedy.road_built.v1') return 'positive';
+  if (action === 'build_structure' || action === 'tragedy.structure_built.v1') return 'positive';
+  if (action === 'upgrade_structure' || action === 'tragedy.structure_upgraded.v1')
+    return 'positive';
   if (action === 'extract_commons' || action === 'tragedy.ecosystem_impact.v1')
+    return 'informational';
+  if (action === 'extract_tile' || action === 'tragedy.tile_extracted.v1') return 'informational';
+  if (action === 'convert_timber_to_energy' || action === 'tragedy.timber_converted.v1')
     return 'informational';
   if (action === 'offer_trade' || action === 'tragedy.trade_offer.v1') return 'informational';
   return 'unknown';
