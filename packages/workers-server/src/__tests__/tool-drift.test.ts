@@ -42,7 +42,7 @@ import {
 import {
   TRAGEDY_GAME_ID,
   TRAGEDY_SYSTEM_ACTION_TYPES,
-  TragedyOfTheCommonsPlugin,
+  TragedyOfTheCommonsV2Plugin,
 } from '@coordination-games/game-tragedy-of-the-commons';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import Ajv from 'ajv';
@@ -66,7 +66,7 @@ const ajv = new AjvCtor({ allErrors: true, strict: false });
 /** Opaque CoordinationGame — the drift harness walks plugin internals by name. */
 type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
 
-const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsPlugin];
+const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsV2Plugin];
 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
@@ -181,28 +181,60 @@ const TRAGEDY_PLAYERS: { id: string; handle: string }[] = [
   { id: 'tp1', handle: 'alice' },
   { id: 'tp2', handle: 'bob' },
   { id: 'tp3', handle: 'carol' },
-  { id: 'tp4', handle: 'dave' },
 ];
 
 function buildTragedyWaitingState(): unknown {
-  const setup = TragedyOfTheCommonsPlugin.createConfig?.(
+  const setup = TragedyOfTheCommonsV2Plugin.createConfig?.(
     TRAGEDY_PLAYERS.map((p) => ({ id: p.id, handle: p.handle })),
     'drift-test-seed',
   );
-  if (!setup) throw new Error('drift fixture: TragedyOfTheCommonsPlugin.createConfig is missing');
-  return TragedyOfTheCommonsPlugin.createInitialState(setup.config);
+  if (!setup) throw new Error('drift fixture: TragedyOfTheCommonsV2Plugin.createConfig is missing');
+  return TragedyOfTheCommonsV2Plugin.createInitialState(setup.config);
 }
 
 function buildTragedyPlayingState(): { state: unknown; playerId: string } {
   const initial = buildTragedyWaitingState();
   const result = (
-    TragedyOfTheCommonsPlugin.applyAction as (
+    TragedyOfTheCommonsV2Plugin.applyAction as (
       s: unknown,
       p: string | null,
       a: { type: string },
     ) => { state: unknown }
   )(initial, null, { type: 'game_start' });
   return { state: result.state, playerId: 'tp1' };
+}
+
+function buildTragedyStateWithRoad(): { state: unknown; playerId: string } {
+  const playing = buildTragedyPlayingState();
+  const state = playing.state as Record<string, unknown>;
+  const roads = (state.roads as unknown[] | undefined) ?? [];
+  roads.push({
+    id: 'road-northWest:northEast',
+    ownerId: 'tp1',
+    fromIntersectionId: 'northWest',
+    toIntersectionId: 'northEast',
+    type: 'straight',
+  });
+  state.roads = roads;
+  const players = (state.players as Record<string, unknown>[]) ?? [];
+  const tp1 = players.find((p) => p.id === 'tp1');
+  if (tp1) {
+    tp1.ownedRoadIds = [...((tp1.ownedRoadIds as string[] | undefined) ?? []), 'road-northWest:northEast'];
+  }
+  return { state, playerId: 'tp1' };
+}
+
+function buildTragedyStateForUpgrade(): { state: unknown; playerId: string } {
+  const playing = buildTragedyPlayingState();
+  const state = playing.state as Record<string, unknown>;
+  const players = (state.players as Record<string, unknown>[]) ?? [];
+  const tp1 = players.find((p) => p.id === 'tp1');
+  if (tp1) {
+    const resources = { ...(tp1.resources as Record<string, number>) };
+    resources.energy = 3;
+    tp1.resources = resources;
+  }
+  return { state, playerId: 'tp1' };
 }
 
 // ---------------------------------------------------------------------------
@@ -363,25 +395,52 @@ const DRIFT_FIXTURES: Record<string, Fixture> = {
     fixture: {
       validSample: { to: 'tp2', give: { grain: 1 }, receive: { timber: 1 } },
       buildState: () => buildTragedyPlayingState(),
-      game: TragedyOfTheCommonsPlugin,
+      game: TragedyOfTheCommonsV2Plugin,
     },
   },
 
-  'tragedy-of-the-commons.game:extract_commons': {
+  'tragedy-of-the-commons.game:build_road': {
     kind: 'game',
     fixture: {
-      validSample: { ecosystemId: 'old-growth-ring', level: 'low' },
+      validSample: { fromIntersectionId: 'northWest', toIntersectionId: 'northEast' },
       buildState: () => buildTragedyPlayingState(),
-      game: TragedyOfTheCommonsPlugin,
+      game: TragedyOfTheCommonsV2Plugin,
     },
   },
 
-  'tragedy-of-the-commons.game:build_settlement': {
+  'tragedy-of-the-commons.game:build_structure': {
     kind: 'game',
     fixture: {
-      validSample: { regionId: 'ironcrest' },
+      validSample: { intersectionId: 'northEast', structureType: 'camp' },
+      buildState: () => buildTragedyStateWithRoad(),
+      game: TragedyOfTheCommonsV2Plugin,
+    },
+  },
+
+  'tragedy-of-the-commons.game:upgrade_structure': {
+    kind: 'game',
+    fixture: {
+      validSample: { structureId: 'tp1-starter-camp' },
+      buildState: () => buildTragedyStateForUpgrade(),
+      game: TragedyOfTheCommonsV2Plugin,
+    },
+  },
+
+  'tragedy-of-the-commons.game:extract_tile': {
+    kind: 'game',
+    fixture: {
+      validSample: { tileId: '0,0', resource: 'water', level: 'low' },
       buildState: () => buildTragedyPlayingState(),
-      game: TragedyOfTheCommonsPlugin,
+      game: TragedyOfTheCommonsV2Plugin,
+    },
+  },
+
+  'tragedy-of-the-commons.game:convert_timber_to_energy': {
+    kind: 'game',
+    fixture: {
+      validSample: { amount: 1 },
+      buildState: () => buildTragedyPlayingState(),
+      game: TragedyOfTheCommonsV2Plugin,
     },
   },
 
@@ -390,7 +449,7 @@ const DRIFT_FIXTURES: Record<string, Fixture> = {
     fixture: {
       validSample: {},
       buildState: () => buildTragedyPlayingState(),
-      game: TragedyOfTheCommonsPlugin,
+      game: TragedyOfTheCommonsV2Plugin,
     },
   },
 
@@ -480,10 +539,10 @@ describe('Tool drift — fixture coverage', () => {
     expect(dead, `Dead DRIFT_FIXTURES entries (no matching tool): ${dead.join(', ')}`).toEqual([]);
   });
 
-  it('discovered surface matches the expected 12-tool count', () => {
+  it('discovered surface matches the expected 15-tool count', () => {
     // If this breaks, either a tool was added (update the constant + fixtures)
     // or the existing surface shrank. Either change the constant intentionally.
-    expect(DISCOVERED).toHaveLength(12);
+    expect(DISCOVERED).toHaveLength(15);
   });
 });
 
@@ -732,7 +791,7 @@ describe('Invariant 3 — system-action isolation', () => {
           }
           if (game.gameType === TRAGEDY_GAME_ID && type === 'round_timeout') {
             return (
-              TragedyOfTheCommonsPlugin.applyAction as (
+              TragedyOfTheCommonsV2Plugin.applyAction as (
                 s: unknown,
                 p: string | null,
                 a: { type: string },

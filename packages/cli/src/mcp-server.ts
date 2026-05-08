@@ -14,7 +14,7 @@
 import type { ToolPlugin } from '@coordination-games/engine';
 import { CaptureTheLobsterPlugin } from '@coordination-games/game-ctl';
 import { OathbreakerPlugin } from '@coordination-games/game-oathbreaker';
-import { TragedyOfTheCommonsPlugin } from '@coordination-games/game-tragedy-of-the-commons';
+import { TragedyOfTheCommonsV2Plugin } from '@coordination-games/game-tragedy-of-the-commons';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -45,7 +45,7 @@ function createMcpServerWithClient(options?: ServeOptions): {
   });
   registerGameTools(server, client, {
     plugins: [BasicChatPlugin, ...(options?.plugins ?? [])],
-    games: [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsPlugin],
+    games: [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsV2Plugin],
   });
   return { server, client };
 }
