@@ -2,15 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { addAlpha, lightenHex, RESOURCE_PALETTE, TERRAIN } from '../lib/colors';
 import { drawHexPath, hexToPixel } from '../lib/hex-math';
 import {
-  clearPatternCache,
-  drawFarmSprite,
-  drawMineSprite,
-  drawPortSprite,
-  drawTowerSprite,
-  getCachedPattern,
-  getEcosystemColor,
-  RESOURCE_ICONS,
-} from '../lib/terrain-textures';
+  getRoadImage,
+  getSettlementImage,
+  getTerrainImage,
+  getVfxFrame,
+  preloadTragedyAssets,
+  setTragedyAssetRedrawCallback,
+} from '../lib/terrain-images';
+import { clearPatternCache, getCachedPattern } from '../lib/terrain-textures';
 import { useGameStore } from '../store';
 
 interface BoardLayout {
@@ -18,6 +17,294 @@ interface BoardLayout {
   centerY: number;
   size: number;
   inner: number;
+}
+
+interface BoardMarker {
+  agentId: string;
+  color: string;
+  type: string;
+  hexes: Array<{ q: number; r: number }>;
+}
+
+const HEALTH_COPY: Record<string, { label: string; tone: string; explanation: string }> = {
+  flourishing: {
+    label: 'Flourishing',
+    tone: '#8fcf86',
+    explanation: 'Healthy ecosystem art is used; no extra warning animation is applied.',
+  },
+  stable: {
+    label: 'Stable',
+    tone: '#ddb469',
+    explanation: 'Baseline ecosystem art is used with only normal board lighting.',
+  },
+  strained: {
+    label: 'Strained',
+    tone: '#dba15d',
+    explanation: 'The tile uses strained terrain art plus a subtle damage or pollution overlay.',
+  },
+  collapsed: {
+    label: 'Collapsed',
+    tone: '#d47c61',
+    explanation: 'The tile uses collapsed terrain art without a continuous warning overlay.',
+  },
+};
+
+function drawCoverImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (sourceWidth <= 0 || sourceHeight <= 0) return;
+  const scale = Math.max(width / sourceWidth, height / sourceHeight);
+  const cropWidth = width / scale;
+  const cropHeight = height / scale;
+  const cropX = (sourceWidth - cropWidth) / 2;
+  const cropY = (sourceHeight - cropHeight) / 2;
+  ctx.drawImage(image, cropX, cropY, cropWidth, cropHeight, x, y, width, height);
+}
+
+function drawContainImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (sourceWidth <= 0 || sourceHeight <= 0) return;
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  ctx.drawImage(
+    image,
+    x + (width - drawWidth) / 2,
+    y + (height - drawHeight) / 2,
+    drawWidth,
+    drawHeight,
+  );
+}
+
+function markerKey(q: number, r: number): string {
+  return `${q},${r}`;
+}
+
+function settlementAssetType(type: string): string {
+  if (type === 'solar-farm' || type === 'solar-array') return type;
+  if (type === 'city' || type === 'cities') return 'city';
+  if (type === 'township' || type === 'townships') return 'township';
+  if (type === 'camp') return 'camp';
+  return 'village';
+}
+
+function titleCase(value: string | undefined): string {
+  if (!value) return 'Unknown';
+  return value.replace(/[-_]/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function tileTitle(tile: {
+  regionName?: string;
+  ecosystemName?: string;
+  terrain?: string;
+}): string {
+  if (tile.regionName) return tile.regionName;
+  if (tile.ecosystemName) return tile.ecosystemName;
+  return titleCase(tile.terrain);
+}
+
+function productiveResources(tile: {
+  terrain?: string;
+  primaryResource?: string;
+  ecosystemResource?: string;
+}): string[] {
+  const resources = new Set<string>();
+  if (tile.terrain === 'rivers' || tile.terrain === 'wetland') {
+    resources.add('water');
+    resources.add('fish');
+  } else if (tile.primaryResource) {
+    resources.add(tile.primaryResource);
+  }
+  if (tile.ecosystemResource) resources.add(tile.ecosystemResource);
+  return [...resources];
+}
+
+function resourceLabel(resource: string): string {
+  if (resource === 'fish') return 'Fish/Food';
+  return titleCase(resource);
+}
+
+function tileResourceFocus(tile: {
+  terrain?: string;
+  primaryResource?: string;
+  ecosystemResource?: string;
+}): string {
+  const resources = productiveResources(tile).map(resourceLabel);
+  if (resources.length > 0) return `Produces ${resources.join(' + ')}`;
+  return 'Scenery only';
+}
+
+function tileFeature(tile: {
+  regionName?: string;
+  ecosystemName?: string;
+  terrain?: string;
+}): string {
+  if (tile.ecosystemName) return `${tile.ecosystemName} resource tile`;
+  if (tile.regionName) return `${tile.regionName} resource tile`;
+  return `${titleCase(tile.terrain)} resource tile`;
+}
+
+function structureLabel(type: string): string {
+  if (type === 'solar-farm') return 'Solar Farm';
+  if (type === 'solar-array') return 'Solar Array';
+  return titleCase(type);
+}
+
+function terrainLegendLabel(label: string): string {
+  if (label === 'oil') return 'Oil Field';
+  if (label === 'rivers') return 'River';
+  return titleCase(label);
+}
+
+function intersectionPixel(
+  hexes: Array<{ q: number; r: number }>,
+  centerX: number,
+  centerY: number,
+  size: number,
+): { x: number; y: number } | null {
+  if (hexes.length === 0) return null;
+  const points = hexes.map((hex) => hexToPixel(hex.q, hex.r, centerX, centerY, size));
+  if (points.length === 1) {
+    const point = points[0];
+    if (!point) return null;
+    return { x: point.x + size * 0.42, y: point.y - size * 0.46 };
+  }
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+}
+
+function drawRoadSegment(
+  ctx: CanvasRenderingContext2D,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  size: number,
+  index: number,
+): void {
+  const angle = Math.atan2(to.y - from.y, to.x - from.x);
+  const offset = (index - 0.5) * size * 0.018;
+  const normalX = Math.cos(angle + Math.PI / 2) * offset;
+  const normalY = Math.sin(angle + Math.PI / 2) * offset;
+  const length = Math.hypot(to.x - from.x, to.y - from.y);
+  const midpointX = (from.x + to.x) / 2 + normalX;
+  const midpointY = (from.y + to.y) / 2 + normalY;
+  const roadImage = getRoadImage('straight');
+
+  if (length > size * 1.18) return;
+
+  if (roadImage) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+    ctx.shadowBlur = size * 0.04;
+    ctx.strokeStyle = 'rgba(116, 84, 44, 0.78)';
+    ctx.lineWidth = Math.max(4, size * 0.075);
+    ctx.beginPath();
+    ctx.moveTo(from.x + normalX, from.y + normalY);
+    ctx.lineTo(to.x + normalX, to.y + normalY);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(midpointX, midpointY);
+    ctx.rotate(angle);
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+    ctx.shadowBlur = size * 0.035;
+    ctx.globalAlpha = 1;
+    ctx.drawImage(roadImage, 0, 52, 109, 14, -length * 0.5, -size * 0.075, length, size * 0.15);
+    ctx.restore();
+    return;
+  }
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  ctx.shadowBlur = size * 0.08;
+  ctx.strokeStyle = 'rgba(34, 24, 16, 0.92)';
+  ctx.lineWidth = Math.max(4, size * 0.07);
+  ctx.beginPath();
+  ctx.moveTo(from.x + normalX, from.y + normalY);
+  ctx.lineTo(to.x + normalX, to.y + normalY);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(156, 120, 69, 0.92)';
+  ctx.lineWidth = Math.max(2.5, size * 0.045);
+  ctx.beginPath();
+  ctx.moveTo(from.x + normalX, from.y + normalY);
+  ctx.lineTo(to.x + normalX, to.y + normalY);
+  ctx.stroke();
+  ctx.setLineDash([size * 0.11, size * 0.07]);
+  ctx.strokeStyle = 'rgba(255, 226, 164, 0.34)';
+  ctx.lineWidth = Math.max(1, size * 0.012);
+  ctx.beginPath();
+  ctx.moveTo(from.x + normalX, from.y + normalY);
+  ctx.lineTo(to.x + normalX, to.y + normalY);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function healthPercent(value: number | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.round(Math.max(0, Math.min(1, value)) * 100);
+}
+
+function visualEffectLabel(status: string | undefined): string {
+  if (status === 'collapsed') return 'Collapsed ecosystem: collapsed terrain art only.';
+  if (status === 'strained') return 'Strained ecosystem: subtle damage or pollution overlay.';
+  return 'No continuous warning animation.';
+}
+
+function drawSettlementMarker(
+  ctx: CanvasRenderingContext2D,
+  marker: BoardMarker,
+  x: number,
+  y: number,
+  size: number,
+  index: number,
+): void {
+  const token = getSettlementImage(settlementAssetType(marker.type));
+  const offsetX = (index - 0.5) * size * 0.24;
+  const tokenSize = size * 0.88;
+  ctx.save();
+  ctx.translate(x + offsetX, y - size * 0.02);
+  ctx.shadowColor = marker.color;
+  ctx.shadowBlur = size * 0.18;
+  ctx.beginPath();
+  ctx.arc(0, tokenSize * 0.03, tokenSize * 0.38, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(5, 10, 15, 0.58)';
+  ctx.fill();
+  ctx.strokeStyle = marker.color;
+  ctx.lineWidth = Math.max(2.4, size * 0.035);
+  ctx.stroke();
+  if (token) {
+    drawContainImage(ctx, token, -tokenSize * 0.42, -tokenSize * 0.62, tokenSize * 0.84, tokenSize);
+  } else {
+    ctx.fillStyle = marker.color;
+    ctx.beginPath();
+    ctx.moveTo(0, -tokenSize * 0.35);
+    ctx.lineTo(tokenSize * 0.24, tokenSize * 0.1);
+    ctx.lineTo(-tokenSize * 0.24, tokenSize * 0.1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function getBoardLayout(
@@ -47,7 +334,7 @@ function getBoardLayout(
     centerX,
     centerY,
     size,
-    inner: size * 0.92,
+    inner: size * 0.99,
   };
 }
 
@@ -58,11 +345,72 @@ export function GameBoard() {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   const hexGrid = useGameStore((state) => state.gameState.hexGrid);
-  const productionNumber = useGameStore((state) => state.gameState.productionNumber);
+  const agents = useGameStore((state) => state.gameState.agents);
   const selectedHex = useGameStore((state) => state.selectedHex);
   const setSelectedHex = useGameStore((state) => state.setSelectedHex);
 
   const sortedHexes = useMemo(() => [...hexGrid].sort((a, b) => a.r - b.r || a.q - b.q), [hexGrid]);
+  const visibleTerrainLegend = useMemo(() => {
+    const terrainByLabel = new Map<string, (typeof TERRAIN)[keyof typeof TERRAIN]>();
+    sortedHexes.forEach((hex) => {
+      const terrain = TERRAIN[hex.terrain as keyof typeof TERRAIN];
+      if (terrain) terrainByLabel.set(terrain.label, terrain);
+    });
+    return [...terrainByLabel.values()];
+  }, [sortedHexes]);
+  const markersByHex = useMemo(() => {
+    const markers = new Map<string, BoardMarker[]>();
+    Object.values(agents).forEach((agent) => {
+      const agentId = agent.id ?? agent.name ?? 'agent';
+      const color = agent.color ?? '#ddb469';
+      agent.structureLocations?.forEach((location) => {
+        location.hexes.forEach((hex) => {
+          const key = markerKey(hex.q, hex.r);
+          const current = markers.get(key) ?? [];
+          current.push({ agentId, color, type: location.type, hexes: location.hexes });
+          markers.set(key, current);
+        });
+      });
+    });
+    return markers;
+  }, [agents]);
+
+  const intersectionMarkers = useMemo(() => {
+    return Object.values(agents).flatMap((agent) => {
+      const agentId = agent.id ?? agent.name ?? 'agent';
+      const color = agent.color ?? '#ddb469';
+      return (agent.structureLocations ?? []).map((location) => ({
+        agentId,
+        color,
+        type: location.type,
+        hexes: location.hexes,
+      }));
+    });
+  }, [agents]);
+
+  const roadSegments = useMemo(() => {
+    return Object.values(agents).flatMap((agent) => {
+      const agentId = agent.id ?? agent.name ?? 'agent';
+      const color = agent.color ?? '#ddb469';
+      return (agent.roadLocations ?? []).map((road) => ({
+        agentId,
+        color,
+        type: road.type ?? 'road',
+        from: road.from,
+        to: road.to,
+      }));
+    });
+  }, [agents]);
+
+  const selectedTile = useMemo(() => {
+    if (!selectedHex) return null;
+    return sortedHexes.find((hex) => hex.q === selectedHex.q && hex.r === selectedHex.r) ?? null;
+  }, [selectedHex, sortedHexes]);
+
+  const selectedTileMarkers = useMemo(() => {
+    if (!selectedTile) return [];
+    return markersByHex.get(markerKey(selectedTile.q, selectedTile.r)) ?? [];
+  }, [markersByHex, selectedTile]);
 
   const drawBoard = useCallback(() => {
     if (document.hidden) return;
@@ -104,12 +452,9 @@ export function GameBoard() {
     const { centerX, centerY, size, inner } = getBoardLayout(sortedHexes, rect.width, rect.height);
 
     for (const hex of sortedHexes) {
-      const terrain = TERRAIN[hex.terrain as keyof typeof TERRAIN] ?? TERRAIN.wasteland;
+      const terrain = TERRAIN[hex.terrain as keyof typeof TERRAIN] ?? TERRAIN.forest;
       const position = hexToPixel(hex.q, hex.r, centerX, centerY, size);
       const key = `${hex.q},${hex.r}`;
-      const producing =
-        Number(hex.productionNumber || 0) === Number(productionNumber || -1) &&
-        Number(hex.productionNumber || 0) > 0;
       const pulse = 0.55 + 0.45 * Math.sin(now / 420 + (hex.q + hex.r) * 0.3);
       const selected = selectedHex?.q === hex.q && selectedHex?.r === hex.r;
       const hovered = hoveredKey === key;
@@ -118,82 +463,115 @@ export function GameBoard() {
 
       ctx.save();
 
-      drawHexPath(ctx, position.x, position.y + 5, inner);
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
-      ctx.fill();
-
       drawHexPath(ctx, position.x, position.y, inner);
-      const pattern = getCachedPattern(hex.terrain, ctx, size, hexSeed, now);
-      if (pattern) {
-        ctx.fillStyle = pattern;
-        ctx.fill();
-
-        const fill = ctx.createRadialGradient(
-          position.x - inner * 0.18,
-          position.y - inner * 0.35,
-          inner * 0.05,
-          position.x,
-          position.y,
-          inner * 1.15,
-        );
-        fill.addColorStop(0, addAlpha(lightenHex(terrain.fill, 32), 0.4));
-        fill.addColorStop(0.5, addAlpha(terrain.fill, 0.3));
-        fill.addColorStop(1, addAlpha(terrain.dark, 0.5));
-        ctx.fillStyle = fill;
-        ctx.fill();
-      } else {
-        const fill = ctx.createRadialGradient(
-          position.x - inner * 0.18,
-          position.y - inner * 0.35,
-          inner * 0.05,
-          position.x,
-          position.y,
-          inner * 1.15,
-        );
-        fill.addColorStop(0, lightenHex(terrain.fill, 32));
-        fill.addColorStop(0.38, terrain.fill);
-        fill.addColorStop(1, terrain.dark);
-        ctx.fillStyle = fill;
-        ctx.fill();
-      }
-
-      ctx.save();
-      drawHexPath(ctx, position.x, position.y, inner);
-      ctx.clip();
-      ctx.strokeStyle = terrain.highlight;
-      ctx.lineWidth = 1.2;
-      const spacing = size * 0.18;
-      for (let offset = -inner * 1.5; offset < inner * 1.5; offset += spacing) {
-        ctx.beginPath();
-        ctx.moveTo(position.x - inner + offset, position.y - inner);
-        ctx.lineTo(position.x + inner + offset, position.y + inner);
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      ctx.save();
-      drawHexPath(ctx, position.x, position.y, inner);
-      ctx.clip();
-      ctx.strokeStyle = 'rgba(0,0,0,0.06)';
-      ctx.lineWidth = 0.6;
-      const vSpacing = size * 0.22;
-      for (let offset = -inner * 1.5; offset < inner * 1.5; offset += vSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(position.x - inner, position.y - inner + offset);
-        ctx.lineTo(position.x + inner, position.y - inner + offset);
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      const firstEcosystemId = hex.ecosystemIds?.[0];
-      if (firstEcosystemId) {
+      let usedTerrainImage = false;
+      const terrainImage = getTerrainImage(hex.terrain, hex.ecosystemStatus);
+      if (terrainImage) {
         ctx.save();
         drawHexPath(ctx, position.x, position.y, inner);
         ctx.clip();
+        const overscan = inner * 0.2;
+        drawCoverImage(
+          ctx,
+          terrainImage,
+          position.x - inner - overscan,
+          position.y - inner - overscan,
+          inner * 2 + overscan * 2,
+          inner * 2 + overscan * 2,
+        );
+        const imageTint = ctx.createRadialGradient(
+          position.x - inner * 0.18,
+          position.y - inner * 0.35,
+          inner * 0.05,
+          position.x,
+          position.y,
+          inner * 1.15,
+        );
+        imageTint.addColorStop(0, addAlpha(lightenHex(terrain.fill, 32), 0.16));
+        imageTint.addColorStop(1, addAlpha(terrain.dark, 0.12));
+        ctx.globalCompositeOperation = 'soft-light';
+        ctx.globalAlpha = 0.72;
+        ctx.fillStyle = imageTint;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.restore();
+        usedTerrainImage = true;
+      } else {
+        const pattern = getCachedPattern(hex.terrain, ctx, size, hexSeed, now);
+        if (pattern) {
+          ctx.fillStyle = pattern;
+          ctx.fill();
 
-        const ecoColor = getEcosystemColor(firstEcosystemId.charCodeAt(0));
-        ctx.fillStyle = ecoColor;
-        ctx.globalCompositeOperation = 'overlay';
+          const fill = ctx.createRadialGradient(
+            position.x - inner * 0.18,
+            position.y - inner * 0.35,
+            inner * 0.05,
+            position.x,
+            position.y,
+            inner * 1.15,
+          );
+          fill.addColorStop(0, addAlpha(lightenHex(terrain.fill, 32), 0.4));
+          fill.addColorStop(0.5, addAlpha(terrain.fill, 0.3));
+          fill.addColorStop(1, addAlpha(terrain.dark, 0.5));
+          ctx.fillStyle = fill;
+          ctx.fill();
+        } else {
+          const fill = ctx.createRadialGradient(
+            position.x - inner * 0.18,
+            position.y - inner * 0.35,
+            inner * 0.05,
+            position.x,
+            position.y,
+            inner * 1.15,
+          );
+          fill.addColorStop(0, lightenHex(terrain.fill, 32));
+          fill.addColorStop(0.38, terrain.fill);
+          fill.addColorStop(1, terrain.dark);
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+      }
+
+      if (!usedTerrainImage) {
+        ctx.save();
+        drawHexPath(ctx, position.x, position.y, inner);
+        ctx.clip();
+        ctx.strokeStyle = terrain.highlight;
+        ctx.lineWidth = 1.2;
+        const spacing = size * 0.18;
+        for (let offset = -inner * 1.5; offset < inner * 1.5; offset += spacing) {
+          ctx.beginPath();
+          ctx.moveTo(position.x - inner + offset, position.y - inner);
+          ctx.lineTo(position.x + inner + offset, position.y + inner);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      if (!usedTerrainImage) {
+        ctx.save();
+        drawHexPath(ctx, position.x, position.y, inner);
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+        ctx.lineWidth = 0.6;
+        const vSpacing = size * 0.22;
+        for (let offset = -inner * 1.5; offset < inner * 1.5; offset += vSpacing) {
+          ctx.beginPath();
+          ctx.moveTo(position.x - inner, position.y - inner + offset);
+          ctx.lineTo(position.x + inner, position.y - inner + offset);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      const ecosystemHealth = Math.max(0, Math.min(1, hex.ecosystemHealth ?? 1));
+      if (ecosystemHealth < 0.92 || hex.ecosystemStatus === 'collapsed') {
+        ctx.save();
+        drawHexPath(ctx, position.x, position.y, inner);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = addAlpha('#2f2b24', Math.min(0.22, (1 - ecosystemHealth) * 0.34));
         ctx.fill();
         ctx.restore();
       }
@@ -203,172 +581,82 @@ export function GameBoard() {
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      const glowAlpha = producing ? 0.28 + 0.12 * pulse : hovered ? 0.18 : 0.06;
-      drawHexPath(ctx, position.x, position.y, inner);
-      ctx.fillStyle = terrain.glow;
-      ctx.globalAlpha = glowAlpha;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-
-      if (hex.primaryResource) {
-        const spriteSize = size * 0.35;
-        const spriteY = position.y + size * 0.08;
-
-        switch (hex.terrain) {
-          case 'plains':
-            drawFarmSprite(ctx, position.x, spriteY, spriteSize, terrain.fill);
-            break;
-          case 'mountains':
-            drawMineSprite(ctx, position.x, spriteY, spriteSize);
-            break;
-          case 'rivers':
-            drawPortSprite(ctx, position.x, spriteY, spriteSize);
-            break;
-          case 'commons':
-            drawTowerSprite(ctx, position.x, spriteY, spriteSize, terrain.fill);
-            break;
-        }
+      if (hovered || selected) {
+        const glowAlpha = hovered ? 0.1 : 0.08;
+        drawHexPath(ctx, position.x, position.y, inner);
+        ctx.fillStyle = terrain.glow;
+        ctx.globalAlpha = glowAlpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
 
       ctx.save();
       drawHexPath(ctx, position.x, position.y, inner + 3);
-      ctx.strokeStyle = lightenHex(terrain.fill, 50);
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = addAlpha(lightenHex(terrain.fill, 45), 0.58);
+      ctx.lineWidth = 1.1;
       ctx.stroke();
       ctx.restore();
 
-      if (producing || hovered || selected) {
+      if (hovered || selected) {
         ctx.save();
         drawHexPath(ctx, position.x, position.y, inner + 5);
         ctx.strokeStyle = selected
           ? addAlpha(terrain.fill, 0.92)
           : addAlpha(terrain.fill, 0.5 + pulse * 0.18);
-        ctx.lineWidth = selected ? 5 : 4.5;
+        ctx.lineWidth = selected ? 3.2 : 2.4;
         ctx.shadowColor = terrain.fill;
-        ctx.shadowBlur = selected ? 32 : 28 * pulse;
+        ctx.shadowBlur = selected ? 20 : 14 * pulse;
         ctx.stroke();
         ctx.restore();
       }
 
       drawHexPath(ctx, position.x, position.y, inner);
-      ctx.strokeStyle = lightenHex(terrain.fill, 45);
-      ctx.lineWidth = hovered ? 3 : 2.4;
+      ctx.strokeStyle = addAlpha(lightenHex(terrain.fill, 45), hovered ? 0.82 : 0.62);
+      ctx.lineWidth = hovered ? 2.2 : 1.6;
       ctx.stroke();
 
-      ctx.fillStyle = 'rgba(252, 244, 225, 0.75)';
-      ctx.font = `700 ${size * 0.115}px SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(terrain.symbol, position.x, position.y - size * 0.17);
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(247, 238, 220, 0.68)';
-      ctx.shadowColor = 'rgba(0,0,0,0.75)';
-      ctx.shadowBlur = 8;
-      ctx.font = `600 ${size * 0.088}px SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
-      ctx.fillText(
-        (hex.regionName || terrain.label).toUpperCase(),
-        position.x,
-        position.y + size * 0.21,
-      );
-      ctx.restore();
-
-      if (Number(hex.productionNumber || 0) > 0 && hex.terrain !== 'wasteland') {
-        const badgeY = position.y - inner * 0.52;
-        const badgeRadius = size * 0.18;
-
-        ctx.beginPath();
-        ctx.arc(position.x + 2, badgeY + 2, badgeRadius, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fill();
-
-        const badgeGrad = ctx.createRadialGradient(
-          position.x - badgeRadius * 0.3,
-          badgeY - badgeRadius * 0.3,
-          0,
-          position.x,
-          badgeY,
-          badgeRadius,
-        );
-
-        if (producing) {
-          badgeGrad.addColorStop(0, '#fcf4e1');
-          badgeGrad.addColorStop(0.5, '#e8d4a0');
-          badgeGrad.addColorStop(1, '#c4a85a');
-          ctx.fillStyle = badgeGrad;
-        } else {
-          badgeGrad.addColorStop(0, '#1a1a1a');
-          badgeGrad.addColorStop(1, '#0d0d0d');
-          ctx.fillStyle = badgeGrad;
-        }
-
-        ctx.beginPath();
-        ctx.arc(position.x, badgeY, badgeRadius, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(position.x, badgeY, badgeRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = producing ? addAlpha('#ddb469', 0.9) : 'rgba(252, 244, 225, 0.25)';
-        ctx.lineWidth = producing ? 2.5 : 1.5;
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(position.x, badgeY, badgeRadius * 0.75, 0, Math.PI * 2);
-        ctx.strokeStyle = producing ? addAlpha('#ddb469', 0.4) : 'rgba(252, 244, 225, 0.1)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = producing ? '#1a1510' : 'rgba(247,238,220,0.85)';
-        ctx.font = `800 ${size * 0.16}px SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      if (hovered || selected) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(247, 238, 220, 0.78)';
+        ctx.shadowColor = 'rgba(0,0,0,0.75)';
+        ctx.shadowBlur = 8;
+        ctx.font = `600 ${size * 0.082}px SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-
-        if (!producing) {
-          ctx.save();
-          ctx.fillStyle = 'rgba(0,0,0,0.5)';
-          ctx.fillText(String(hex.productionNumber), position.x + 1, badgeY + 2);
-          ctx.restore();
-        }
-
-        ctx.fillText(String(hex.productionNumber), position.x, badgeY);
-
-        if (producing) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(position.x, badgeY, badgeRadius + 4, 0, Math.PI * 2);
-          ctx.strokeStyle = addAlpha('#ddb469', 0.5 * pulse);
-          ctx.lineWidth = 3;
-          ctx.stroke();
-          ctx.restore();
-        }
+        ctx.fillText(
+          (hex.regionName || terrain.label).toUpperCase(),
+          position.x,
+          position.y + size * 0.2,
+        );
+        ctx.restore();
       }
 
-      if (hex.primaryResource) {
-        const iconSize = size * 0.12;
-        const iconOffset = size * 0.55;
-        const iconPositions = [
-          { x: position.x - iconOffset, y: position.y },
-          { x: position.x + iconOffset, y: position.y },
-        ];
-
-        const iconFn = RESOURCE_ICONS[hex.primaryResource] ?? RESOURCE_ICONS.grain;
-        if (!iconFn) continue;
-
-        iconPositions.forEach((pos, idx) => {
-          if (idx === 1 && size < 50) return;
-
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, iconSize * 0.8, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(8, 16, 24, 0.7)';
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(233, 220, 190, 0.2)';
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          ctx.restore();
-
-          iconFn(ctx, pos.x, pos.y, iconSize);
-        });
+      const vfxFrame = Math.floor(now / 360 + hex.q * 2 + hex.r * 3);
+      const vfxKind =
+        hex.terrain === 'oil-field' && hex.ecosystemStatus === 'strained'
+          ? 'oilSpill'
+          : hex.terrain === 'rivers' && hex.ecosystemStatus === 'strained'
+            ? 'downstreamPollution'
+            : hex.terrain === 'wetland' && hex.ecosystemStatus === 'strained'
+              ? 'wetlandAbsorption'
+              : hex.ecosystemStatus === 'strained'
+                ? 'healthDrain'
+                : null;
+      const vfxImage = vfxKind ? getVfxFrame(vfxKind, vfxFrame) : null;
+      if (vfxImage) {
+        ctx.save();
+        drawHexPath(ctx, position.x, position.y, inner);
+        ctx.clip();
+        ctx.globalAlpha = 0.12;
+        drawCoverImage(
+          ctx,
+          vfxImage,
+          position.x - inner * 0.98,
+          position.y - inner * 0.98,
+          inner * 1.96,
+          inner * 1.96,
+        );
+        ctx.restore();
       }
 
       if (hovered || selected) {
@@ -424,7 +712,20 @@ export function GameBoard() {
 
       ctx.restore();
     }
-  }, [hoveredKey, productionNumber, selectedHex, sortedHexes]);
+
+    roadSegments.forEach((road, roadIndex) => {
+      const from = intersectionPixel(road.from.hexes, centerX, centerY, size);
+      const to = intersectionPixel(road.to.hexes, centerX, centerY, size);
+      if (!from || !to) return;
+      drawRoadSegment(ctx, from, to, size, roadIndex);
+    });
+
+    intersectionMarkers.forEach((marker, markerIndex) => {
+      const point = intersectionPixel(marker.hexes, centerX, centerY, size);
+      if (!point) return;
+      drawSettlementMarker(ctx, marker, point.x, point.y, size, markerIndex % 2);
+    });
+  }, [hoveredKey, intersectionMarkers, roadSegments, selectedHex, sortedHexes]);
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -437,6 +738,8 @@ export function GameBoard() {
 
     const observer = new ResizeObserver(redraw);
     observer.observe(shell);
+    setTragedyAssetRedrawCallback(redraw);
+    preloadTragedyAssets();
     redraw();
 
     const handleVisibilityChange = () => {
@@ -448,6 +751,7 @@ export function GameBoard() {
     return () => {
       observer.disconnect();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      setTragedyAssetRedrawCallback(null);
       clearPatternCache();
     };
   }, []);
@@ -456,6 +760,19 @@ export function GameBoard() {
     drawRef.current = drawBoard;
     drawBoard();
   }, [drawBoard]);
+
+  useEffect(() => {
+    let frame = 0;
+    const animate = () => {
+      const draw = drawRef.current;
+      if (draw) draw();
+      frame = window.requestAnimationFrame(animate);
+    };
+    frame = window.requestAnimationFrame(animate);
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   const updateHover = (clientX: number, clientY: number) => {
     const shell = shellRef.current;
@@ -496,6 +813,13 @@ export function GameBoard() {
     }
   };
 
+  const selectedTerrain = selectedTile
+    ? (TERRAIN[selectedTile.terrain as keyof typeof TERRAIN] ?? TERRAIN.forest)
+    : null;
+  const selectedHealth = healthPercent(selectedTile?.ecosystemHealth);
+  const selectedHealthCopy = selectedTile
+    ? (HEALTH_COPY[selectedTile.ecosystemStatus ?? 'stable'] ?? HEALTH_COPY.stable)
+    : null;
   return (
     <div className="relative min-h-[560px] flex flex-col rounded-[18px] border border-[var(--color-line)] overflow-hidden bg-[radial-gradient(circle_at_50%_18%,rgba(221,180,105,0.12),transparent_22%),radial-gradient(circle_at_50%_50%,rgba(114,169,181,0.12),transparent_34%),linear-gradient(180deg,#08131f_0%,#0a1623_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_24px_70px_rgba(0,0,0,0.28)]">
       <button
@@ -511,8 +835,115 @@ export function GameBoard() {
         <canvas ref={canvasRef} className="w-full h-full block" />
       </button>
 
+      {selectedTile && selectedTerrain && selectedHealthCopy ? (
+        <aside className="absolute right-5 top-5 z-10 w-[min(340px,calc(100%-2.5rem))] rounded-2xl border border-[rgba(233,220,190,0.18)] bg-[rgba(7,17,27,0.9)] p-4 text-[var(--color-text)] shadow-[0_18px_46px_rgba(0,0,0,0.45)] backdrop-blur-md">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--color-text-soft)]">
+                Selected tile · q{selectedTile.q}, r{selectedTile.r}
+              </div>
+              <h3 className="mt-1 font-serif text-lg font-semibold">{tileTitle(selectedTile)}</h3>
+            </div>
+            <button
+              type="button"
+              className="rounded-full border border-[rgba(233,220,190,0.18)] px-2 py-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              onClick={() => setSelectedHex(null)}
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl border border-[rgba(233,220,190,0.1)] bg-[rgba(255,255,255,0.04)] p-3">
+              <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+                Terrain
+              </div>
+              <div className="mt-1 font-semibold">{titleCase(selectedTile.terrain)}</div>
+            </div>
+            <div className="rounded-xl border border-[rgba(233,220,190,0.1)] bg-[rgba(255,255,255,0.04)] p-3">
+              <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+                Produces
+              </div>
+              <div className="mt-1 font-semibold">{tileResourceFocus(selectedTile)}</div>
+            </div>
+            <div className="rounded-xl border border-[rgba(233,220,190,0.1)] bg-[rgba(255,255,255,0.04)] p-3">
+              <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+                Tile role
+              </div>
+              <div className="mt-1 font-semibold">
+                {selectedTile.ecosystemIds && selectedTile.ecosystemIds.length > 0
+                  ? 'Harvestable resource tile'
+                  : 'Visual terrain only'}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[rgba(233,220,190,0.1)] bg-[rgba(255,255,255,0.04)] p-3">
+              <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+                Adjacent structures
+              </div>
+              <div className="mt-1 font-semibold">
+                {selectedTileMarkers.length > 0
+                  ? selectedTileMarkers
+                      .map((marker) => `${marker.agentId} ${structureLabel(marker.type)}`)
+                      .join(', ')
+                  : 'No building touches this tile'}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-[rgba(233,220,190,0.12)] bg-[rgba(255,255,255,0.04)] p-3">
+            <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+              Tile feature
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {tileFeature(selectedTile)}. Buildings sit on the shared intersections around the
+              tile; roads are the lines connecting those intersections.
+            </p>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-[rgba(233,220,190,0.12)] bg-[rgba(255,255,255,0.04)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+                  Ecosystem health
+                </div>
+                <div className="mt-1 font-semibold" style={{ color: selectedHealthCopy.tone }}>
+                  {selectedHealthCopy.label}
+                  {selectedHealth != null ? ` · ${selectedHealth}%` : ''}
+                </div>
+              </div>
+              <div className="h-2 w-24 overflow-hidden rounded-full bg-[rgba(255,255,255,0.1)]">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${selectedHealth ?? 100}%`,
+                    backgroundColor: selectedHealthCopy.tone,
+                  }}
+                />
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {selectedHealthCopy.explanation}
+            </p>
+            {selectedTile.ecosystemIds && selectedTile.ecosystemIds.length > 0 ? (
+              <p className="mt-2 text-[11px] leading-relaxed text-[var(--color-text-soft)]">
+                Ecosystem IDs: {selectedTile.ecosystemIds.join(', ')}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="mt-3 rounded-xl border border-[rgba(233,220,190,0.12)] bg-[rgba(255,255,255,0.04)] p-3">
+            <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-text-soft)]">
+              Animation / overlay
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              {visualEffectLabel(selectedTile.ecosystemStatus)}
+            </p>
+          </div>
+        </aside>
+      ) : null}
+
       <div className="shrink-0 flex flex-wrap gap-3 px-5 py-4 border-t border-[rgba(233,220,190,0.1)] bg-[rgba(8,16,24,0.6)]">
-        {Object.values(TERRAIN).map((terrain) => (
+        {visibleTerrainLegend.map((terrain) => (
           <span
             key={terrain.label}
             className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-[rgba(10,20,31,0.7)] border border-[rgba(233,220,190,0.16)] text-[11px] text-[var(--color-text-muted)]"
@@ -524,7 +955,7 @@ export function GameBoard() {
                   RESOURCE_PALETTE[terrain.label as keyof typeof RESOURCE_PALETTE] ?? terrain.fill,
               }}
             />
-            {terrain.label}
+            {terrainLegendLabel(terrain.label)}
           </span>
         ))}
       </div>

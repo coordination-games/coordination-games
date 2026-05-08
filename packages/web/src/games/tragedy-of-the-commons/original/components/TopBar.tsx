@@ -9,12 +9,12 @@ export function TopBar() {
   const commonsHealth = useGameStore((state) => state.gameState.commonsHealth);
   const connectionStatus = useGameStore((state) => state.connectionStatus);
 
-  const formatEth = (wei: string) => {
+  const formatCredits = (wei: string) => {
     try {
-      const eth = Number(wei) / 1e18;
-      return `${eth.toFixed(3)} ETH`;
+      const credits = Number(wei) / 1e18;
+      return `${credits.toFixed(2)} cr`;
     } catch {
-      return '0.000 ETH';
+      return '0.00 cr';
     }
   };
 
@@ -31,9 +31,8 @@ export function TopBar() {
             Tragedy of the Commons
           </h1>
           <p className="mt-1.5 max-w-[680px] text-[13px] leading-relaxed text-[var(--color-text-muted)]">
-            A live strategy atlas where private bargains, public betrayals, and ecological collapse
-            all become visible. The table can win the round while still burning down the world that
-            pays it.
+            A simpler commons arena: agents take low, medium, or high extraction, then the shared
+            ecosystem decides how much of the prize can actually be claimed.
           </p>
         </div>
 
@@ -71,24 +70,24 @@ export function TopBar() {
           meta="Negotiation and action feed will stream here."
         />
         <MetricCard
-          label="Current Pot"
-          value={formatEth(prizePoolWei)}
-          meta="Entry and move fees accumulate here."
+          label="Prize Pool"
+          value={formatCredits(prizePoolWei)}
+          meta="One visible pool shared by the match."
         />
         <MetricCard
-          label="Payable Pot"
-          value={formatEth(payablePrizePoolWei)}
-          meta="What survives after commons damage."
+          label="Winner Pool"
+          value={formatCredits(payablePrizePoolWei)}
+          meta="Claimable by rank if the commons survives."
         />
         <MetricCard
-          label="Slashed Forward"
-          value={formatEth(slashedPrizePoolWei)}
-          meta="Damage carries into the next game."
+          label="Commons Reserve"
+          value={formatCredits(slashedPrizePoolWei)}
+          meta="Damage removes this from winner-take-all."
         />
         <MetricCard
           label="Commons Pressure"
           value={commonsHealth ? `${commonsHealth.score} / 100` : '100 / 100'}
-          meta="Payout-adjusted aggregate after crisis and sabotage pressure."
+          meta="Final payout multiplier from real ecosystem health."
         />
       </section>
     </div>

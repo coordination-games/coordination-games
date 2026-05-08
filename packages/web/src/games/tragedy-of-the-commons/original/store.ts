@@ -14,6 +14,10 @@ export interface HexTile {
   center?: { x: number; y: number };
   polygon?: Array<{ x: number; y: number }>;
   ecosystemIds?: string[];
+  ecosystemHealth?: number;
+  ecosystemStatus?: string;
+  ecosystemResource?: string;
+  ecosystemName?: string;
 }
 
 export interface AgentState {
@@ -38,6 +42,12 @@ export interface AgentState {
     type: string;
     hexes: Array<{ q: number; r: number }>;
     regionId?: string;
+    regionIds?: string[];
+  }>;
+  roadLocations?: Array<{
+    from: { hexes: Array<{ q: number; r: number }> };
+    to: { hexes: Array<{ q: number; r: number }> };
+    type?: string;
     regionIds?: string[];
   }>;
   armies?: Array<{ id: string; owner: string; position: { q: number; r: number }; count: number }>;
@@ -69,6 +79,21 @@ export interface VisibleBehaviorTag {
   actor: string;
   kind: string;
   severity: string;
+  description: string;
+}
+
+export interface ResolvedActionSummary {
+  playerId: string;
+  type: string;
+  level?: string;
+  ecosystemId?: string;
+  regionId?: string;
+  tileId?: string;
+  resource?: string;
+  intersectionId?: string;
+  structureId?: string;
+  fromIntersectionId?: string;
+  toIntersectionId?: string;
   description: string;
 }
 
@@ -176,6 +201,7 @@ export interface GameState {
   ecosystemStates: Array<Record<string, unknown>>;
   commitments: Commitment[];
   attestations: Attestation[];
+  lastResolvedActions: ResolvedActionSummary[];
   behaviorTags: VisibleBehaviorTag[];
   trustCards: TrustCard[];
   trustMatrix: { agents: string[]; matrix: number[][] } | null;
@@ -221,6 +247,7 @@ export const initialGameState: GameState = {
   ecosystemStates: [],
   commitments: [],
   attestations: [],
+  lastResolvedActions: [],
   behaviorTags: [],
   trustCards: [],
   trustMatrix: null,

@@ -8,38 +8,130 @@ class TestResizeObserver {
   disconnect() {}
 }
 
-const boardTiles = [
-  ['0,-2', 0, -2, 'mountains'],
-  ['1,-2', 1, -2, 'mountains'],
-  ['2,-2', 2, -2, 'wasteland'],
-  ['-1,-1', -1, -1, 'forest'],
-  ['0,-1', 0, -1, 'mountains', 'ironcrest', 'Ironcrest', 'ore'],
-  ['1,-1', 1, -1, 'rivers', 'sunspine-basin', 'Sunspine Basin', 'energy'],
-  ['2,-1', 2, -1, 'rivers'],
-  ['-2,0', -2, 0, 'forest'],
-  ['-1,0', -1, 0, 'forest', 'mistbarrow', 'Mistbarrow', 'timber'],
-  ['0,0', 0, 0, 'commons', 'commons-heart', 'Commons Heart', 'grain'],
-  ['1,0', 1, 0, 'rivers', 'monsoon-reach', 'Monsoon Reach', 'fish'],
-  ['2,0', 2, 0, 'wetland'],
-  ['-2,1', -2, 1, 'forest'],
-  ['-1,1', -1, 1, 'rivers', 'riverwake', 'Riverwake', 'water'],
-  ['0,1', 0, 1, 'commons'],
-  ['1,1', 1, 1, 'rivers'],
-  ['-2,2', -2, 2, 'wetland'],
-  ['-1,2', -1, 2, 'wetland'],
-  ['0,2', 0, 2, 'rivers'],
-].map(([id, q, r, terrain, regionId, regionName, primaryResource], index) => ({
+const tiles = [
+  ['0,-2', 0, -2, 'mountains', 'ore', 16, 20, 'flourishing'],
+  ['1,-2', 1, -2, 'mountains', 'ore', 15, 20, 'stable'],
+  ['2,-2', 2, -2, 'oil-field', 'energy', 12, 20, 'stable'],
+  ['-1,-1', -1, -1, 'forest', 'timber', 16, 20, 'flourishing'],
+  ['0,-1', 0, -1, 'mountains', 'ore', 12, 20, 'stable'],
+  ['1,-1', 1, -1, 'mountains', 'energy', 12, 20, 'stable'],
+  ['2,-1', 2, -1, 'rivers', 'water', 15, 20, 'stable'],
+  ['-2,0', -2, 0, 'forest', 'timber', 16, 20, 'flourishing'],
+  ['-1,0', -1, 0, 'forest', 'timber', 16, 20, 'flourishing'],
+  ['0,0', 0, 0, 'rivers', 'water', 15, 20, 'stable'],
+  ['1,0', 1, 0, 'wetland', 'fish', 14, 20, 'stable'],
+  ['2,0', 2, 0, 'wetland', 'fish', 14, 20, 'stable'],
+  ['-2,1', -2, 1, 'forest', 'timber', 16, 20, 'flourishing'],
+  ['-1,1', -1, 1, 'rivers', 'water', 15, 20, 'stable'],
+  ['0,1', 0, 1, 'rivers', 'water', 15, 20, 'stable'],
+  ['1,1', 1, 1, 'rivers', 'water', 15, 20, 'stable'],
+  ['-2,2', -2, 2, 'wetland', 'fish', 14, 20, 'stable'],
+  ['-1,2', -1, 2, 'wetland', 'fish', 14, 20, 'stable'],
+  ['0,2', 0, 2, 'rivers', 'water', 15, 20, 'stable'],
+].map(([id, q, r, terrain, primaryResource, health, maxHealth, status], index) => ({
   id,
   q,
   r,
   terrain,
   productionNumber: [5, 8, 10, 6, 11, 9, 4, 3, 12, 2, 5, 8, 10, 6, 11, 9, 4, 3, 12][index],
   revealed: true,
-  ecosystemIds: [],
-  ...(typeof regionId === 'string' ? { regionId } : {}),
-  ...(typeof regionName === 'string' ? { regionName } : {}),
+  ecosystemIds:
+    typeof id === 'string' && ['0,-2', '0,-1', '1,-2'].includes(id) ? ['ironcrest-vein'] : [],
   ...(typeof primaryResource === 'string' ? { primaryResource } : {}),
+  ...(typeof health === 'number' ? { health } : {}),
+  ...(typeof maxHealth === 'number' ? { maxHealth } : {}),
+  ...(typeof status === 'string' ? { status } : {}),
 }));
+
+const intersections = [
+  {
+    id: 'alpha-camp',
+    hexes: [
+      { q: -1, r: 0 },
+      { q: 0, r: 0 },
+      { q: -1, r: 1 },
+    ],
+  },
+  {
+    id: 'beta-camp',
+    hexes: [
+      { q: 0, r: 0 },
+      { q: 1, r: 0 },
+      { q: 0, r: 1 },
+    ],
+  },
+  {
+    id: 'gamma-camp',
+    hexes: [
+      { q: -1, r: -1 },
+      { q: 0, r: -1 },
+      { q: -1, r: 0 },
+    ],
+  },
+  {
+    id: 'delta-camp',
+    hexes: [
+      { q: 1, r: -1 },
+      { q: 1, r: 0 },
+      { q: 0, r: 0 },
+    ],
+  },
+  {
+    id: 'alpha-solar',
+    hexes: [
+      { q: -2, r: 0 },
+      { q: -1, r: 0 },
+      { q: -2, r: 1 },
+    ],
+  },
+];
+
+const structures = [
+  {
+    id: 'alpha-structure',
+    ownerId: 'alpha',
+    intersectionId: 'alpha-camp',
+    type: 'camp',
+    extractionsThisRound: 0,
+  },
+  {
+    id: 'alpha-solar-structure',
+    ownerId: 'alpha',
+    intersectionId: 'alpha-solar',
+    type: 'solar-farm',
+    extractionsThisRound: 0,
+  },
+  {
+    id: 'beta-structure',
+    ownerId: 'beta',
+    intersectionId: 'beta-camp',
+    type: 'camp',
+    extractionsThisRound: 1,
+  },
+  {
+    id: 'gamma-structure',
+    ownerId: 'gamma',
+    intersectionId: 'gamma-camp',
+    type: 'camp',
+    extractionsThisRound: 0,
+  },
+  {
+    id: 'delta-structure',
+    ownerId: 'delta',
+    intersectionId: 'delta-camp',
+    type: 'camp',
+    extractionsThisRound: 1,
+  },
+];
+
+const roads = [
+  {
+    id: 'alpha-road',
+    ownerId: 'alpha',
+    fromIntersectionId: 'alpha-camp',
+    toIntersectionId: 'alpha-solar',
+  },
+];
 
 const nativeSpectatorSnapshot = {
   type: 'state_update',
@@ -63,7 +155,12 @@ const nativeSpectatorSnapshot = {
         influence: 0,
         vp: 1,
         totalResources: 8,
-        regionsControlled: ['mistbarrow'],
+        ownedStructureIds: ['alpha-structure', 'alpha-solar-structure'],
+        ownedRoadIds: ['alpha-road'],
+        structures,
+        roads,
+        intersections,
+        tiles,
       },
       {
         id: 'beta',
@@ -71,7 +168,12 @@ const nativeSpectatorSnapshot = {
         influence: 0,
         vp: 1,
         totalResources: 8,
-        regionsControlled: ['riverwake'],
+        ownedStructureIds: ['beta-structure'],
+        ownedRoadIds: [],
+        structures,
+        roads,
+        intersections,
+        tiles,
       },
       {
         id: 'gamma',
@@ -79,7 +181,12 @@ const nativeSpectatorSnapshot = {
         influence: 0,
         vp: 1,
         totalResources: 8,
-        regionsControlled: ['commons-heart'],
+        ownedStructureIds: ['gamma-structure'],
+        ownedRoadIds: [],
+        structures,
+        roads,
+        intersections,
+        tiles,
       },
       {
         id: 'delta',
@@ -87,61 +194,24 @@ const nativeSpectatorSnapshot = {
         influence: 0,
         vp: 1,
         totalResources: 8,
-        regionsControlled: ['sunspine-basin'],
+        ownedStructureIds: ['delta-structure'],
+        ownedRoadIds: [],
+        structures,
+        roads,
+        intersections,
+        tiles,
       },
     ],
-    regions: [
-      {
-        id: 'mistbarrow',
-        name: 'Mistbarrow',
-        primaryResource: 'timber',
-        secondaryResources: ['water'],
-        ecosystemIds: ['old-growth-ring'],
-      },
-      {
-        id: 'riverwake',
-        name: 'Riverwake',
-        primaryResource: 'water',
-        secondaryResources: ['fish', 'grain'],
-        ecosystemIds: ['sunspine-aquifer'],
-      },
-      {
-        id: 'commons-heart',
-        name: 'Commons Heart',
-        primaryResource: 'grain',
-        secondaryResources: ['timber', 'water'],
-        ecosystemIds: ['old-growth-ring', 'sunspine-aquifer'],
-      },
-      {
-        id: 'sunspine-basin',
-        name: 'Sunspine Basin',
-        primaryResource: 'energy',
-        secondaryResources: ['ore'],
-        ecosystemIds: ['sunspine-aquifer'],
-      },
-      {
-        id: 'ironcrest',
-        name: 'Ironcrest',
-        primaryResource: 'ore',
-        secondaryResources: ['energy'],
-        ecosystemIds: [],
-      },
-      {
-        id: 'monsoon-reach',
-        name: 'Monsoon Reach',
-        primaryResource: 'fish',
-        secondaryResources: ['water', 'grain'],
-        ecosystemIds: ['silver-tide-fishery'],
-      },
-    ],
-    boardTiles,
+    tiles,
+    intersections,
+    structures,
+    roads,
     ecosystems: [
       {
         id: 'old-growth-ring',
         name: 'Old Growth Ring',
         kind: 'forest',
         resource: 'timber',
-        regionIds: ['mistbarrow', 'commons-heart'],
         health: 16,
         maxHealth: 20,
         collapseThreshold: 4,
@@ -149,11 +219,10 @@ const nativeSpectatorSnapshot = {
         status: 'flourishing',
       },
       {
-        id: 'sunspine-aquifer',
-        name: 'Sunspine Aquifer',
-        kind: 'aquifer',
+        id: 'sunspine-river',
+        name: 'Sunspine River',
+        kind: 'river',
         resource: 'water',
-        regionIds: ['riverwake', 'commons-heart', 'sunspine-basin'],
         health: 15,
         maxHealth: 20,
         collapseThreshold: 4,
@@ -161,16 +230,60 @@ const nativeSpectatorSnapshot = {
         status: 'stable',
       },
       {
-        id: 'silver-tide-fishery',
-        name: 'Silver Tide Fishery',
-        kind: 'fishery',
+        id: 'silver-tide-wetland',
+        name: 'Silver Tide Wetland',
+        kind: 'wetland',
         resource: 'fish',
-        regionIds: ['monsoon-reach'],
         health: 14,
         maxHealth: 20,
         collapseThreshold: 4,
         flourishThreshold: 16,
         status: 'stable',
+      },
+      {
+        id: 'east-oil-field',
+        name: 'East Oil Field',
+        kind: 'oil-field',
+        resource: 'energy',
+        health: 12,
+        maxHealth: 20,
+        collapseThreshold: 4,
+        flourishThreshold: 16,
+        status: 'stable',
+      },
+      {
+        id: 'ironcrest-vein',
+        name: 'Ironcrest Vein',
+        kind: 'mineral',
+        resource: 'ore',
+        health: 12,
+        maxHealth: 20,
+        collapseThreshold: 4,
+        flourishThreshold: 16,
+        status: 'stable',
+      },
+    ],
+    commonsHealthPercent: 75,
+    lastResolvedActions: [
+      {
+        playerId: 'alpha',
+        action: {
+          type: 'build_road',
+          fromIntersectionId: 'alpha-camp',
+          toIntersectionId: 'alpha-solar',
+        },
+      },
+      {
+        playerId: 'beta',
+        action: { type: 'extract_tile', tileId: '0,0', resource: 'water', level: 'high' },
+      },
+      {
+        playerId: 'gamma',
+        action: { type: 'build_structure', intersectionId: 'gamma-camp', structureType: 'camp' },
+      },
+      {
+        playerId: 'delta',
+        action: { type: 'extract_tile', tileId: '-1,0', resource: 'timber', level: 'low' },
       },
     ],
     activeTrades: [],
@@ -207,10 +320,13 @@ describe('TragedyOfTheCommonsSpectatorView', () => {
       />,
     );
 
-    expect(boardTiles).toHaveLength(19);
+    expect(tiles).toHaveLength(19);
     expect(screen.getByText('Living Board')).toBeTruthy();
     expect(screen.getByText('The Shared World')).toBeTruthy();
     expect(screen.getAllByText('Commons Pressure').length).toBeGreaterThan(0);
+    expect(screen.getByText('Last Extraction Reveal')).toBeTruthy();
+    expect(screen.getByText('high extraction of water from 0,0')).toBeTruthy();
+    expect(screen.getByText('Winner Pool')).toBeTruthy();
     expect(screen.getByText('Power Table')).toBeTruthy();
     expect(screen.getByText('Dialogue')).toBeTruthy();
     expect(screen.getByText('Promises')).toBeTruthy();

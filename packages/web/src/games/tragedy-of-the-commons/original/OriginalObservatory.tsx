@@ -20,6 +20,7 @@ import {
   type GameState,
   type HexTile,
   initialGameState,
+  type ResolvedActionSummary,
   type TrustCard,
   type TrustEvidenceRef,
   type TrustSignal,
@@ -45,6 +46,10 @@ interface CommonsPlayer {
   vp: number;
   totalResources: number;
   regionsControlled: string[];
+  ownedStructureIds: string[];
+  ownedRoadIds: string[];
+  structureLocations?: AgentState['structureLocations'];
+  roadLocations?: AgentState['roadLocations'];
 }
 
 interface CommonsRegion {
@@ -56,6 +61,7 @@ interface CommonsRegion {
 }
 
 interface CommonsBoardTile {
+  id?: string;
   q: number;
   r: number;
   terrain: string;
@@ -66,6 +72,9 @@ interface CommonsBoardTile {
   regionName?: string;
   primaryResource?: string;
   ecosystemIds?: string[];
+  health?: number;
+  maxHealth?: number;
+  status?: string;
 }
 
 interface CommonsEcosystem {
@@ -77,6 +86,21 @@ interface CommonsEcosystem {
   health: number;
   maxHealth: number;
   status: string;
+}
+
+interface CommonsResolvedAction {
+  playerId: string;
+  type: string;
+  level?: string;
+  ecosystemId?: string;
+  regionId?: string;
+  tileId?: string;
+  resource?: string;
+  intersectionId?: string;
+  structureId?: string;
+  structureType?: string;
+  fromIntersectionId?: string;
+  toIntersectionId?: string;
 }
 
 interface ObservatoryProps {
@@ -154,6 +178,10 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
 function parseTrustEvidenceRef(value: unknown): TrustEvidenceRef | null {
@@ -273,6 +301,9 @@ function parsePlayer(value: unknown): CommonsPlayer | null {
   const id = text(value.id);
   if (!id) return null;
   const resources = parseResources(value.resources);
+  const structureLocations =
+    parseStructureLocations(value.structureLocations) ?? parseV2StructureLocations(value);
+  const roadLocations = parseRoadLocations(value.roadLocations) ?? parseV2RoadLocations(value);
   return {
     id,
     resources,
@@ -280,7 +311,101 @@ function parsePlayer(value: unknown): CommonsPlayer | null {
     vp: numberValue(value.vp),
     totalResources: numberValue(value.totalResources, totalResources(resources)),
     regionsControlled: stringArray(value.regionsControlled),
+    ownedStructureIds: stringArray(value.ownedStructureIds),
+    ownedRoadIds: stringArray(value.ownedRoadIds),
+    structureLocations,
+    roadLocations,
   };
+}
+
+function parseHexList(value: unknown): Array<{ q: number; r: number }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((hex) => {
+    if (!isRecord(hex)) return [];
+    const q = numberValue(hex.q, Number.NaN);
+    const r = numberValue(hex.r, Number.NaN);
+    return Number.isFinite(q) && Number.isFinite(r) ? [{ q, r }] : [];
+  });
+}
+
+function parseStructureLocations(value: unknown): AgentState['structureLocations'] {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const type = text(item.type);
+    const hexes = parseHexList(item.hexes);
+    if (!type || hexes.length === 0) return [];
+    return [{ type, hexes }];
+  });
+}
+
+function intersectionHexMap(value: unknown): Map<string, Array<{ q: number; r: number }>> {
+  return new Map(
+    recordArray(value).flatMap((intersection) => {
+      const id = text(intersection.id);
+      const hexes = parseHexList(intersection.hexes);
+      return id && hexes.length > 0 ? [[id, hexes] as const] : [];
+    }),
+  );
+}
+
+function parseV2StructureLocations(
+  player: Record<string, unknown>,
+): AgentState['structureLocations'] {
+  const playerId = text(player.id);
+  const ownedIds = new Set(stringArray(player.ownedStructureIds));
+  const hexesByIntersection = intersectionHexMap(player.intersections);
+  const locations = recordArray(player.structures).flatMap((structure) => {
+    const structureId = text(structure.id);
+    const ownerId = text(structure.ownerId);
+    if (ownerId !== playerId && !ownedIds.has(structureId)) return [];
+    const type = text(structure.type);
+    const hexes =
+      hexesByIntersection.get(text(structure.intersectionId)) ?? parseHexList(structure.hexes);
+    return type && hexes.length > 0 ? [{ type, hexes }] : [];
+  });
+  return locations.length > 0 ? locations : undefined;
+}
+
+function parseRoadLocations(value: unknown): AgentState['roadLocations'] {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const from = isRecord(item.from) ? parseHexList(item.from.hexes) : [];
+    const to = isRecord(item.to) ? parseHexList(item.to.hexes) : [];
+    if (from.length === 0 || to.length === 0) return [];
+    const road: NonNullable<AgentState['roadLocations']>[number] = {
+      from: { hexes: from },
+      to: { hexes: to },
+    };
+    const type = text(item.type);
+    const regionIds = stringArray(item.regionIds);
+    if (type) road.type = type;
+    if (regionIds.length > 0) road.regionIds = regionIds;
+    return [road];
+  });
+}
+
+function parseV2RoadLocations(player: Record<string, unknown>): AgentState['roadLocations'] {
+  const playerId = text(player.id);
+  const ownedIds = new Set(stringArray(player.ownedRoadIds));
+  const hexesByIntersection = intersectionHexMap(player.intersections);
+  const locations = recordArray(player.roads).flatMap((road) => {
+    const roadId = text(road.id);
+    const ownerId = text(road.ownerId);
+    if (ownerId !== playerId && !ownedIds.has(roadId)) return [];
+    const from = hexesByIntersection.get(text(road.fromIntersectionId)) ?? [];
+    const to = hexesByIntersection.get(text(road.toIntersectionId)) ?? [];
+    if (from.length === 0 || to.length === 0) return [];
+    const location: NonNullable<AgentState['roadLocations']>[number] = {
+      from: { hexes: from },
+      to: { hexes: to },
+    };
+    const type = text(road.type);
+    if (type) location.type = type;
+    return [location];
+  });
+  return locations.length > 0 ? locations : undefined;
 }
 
 function parseRegion(value: unknown): CommonsRegion | null {
@@ -303,7 +428,7 @@ function parseEcosystem(value: unknown): CommonsEcosystem | null {
   return {
     id,
     name: text(value.name, id),
-    kind: text(value.kind, 'commons'),
+    kind: text(value.kind, 'river'),
     resource: resourceType(value.resource),
     regionIds: stringArray(value.regionIds),
     health: numberValue(value.health, 100),
@@ -321,10 +446,14 @@ function parseBoardTile(value: unknown): CommonsBoardTile | null {
   const regionName = text(value.regionName);
   const primaryResource = text(value.primaryResource);
   const ecosystemIds = stringArray(value.ecosystemIds);
+  const health = numberValue(value.health, Number.NaN);
+  const maxHealth = numberValue(value.maxHealth, Number.NaN);
+  const status = text(value.status);
   return {
+    ...(text(value.id) ? { id: text(value.id) } : {}),
     q,
     r,
-    terrain: text(value.terrain, 'wasteland'),
+    terrain: text(value.terrain, 'forest'),
     productionNumber: numberValue(value.productionNumber),
     revealed: value.revealed !== false,
     revealedBy: stringArray(value.revealedBy),
@@ -332,7 +461,42 @@ function parseBoardTile(value: unknown): CommonsBoardTile | null {
     ...(regionName ? { regionName } : {}),
     ...(primaryResource ? { primaryResource } : {}),
     ...(ecosystemIds.length > 0 ? { ecosystemIds } : {}),
+    ...(Number.isFinite(health) ? { health } : {}),
+    ...(Number.isFinite(maxHealth) ? { maxHealth } : {}),
+    ...(status ? { status } : {}),
   };
+}
+
+function parseResolvedAction(value: unknown): CommonsResolvedAction | null {
+  if (!isRecord(value)) return null;
+  const playerId = text(value.playerId);
+  const action = isRecord(value.action) ? value.action : null;
+  const type = action ? text(action.type) : '';
+  if (!playerId || !type) return null;
+  const resolved: CommonsResolvedAction = { playerId, type };
+  if (action) {
+    const level = text(action.level);
+    const ecosystemId = text(action.ecosystemId);
+    const regionId = text(action.regionId);
+    const tileId = text(action.tileId);
+    const resource = text(action.resource);
+    const intersectionId = text(action.intersectionId);
+    const structureId = text(action.structureId);
+    const structureType = text(action.structureType);
+    const fromIntersectionId = text(action.fromIntersectionId);
+    const toIntersectionId = text(action.toIntersectionId);
+    if (level) resolved.level = level;
+    if (ecosystemId) resolved.ecosystemId = ecosystemId;
+    if (regionId) resolved.regionId = regionId;
+    if (tileId) resolved.tileId = tileId;
+    if (resource) resolved.resource = resource;
+    if (intersectionId) resolved.intersectionId = intersectionId;
+    if (structureId) resolved.structureId = structureId;
+    if (structureType) resolved.structureType = structureType;
+    if (fromIntersectionId) resolved.fromIntersectionId = fromIntersectionId;
+    if (toIntersectionId) resolved.toIntersectionId = toIntersectionId;
+  }
+  return resolved;
 }
 
 function extractPayload(source: unknown) {
@@ -347,19 +511,54 @@ function extractPayload(source: unknown) {
   };
 }
 
-function buildHexGrid(boardTiles: CommonsBoardTile[]): HexTile[] {
-  return boardTiles.map((tile) => ({
-    q: tile.q,
-    r: tile.r,
-    terrain: tile.terrain,
-    productionNumber: tile.productionNumber,
-    revealed: tile.revealed,
-    revealedBy: tile.revealedBy,
-    ...(tile.regionId ? { regionId: tile.regionId } : {}),
-    ...(tile.regionName ? { regionName: tile.regionName } : {}),
-    ...(tile.primaryResource ? { primaryResource: tile.primaryResource } : {}),
-    ...(tile.ecosystemIds ? { ecosystemIds: tile.ecosystemIds } : {}),
-  }));
+function buildHexGrid(
+  boardTiles: CommonsBoardTile[],
+  ecosystemById: Map<string, CommonsEcosystem>,
+): HexTile[] {
+  return boardTiles.map((tile) => {
+    const maxHealth = tile.maxHealth ?? 100;
+    const health = tile.health;
+    const tileHealth =
+      typeof health === 'number' && Number.isFinite(health)
+        ? Math.max(0, Math.min(1, health / maxHealth))
+        : undefined;
+    return {
+      q: tile.q,
+      r: tile.r,
+      terrain: tile.terrain,
+      productionNumber: tile.productionNumber,
+      revealed: tile.revealed,
+      revealedBy: tile.revealedBy,
+      ...(tile.regionId ? { regionId: tile.regionId } : {}),
+      ...(tile.regionName ? { regionName: tile.regionName } : {}),
+      ...(tile.primaryResource ? { primaryResource: tile.primaryResource } : {}),
+      ...(tile.ecosystemIds ? { ecosystemIds: tile.ecosystemIds } : {}),
+      ...ecosystemVisualState(tile.ecosystemIds ?? [], ecosystemById),
+      ...(tileHealth != null ? { ecosystemHealth: tileHealth } : {}),
+      ...(tile.status ? { ecosystemStatus: tile.status } : {}),
+      ...(tile.primaryResource ? { ecosystemResource: tile.primaryResource } : {}),
+    };
+  });
+}
+
+function ecosystemVisualState(
+  ecosystemIds: string[],
+  ecosystemById: Map<string, CommonsEcosystem>,
+): Pick<HexTile, 'ecosystemHealth' | 'ecosystemStatus' | 'ecosystemResource' | 'ecosystemName'> {
+  const ecosystems = ecosystemIds
+    .map((id) => ecosystemById.get(id))
+    .filter((ecosystem): ecosystem is CommonsEcosystem => Boolean(ecosystem));
+  if (ecosystems.length === 0) return {};
+  const weakest = ecosystems
+    .slice()
+    .sort((left, right) => healthPercent(left) - healthPercent(right))[0];
+  if (!weakest) return {};
+  return {
+    ecosystemHealth: healthPercent(weakest) / 100,
+    ecosystemStatus: weakest.status,
+    ecosystemResource: weakest.resource,
+    ecosystemName: weakest.name,
+  };
 }
 
 function healthPercent(ecosystem: CommonsEcosystem): number {
@@ -383,57 +582,141 @@ function pseudoWallet(agentId: string): string {
   return `0x${hex}`;
 }
 
+function actionStewardshipDelta(action: CommonsResolvedAction | undefined): number {
+  if (!action) return 0;
+  if (action.type === 'extract_commons' || action.type === 'extract_tile') {
+    if (action.level === 'high') return -0.24;
+    if (action.level === 'medium') return -0.08;
+    return 0.16;
+  }
+  if (
+    action.type === 'offer_trade' ||
+    action.type === 'build_settlement' ||
+    action.type === 'build_structure' ||
+    action.type === 'build_road' ||
+    action.type === 'upgrade_structure' ||
+    action.type === 'convert_timber_to_energy'
+  )
+    return 0.08;
+  if (action.type === 'pass') return 0.04;
+  return 0;
+}
+
+function describeResolvedAction(
+  action: CommonsResolvedAction,
+  ecosystems: CommonsEcosystem[],
+): string {
+  if (action.type === 'extract_commons') {
+    const ecosystem = ecosystems.find((item) => item.id === action.ecosystemId);
+    const target = ecosystem?.name ?? action.ecosystemId ?? 'the commons';
+    return `${action.level ?? 'unknown'} extraction from ${target}`;
+  }
+  if (action.type === 'extract_tile') {
+    const resource = action.resource ? `${action.resource} ` : '';
+    return `${action.level ?? 'unknown'} extraction of ${resource}from ${action.tileId ?? 'a tile'}`;
+  }
+  if (action.type === 'build_settlement') return `built toward ${action.regionId ?? 'a region'}`;
+  if (action.type === 'build_structure') {
+    return `built ${action.structureType ?? 'structure'} at ${action.intersectionId ?? 'an intersection'}`;
+  }
+  if (action.type === 'upgrade_structure') return `upgraded ${action.structureId ?? 'a structure'}`;
+  if (action.type === 'build_road') {
+    return `built road ${action.fromIntersectionId ?? 'from an intersection'} → ${action.toIntersectionId ?? 'to an intersection'}`;
+  }
+  if (action.type === 'convert_timber_to_energy') return 'converted timber into energy';
+  if (action.type === 'offer_trade') return 'offered a resource trade';
+  if (action.type === 'pass') return 'passed / rested the commons';
+  return action.type.replace(/_/g, ' ');
+}
+
+function summarizeResolvedActions(
+  actions: CommonsResolvedAction[],
+  ecosystems: CommonsEcosystem[],
+): ResolvedActionSummary[] {
+  return actions.map((action) => ({
+    playerId: action.playerId,
+    type: action.type,
+    ...(action.level ? { level: action.level } : {}),
+    ...(action.ecosystemId ? { ecosystemId: action.ecosystemId } : {}),
+    ...(action.regionId ? { regionId: action.regionId } : {}),
+    ...(action.tileId ? { tileId: action.tileId } : {}),
+    ...(action.resource ? { resource: action.resource } : {}),
+    ...(action.intersectionId ? { intersectionId: action.intersectionId } : {}),
+    ...(action.structureId ? { structureId: action.structureId } : {}),
+    ...(action.fromIntersectionId ? { fromIntersectionId: action.fromIntersectionId } : {}),
+    ...(action.toIntersectionId ? { toIntersectionId: action.toIntersectionId } : {}),
+    description: describeResolvedAction(action, ecosystems),
+  }));
+}
+
 function buildAgents(
   players: CommonsPlayer[],
   regions: CommonsRegion[],
   handles: Record<string, string>,
   tileByRegionId: Map<string, CommonsBoardTile>,
+  lastActionByPlayer: Map<string, CommonsResolvedAction>,
 ): Record<string, AgentState> {
   const regionById = new Map(regions.map((region) => [region.id, region]));
   return Object.fromEntries(
     players.map((player, index) => {
       const displayName = cleanAgentDisplayName(handles[player.id] ?? `Player ${index + 1}`);
-      const locations = player.regionsControlled.flatMap((regionId) => {
-        const tile = tileByRegionId.get(regionId);
-        if (!tile) return [];
-        return [
-          {
-            type: 'village',
-            hexes: [{ q: tile.q, r: tile.r }],
-            regionId,
-            regionIds: [regionId],
-          },
-        ];
-      });
-      return [
-        player.id,
-        {
-          id: player.id,
-          name: displayName,
-          strategy: regionById.get(player.regionsControlled[0] ?? '')?.name ?? 'commons steward',
-          color: AGENT_COLORS[index % AGENT_COLORS.length] ?? AGENT_COLORS[0] ?? '#ddb469',
-          resources: player.resources,
-          vp: player.vp,
-          influence: player.influence,
-          trust: Math.max(0, Math.min(1, 0.45 + player.influence * 0.08)),
-          longestRoad: player.regionsControlled.length,
-          structures: {
-            villages: Math.max(1, player.regionsControlled.length),
-            townships: Math.floor(player.vp / 3),
-            cities: Math.floor(player.vp / 5),
-            beacons: player.influence,
-            tradePosts: player.totalResources > 8 ? 1 : 0,
-            roads: Math.max(0, player.regionsControlled.length - 1),
-          },
-          structureLocations: locations,
+      const lastAction = lastActionByPlayer.get(player.id);
+      const trust = Math.max(
+        0,
+        Math.min(1, 0.5 + player.influence * 0.06 + actionStewardshipDelta(lastAction)),
+      );
+      const locations =
+        player.structureLocations ??
+        player.regionsControlled.flatMap((regionId) => {
+          const tile = tileByRegionId.get(regionId);
+          if (!tile) return [];
+          return [
+            {
+              type: 'village',
+              hexes: [{ q: tile.q, r: tile.r }],
+              regionId,
+              regionIds: [regionId],
+            },
+          ];
+        });
+      const roadCount =
+        player.roadLocations?.length ?? Math.max(0, player.regionsControlled.length - 1);
+      const solarCount = locations.filter(
+        (location) => location.type === 'solar-farm' || location.type === 'solar-array',
+      ).length;
+      const settlementCount = Math.max(0, locations.length - solarCount);
+      const agent: AgentState = {
+        id: player.id,
+        name: displayName,
+        strategy:
+          locations[0]?.type != null
+            ? `${locations[0].type.replace(/-/g, ' ')} network`
+            : (regionById.get(player.regionsControlled[0] ?? '')?.name ?? 'commons steward'),
+        color: AGENT_COLORS[index % AGENT_COLORS.length] ?? AGENT_COLORS[0] ?? '#ddb469',
+        resources: player.resources,
+        vp: player.vp,
+        influence: player.influence,
+        trust,
+        longestRoad: roadCount,
+        structures: {
+          villages: Math.max(1, settlementCount),
+          townships: Math.floor(player.vp / 3),
+          cities: Math.floor(player.vp / 5),
+          beacons: player.influence,
+          tradePosts: solarCount || (player.totalResources > 8 ? 1 : 0),
+          roads: roadCount,
         },
-      ];
+        structureLocations: locations,
+      };
+      if (player.roadLocations) agent.roadLocations = player.roadLocations;
+      return [player.id, agent];
     }),
   );
 }
 
 function buildTrustMatrix(
   players: CommonsPlayer[],
+  lastActionByPlayer: Map<string, CommonsResolvedAction>,
 ): { agents: string[]; matrix: number[][] } | null {
   if (players.length === 0) return null;
   const maxInfluence = Math.max(1, ...players.map((player) => player.influence));
@@ -445,9 +728,13 @@ function buildTrustMatrix(
       const cooperation = target.influence / maxInfluence;
       const visibleSuccess = target.vp / maxVp;
       const scarcityPenalty = Math.max(0, 1 - target.totalResources / 14) * 0.18;
+      const actionDelta = actionStewardshipDelta(lastActionByPlayer.get(target.id));
       return Math.max(
         0.05,
-        Math.min(0.95, 0.35 + cooperation * 0.38 + visibleSuccess * 0.18 - scarcityPenalty),
+        Math.min(
+          0.95,
+          0.35 + cooperation * 0.34 + visibleSuccess * 0.14 - scarcityPenalty + actionDelta,
+        ),
       );
     }),
   );
@@ -457,24 +744,37 @@ function buildTrustMatrix(
 function buildBehaviorTags(
   players: CommonsPlayer[],
   ecosystems: CommonsEcosystem[],
+  lastActionByPlayer: Map<string, CommonsResolvedAction>,
   round: number,
 ): VisibleBehaviorTag[] {
   const weakest = ecosystems
     .slice()
     .sort((left, right) => healthPercent(left) - healthPercent(right))[0];
-  return players.flatMap((player, index) => {
+  return players.flatMap((player) => {
     if (!weakest) return [];
-    const cooperative = player.influence > 0 || player.vp > 1;
+    const lastAction = lastActionByPlayer.get(player.id);
+    const isExtraction =
+      lastAction?.type === 'extract_commons' || lastAction?.type === 'extract_tile';
+    const highExtraction = isExtraction && lastAction?.level === 'high';
+    const mediumExtraction = isExtraction && lastAction?.level === 'medium';
+    const lowExtraction = isExtraction && lastAction?.level === 'low';
+    const cooperative = lowExtraction || lastAction?.type === 'pass' || player.influence > 0;
     return [
       {
         id: `${player.id}-round-${round}-commons-signal`,
         round,
         actor: player.id,
-        kind: cooperative ? 'stewardship' : 'extractive',
-        severity: cooperative ? 'positive' : index % 2 === 0 ? 'medium' : 'low',
+        kind: highExtraction || mediumExtraction ? 'extractive' : 'stewardship',
+        severity: highExtraction
+          ? 'high'
+          : mediumExtraction
+            ? 'medium'
+            : cooperative
+              ? 'positive'
+              : 'low',
         description: cooperative
-          ? `Visible influence suggests support for ${weakest.name}.`
-          : `${weakest.name} is under visible pressure while this agent accumulates resources.`,
+          ? `${describeResolvedAction(lastAction ?? { playerId: player.id, type: 'pass' }, ecosystems)}; restraint supports ${weakest.name}.`
+          : `${describeResolvedAction(lastAction ?? { playerId: player.id, type: 'pass' }, ecosystems)} while ${weakest.name} is under pressure.`,
       },
     ];
   });
@@ -523,7 +823,7 @@ function buildCommitments(
   players: CommonsPlayer[],
   activeTrades: unknown[],
   round: number,
-  handles: Record<string, string>,
+  _handles: Record<string, string>,
 ): Commitment[] {
   const tradeCommitments = activeTrades.flatMap((trade, index) => {
     if (!isRecord(trade)) return [];
@@ -540,21 +840,7 @@ function buildCommitments(
     ];
   });
   if (tradeCommitments.length > 0) return tradeCommitments;
-  return players.slice(0, 6).map((player, index) => {
-    const displayName = cleanAgentDisplayName(handles[player.id] ?? `Player ${index + 1}`);
-    return {
-      id: `commons-memory-${player.id}-${round}`,
-      type: 'public_memory',
-      promisor: player.id,
-      counterparties: players
-        .filter((candidate) => candidate.id !== player.id)
-        .slice(0, 2)
-        .map((candidate) => candidate.id),
-      resolutionStatus: player.influence > 0 ? 'fulfilled' : 'pending',
-      summary: `${displayName} is visibly accountable for stewardship across ${player.regionsControlled.length || 1} region${player.regionsControlled.length === 1 ? '' : 's'}.`,
-      dueByRound: round + 1,
-    };
-  });
+  return [];
 }
 
 function buildAttestations(commitments: Commitment[], round: number): Attestation[] {
@@ -586,7 +872,7 @@ function buildIdentities(
         walletAddress: pseudoWallet(player.id),
         name: cleanAgentDisplayName(handles[player.id] ?? `Player ${index + 1}`),
         mcpEndpoint: `games.coop/${gameId}/agents/${player.id}`,
-        capabilities: ['trade', 'extract_commons', 'build_settlement', 'attest'],
+        capabilities: ['trade', 'extract_tile', 'build_structure', 'build_road', 'attest'],
         registeredAt: Date.now() - index * 1000,
         chainId: 11155420,
       },
@@ -614,14 +900,23 @@ function buildAttestationReadiness(
   }));
 }
 
-function buildParticipationReadiness(players: CommonsPlayer[]): AgentParticipationReadiness[] {
+function buildParticipationReadiness(
+  players: CommonsPlayer[],
+  lastActionByPlayer: Map<string, CommonsResolvedAction>,
+): AgentParticipationReadiness[] {
   return players.map((player) => ({
     agentId: player.id,
     status: 'active',
     mcpConnected: true,
     lastSeenAt: Date.now(),
     gamesPlayed: 1,
-    trustScore: Math.max(0, Math.min(1, 0.45 + player.influence * 0.08)),
+    trustScore: Math.max(
+      0,
+      Math.min(
+        1,
+        0.5 + player.influence * 0.06 + actionStewardshipDelta(lastActionByPlayer.get(player.id)),
+      ),
+    ),
   }));
 }
 
@@ -630,7 +925,7 @@ function buildWorldMap(
   ecosystems: CommonsEcosystem[],
 ): Record<string, unknown> {
   return {
-    regions: boardTiles.map((tile) => ({ ...tile, coord: { q: tile.q, r: tile.r } })),
+    tiles: boardTiles.map((tile) => ({ ...tile, coord: { q: tile.q, r: tile.r } })),
     ecosystems,
   };
 }
@@ -654,8 +949,9 @@ function buildOriginalState(
         .map(parseEcosystem)
         .filter((ecosystem): ecosystem is CommonsEcosystem => Boolean(ecosystem))
     : [];
-  const boardTiles = Array.isArray(state.boardTiles)
-    ? state.boardTiles.map(parseBoardTile).filter((tile): tile is CommonsBoardTile => Boolean(tile))
+  const rawBoardTiles = Array.isArray(state.boardTiles) ? state.boardTiles : state.tiles;
+  const boardTiles = Array.isArray(rawBoardTiles)
+    ? rawBoardTiles.map(parseBoardTile).filter((tile): tile is CommonsBoardTile => Boolean(tile))
     : [];
   if (boardTiles.length === 0 || (players.length === 0 && ecosystems.length === 0)) return null;
 
@@ -668,17 +964,28 @@ function buildOriginalState(
   );
   const round = numberValue(state.round);
   const phase = text(state.phase, text(payload.meta.finished) === 'true' ? 'finished' : 'playing');
-  const score = commonsScore(ecosystems);
+  const score = Math.round(
+    Math.max(0, Math.min(100, numberValue(state.commonsHealthPercent, commonsScore(ecosystems)))),
+  );
   const tileByRegionId = new Map(
     boardTiles.flatMap((tile) => (tile.regionId ? [[tile.regionId, tile] as const] : [])),
   );
+  const ecosystemById = new Map(ecosystems.map((ecosystem) => [ecosystem.id, ecosystem]));
   const activeTrades = Array.isArray(state.activeTrades) ? state.activeTrades : [];
+  const resolvedActions = Array.isArray(state.lastResolvedActions)
+    ? state.lastResolvedActions
+        .map(parseResolvedAction)
+        .filter((action): action is CommonsResolvedAction => Boolean(action))
+    : [];
+  const lastActionByPlayer = new Map(
+    resolvedActions.map((action) => [action.playerId, action] as const),
+  );
   const commitments = buildCommitments(players, activeTrades, round, handles);
   const attestations = buildAttestations(commitments, round);
   const messages = payload.relay
     .map((relay) => relayToMessage(relay, round, phase))
     .filter((message): message is ChatMessage => Boolean(message));
-  const hexGrid = buildHexGrid(boardTiles);
+  const hexGrid = buildHexGrid(boardTiles, ecosystemById);
   const productionWheel =
     hexGrid.length > 0 ? hexGrid.map((tile) => tile.productionNumber) : DEFAULT_PRODUCTION_WHEEL;
   const productionNumber = productionWheel[Math.max(0, round - 1) % productionWheel.length] ?? 0;
@@ -697,16 +1004,14 @@ function buildOriginalState(
       gameId,
       round,
       phase,
-      prizePoolWei: String(
-        BigInt(Math.max(1, players.length * Math.max(1, round))) * 10000000000000000n,
-      ),
-      payablePrizePoolWei: String(
-        BigInt(Math.max(1, players.length * Math.max(1, round) * score)) * 100000000000000n,
-      ),
+      prizePoolWei: String(BigInt(Math.max(1, players.length)) * 1000000000000000000n),
+      payablePrizePoolWei: String(BigInt(Math.max(1, players.length) * score) * 10000000000000000n),
       slashedPrizePoolWei: String(
-        BigInt(Math.max(0, players.length * Math.max(1, round) * (100 - score))) * 100000000000000n,
+        BigInt(Math.max(1, players.length) * (100 - score)) * 10000000000000000n,
       ),
-      carryoverPrizePoolWei: String(BigInt(Math.max(0, 100 - score)) * 1000000000000000n),
+      carryoverPrizePoolWei: String(
+        BigInt(Math.max(1, players.length) * (100 - score)) * 10000000000000000n,
+      ),
       commonsHealth: {
         score,
         payableFraction: score / 100,
@@ -729,7 +1034,7 @@ function buildOriginalState(
       productionWheel,
       hexGrid,
       worldMap: buildWorldMap(boardTiles, ecosystems),
-      agents: buildAgents(players, regions, handles, tileByRegionId),
+      agents: buildAgents(players, regions, handles, tileByRegionId, lastActionByPlayer),
       pendingAgentInfo: Object.fromEntries(
         players.map((player) => [
           player.id,
@@ -745,13 +1050,14 @@ function buildOriginalState(
       ecosystemStates,
       commitments,
       attestations,
-      behaviorTags: buildBehaviorTags(players, ecosystems, round),
+      lastResolvedActions: summarizeResolvedActions(resolvedActions, ecosystems),
+      behaviorTags: buildBehaviorTags(players, ecosystems, lastActionByPlayer, round),
       trustCards: parseTrustCards(state.trustCards),
-      trustMatrix: buildTrustMatrix(players),
+      trustMatrix: buildTrustMatrix(players, lastActionByPlayer),
       winnerId: text(state.winner) || null,
       agentIdentities: buildIdentities(players, handles, gameId),
       attestationReadiness: buildAttestationReadiness(players, round, score),
-      participationReadiness: buildParticipationReadiness(players),
+      participationReadiness: buildParticipationReadiness(players, lastActionByPlayer),
     },
     messages,
   };

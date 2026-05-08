@@ -9,11 +9,16 @@ function hasRenderableState(source: unknown): boolean {
   if (!isRecord(source)) return false;
   const candidate = source.type === 'state_update' ? source.state : (source.data ?? source);
   if (!isRecord(candidate)) return false;
+  const hasLegacyBoard = Array.isArray(candidate.boardTiles);
+  const hasV2Board =
+    Array.isArray(candidate.tiles) &&
+    Array.isArray(candidate.intersections) &&
+    Array.isArray(candidate.structures) &&
+    Array.isArray(candidate.roads);
   return (
     Array.isArray(candidate.players) &&
     Array.isArray(candidate.ecosystems) &&
-    Array.isArray(candidate.regions) &&
-    Array.isArray(candidate.boardTiles)
+    (hasLegacyBoard || hasV2Board)
   );
 }
 

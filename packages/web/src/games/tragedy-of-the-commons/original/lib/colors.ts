@@ -6,7 +6,7 @@ export const TERRAIN = {
     dark: '#5c4b22',
     glow: 'rgba(217, 178, 95, 0.45)',
     highlight: 'rgba(255, 235, 180, 0.12)',
-    label: 'grain',
+    label: 'plains',
     symbol: 'GR',
   },
   forest: {
@@ -14,7 +14,7 @@ export const TERRAIN = {
     dark: '#2a4228',
     glow: 'rgba(126, 172, 115, 0.48)',
     highlight: 'rgba(160, 220, 140, 0.10)',
-    label: 'timber',
+    label: 'forest',
     symbol: 'TI',
   },
   mountains: {
@@ -22,16 +22,32 @@ export const TERRAIN = {
     dark: '#3a3655',
     glow: 'rgba(143, 132, 190, 0.44)',
     highlight: 'rgba(180, 170, 220, 0.12)',
-    label: 'ore',
+    label: 'mountains',
     symbol: 'OR',
+  },
+  'oil-field': {
+    fill: '#6b4a2e',
+    dark: '#241812',
+    glow: 'rgba(184, 116, 54, 0.44)',
+    highlight: 'rgba(230, 170, 100, 0.12)',
+    label: 'oil',
+    symbol: 'EN',
   },
   rivers: {
     fill: '#4a8a8c',
     dark: '#1c4448',
     glow: 'rgba(99, 165, 167, 0.48)',
     highlight: 'rgba(140, 200, 205, 0.12)',
-    label: 'energy',
-    symbol: 'EN',
+    label: 'rivers',
+    symbol: 'RI',
+  },
+  wetland: {
+    fill: '#5f947c',
+    dark: '#263f36',
+    glow: 'rgba(108, 176, 143, 0.42)',
+    highlight: 'rgba(150, 220, 185, 0.12)',
+    label: 'wetland',
+    symbol: 'WE',
   },
   wasteland: {
     fill: '#7a7562',
@@ -46,7 +62,7 @@ export const TERRAIN = {
     dark: '#522a18',
     glow: 'rgba(183, 114, 73, 0.50)',
     highlight: 'rgba(220, 160, 110, 0.12)',
-    label: 'core',
+    label: 'commons',
     symbol: 'CO',
   },
 } as const;
@@ -58,6 +74,7 @@ export const RESOURCE_PALETTE = {
   fish: '#63a5a7',
   water: '#7ec0cf',
   energy: '#d9b25f',
+  solar: '#f2c75b',
 } as const;
 
 function clamp(value: number, min: number, max: number) {

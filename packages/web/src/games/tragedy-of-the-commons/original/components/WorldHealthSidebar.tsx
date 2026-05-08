@@ -8,7 +8,7 @@ function formatHealth(value: number) {
   return Math.round(value);
 }
 
-function formatEth(value: string) {
+function formatCredits(value: string) {
   try {
     const wei = BigInt(String(value || '0'));
     const whole = wei / 1000000000000000000n;
@@ -17,9 +17,9 @@ function formatEth(value: string) {
       .padStart(18, '0')
       .slice(0, 3)
       .replace(/0+$/, '');
-    return `${whole.toString()}${decimals ? `.${decimals}` : ''} ETH`;
+    return `${whole.toString()}${decimals ? `.${decimals}` : ''} cr`;
   } catch {
-    return '0.000 ETH';
+    return '0 cr';
   }
 }
 
@@ -30,6 +30,7 @@ export function WorldHealthSidebar() {
   const payablePrizePoolWei = useGameStore((state) => state.gameState.payablePrizePoolWei);
   const slashedPrizePoolWei = useGameStore((state) => state.gameState.slashedPrizePoolWei);
   const carryoverPrizePoolWei = useGameStore((state) => state.gameState.carryoverPrizePoolWei);
+  const lastResolvedActions = useGameStore((state) => state.gameState.lastResolvedActions);
   const score = clamp(commonsHealth?.score ?? 100, 0, 100);
   const ecosystems = [...ecosystemStates]
     .map(
@@ -58,7 +59,7 @@ export function WorldHealthSidebar() {
     <aside className="w-full min-w-0 grid gap-5 overflow-y-auto max-h-[600px]">
       <div className="p-6 rounded-[14px] border border-[var(--color-line)] bg-gradient-to-b from-[rgba(14,28,41,0.97)] to-[rgba(9,18,28,0.95)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
         <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--color-text-soft)]">
-          Commons Pressure
+          Commons Health
         </div>
         <div className="mt-3 h-3 rounded-full overflow-hidden border border-[var(--color-line)] bg-[rgba(0,0,0,0.22)]">
           <div
@@ -71,7 +72,7 @@ export function WorldHealthSidebar() {
         </div>
         <div className="mt-2 text-xs leading-[1.4] text-[var(--color-text-muted)]">
           {commonsHealth?.reasons?.[0] ??
-            'This is the payout-adjusted aggregate after crisis and sabotage penalties.'}
+            'This is the real payout multiplier from final ecosystem health.'}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
           <div className="rounded-[12px] border border-[rgba(233,220,190,0.08)] bg-[rgba(10,20,30,0.35)] px-3 py-2">
@@ -84,7 +85,7 @@ export function WorldHealthSidebar() {
           </div>
           <div className="rounded-[12px] border border-[rgba(233,220,190,0.08)] bg-[rgba(10,20,30,0.35)] px-3 py-2">
             <div className="font-mono uppercase tracking-[0.14em] text-[var(--color-text-soft)]">
-              Payout fraction
+              Winner pool
             </div>
             <div className="mt-1 font-serif text-[16px] text-[var(--color-text)]">
               {Math.round((commonsHealth?.payableFraction ?? 1) * 100)}%
@@ -135,25 +136,73 @@ export function WorldHealthSidebar() {
 
       <div className="p-6 rounded-[14px] border border-[var(--color-line)] bg-gradient-to-b from-[rgba(14,28,41,0.97)] to-[rgba(9,18,28,0.95)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
         <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--color-text-soft)]">
-          Prize Pressure
+          Prize Split
         </div>
         <div className="grid gap-1.5 mt-2 text-xs text-[var(--color-text-muted)]">
           <div className="flex justify-between">
-            <span>Current pool</span>
-            <strong className="text-[var(--color-text)]">{formatEth(prizePoolWei)}</strong>
+            <span>Total pool</span>
+            <strong className="text-[var(--color-text)]">{formatCredits(prizePoolWei)}</strong>
           </div>
           <div className="flex justify-between">
-            <span>Payable now</span>
-            <strong className="text-[var(--color-text)]">{formatEth(payablePrizePoolWei)}</strong>
+            <span>Winner-take-all portion</span>
+            <strong className="text-[var(--color-text)]">
+              {formatCredits(payablePrizePoolWei)}
+            </strong>
           </div>
           <div className="flex justify-between">
-            <span>Slashed ahead</span>
-            <strong className="text-[var(--color-text)]">{formatEth(slashedPrizePoolWei)}</strong>
+            <span>Equal commons reserve</span>
+            <strong className="text-[var(--color-text)]">
+              {formatCredits(slashedPrizePoolWei)}
+            </strong>
           </div>
           <div className="flex justify-between">
-            <span>Carryover next game</span>
-            <strong className="text-[var(--color-text)]">{formatEth(carryoverPrizePoolWei)}</strong>
+            <span>Removed from winner claim</span>
+            <strong className="text-[var(--color-text)]">
+              {formatCredits(carryoverPrizePoolWei)}
+            </strong>
           </div>
+        </div>
+      </div>
+
+      <div className="p-6 rounded-[14px] border border-[var(--color-line)] bg-gradient-to-b from-[rgba(14,28,41,0.97)] to-[rgba(9,18,28,0.95)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+        <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-[var(--color-text-soft)]">
+          Last Extraction Reveal
+        </div>
+        <div className="mt-3 grid gap-2 text-xs">
+          {lastResolvedActions.length === 0 ? (
+            <div className="rounded-[12px] border border-dashed border-[rgba(233,220,190,0.12)] bg-[rgba(10,20,30,0.35)] px-3 py-2 text-[var(--color-text-muted)]">
+              Actions appear here after the first round resolves.
+            </div>
+          ) : (
+            lastResolvedActions.map((action) => {
+              const isHigh = action.type === 'extract_commons' && action.level === 'high';
+              const isMedium = action.type === 'extract_commons' && action.level === 'medium';
+              const isLow = action.type === 'extract_commons' && action.level === 'low';
+              const tone = isHigh
+                ? 'text-[var(--color-rose)]'
+                : isMedium
+                  ? 'text-[var(--color-gold)]'
+                  : isLow
+                    ? 'text-[var(--color-moss)]'
+                    : 'text-[var(--color-text)]';
+              return (
+                <div
+                  key={`${action.playerId}-${action.type}-${action.ecosystemId ?? action.regionId ?? 'none'}`}
+                  className="rounded-[12px] border border-[rgba(233,220,190,0.08)] bg-[rgba(10,20,30,0.35)] px-3 py-2"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--color-text-soft)]">
+                      {action.playerId}
+                    </span>
+                    <span className={`font-mono text-[10px] uppercase tracking-[0.14em] ${tone}`}>
+                      {action.type.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[var(--color-text-muted)]">{action.description}</div>
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
     </aside>
