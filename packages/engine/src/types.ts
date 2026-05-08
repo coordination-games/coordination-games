@@ -330,6 +330,12 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    */
   readonly gameTools?: ToolDefinition[];
 
+  /**
+   * Player-callable game tools for the current state. If omitted, `gameTools`
+   * is advertised as the static game-phase surface.
+   */
+  getCurrentGameTools?(state: TState, playerId: string | null): ToolDefinition[];
+
   /** Delay in progress units (turns for CtL, rounds for OATHBREAKER). Default 0. */
   spectatorDelay?: number;
 

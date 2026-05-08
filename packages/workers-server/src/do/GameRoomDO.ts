@@ -1509,7 +1509,8 @@ export class GameRoomDO extends DurableObject<Env> {
     const currentPhase = {
       id: 'game',
       name: 'Game',
-      tools: this._plugin.gameTools ?? [],
+      tools:
+        this._plugin.getCurrentGameTools?.(this._state, playerId) ?? this._plugin.gameTools ?? [],
     };
     return buildSpectatorPayload({
       gameId: this._meta.gameId,
