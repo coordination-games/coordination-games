@@ -37,6 +37,14 @@ jobs:
         run: npx tsc --skipLibCheck
         working-directory: packages/plugins/basic-chat
 
+      - name: Build reasoning plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/reasoning
+
+      - name: Build trust-projector-tragedy plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/trust-projector-tragedy
+
       - name: Build game plugin
         run: npx tsc --skipLibCheck
         working-directory: packages/games/capture-the-lobster

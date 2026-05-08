@@ -47,6 +47,8 @@ jobs:
         run: |
           npm run build -w packages/engine
           npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/plugins/reasoning
+          npm run build -w packages/plugins/trust-projector-tragedy
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/games/tragedy-of-the-commons
@@ -87,6 +89,14 @@ jobs:
         run: npx tsc --noEmit
         working-directory: packages/plugins/basic-chat
 
+      - name: Typecheck — plugins/reasoning
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/reasoning
+
+      - name: Typecheck — plugins/trust-projector-tragedy
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/trust-projector-tragedy
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -111,6 +121,8 @@ jobs:
         run: |
           npm run build -w packages/engine
           npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/plugins/reasoning
+          npm run build -w packages/plugins/trust-projector-tragedy
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/games/tragedy-of-the-commons
@@ -132,4 +144,6 @@ jobs:
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
                    -w packages/games/tragedy-of-the-commons \
-                   -w packages/plugins/basic-chat
+                   -w packages/plugins/basic-chat \
+                   -w packages/plugins/reasoning \
+                   -w packages/plugins/trust-projector-tragedy
