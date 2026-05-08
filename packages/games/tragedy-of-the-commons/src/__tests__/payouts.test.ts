@@ -9,12 +9,13 @@ function ranking(id: string, vp: number, influence: number): TragedyPlayerRankin
   return { id, vp, influence };
 }
 
-function outcome(rankings: TragedyPlayerRanking[]): TragedyOutcome {
+function outcome(rankings: TragedyPlayerRanking[], commonsHealthPercent = 100): TragedyOutcome {
   return {
     rankings,
     roundsPlayed: 12,
     flourishingEcosystems: 1,
     collapsedEcosystems: 0,
+    commonsHealthPercent,
   };
 }
 
@@ -42,6 +43,29 @@ describe('TragedyOfTheCommonsPlugin.computePayouts', () => {
     expect(payouts.get('beta')).toBe(-10n);
     expect(payouts.get('gamma')).toBe(-10n);
     expect(payouts.get('delta')).toBe(-10n);
+    expect(sum(payouts.values())).toBe(0n);
+  });
+
+  it('softens winner-take-all payouts when commons health is damaged', () => {
+    const ids = ['alpha', 'beta', 'gamma', 'delta'];
+    const payouts = TragedyOfTheCommonsPlugin.computePayouts(
+      outcome(
+        [
+          ranking('alpha', 3, 0),
+          ranking('beta', 2, 0),
+          ranking('gamma', 1, 0),
+          ranking('delta', 0, 0),
+        ],
+        50,
+      ),
+      ids,
+      10n,
+    );
+
+    expect(payouts.get('alpha')).toBe(15n);
+    expect(payouts.get('beta')).toBe(-5n);
+    expect(payouts.get('gamma')).toBe(-5n);
+    expect(payouts.get('delta')).toBe(-5n);
     expect(sum(payouts.values())).toBe(0n);
   });
 
@@ -77,5 +101,15 @@ describe('TragedyOfTheCommonsPlugin.computePayouts', () => {
         1n,
       ),
     ).toThrow(/non-integer score/);
+  });
+
+  it('rejects non-integer commons health percent', () => {
+    expect(() =>
+      TragedyOfTheCommonsPlugin.computePayouts(
+        outcome([ranking('alpha', 1, 0), ranking('beta', 0, 0)], 99.5),
+        ['alpha', 'beta'],
+        1n,
+      ),
+    ).toThrow(/non-integer commons health percent/);
   });
 });

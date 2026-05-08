@@ -7,9 +7,21 @@ interface NativeBoardView {
   round: number;
   phase: string;
   boardTiles: unknown[];
+  commonsHealthPercent?: number;
+  lastResolvedActions?: unknown[];
   players?: unknown[];
   you?: unknown;
   relayMessages?: unknown[];
+}
+
+function playerObjects(view: NativeBoardView): Array<Record<string, unknown>> {
+  const players = view.players;
+  if (!Array.isArray(players)) throw new Error('expected players array');
+  return players.flatMap((player) =>
+    player && typeof player === 'object' && !Array.isArray(player)
+      ? [player as Record<string, unknown>]
+      : [],
+  );
 }
 
 function isNativeBoardView(value: unknown): value is NativeBoardView {
@@ -80,6 +92,7 @@ describe('Tragedy native plugin gameplay flow', () => {
       }),
     );
     expect(spectatorBeforeActions.relayMessages).toHaveLength(1);
+    expect(spectatorBeforeActions.commonsHealthPercent).toBeGreaterThan(0);
 
     const alphaView = expectNativeBoardView(
       TragedyOfTheCommonsPlugin.getVisibleState(state, 'alpha'),
@@ -98,7 +111,7 @@ describe('Tragedy native plugin gameplay flow', () => {
 
     state = applyValidated(state, 'beta', {
       type: 'extract_commons',
-      ecosystemId: 'sunspine-aquifer',
+      ecosystemId: 'sunspine-river',
       level: 'medium',
     });
     state = applyValidated(state, 'gamma', { type: 'pass' });
@@ -106,16 +119,26 @@ describe('Tragedy native plugin gameplay flow', () => {
 
     expect(state.round).toBe(2);
     expect(state.phase).toBe('playing');
+    expect(state.lastResolvedActions).toHaveLength(PLAYERS.length);
     expect(state.boardTiles).toHaveLength(19);
     expect(state.players.find((player) => player.id === 'alpha')?.regionsControlled).toContain(
       'ironcrest',
     );
-    expectNativeBoardView(
+    const spectatorAfterActions = expectNativeBoardView(
       TragedyOfTheCommonsPlugin.buildSpectatorView(state, null, {
         handles: {},
         relayMessages: [],
       }),
     );
+    expect(spectatorAfterActions.lastResolvedActions).toHaveLength(PLAYERS.length);
+    const alphaSnapshot = playerObjects(spectatorAfterActions).find(
+      (player) => player.id === 'alpha',
+    );
+    if (!alphaSnapshot) throw new Error('expected alpha spectator player');
+    expect(Array.isArray(alphaSnapshot.structureLocations)).toBe(true);
+    expect(Array.isArray(alphaSnapshot.roadLocations)).toBe(true);
+    expect((alphaSnapshot.structureLocations as unknown[]).length).toBe(2);
+    expect((alphaSnapshot.roadLocations as unknown[]).length).toBeGreaterThan(0);
 
     for (let timeoutCount = 0; timeoutCount < PLAYERS.length; timeoutCount++) {
       state = applyValidated(state, null, { type: 'round_timeout' });
@@ -128,6 +151,8 @@ describe('Tragedy native plugin gameplay flow', () => {
     const outcome = TragedyOfTheCommonsPlugin.getOutcome(state);
     expect(outcome.rankings).toHaveLength(PLAYERS.length);
     expect(outcome.roundsPlayed).toBe(2);
+    expect(outcome.commonsHealthPercent).toBeGreaterThanOrEqual(0);
+    expect(outcome.commonsHealthPercent).toBeLessThanOrEqual(100);
     const payouts = TragedyOfTheCommonsPlugin.computePayouts(
       outcome,
       PLAYERS,
