@@ -7,6 +7,7 @@ import {
   getV2Outcome,
   validateV2Action,
 } from '../game.js';
+import { TragedyOfTheCommonsV2Plugin } from '../plugin.js';
 import { DEFAULT_V2_CONFIG, type TragedyV2Action, type TragedyV2State } from '../types.js';
 
 const PLAYERS = ['alpha', 'beta', 'gamma'];
@@ -193,6 +194,16 @@ describe('Tragedy V2 gameplay flow', () => {
     const firstPlayer = state.players[state.currentPlayerIndex];
     if (!firstPlayer) throw new Error('missing first setup player');
     expect(
+      TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(state, firstPlayer.id).map(
+        (tool) => tool.name,
+      ),
+    ).toEqual(['place_starting_camp']);
+    expect(
+      TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(state, 'not-current').map(
+        (tool) => tool.name,
+      ),
+    ).toEqual([]);
+    expect(
       validateV2Action(state, firstPlayer.id, {
         type: 'place_starting_camp',
         intersectionId: 'northWest',
@@ -216,6 +227,11 @@ describe('Tragedy V2 gameplay flow', () => {
 
     expect(state.phase).toBe('playing');
     expect(state.round).toBe(1);
+    const playingTools = TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(state, 'alpha').map(
+      (tool) => tool.name,
+    );
+    expect(playingTools).toContain('pass');
+    expect(playingTools).not.toContain('place_starting_camp');
     expect(state.structures).toHaveLength(FOUR_PLAYERS.length);
     expect(new Set(state.structures.map((structure) => structure.ownerId))).toEqual(
       new Set(FOUR_PLAYERS),

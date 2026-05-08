@@ -401,21 +401,23 @@ Tragedy of the Commons is a free-for-all coordination game about shared scarcity
 Highest VP wins when the round limit is reached. Influence is the tie-breaker. Final payouts are softened by commons health.
 `;
 
-const GAME_TOOLS_V2: ToolDefinition[] = [
-  {
-    name: 'place_starting_camp',
-    description:
-      'During setup, choose the intersection where your free starting camp will be placed. Camps cannot be adjacent to existing starting camps.',
-    mcpExpose: true,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        intersectionId: { type: 'string', description: 'Target empty intersection id.' },
-      },
-      required: ['intersectionId'],
-      additionalProperties: false,
+const PLACE_STARTING_CAMP_TOOL: ToolDefinition = {
+  name: 'place_starting_camp',
+  description:
+    'During setup, choose the intersection where your free starting camp will be placed. Camps cannot be adjacent to existing starting camps.',
+  mcpExpose: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      intersectionId: { type: 'string', description: 'Target empty intersection id.' },
     },
+    required: ['intersectionId'],
+    additionalProperties: false,
   },
+};
+
+const GAME_TOOLS_V2: ToolDefinition[] = [
+  PLACE_STARTING_CAMP_TOOL,
   {
     name: 'offer_trade',
     description:
@@ -525,6 +527,8 @@ const GAME_TOOLS_V2: ToolDefinition[] = [
   },
 ];
 
+const ROUND_TOOLS_V2 = GAME_TOOLS_V2.filter((tool) => tool.name !== PLACE_STARTING_CAMP_TOOL.name);
+
 export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   TragedyV2Config,
   TragedyV2State,
@@ -552,6 +556,19 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   },
 
   gameTools: GAME_TOOLS_V2,
+
+  getCurrentGameTools(state: TragedyV2State, playerId: string | null): ToolDefinition[] {
+    if (state.phase === 'waiting') {
+      const currentPlayer = state.players[state.currentPlayerIndex];
+      return playerId !== null &&
+        currentPlayer?.id === playerId &&
+        currentPlayer.ownedStructureIds.length === 0
+        ? [PLACE_STARTING_CAMP_TOOL]
+        : [];
+    }
+    if (state.phase !== 'playing') return [];
+    return ROUND_TOOLS_V2;
+  },
 
   requiredPlugins: ['basic-chat'],
   recommendedPlugins: ['reasoning', 'trust-projector-tragedy'],
