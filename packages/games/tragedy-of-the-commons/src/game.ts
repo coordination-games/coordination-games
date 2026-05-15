@@ -190,6 +190,14 @@ function roundTimeoutDeadline(turnTimerSeconds: number): GameDeadline<TragedyAct
   };
 }
 
+function v2SetupTimeoutDeadline(turnTimerSeconds: number): GameDeadline<TragedyV2Action> {
+  return {
+    kind: 'absolute',
+    at: Date.now() + turnTimerSeconds * 1000,
+    action: { type: 'setup_timeout' },
+  };
+}
+
 function turnTimeoutDeadline(turnTimerSeconds: number): GameDeadline<TragedyAction> {
   return roundTimeoutDeadline(turnTimerSeconds);
 }
@@ -256,15 +264,62 @@ function advanceTurn(state: TragedyState): ActionResult<TragedyState, TragedyAct
   };
 }
 
-function withRelayMessages(
-  result: ActionResult<TragedyState, TragedyAction>,
+function withRelayMessages<TState, TAction extends { type: string }>(
+  result: ActionResult<TState, TAction>,
   relayMessages: RelayEnvelope[],
-): ActionResult<TragedyState, TragedyAction> {
+): ActionResult<TState, TAction> {
   if (relayMessages.length === 0) return result;
   return {
     ...result,
     relayMessages: [...(result.relayMessages ?? []), ...relayMessages],
   };
+}
+
+function systemMessageRelay(input: {
+  readonly body: string;
+  readonly round: number | null;
+  readonly scope: RelayEnvelope['scope'];
+}): RelayEnvelope {
+  return {
+    type: 'messaging',
+    index: -1,
+    sender: 'system',
+    scope: input.scope,
+    data: { body: input.body },
+    pluginId: 'basic-chat',
+    turn: input.round,
+    timestamp: Date.now(),
+  };
+}
+
+function v2TurnRelays(state: TragedyV2State, player: TragedyV2PlayerState): RelayEnvelope[] {
+  return [
+    systemMessageRelay({
+      body: `Turn passes to ${player.id}.`,
+      round: state.round,
+      scope: { kind: 'all' },
+    }),
+    systemMessageRelay({
+      body: `It is now your turn. You are player ${player.id}.`,
+      round: state.round,
+      scope: { kind: 'dm', recipientHandle: player.id },
+    }),
+  ];
+}
+
+function v2SetupTurnRelays(state: TragedyV2State, player: TragedyV2PlayerState): RelayEnvelope[] {
+  return [
+    systemMessageRelay({
+      body: `Setup passes to ${player.id}.`,
+      round: state.round,
+      scope: { kind: 'all' },
+    }),
+    systemMessageRelay({
+      body: `It is your setup turn. Choose an open non-adjacent intersection with place_starting_camp.`,
+      round: state.round,
+      scope: { kind: 'dm', recipientHandle: player.id },
+    }),
+  ];
 }
 
 function actionPayload(action: TragedyAction): JsonObject {
@@ -274,6 +329,36 @@ function actionPayload(action: TragedyAction): JsonObject {
   if (action.type === 'build_settlement') {
     return { regionId: action.regionId };
   }
+  if (action.type === 'offer_trade') {
+    return {
+      to: action.to,
+      give: jsonResourceBundle(action.give),
+      receive: jsonResourceBundle(action.receive),
+    };
+  }
+  return {};
+}
+
+function v2ActionPayload(action: TragedyV2Action): JsonObject {
+  if (action.type === 'place_starting_camp') return { intersectionId: action.intersectionId };
+  if (action.type === 'build_road') {
+    return {
+      fromIntersectionId: action.fromIntersectionId,
+      toIntersectionId: action.toIntersectionId,
+    };
+  }
+  if (action.type === 'build_structure') {
+    return { intersectionId: action.intersectionId, structureType: action.structureType };
+  }
+  if (action.type === 'upgrade_structure') return { structureId: action.structureId };
+  if (action.type === 'extract_tile') {
+    return {
+      tileId: action.tileId,
+      resource: action.resource,
+      level: action.level,
+    };
+  }
+  if (action.type === 'convert_timber_to_energy') return { amount: action.amount };
   if (action.type === 'offer_trade') {
     return {
       to: action.to,
@@ -316,6 +401,57 @@ function createActionAttestationRelay(input: {
     schemaVersion: 'attestation/v1',
     id: keccak256CanonicalJson({
       gameType: 'tragedy-of-the-commons',
+      round: input.state.round,
+      subject: input.player.id,
+      claimType: 'tragedy.round_choice.v1',
+      data,
+    }),
+    issuer: 'tragedy-of-the-commons:system',
+    issuerKind: 'system',
+    subject: input.player.id,
+    claim: { type: 'tragedy.round_choice.v1', data },
+    confidence: 1,
+    round: input.state.round,
+    ...(input.note ? { note: input.note } : {}),
+  };
+  return {
+    type: ATTESTATION_RELAY_TYPE,
+    index: -1,
+    sender: 'system',
+    scope: { kind: 'all' },
+    data: attestation,
+    pluginId: TRUST_PROJECTOR_PLUGIN_ID,
+    turn: input.state.round,
+    timestamp: Date.now(),
+  };
+}
+
+function createV2ActionAttestationRelay(input: {
+  readonly state: TragedyV2State;
+  readonly player: TragedyV2PlayerState;
+  readonly action: TragedyV2Action;
+  readonly note?: string;
+}): RelayEnvelope<AttestationV1> {
+  const data: JsonObject = {
+    gameType: 'tragedy-of-the-commons',
+    schemaVersion: 'v2',
+    round: input.state.round,
+    actor: input.player.id,
+    actionType: input.action.type,
+    action: v2ActionPayload(input.action),
+    before: {
+      resources: jsonResourceBundle(input.player.resources),
+      influence: input.player.influence,
+      vp: input.player.vp,
+      structures: [...input.player.ownedStructureIds],
+      roads: [...input.player.ownedRoadIds],
+    },
+  };
+  const attestation: AttestationV1 = {
+    schemaVersion: 'attestation/v1',
+    id: keccak256CanonicalJson({
+      gameType: 'tragedy-of-the-commons',
+      schemaVersion: 'v2',
       round: input.state.round,
       subject: input.player.id,
       claimType: 'tragedy.round_choice.v1',
@@ -1589,6 +1725,19 @@ function validateV2StartingCamp(
   });
 }
 
+function firstValidV2StartingCampIntersection(
+  state: TragedyV2State,
+  player: TragedyV2PlayerState,
+): string | null {
+  const valid = state.intersections.find((intersection) =>
+    validateV2StartingCamp(state, player, {
+      type: 'place_starting_camp',
+      intersectionId: intersection.id,
+    }),
+  );
+  return valid?.id ?? null;
+}
+
 function placeV2StartingCamp(
   state: TragedyV2State,
   playerId: string,
@@ -1612,17 +1761,41 @@ function placeV2StartingCamp(
     extractionsThisRound: 0,
   });
   const placedState: TragedyV2State = { ...state, players, intersections, structures };
+  const relayMessages: RelayEnvelope[] = [
+    systemMessageRelay({
+      body: `${playerId} placed a starting camp at ${action.intersectionId}.`,
+      round: state.round,
+      scope: { kind: 'all' },
+    }),
+  ];
   const allPlaced = players.every((item) => item.ownedStructureIds.length > 0);
   if (allPlaced) {
     const started = startV2Round(placedState);
-    return { state: started, deadline: v2RoundTimeoutDeadline(started.config.turnTimerSeconds) };
+    const currentPlayer = started.players[started.currentPlayerIndex];
+    relayMessages.push(
+      systemMessageRelay({
+        body: `Setup complete. Round ${started.round} begins.`,
+        round: started.round,
+        scope: { kind: 'all' },
+      }),
+    );
+    if (currentPlayer) relayMessages.push(...v2TurnRelays(started, currentPlayer));
+    return {
+      state: started,
+      deadline: v2RoundTimeoutDeadline(started.config.turnTimerSeconds),
+      relayMessages,
+    };
   }
   const nextIndex = players.findIndex((item) => item.ownedStructureIds.length === 0);
+  const nextPlayer = nextIndex >= 0 ? players[nextIndex] : undefined;
+  if (nextPlayer) relayMessages.push(...v2SetupTurnRelays(placedState, nextPlayer));
   return {
     state: {
       ...placedState,
       currentPlayerIndex: nextIndex >= 0 ? nextIndex : state.currentPlayerIndex,
     },
+    deadline: v2SetupTimeoutDeadline(state.config.turnTimerSeconds),
+    relayMessages,
   };
 }
 
@@ -1725,6 +1898,7 @@ export function validateV2Action(
   if (action.type === 'game_start') {
     return playerId === null && state.phase === 'waiting';
   }
+  if (action.type === 'setup_timeout') return playerId === null && state.phase === 'waiting';
   if (action.type === 'round_timeout') return playerId === null && state.phase === 'playing';
   if (playerId === null) return false;
   if (state.players[state.currentPlayerIndex]?.id !== playerId) return false;
@@ -1974,18 +2148,45 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
 
 function advanceOrFinishV2(state: TragedyV2State): ActionResult<TragedyV2State, TragedyV2Action> {
   if (state.round >= state.config.maxRounds) {
-    return { state: { ...state, phase: 'finished' }, deadline: { kind: 'none' } };
+    const finished = { ...state, phase: 'finished' as const };
+    return {
+      state: finished,
+      deadline: { kind: 'none' },
+      relayMessages: [
+        systemMessageRelay({
+          body: `Game complete after round ${state.round}.`,
+          round: state.round,
+          scope: { kind: 'all' },
+        }),
+      ],
+    };
   }
   const started = startV2Round(state);
-  return { state: started, deadline: v2RoundTimeoutDeadline(state.config.turnTimerSeconds) };
+  const currentPlayer = started.players[started.currentPlayerIndex];
+  const relayMessages: RelayEnvelope[] = [
+    systemMessageRelay({
+      body: `Round ${started.round} begins.`,
+      round: started.round,
+      scope: { kind: 'all' },
+    }),
+  ];
+  if (currentPlayer) relayMessages.push(...v2TurnRelays(started, currentPlayer));
+  return {
+    state: started,
+    deadline: v2RoundTimeoutDeadline(state.config.turnTimerSeconds),
+    relayMessages,
+  };
 }
 
 function advanceV2Turn(state: TragedyV2State): ActionResult<TragedyV2State, TragedyV2Action> {
   const nextIndex = (state.currentPlayerIndex + 1) % state.players.length;
   if (nextIndex === 0) return advanceOrFinishV2(resolveV2Round(state));
+  const nextState: TragedyV2State = { ...state, currentPlayerIndex: nextIndex };
+  const nextPlayer = nextState.players[nextIndex];
   return {
-    state: { ...state, currentPlayerIndex: nextIndex },
+    state: nextState,
     deadline: v2RoundTimeoutDeadline(state.config.turnTimerSeconds),
+    relayMessages: nextPlayer ? v2TurnRelays(nextState, nextPlayer) : [],
   };
 }
 
@@ -1996,10 +2197,54 @@ export function applyV2Action(
 ): ActionResult<TragedyV2State, TragedyV2Action> {
   if (!validateV2Action(state, playerId, action)) return { state };
   if (action.type === 'game_start') {
-    return { state, deadline: v2RoundTimeoutDeadline(state.config.turnTimerSeconds) };
+    const currentPlayer = state.players[state.currentPlayerIndex];
+    return {
+      state,
+      deadline: v2SetupTimeoutDeadline(state.config.turnTimerSeconds),
+      relayMessages: currentPlayer
+        ? [
+            systemMessageRelay({
+              body: `Setup begins for Tragedy of the Commons V2.`,
+              round: state.round,
+              scope: { kind: 'all' },
+            }),
+            ...v2SetupTurnRelays(state, currentPlayer),
+          ]
+        : [],
+    };
   }
   if (action.type === 'place_starting_camp' && playerId) {
-    return placeV2StartingCamp(state, playerId, action);
+    const player = state.players.find((item) => item.id === playerId);
+    const result = placeV2StartingCamp(state, playerId, action);
+    return player
+      ? withRelayMessages(result, [createV2ActionAttestationRelay({ state, player, action })])
+      : result;
+  }
+  if (action.type === 'setup_timeout') {
+    const currentPlayer = state.players[state.currentPlayerIndex];
+    if (!currentPlayer) return { state };
+    const intersectionId = firstValidV2StartingCampIntersection(state, currentPlayer);
+    if (!intersectionId) return { state, deadline: { kind: 'none' } };
+    const timeoutAction: TragedyV2Action = { type: 'setup_timeout' };
+    return withRelayMessages(
+      placeV2StartingCamp(state, currentPlayer.id, {
+        type: 'place_starting_camp',
+        intersectionId,
+      }),
+      [
+        systemMessageRelay({
+          body: `Setup timer expired for ${currentPlayer.id}; the system placed a starting camp at ${intersectionId}.`,
+          round: state.round,
+          scope: { kind: 'all' },
+        }),
+        createV2ActionAttestationRelay({
+          state,
+          player: currentPlayer,
+          action: timeoutAction,
+          note: `Setup timer expired; system placed a starting camp at ${intersectionId}.`,
+        }),
+      ],
+    );
   }
   if (action.type === 'round_timeout') {
     const currentPlayer = state.players[state.currentPlayerIndex];
@@ -2011,9 +2256,23 @@ export function applyV2Action(
         [currentPlayer.id]: { type: 'pass' },
       } as unknown as Record<string, TragedyAction | null>,
     };
-    return advanceV2Turn(nextState);
+    return withRelayMessages(advanceV2Turn(nextState), [
+      systemMessageRelay({
+        body: `Round timer expired for ${currentPlayer.id}; the system recorded a pass.`,
+        round: state.round,
+        scope: { kind: 'all' },
+      }),
+      createV2ActionAttestationRelay({
+        state,
+        player: currentPlayer,
+        action: { type: 'round_timeout' },
+        note: 'Round timer expired; system recorded a pass for the current player.',
+      }),
+    ]);
   }
   if (!playerId) return { state };
+  const player = state.players.find((item) => item.id === playerId);
+  if (!player) return { state };
   const nextState: TragedyV2State = {
     ...state,
     submittedActions: {
@@ -2021,7 +2280,9 @@ export function applyV2Action(
       [playerId]: action,
     } as unknown as Record<string, TragedyAction | null>,
   };
-  return advanceV2Turn(nextState);
+  return withRelayMessages(advanceV2Turn(nextState), [
+    createV2ActionAttestationRelay({ state, player, action }),
+  ]);
 }
 
 function buildV2SpectatorPlayer(

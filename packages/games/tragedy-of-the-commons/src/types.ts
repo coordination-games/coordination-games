@@ -312,6 +312,7 @@ export type TragedyV2Action =
     }
   | { type: 'convert_timber_to_energy'; amount: number }
   | { type: 'pass' }
+  | { type: 'setup_timeout' }
   | { type: 'round_timeout' };
 
 // ── V2 Config ──

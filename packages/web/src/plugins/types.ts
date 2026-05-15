@@ -62,7 +62,7 @@ export interface GameSummaryView {
   gameType?: string | undefined;
   turn: number;
   maxTurns: number;
-  phase: 'in_progress' | 'finished';
+  phase: 'setup' | 'in_progress' | 'finished';
   winner?: string | undefined;
   teamsA: number;
   teamsB: number;

@@ -1,4 +1,5 @@
 import { getGame, getRegisteredGames } from '@coordination-games/engine';
+import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import {
   consumeWsTicket,
   createWsTicket,
@@ -953,17 +954,38 @@ async function handlePlayerGuide(playerId: string, request: Request, env: Env): 
 
   const guide = plugin.guide ?? 'No guide available.';
 
-  // Collect tool names from lobby phases and required/recommended plugins
-  const tools: string[] = [];
+  // Static capability surface only. Use /api/player/state for player-specific
+  // currentPhase.tools because that path has live game state and player scope.
+  const lobbyTools: string[] = [];
   if (plugin.lobby?.phases) {
     for (const phase of plugin.lobby.phases) {
       if (phase.tools) {
-        tools.push(...phase.tools.map((t) => t.name ?? String(t)));
+        lobbyTools.push(...phase.tools.map((t) => t.name ?? String(t)));
       }
     }
   }
 
-  return Response.json({ gameType, guide, tools });
+  const gameTools = (plugin.gameTools ?? [])
+    .filter((tool) => tool.mcpExpose !== false)
+    .map((tool) => tool.name);
+  const pluginTools = plugin.requiredPlugins?.includes(BasicChatPlugin.id)
+    ? (BasicChatPlugin.tools ?? [])
+        .filter((tool) => tool.mcpExpose !== false)
+        .map((tool) => tool.name)
+    : [];
+  const tools = [...new Set([...lobbyTools, ...gameTools, ...pluginTools])];
+
+  return Response.json({
+    gameType,
+    guide,
+    tools,
+    gameTools,
+    lobbyTools,
+    pluginTools,
+    requiredPlugins: plugin.requiredPlugins ?? [],
+    recommendedPlugins: plugin.recommendedPlugins ?? [],
+    currentToolsHint: 'Call state or wait for live currentPhase.tools scoped to your player.',
+  });
 }
 
 // ---------------------------------------------------------------------------
