@@ -390,11 +390,14 @@ Tragedy of the Commons is a free-for-all coordination game about shared scarcity
 ## Extraction
 - camp/village/city = 1/2/3 extraction units per round
 - Must be adjacent to the tile you extract from
+- low/medium/high extraction uses 1/2/3 units and applies 1/3/6 pressure
 - Oil yields 2 energy per extraction but causes heavy damage to adjacent tiles
+- convert_timber_to_energy converts 2 timber into 1 energy
 
 ## Tile health
 - healthy → strained → collapsed
 - Collapsed tiles produce nothing
+- Tiles recover 2 health each round before new extraction pressure is applied
 - Solar buildings generate clean energy without extraction
 
 ## Win condition
