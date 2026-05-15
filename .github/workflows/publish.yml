@@ -26,7 +26,7 @@ jobs:
 
 
       - name: Install dependencies
-        run: npm install --include=dev
+        run: npm install --include=dev --legacy-peer-deps
         working-directory: .
 
       - name: Build engine
@@ -36,6 +36,14 @@ jobs:
       - name: Build chat plugin
         run: npx tsc --skipLibCheck
         working-directory: packages/plugins/basic-chat
+
+      - name: Build reasoning plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/reasoning
+
+      - name: Build tragedy trust projector plugin
+        run: npx tsc --skipLibCheck
+        working-directory: packages/plugins/trust-projector-tragedy
 
       - name: Build game plugin
         run: npx tsc --skipLibCheck

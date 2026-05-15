@@ -42,11 +42,15 @@ jobs:
         # pointing at `dist/*`. Without built artifacts, every workspace
         # consumer fails with TS2307 "Cannot find module" — which also
         # makes @ts-expect-error directives appear "unused". Order matters:
+        # plugin workspaces must also be built because workers-server and CLI
+        # import them through package `main` entries that point at dist/*.
         # basic-chat must precede the games (both capture-the-lobster and
         # workers-server import from plugin-chat).
         run: |
           npm run build -w packages/engine
           npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/plugins/reasoning
+          npm run build -w packages/plugins/trust-projector-tragedy
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/games/tragedy-of-the-commons
@@ -87,6 +91,14 @@ jobs:
         run: npx tsc --noEmit
         working-directory: packages/plugins/basic-chat
 
+      - name: Typecheck — plugins/reasoning
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/reasoning
+
+      - name: Typecheck — plugins/trust-projector-tragedy
+        run: npx tsc --noEmit
+        working-directory: packages/plugins/trust-projector-tragedy
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -106,11 +118,15 @@ jobs:
       - name: Build engine + plugins + games
         # Tests in workers-server resolve `@coordination-games/game-*` via the
         # `main`/`types` fields (dist/*). They must be built before tests run.
+        # Plugin workspaces must also be built because workers-server and CLI
+        # import them through package `main` entries that point at dist/*.
         # Order matters: basic-chat must precede the games, since both
         # capture-the-lobster and workers-server import from plugin-chat.
         run: |
           npm run build -w packages/engine
           npm run build -w packages/plugins/basic-chat
+          npm run build -w packages/plugins/reasoning
+          npm run build -w packages/plugins/trust-projector-tragedy
           npm run build -w packages/games/capture-the-lobster
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/games/tragedy-of-the-commons
@@ -132,4 +148,6 @@ jobs:
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
                    -w packages/games/tragedy-of-the-commons \
-                   -w packages/plugins/basic-chat
+                   -w packages/plugins/basic-chat \
+                   -w packages/plugins/reasoning \
+                   -w packages/plugins/trust-projector-tragedy
