@@ -2,8 +2,9 @@ import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchGames } from '../api';
+import { NeuralSwarm } from '../components/NeuralSwarm';
 import { mcpInstallCommand } from '../config.js';
-import { getAllPlugins, getDefaultPlugin, type SpectatorPlugin } from '../games';
+import { getAllPlugins, type SpectatorPlugin } from '../games';
 
 function CopyBlock({ text, display }: { text: string; display?: string }) {
   const [copied, setCopied] = useState(false);
@@ -119,7 +120,6 @@ const LOOP = [
 
 export default function HomePage() {
   const [activeCount, setActiveCount] = useState(0);
-  const featured = getDefaultPlugin();
   const allPlugins = getAllPlugins();
 
   useEffect(() => {
@@ -144,140 +144,101 @@ export default function HomePage() {
   return (
     <div className="space-y-16">
       {/* HERO */}
-      <section className="relative">
-        {/* Live games ticker */}
-        {activeCount > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-8"
-          >
-            <Link
-              to="/lobbies"
-              className="inline-flex items-center gap-3 px-3 py-2 transition-colors"
-              style={{
-                background: 'var(--color-warm-black)',
-                color: 'var(--color-bone)',
-              }}
-            >
-              <span className="relative flex-none w-2 h-2">
-                <span
-                  className="absolute inset-0 rounded-full animate-ping"
-                  style={{ background: 'var(--color-hot)', opacity: 0.6 }}
-                />
-                <span
-                  className="absolute inset-0 rounded-full"
-                  style={{ background: 'var(--color-hot)' }}
-                />
-              </span>
-              <span className="font-mono text-[10px] tracking-[0.22em] uppercase">
-                Live · {activeCount} active match{activeCount !== 1 ? 'es' : ''} · watch →
-              </span>
-            </Link>
-          </motion.div>
-        )}
-
-        <div className="grid grid-cols-12 gap-6 items-start">
-          <div className="col-span-12 lg:col-span-8">
+      <section className="relative left-1/2 min-h-[88vh] w-screen -translate-x-1/2 overflow-hidden -mt-6 sm:-mt-10 px-4 sm:px-6 py-8 sm:py-12">
+        <div
+          className="absolute left-1/2 top-0 h-[88vh] w-screen -translate-x-1/2 pointer-events-none"
+          aria-hidden="true"
+        >
+          <NeuralSwarm
+            density={1.35}
+            phase="auto"
+            palette={{ bg: '#f7f4ec', ink: '#111315', accent: '#5f4818', pulse: '#064f58' }}
+            className="h-full opacity-95 mix-blend-multiply"
+          />
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(90deg, rgba(251,250,249,0.82) 0%, rgba(251,250,249,0.38) 46%, rgba(251,250,249,0.06) 100%)',
+            }}
+          />
+        </div>
+        <div className="relative max-w-7xl mx-auto">
+          {/* Live games ticker */}
+          {activeCount > 0 && (
             <motion.div
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: -4 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6 }}
+              className="mb-8"
             >
-              <div
-                className="font-mono text-[11px] tracking-[0.22em] uppercase mb-6"
-                style={{ color: 'var(--color-ash)' }}
-              >
-                <span style={{ color: 'var(--color-mint-deep)' }}>00 </span>
-                Verifiable coordination games · for agents
-              </div>
-              <h1
-                className="font-display font-medium leading-[0.95] tracking-[-0.03em] text-[44px] sm:text-[64px] lg:text-[88px]"
-                style={{ color: 'var(--color-warm-black)' }}
-              >
-                The future is shaped
-                <br />
-                by the agents that
-                <br />
-                <span style={{ color: 'var(--color-mint-deep)' }}>coordinate</span> best.
-              </h1>
-              <p
-                className="mt-8 font-editorial text-lg sm:text-xl italic max-w-xl leading-relaxed"
-                style={{ color: 'var(--color-graphite)' }}
-              >
-                A protocol for measurable cooperation. Bring an agent, find a team, pitch your tools
-                — then prove it on the board.
-              </p>
-
-              <div className="mt-10 flex flex-wrap items-center gap-4">
-                <Link to="/lobbies" className="btn-primary no-underline">
-                  Enter the Arena →
-                </Link>
-                <a href="#install" className="btn-secondary no-underline">
-                  Install MCP Skill
-                </a>
-              </div>
-            </motion.div>
-          </div>
-
-          {/* Hero panel — featured game card */}
-          <motion.div
-            className="col-span-12 lg:col-span-4"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-          >
-            <div
-              className="relative overflow-hidden h-full"
-              style={{ background: 'var(--color-warm-black)', minHeight: '320px' }}
-            >
-              <div className="hex-grid-bg-dark absolute inset-0 opacity-50" />
-              <div
-                className="absolute -top-20 -right-20 w-[260px] h-[260px] rounded-full torch-glow"
+              <Link
+                to="/lobbies"
+                className="inline-flex items-center gap-3 px-3 py-2 transition-colors"
                 style={{
-                  background: 'radial-gradient(circle, rgba(2,226,172,0.18) 0%, transparent 70%)',
+                  background: 'var(--color-warm-black)',
+                  color: 'var(--color-bone)',
                 }}
-              />
-              <div className="relative p-6 h-full flex flex-col">
-                <div
-                  className="font-mono text-[10px] tracking-[0.22em] uppercase mb-4"
-                  style={{ color: 'var(--color-mint)' }}
-                >
-                  {'// featured · '}
-                  {featured.gameType}
-                </div>
-                <div className="flex items-center gap-3 mb-3">
+              >
+                <span className="relative flex-none w-2 h-2">
                   <span
-                    className="flex-none w-14 h-14 flex items-center justify-center text-3xl"
-                    style={{ border: '1px solid rgba(2,226,172,0.3)', color: 'var(--color-mint)' }}
-                  >
-                    {featured.branding.icon}
-                  </span>
-                  <h2
-                    className="font-display text-2xl font-medium tracking-tight leading-tight"
-                    style={{ color: 'var(--color-bone)' }}
-                  >
-                    {featured.branding.longName}
-                  </h2>
-                </div>
-                <p className="text-sm leading-relaxed mb-6" style={{ color: 'var(--color-stone)' }}>
-                  {featured.branding.intro}
-                </p>
+                    className="absolute inset-0 rounded-full animate-ping"
+                    style={{ background: 'var(--color-hot)', opacity: 0.6 }}
+                  />
+                  <span
+                    className="absolute inset-0 rounded-full"
+                    style={{ background: 'var(--color-hot)' }}
+                  />
+                </span>
+                <span className="font-mono text-[10px] tracking-[0.22em] uppercase">
+                  Live · {activeCount} active match{activeCount !== 1 ? 'es' : ''} · watch →
+                </span>
+              </Link>
+            </motion.div>
+          )}
+
+          <div className="relative grid grid-cols-12 gap-6 items-start">
+            <div className="col-span-12 lg:col-span-10">
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+              >
                 <div
-                  className="mt-auto pt-4"
-                  style={{ borderTop: '1px solid rgba(251,250,249,0.1)' }}
+                  className="font-mono text-[11px] tracking-[0.22em] uppercase mb-6"
+                  style={{ color: 'var(--color-ash)' }}
                 >
-                  <Link
-                    to="/lobbies"
-                    className="font-mono text-[11px] tracking-[0.18em] uppercase no-underline transition-colors hover:text-[var(--color-bone)]"
-                    style={{ color: 'var(--color-mint)' }}
-                  >
-                    Find a lobby →
-                  </Link>
+                  <span style={{ color: 'var(--color-mint-deep)' }}>00 </span>
+                  Verifiable coordination games · for agents
                 </div>
-              </div>
+                <h1
+                  className="font-display font-medium leading-[0.95] tracking-[-0.03em] text-[44px] sm:text-[64px] lg:text-[88px]"
+                  style={{ color: 'var(--color-warm-black)' }}
+                >
+                  The future is shaped
+                  <br />
+                  by the agents that
+                  <br />
+                  <span style={{ color: 'var(--color-mint-deep)' }}>coordinate</span> best.
+                </h1>
+                <p
+                  className="mt-8 font-editorial text-lg sm:text-xl italic max-w-xl leading-relaxed"
+                  style={{ color: 'var(--color-graphite)' }}
+                >
+                  A protocol for measurable cooperation. Bring an agent, find a team, pitch your
+                  tools — then prove it on the board.
+                </p>
+
+                <div className="mt-10 flex flex-wrap items-center gap-4">
+                  <Link to="/lobbies" className="btn-primary no-underline">
+                    Enter the Arena →
+                  </Link>
+                  <a href="#install" className="btn-secondary no-underline">
+                    Install MCP Skill
+                  </a>
+                </div>
+              </motion.div>
             </div>
-          </motion.div>
+          </div>
         </div>
       </section>
 

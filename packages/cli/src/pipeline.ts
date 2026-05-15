@@ -14,8 +14,9 @@
 import type { ToolPlugin } from '@coordination-games/engine';
 import { PluginLoader, type PluginPipeline } from '@coordination-games/engine';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import { TrustProjectorTragedyPlugin } from '@coordination-games/plugin-trust-projector-tragedy';
 
-const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];
+const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin, TrustProjectorTragedyPlugin];
 
 let registeredPlugins: ToolPlugin[] = [...DEFAULT_PLUGINS];
 let loader: PluginLoader | null = null;
@@ -32,10 +33,17 @@ export function initPipeline(additionalPlugins: ToolPlugin[] = []): void {
   pipeline = loader.buildPipeline(registeredPlugins.map((p) => p.id));
 }
 
-export function runPipeline(relayMessages: unknown[]): Map<string, unknown> {
+export function runPipeline(input: {
+  readonly relayMessages: unknown[];
+  readonly gameState?: unknown;
+  readonly gameMeta?: unknown;
+}): Map<string, unknown> {
   if (!pipeline) initPipeline();
-  // @ts-expect-error TS2322: Type 'Map<string, any> | undefined' is not assignable to type 'Map<string, any>' — TODO(2.3-followup)
-  return pipeline?.execute(new Map([['relay-messages', relayMessages]]));
+  if (!pipeline) return new Map<string, unknown>();
+  const initial = new Map<string, unknown>([['relay-messages', input.relayMessages]]);
+  if (input.gameState !== undefined) initial.set('game-state', input.gameState);
+  if (input.gameMeta !== undefined) initial.set('game-meta', input.gameMeta);
+  return pipeline.execute(initial);
 }
 
 /**
@@ -68,10 +76,15 @@ export function processState(serverResponse: {
   raw: unknown;
 } {
   const relayMessages = serverResponse.relayMessages ?? [];
-  const pipelineOutput = runPipeline(relayMessages);
+  const gameState = serverResponse.gameState ?? serverResponse;
+  const pipelineOutput = runPipeline({
+    relayMessages,
+    gameState,
+    gameMeta: serverResponse.meta,
+  });
 
   return {
-    gameState: serverResponse.gameState ?? serverResponse,
+    gameState,
     envelopeExtensions: buildEnvelopeExtensions(pipelineOutput),
     pipelineOutput,
     raw: serverResponse,

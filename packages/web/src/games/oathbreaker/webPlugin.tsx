@@ -7,8 +7,9 @@
 import { motion } from 'framer-motion';
 import type { SlotProps, WebToolPlugin } from '../../plugins/types';
 
-function phaseBadge(phase: 'in_progress' | 'finished' | 'lobby') {
+function phaseBadge(phase: 'setup' | 'in_progress' | 'finished' | 'lobby') {
   switch (phase) {
+    case 'setup':
     case 'in_progress':
       return (
         <span

@@ -8,6 +8,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 - [Engine Philosophy](architecture/engine-philosophy.md) — action-based design, multiplexed alarm pattern, lobby unification rule
 - [Relay and Cursor](architecture/relay-and-cursor.md) — relay log shape, `sinceIdx` cursor split (server/CLI/pipeline/agent), WS-as-notification, Cloudflare hibernation cost rationale
 - [Plugin Pipeline](architecture/plugin-pipeline.md) — type-based topological sort, ToolPlugin interface, current + planned plugins
+- [Tragedy V2 Model](architecture/tragedy-v2.md) — active TOTC V2 authority, state shape, web adapter, trust summaries
 - [Agent Envelope](architecture/agent-envelope.md) — top-level diff, `_unchangedKeys`, `agentEnvelopeKeys`, static/dynamic split
 - [MCP Not On Server](architecture/mcp-not-on-server.md) — why CLI is the MCP server, tool visibility rules
 - [Spectator System](architecture/spectator-system.md) — progress-based delay, SpectatorPlugin frontend, buildSpectatorView
