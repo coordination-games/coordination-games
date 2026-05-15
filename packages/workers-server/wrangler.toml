@@ -9,7 +9,7 @@ compatibility_flags = ["nodejs_compat"]
 # types to prod twice. Web is deployed separately via Pages and has a
 # flaky npm-workspace install — excluded to keep server deploy resilient.
 [build]
-command = "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons"
+command = "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat -w packages/plugins/reasoning -w packages/plugins/trust-projector-tragedy && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons"
 
 [[d1_databases]]
 binding = "DB"
