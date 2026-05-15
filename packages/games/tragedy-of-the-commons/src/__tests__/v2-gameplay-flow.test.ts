@@ -256,6 +256,40 @@ describe('Tragedy V2 gameplay flow', () => {
     }
   });
 
+  it('emits setup relays and recovers stalled setup turns', () => {
+    let state = createState();
+    const firstPlayer = state.players[state.currentPlayerIndex];
+    if (!firstPlayer) throw new Error('missing first setup player');
+
+    const startResult = applyV2Action(state, null, { type: 'game_start' });
+    expect(startResult.state.phase).toBe('waiting');
+    expect(startResult.deadline?.kind).toBe('absolute');
+    if (startResult.deadline?.kind !== 'absolute') throw new Error('expected setup deadline');
+    expect(startResult.deadline.action.type).toBe('setup_timeout');
+    expect(startResult.relayMessages?.some((message) => message.scope.kind === 'dm')).toBe(true);
+
+    expect(validateV2Action(state, null, { type: 'setup_timeout' })).toBe(true);
+    const timeoutResult = applyV2Action(state, null, { type: 'setup_timeout' });
+    state = timeoutResult.state;
+    expect(state.structures).toHaveLength(1);
+    expect(state.structures[0]?.ownerId).toBe(firstPlayer.id);
+    if (timeoutResult.deadline?.kind !== 'absolute')
+      throw new Error('expected next setup deadline');
+    expect(timeoutResult.deadline.action.type).toBe('setup_timeout');
+    expect(
+      timeoutResult.relayMessages?.some(
+        (message) =>
+          typeof message.data === 'object' &&
+          message.data !== null &&
+          'body' in message.data &&
+          String(message.data.body).includes('Setup timer expired'),
+      ),
+    ).toBe(true);
+
+    state = placeStartingCamps(state);
+    expect(state.phase).toBe('playing');
+  });
+
   it('enforces extraction capacity, settlement upgrades, and collapsed tile recovery', () => {
     let state = createState(3);
     state = placeStartingCamps(state);
