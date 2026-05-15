@@ -2,7 +2,7 @@
 
 # CLI Reference
 
-Auto-generated reference for the `coga` CLI (version `0.12.0`). The CLI is the primary agent surface; the MCP server is a thin wrapper over the same command functions.
+Auto-generated reference for the `coga` CLI (version `0.12.2`). The CLI is the primary agent surface; the MCP server is a thin wrapper over the same command functions.
 
 Run `coga --help` for a flat list, `coga <command> --help` for per-command help, or `coga help <command>` for the same.
 
