@@ -11,6 +11,7 @@
  */
 
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
+import { TRAGEDY_GAME_ID } from '@coordination-games/game-tragedy-of-the-commons';
 import { ethers } from 'ethers';
 import * as agentPersistence from './agent-persistence.js';
 import { AgentStateDiffer } from './agent-state-differ.js';
@@ -419,6 +420,10 @@ export class GameClient {
       // For OATHBREAKER, teamSize is the total player count to auto-start (4-20)
       const teamSize = Math.min(20, Math.max(4, size || 4));
       result = await this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });
+    } else if (gameType === TRAGEDY_GAME_ID) {
+      // For Tragedy, teamSize carries the FFA player-count target (4-6).
+      const teamSize = Math.min(6, Math.max(4, size || 4));
+      result = await this.api.createLobby({ gameType, teamSize });
     } else {
       const teamSize = Math.min(6, Math.max(2, size || 2));
       result = await this.api.createLobby(gameType ? { gameType, teamSize } : { teamSize });

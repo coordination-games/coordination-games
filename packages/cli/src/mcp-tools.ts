@@ -384,7 +384,9 @@ export function registerGameTools(
         .min(2)
         .max(6)
         .optional()
-        .describe('Players per team for CtL (2-6, default 2), or player count for Tragedy (4-6)'),
+        .describe(
+          'Players per team for CtL (2-6, default 2), or player count for Tragedy (4-6, default 4)',
+        ),
       playerCount: z
         .number()
         .min(4)
@@ -395,7 +397,8 @@ export function registerGameTools(
     async ({ gameType, teamSize, playerCount }) => {
       try {
         const game = gameType || CTL_GAME_ID;
-        const size = game === OATH_GAME_ID ? playerCount || 4 : teamSize || 2;
+        const size =
+          game === OATH_GAME_ID || game === TRAGEDY_GAME_ID ? playerCount || 4 : teamSize || 2;
         const result = await client.createLobby(game, size);
         return jsonResult(result);
       } catch (err) {

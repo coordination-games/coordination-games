@@ -43,7 +43,7 @@ function TragedyLobbyCard({
   onClick?: (() => void) | undefined;
 }) {
   const playerCount = lobby.playerCount ?? 0;
-  const capacity = lobby.teamSize ?? undefined;
+  const capacity = Math.min(6, Math.max(4, lobby.teamSize ?? 4));
   return (
     <button
       type="button"
