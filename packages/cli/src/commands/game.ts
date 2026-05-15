@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { ToolDefinition } from '@coordination-games/engine';
 import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
+import { TRAGEDY_GAME_ID } from '@coordination-games/game-tragedy-of-the-commons';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import type { Command } from 'commander';
 import { ApiClient } from '../api-client.js';
@@ -266,8 +267,16 @@ export function registerGameCommands(program: Command) {
   program
     .command('create-lobby')
     .description('Create a new game lobby')
-    .option('-s, --size <n>', 'Team size (2-6) for CtL, player count (4-20) for OATHBREAKER', '2')
-    .option('-g, --game <name>', `Game type: ${CTL_GAME_ID} or ${OATH_GAME_ID}`, CTL_GAME_ID)
+    .option(
+      '-s, --size <n>',
+      'Team size for CtL (2-6), player count for OATHBREAKER (4-20), or player count for Tragedy (4-6)',
+      '2',
+    )
+    .option(
+      '-g, --game <name>',
+      `Game type: ${CTL_GAME_ID}, ${OATH_GAME_ID}, or ${TRAGEDY_GAME_ID}`,
+      CTL_GAME_ID,
+    )
     .action(async (opts) => {
       const client = await createClient();
       const gameType = opts.game;
@@ -287,6 +296,16 @@ export function registerGameCommands(program: Command) {
           if (result.gameId) {
             const session = loadSession();
             session.currentGameId = result.gameId;
+            saveSession(session);
+          }
+        } else if (gameType === TRAGEDY_GAME_ID) {
+          const lobbyId = result.lobbyId;
+          const playerCount = Math.min(6, Math.max(4, size));
+          process.stdout.write(`\n  Tragedy of the Commons lobby created: ${lobbyId}\n`);
+          process.stdout.write(`  Players: ${playerCount}\n\n`);
+          if (lobbyId) {
+            const session = loadSession();
+            session.currentLobbyId = lobbyId;
             saveSession(session);
           }
         } else {
