@@ -69,6 +69,38 @@ import {
   TrustProjectorTragedyPlugin,
 } from '@coordination-games/plugin-trust-projector-tragedy';
 
+type RecentChatHistoryItem = {
+  index: number;
+  timestamp: number;
+  from: string;
+  scope: RelayScope['kind'];
+  turn: number | null;
+  body: string;
+};
+
+function relayBody(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const body = (data as Record<string, unknown>).body;
+  return typeof body === 'string' ? body : '';
+}
+
+function recentChatHistory(
+  relayMessages: readonly RelayEnvelope[],
+  limit = 20,
+): RecentChatHistoryItem[] {
+  return relayMessages
+    .filter((message) => message.type === CHAT_RELAY_TYPE)
+    .slice(-limit)
+    .map((message) => ({
+      index: message.index,
+      timestamp: message.timestamp,
+      from: message.sender,
+      scope: message.scope.kind,
+      turn: message.turn,
+      body: relayBody(message.data),
+    }));
+}
+
 // ---------------------------------------------------------------------------
 // WS tags
 // ---------------------------------------------------------------------------
@@ -1494,7 +1526,9 @@ export class GameRoomDO extends DurableObject<Env> {
     const viewer: SpectatorViewer = { kind: 'player', playerId };
     const relayClient = this.getRelayClient();
     const relayTip = await relayClient.getTip();
-    // Inject relay messages into player view so agents can see chat history
+    // Keep chat history bounded and explicit. Top-level relay deltas still feed
+    // the client pipeline (`newMessages`); this field is context, not a replay
+    // of every visible envelope since game start.
     const playerRelay = await relayClient.visibleTo(viewer);
     const visible = this.applyTrustProjector(
       this._plugin.getVisibleState(this._state, playerId),
@@ -1502,7 +1536,7 @@ export class GameRoomDO extends DurableObject<Env> {
       playerRelay,
     );
     if (typeof visible === 'object' && visible !== null && !Array.isArray(visible)) {
-      (visible as Record<string, unknown>).relayMessages = playerRelay;
+      (visible as Record<string, unknown>).recentChatHistory = recentChatHistory(playerRelay);
     }
     // Today every game has one game phase. When GamePhase[] lands this
     // becomes the current GamePhase's {id, name, tools}.
