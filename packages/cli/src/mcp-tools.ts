@@ -43,6 +43,7 @@
 import type { CoordinationGame, ToolDefinition, ToolPlugin } from '@coordination-games/engine';
 import { CTL_GAME_ID } from '@coordination-games/game-ctl';
 import { OATH_GAME_ID } from '@coordination-games/game-oathbreaker';
+import { TRAGEDY_GAME_ID } from '@coordination-games/game-tragedy-of-the-commons';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { GameClient } from './game-client.js';
@@ -376,14 +377,14 @@ export function registerGameTools(
         .string()
         .optional()
         .describe(
-          `Game type (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}"). Defaults to ${CTL_GAME_ID}.`,
+          `Game type (e.g. "${CTL_GAME_ID}", "${OATH_GAME_ID}", "${TRAGEDY_GAME_ID}"). Defaults to ${CTL_GAME_ID}.`,
         ),
       teamSize: z
         .number()
         .min(2)
         .max(6)
         .optional()
-        .describe('Players per team for CtL (2-6, default 2)'),
+        .describe('Players per team for CtL (2-6, default 2), or player count for Tragedy (4-6)'),
       playerCount: z
         .number()
         .min(4)
