@@ -80,7 +80,11 @@ export default function LobbiesPage() {
             gameType: g.gameType,
             turn: g.turn ?? 0,
             maxTurns: g.maxTurns ?? 30,
-            phase: g.finished ? ('finished' as const) : ('in_progress' as const),
+            phase: g.finished
+              ? ('finished' as const)
+              : g.phase === 'waiting'
+                ? ('setup' as const)
+                : ('in_progress' as const),
             winner: g.winner,
             teamsA: g.teams?.A?.length ?? 0,
             teamsB: g.teams?.B?.length ?? 0,

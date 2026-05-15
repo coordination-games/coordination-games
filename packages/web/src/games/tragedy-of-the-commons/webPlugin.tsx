@@ -1,14 +1,23 @@
 import { motion } from 'framer-motion';
 import type { SlotProps, WebToolPlugin } from '../../plugins/types';
 
-function phaseBadge(phase: 'in_progress' | 'finished' | 'lobby') {
-  const label = phase === 'lobby' ? 'Forming' : phase === 'in_progress' ? 'Live' : 'Finished';
+function phaseBadge(phase: 'setup' | 'in_progress' | 'finished' | 'lobby') {
+  const label =
+    phase === 'lobby'
+      ? 'Forming'
+      : phase === 'setup'
+        ? 'Setup'
+        : phase === 'in_progress'
+          ? 'Live'
+          : 'Finished';
   const color =
     phase === 'finished'
       ? 'var(--color-ink-faint)'
       : phase === 'lobby'
         ? 'var(--color-amber)'
-        : 'var(--color-forest)';
+        : phase === 'setup'
+          ? 'var(--color-amber)'
+          : 'var(--color-forest)';
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-heading font-medium tracking-wide"
@@ -72,7 +81,7 @@ function TragedyGameCard({
   const round = game.round ?? game.turn ?? 0;
   const maxRounds = game.maxRounds ?? game.maxTurns ?? 12;
   const progress = maxRounds > 0 ? Math.round((round / maxRounds) * 100) : 0;
-  const isLive = game.phase === 'in_progress';
+  const isSetup = game.phase === 'setup';
   return (
     <button
       type="button"
@@ -83,17 +92,15 @@ function TragedyGameCard({
         <span className="font-mono text-xs" style={{ color: 'var(--color-ink-faint)' }}>
           {game.id}
         </span>
-        {phaseBadge(isLive ? 'in_progress' : 'finished')}
+        {phaseBadge(game.phase)}
       </div>
       <div className="mb-3">
         <div
           className="mb-1.5 flex justify-between text-xs font-mono"
           style={{ color: 'var(--color-ink-faint)' }}
         >
-          <span>
-            Round {round}/{maxRounds}
-          </span>
-          <span>{progress}%</span>
+          <span>{isSetup ? 'Starting camps' : `Round ${round}/${maxRounds}`}</span>
+          <span>{isSetup ? 'Setup' : `${progress}%`}</span>
         </div>
         <div className="h-1.5 w-full rounded-full" style={{ background: 'rgba(42, 31, 14, 0.08)' }}>
           <motion.div
