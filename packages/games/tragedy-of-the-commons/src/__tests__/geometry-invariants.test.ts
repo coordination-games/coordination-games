@@ -42,7 +42,12 @@ function allHexesValid(hexes: TragedyHexRef[]): boolean {
   return hexes.every((hex) => BOARD_TILE_SET.has(hexKey(hex)));
 }
 
-function makeIntersection(id: string, qr0: TragedyHexRef, qr1: TragedyHexRef, qr2: TragedyHexRef): TragedyV2Intersection {
+function makeIntersection(
+  id: string,
+  qr0: TragedyHexRef,
+  qr1: TragedyHexRef,
+  qr2: TragedyHexRef,
+): TragedyV2Intersection {
   return { id, hexes: [qr0, qr1, qr2] };
 }
 
@@ -51,7 +56,7 @@ function makeIntersection(id: string, qr0: TragedyHexRef, qr1: TragedyHexRef, qr
 interface RoadEdge {
   id: string;
   from: string; // intersection id
-  to: string;   // intersection id
+  to: string; // intersection id
 }
 
 // ── Tests ──
@@ -60,21 +65,21 @@ describe('V2 geometry invariants', () => {
   const intersections: TragedyV2Intersection[] = [
     makeIntersection('nw', { q: -1, r: 0 }, { q: 0, r: -1 }, { q: 0, r: 0 }),
     makeIntersection('ne', { q: 0, r: -1 }, { q: 1, r: -1 }, { q: 0, r: 0 }),
-    makeIntersection('n',  { q: 1, r: -1 }, { q: 0, r: 0 }, { q: 1, r: 0 }),
-    makeIntersection('e',  { q: 0, r: 0 }, { q: 0, r: 1 }, { q: 1, r: 0 }),
-    makeIntersection('s',  { q: 0, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 }),
-    makeIntersection('w',  { q: -1, r: 0 }, { q: 0, r: 0 }, { q: -1, r: 1 }),
+    makeIntersection('n', { q: 1, r: -1 }, { q: 0, r: 0 }, { q: 1, r: 0 }),
+    makeIntersection('e', { q: 0, r: 0 }, { q: 0, r: 1 }, { q: 1, r: 0 }),
+    makeIntersection('s', { q: 0, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 }),
+    makeIntersection('w', { q: -1, r: 0 }, { q: 0, r: 0 }, { q: -1, r: 1 }),
   ];
 
   const intersectionById = new Map(intersections.map((ix) => [ix.id, ix]));
 
   const edges: RoadEdge[] = [
     { id: 'nw-ne', from: 'nw', to: 'ne' },
-    { id: 'ne-n',  from: 'ne', to: 'n' },
-    { id: 'n-e',   from: 'n',  to: 'e' },
-    { id: 'e-s',   from: 'e',  to: 's' },
-    { id: 's-w',   from: 's',  to: 'w' },
-    { id: 'w-nw',  from: 'w',  to: 'nw' },
+    { id: 'ne-n', from: 'ne', to: 'n' },
+    { id: 'n-e', from: 'n', to: 'e' },
+    { id: 'e-s', from: 'e', to: 's' },
+    { id: 's-w', from: 's', to: 'w' },
+    { id: 'w-nw', from: 'w', to: 'nw' },
   ];
 
   it('every intersection has exactly 3 hexes', () => {
