@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { OpenQueuePhase } from '../phases/open-queue.js';
 import type {
   AgentInfo,
   CoordinationGame,
@@ -94,21 +95,10 @@ describe('Type interfaces compile correctly', () => {
 
   it('GameLobbyConfig structures correctly', () => {
     const config: GameLobbyConfig = {
-      queueType: 'open',
-      phases: [
-        { phaseId: 'team-formation', config: { rounds: 3 } },
-        { phaseId: 'class-selection', config: {} },
-      ],
-      matchmaking: {
-        minPlayers: 4,
-        maxPlayers: 12,
-        teamSize: 2,
-        numTeams: 2,
-        queueTimeoutMs: 120000,
-      },
+      phases: [new OpenQueuePhase(4), new OpenQueuePhase(4)],
     };
     expect(config.phases).toHaveLength(2);
-    expect(config.matchmaking.teamSize).toBe(2);
+    expect(config.phases[0]?.id).toBe('open-queue');
   });
 
   it('Message type with extensible tags', () => {
@@ -129,21 +119,13 @@ describe('Type interfaces compile correctly', () => {
       gameType: 'test-game',
       version: '0.1.0',
       lobby: {
-        queueType: 'open',
-        phases: [],
-        matchmaking: {
-          minPlayers: 2,
-          maxPlayers: 4,
-          teamSize: 1,
-          numTeams: 2,
-          queueTimeoutMs: 60000,
-        },
+        phases: [new OpenQueuePhase(2)],
       },
       requiredPlugins: ['basic-chat'],
       recommendedPlugins: ['elo'],
     };
     expect(game.requiredPlugins).toContain('basic-chat');
-    expect(game.lobby?.queueType).toBe('open');
+    expect(game.lobby?.phases).toHaveLength(1);
   });
 
   it('PluginMode defines data flow', () => {

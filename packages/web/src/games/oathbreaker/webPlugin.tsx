@@ -68,9 +68,10 @@ function OathLobbyCard({
   onClick?: (() => void) | undefined;
 }) {
   const playerCount = lobby.playerCount ?? 0;
-  const teamSize = lobby.teamSize;
-  // OATH `teamSize` carries the player count target (no 2x multiplier).
-  const capacity = teamSize ?? undefined;
+  // Server-computed capacity is canonical; legacy fallback for rows minted
+  // before the capacity column landed reads the raw wire `teamSize` (which
+  // OATH overloads as player-count).
+  const capacity = lobby.capacity ?? lobby.teamSize ?? undefined;
   return (
     <button
       type="button"

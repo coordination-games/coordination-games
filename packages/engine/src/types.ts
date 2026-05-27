@@ -701,6 +701,19 @@ export interface LobbyPhase<TPhaseState = unknown> {
    * If omitted, team-scoped messages fall back to "all" scope.
    */
   getTeamForPlayer?(state: TPhaseState, playerId: string): string | null;
+
+  /**
+   * Maximum number of players this phase will hold before completing.
+   *
+   * The lobby's canonical "capacity" exposed on `/api/lobbies` is the
+   * first phase's `capacity(initialState)` — that's what the join surface
+   * (CLI / web / fill-bots) renders. Later phases inherit their player
+   * set from prior `PhaseResult.groups`, so they don't advertise capacity.
+   *
+   * Return `null` to mean "no fixed capacity" (e.g. ClassSelectionPhase,
+   * which works with whatever roster the previous phase produced).
+   */
+  capacity?(state: TPhaseState): number | null;
 }
 
 /** Result of handling an action within a phase. */
@@ -739,19 +752,8 @@ export interface PhaseResult {
 
 /** Lobby configuration declared by a game plugin. */
 export interface GameLobbyConfig {
-  queueType: 'open' | 'stake-tiered' | 'invite';
   /** Phase instances. Every game must have at least one. */
   phases: LobbyPhase[];
-  matchmaking: MatchmakingConfig;
-}
-
-/** Matchmaking parameters. */
-export interface MatchmakingConfig {
-  minPlayers: number;
-  maxPlayers: number;
-  teamSize: number;
-  numTeams: number;
-  queueTimeoutMs: number;
 }
 
 // ---------------------------------------------------------------------------

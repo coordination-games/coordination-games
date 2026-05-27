@@ -2,18 +2,32 @@ import type { AgentInfo, LobbyPhase, PhaseActionResult, PhaseResult } from '../t
 
 export interface OpenQueueState {
   playerIds: string[];
+  /** Lobby-time target; phase completes once playerIds.length >= target. */
+  target: number;
 }
 
+/**
+ * Single-phase FFA queue. Completes the moment `playerIds.length` reaches
+ * the lobby's `target` (sourced from `init()`'s `config.teamSize`, falling
+ * back to the constructor `defaultTarget`).
+ *
+ * The instance is a module-level singleton shared across every lobby for
+ * a given game type, so per-lobby sizing must live in state — not on
+ * `this`. The constructor only declares a default.
+ */
 export class OpenQueuePhase implements LobbyPhase<OpenQueueState> {
   readonly id = 'open-queue';
   readonly name = 'Open Queue';
   readonly acceptsJoins = true;
   readonly timeout = null;
 
-  constructor(private readonly minPlayers: number = 4) {}
+  constructor(private readonly defaultTarget: number = 4) {}
 
-  init(players: AgentInfo[]): OpenQueueState {
-    return { playerIds: players.map((p) => p.id) };
+  init(players: AgentInfo[], config: Record<string, unknown>): OpenQueueState {
+    const raw = config?.teamSize;
+    const fromConfig = typeof raw === 'number' && raw >= 2 ? Math.floor(raw) : null;
+    const target = fromConfig ?? this.defaultTarget;
+    return { playerIds: players.map((p) => p.id), target };
   }
 
   handleAction(
@@ -31,8 +45,9 @@ export class OpenQueuePhase implements LobbyPhase<OpenQueueState> {
   ): PhaseActionResult<OpenQueueState> {
     const updated: OpenQueueState = {
       playerIds: [...state.playerIds, player.id],
+      target: state.target,
     };
-    if (updated.playerIds.length >= this.minPlayers) {
+    if (updated.playerIds.length >= state.target) {
       return {
         state: updated,
         completed: { groups: [allPlayers], metadata: {} },
@@ -42,13 +57,17 @@ export class OpenQueuePhase implements LobbyPhase<OpenQueueState> {
   }
 
   handleTimeout(state: OpenQueueState, players: AgentInfo[]): PhaseResult | null {
-    if (state.playerIds.length >= this.minPlayers) {
+    if (state.playerIds.length >= state.target) {
       return { groups: [players], metadata: {} };
     }
     return null;
   }
 
-  getView(state: OpenQueueState): { playerCount: number; minPlayers: number } {
-    return { playerCount: state.playerIds.length, minPlayers: this.minPlayers };
+  getView(state: OpenQueueState): { playerCount: number; target: number } {
+    return { playerCount: state.playerIds.length, target: state.target };
+  }
+
+  capacity(state: OpenQueueState): number {
+    return state.target;
   }
 }

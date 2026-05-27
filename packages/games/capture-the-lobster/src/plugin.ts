@@ -779,18 +779,10 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
   entryCost: credits(10),
 
   lobby: {
-    queueType: 'open',
     phases: [
       new TeamFormationPhase({ teamSize: 2, numTeams: 2 }),
       new ClassSelectionPhase({ validClasses: ['rogue', 'knight', 'mage'] }),
     ],
-    matchmaking: {
-      minPlayers: 4,
-      maxPlayers: 12,
-      teamSize: 2,
-      numTeams: 2,
-      queueTimeoutMs: 120000,
-    },
   } as GameLobbyConfig,
 
   gameTools: GAME_TOOLS,
@@ -861,11 +853,23 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
         teamIdMap[id] = i === 0 ? 'A' : 'B';
       });
 
-      ctlPlayers = enrichedPlayers.map((p) => ({
-        id: p.id,
-        team: (p.team ? teamIdMap[p.team] : 'A') as 'A' | 'B',
-        unitClass: (p.role as UnitClass) ?? classes[0],
-      }));
+      // If any player slipped through without a team while others have one,
+      // that's a lobby-state bug (e.g. the ghost-player path that pushed an
+      // agent into _agents without registering them with the team-formation
+      // phase). Refuse to silently default to team A — surface the bug.
+      ctlPlayers = enrichedPlayers.map((p) => {
+        if (!p.team) {
+          throw new Error(
+            `Player ${p.id} (${p.handle}) has no team assignment; ` +
+              'lobby produced a partial team map. Refusing to default to team A.',
+          );
+        }
+        return {
+          id: p.id,
+          team: teamIdMap[p.team] as 'A' | 'B',
+          unitClass: (p.role as UnitClass) ?? classes[0],
+        };
+      });
     } else {
       // Auto-assign: alternate A/B, cycle through classes
       // @ts-expect-error TS2322: Type '{ id: string; team: "A" | "B"; unitClass: UnitClass | undefined; }[]' is n — TODO(2.3-followup)

@@ -204,15 +204,7 @@ export const TragedyOfTheCommonsPlugin: CoordinationGame<
   guide: TRAGEDY_GUIDE,
 
   lobby: {
-    queueType: 'open' as const,
     phases: [new OpenQueuePhase(4)],
-    matchmaking: {
-      minPlayers: 4,
-      maxPlayers: 6,
-      teamSize: 1,
-      numTeams: 0,
-      queueTimeoutMs: 300000,
-    },
   },
 
   gameTools: GAME_TOOLS,
@@ -547,15 +539,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   guide: TRAGEDY_GUIDE_V2,
 
   lobby: {
-    queueType: 'open' as const,
     phases: [new OpenQueuePhase(4)],
-    matchmaking: {
-      minPlayers: 4,
-      maxPlayers: 6,
-      teamSize: 1,
-      numTeams: 0,
-      queueTimeoutMs: 300000,
-    },
   },
 
   gameTools: GAME_TOOLS_V2,

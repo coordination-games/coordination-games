@@ -568,7 +568,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
 async function handleListLobbies(env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
-    'SELECT l.id, l.game_type, l.team_size, l.phase, l.created_at, l.game_id, ' +
+    'SELECT l.id, l.game_type, l.team_size, l.capacity, l.phase, l.created_at, l.game_id, ' +
       'COUNT(ps.player_id) as player_count ' +
       'FROM lobbies l ' +
       'LEFT JOIN player_sessions ps ON ps.lobby_id = l.id ' +
@@ -581,6 +581,7 @@ async function handleListLobbies(env: Env): Promise<Response> {
     id: string;
     game_type: string;
     team_size: number;
+    capacity: number;
     phase: string;
     created_at: string;
     game_id: string | null;
@@ -592,6 +593,7 @@ async function handleListLobbies(env: Env): Promise<Response> {
       lobbyId: r.id,
       gameType: r.game_type,
       teamSize: r.team_size,
+      capacity: r.capacity,
       phase: r.phase,
       createdAt: r.created_at,
       gameId: r.game_id,
@@ -618,17 +620,36 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   }
   const gameType = body?.gameType ?? defaultGameType;
   const noTimeout = !!body?.noTimeout;
-  // Broad bounds — LobbyDO enforces per-game limits via plugin.lobby.matchmaking
+  // Generic bounds [1, 20]. The CLI and MCP wrappers apply tighter per-game
+  // clamps before this point; the canonical capacity is what the first
+  // lobby phase computes from `teamSize` after the lobby is created.
   const teamSize = Math.min(20, Math.max(1, Math.floor(body?.teamSize ?? 2)));
+
+  // Compute canonical capacity from the game's first lobby phase. This is
+  // the value clients (CLI list, web cards, fill-bots) render — they no
+  // longer reinvent per-game capacity math. Phases without a `capacity()`
+  // method fall back to `teamSize` so the row still has a sane integer.
+  const plugin = getGame(gameType);
+  const firstPhase = plugin?.lobby?.phases?.[0];
+  let capacity = teamSize;
+  if (firstPhase?.capacity) {
+    try {
+      const probeState = firstPhase.init([], { teamSize });
+      const reported = firstPhase.capacity(probeState);
+      if (typeof reported === 'number' && reported > 0) capacity = reported;
+    } catch (err) {
+      console.warn(`[Worker] Capacity probe failed for game ${gameType}: ${errorMessage(err)}`);
+    }
+  }
 
   const lobbyId = crypto.randomUUID();
 
   // Write the discovery row to D1 first
   try {
     await env.DB.prepare(
-      'INSERT INTO lobbies (id, game_type, team_size, phase, created_at) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO lobbies (id, game_type, team_size, capacity, phase, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     )
-      .bind(lobbyId, gameType, teamSize, 'lobby', new Date().toISOString())
+      .bind(lobbyId, gameType, teamSize, capacity, 'lobby', new Date().toISOString())
       .run();
   } catch (_err) {
     return Response.json({ error: 'Failed to create lobby record' }, { status: 500 });
@@ -657,8 +678,10 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  console.log(`[Worker] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize})`);
-  return Response.json({ lobbyId, gameType, teamSize }, { status: 201 });
+  console.log(
+    `[Worker] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize}, capacity=${capacity})`,
+  );
+  return Response.json({ lobbyId, gameType, teamSize, capacity }, { status: 201 });
 }
 
 // ---------------------------------------------------------------------------
@@ -788,9 +811,16 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
       'INSERT OR REPLACE INTO games (game_id, game_type, finished, created_at) VALUES (?, ?, 0, ?)',
     ).bind(gameId, gameType, now),
     env.DB.prepare(
-      `INSERT OR REPLACE INTO lobbies (id, game_type, team_size, phase, created_at, game_id)
-       VALUES (?, ?, ?, 'in_progress', ?, ?)`,
-    ).bind(syntheticLobbyId, gameType, (playerIds as string[]).length, now, gameId),
+      `INSERT OR REPLACE INTO lobbies (id, game_type, team_size, capacity, phase, created_at, game_id)
+       VALUES (?, ?, ?, ?, 'in_progress', ?, ?)`,
+    ).bind(
+      syntheticLobbyId,
+      gameType,
+      (playerIds as string[]).length,
+      (playerIds as string[]).length,
+      now,
+      gameId,
+    ),
     ...(playerIds as string[]).map((pid) =>
       env.DB.prepare(
         'INSERT OR REPLACE INTO player_sessions (player_id, lobby_id, joined_at) VALUES (?, ?, ?)',

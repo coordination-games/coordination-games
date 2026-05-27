@@ -73,7 +73,9 @@ function CtlLobbyCard({
 }) {
   const playerCount = lobby.playerCount ?? 0;
   const teamSize = lobby.teamSize;
-  const capacity = teamSize != null ? teamSize * 2 : undefined;
+  // Server-computed capacity is canonical; the legacy `teamSize * 2` derivation
+  // is only the fallback for rows minted before the capacity column landed.
+  const capacity = lobby.capacity ?? (teamSize != null ? teamSize * 2 : undefined);
   return (
     <button
       type="button"

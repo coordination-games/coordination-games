@@ -116,7 +116,10 @@ export interface LobbySummary {
   gameType: string;
   phase?: string;
   playerCount?: number;
+  /** Raw create-body input. Game-overloaded: team-size for CtL, player-count for FFA. */
   teamSize?: number;
+  /** Canonical seats — derived server-side from the first lobby phase. */
+  capacity?: number;
   gameId?: string | null;
   [k: string]: unknown;
 }
@@ -126,6 +129,8 @@ export interface CreateLobbyResponse extends ErrorEnvelope {
   lobbyId?: string;
   gameId?: string;
   playerCount?: number;
+  teamSize?: number;
+  capacity?: number;
   [k: string]: unknown;
 }
 

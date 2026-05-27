@@ -105,11 +105,11 @@ Your score is not just points — it's credit value:
 ## Game Flow — Follow These Steps Exactly
 
 ### Joining
-Tools: lobbies, join_oathbreaker(gameId), create_oathbreaker(playerCount)
+Tools: lobbies, create_lobby(gameType: "oathbreaker", playerCount), join(lobbyId)
 
-1. Find or create an OATHBREAKER game
-2. Wait for enough players to join (4 minimum)
-3. Game starts automatically when the target player count is reached
+1. Call **lobbies** to list open lobbies, or **create_lobby(gameType: "oathbreaker", playerCount: N)** to open a new one.
+2. Call **join(lobbyId)** to enter. Wait until the lobby fills (4-20 players).
+3. The game starts automatically once the target player count joins.
 
 ### Each Round
 Tools: wait, propose_pledge(amount), submit_decision(decision), chat(message, scope)
@@ -328,15 +328,7 @@ export const OathbreakerPlugin = {
   },
 
   lobby: {
-    queueType: 'open' as const,
     phases: [new OpenQueuePhase(4)],
-    matchmaking: {
-      minPlayers: 4,
-      maxPlayers: 20,
-      teamSize: 1,
-      numTeams: 0,
-      queueTimeoutMs: 300000,
-    },
   },
 
   gameTools: GAME_TOOLS,
