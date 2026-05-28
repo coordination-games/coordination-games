@@ -13,6 +13,9 @@
  *      rejected with HTTP 409 and `_agents` stays untouched.
  *   2. Joining a lobby whose current phase has `acceptsJoins: true` succeeds
  *      and the agent lands on the roster.
+ *   3. An already-joined player retrying their join during a non-joinable
+ *      phase is let through idempotently (200, no duplicate) rather than
+ *      hitting the 409 gate — the gate is only for genuinely-new joiners.
  */
 
 import { CaptureTheLobsterPlugin, CTL_GAME_ID } from '@coordination-games/game-ctl';
@@ -106,5 +109,25 @@ describe('LobbyDO — ghost-player gate', () => {
     expect(resp.status).toBe(200);
     expect(lobby._agents).toHaveLength(1);
     expect(lobby._agents[0]).toMatchObject({ id: 'real-player', handle: 'alice' });
+  });
+
+  it('lets an already-joined player retry during a non-joinable phase (idempotent, not 409)', async () => {
+    // Player joined while team-formation was open; the lobby has since
+    // advanced to class-selection (acceptsJoins=false). A late retry of their
+    // join must still succeed — they are already on the roster, so the
+    // acceptsJoins gate (which is for new joiners) must not turn their retry
+    // into a confusing 409.
+    const lobby = buildLobbyAtPhase(1);
+    lobby._agents = [{ id: 'already-in', handle: 'bob', elo: 1000, joinedAt: 0 }];
+    const resp: Response = await lobby.fetch(
+      new Request('https://do/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Player-Id': 'already-in' },
+        body: JSON.stringify({ handle: 'bob' }),
+      }),
+    );
+    expect(resp.status).toBe(200);
+    // No duplicate roster entry.
+    expect(lobby._agents).toHaveLength(1);
   });
 });

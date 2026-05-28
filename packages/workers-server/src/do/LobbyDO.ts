@@ -346,14 +346,26 @@ export class LobbyDO extends DurableObject<Env> {
       );
     }
 
+    const playerId = this.headerPlayerId(request);
+
+    // Idempotent fast-path, BEFORE the acceptsJoins gate below: a player who
+    // is already on the roster is let through regardless of the current phase.
+    // A late /join retry (network retry, double-submit) from an existing
+    // member must return the same success it got the first time — not a "not
+    // accepting joins" 409 just because the lobby has since advanced to a
+    // non-joinable phase (e.g. CtL's ClassSelectionPhase). New joiners fall
+    // through to the gate.
+    if (playerId && this._agents.find((a) => a.id === playerId)) {
+      return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
+    }
+
     // The `_meta.phase === 'lobby'` outer guard above is too coarse — a CtL
     // lobby in ClassSelectionPhase still has `_meta.phase === 'lobby'`, but
-    // the active phase has `acceptsJoins: false`. Without this guard, the
-    // 5th joiner during class-selection would be pushed into `_agents`
-    // without ever reaching the phase's player list — the ghost-player bug.
-    // The check is _before_ the agent push (and before the credit check) so
-    // the only state any rejected join touches is the read of the current
-    // phase.
+    // the active phase has `acceptsJoins: false`. Without this gate, a new
+    // joiner during class-selection would be pushed into `_agents` without
+    // ever reaching the phase's player list — the ghost-player bug. The gate
+    // is before the agent push (and before the credit check) so the only
+    // state a rejected new join touches is the read of the current phase.
     const phase = this.getCurrentPhase();
     if (!phase) {
       await this.failLobby('No current phase');
@@ -370,17 +382,11 @@ export class LobbyDO extends DurableObject<Env> {
     if (body instanceof Response) return body;
 
     const { handle, elo } = body;
-    const playerId = this.headerPlayerId(request);
     if (!playerId || !handle) {
       return Response.json(
         { error: 'X-Player-Id header and body.handle are required' },
         { status: 400 },
       );
-    }
-
-    // Idempotent — don't add twice
-    if (this._agents.find((a) => a.id === playerId)) {
-      return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
     }
 
     // Pre-game credit balance check. MVP: read-only "can this player afford
