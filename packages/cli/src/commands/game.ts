@@ -249,8 +249,9 @@ export function registerGameCommands(program: Command) {
         process.stdout.write(`\n  Active Lobbies:\n`);
         for (const lobby of lobbies) {
           const phase = lobby.phase ?? 'lobby';
+          const capacity = lobby.capacity ?? lobby.teamSize ?? '?';
           process.stdout.write(
-            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${lobby.teamSize ?? '?'} players (${phase})\n`,
+            `  [${lobby.lobbyId}] ${lobby.gameType} — ${lobby.playerCount ?? 0}/${capacity} players (${phase})\n`,
           );
           if (lobby.gameId) {
             process.stdout.write(`    -> Game started: ${lobby.gameId}\n`);
@@ -290,19 +291,21 @@ export function registerGameCommands(program: Command) {
           process.exit(1);
         }
 
+        const capacity = result.capacity;
+        const wireTeamSize = result.teamSize;
         if (gameType === OATH_GAME_ID) {
-          process.stdout.write(`\n  OATHBREAKER game created: ${result.gameId}\n`);
-          process.stdout.write(`  Players: ${result.playerCount}\n\n`);
-          if (result.gameId) {
+          process.stdout.write(`\n  OATHBREAKER lobby created: ${result.lobbyId}\n`);
+          process.stdout.write(`  Players: ${capacity ?? wireTeamSize ?? size}\n\n`);
+          const lobbyId = result.lobbyId;
+          if (lobbyId) {
             const session = loadSession();
-            session.currentGameId = result.gameId;
+            session.currentLobbyId = lobbyId;
             saveSession(session);
           }
         } else if (gameType === TRAGEDY_GAME_ID) {
           const lobbyId = result.lobbyId;
-          const playerCount = Math.min(6, Math.max(4, size));
           process.stdout.write(`\n  Tragedy of the Commons lobby created: ${lobbyId}\n`);
-          process.stdout.write(`  Players: ${playerCount}\n\n`);
+          process.stdout.write(`  Players: ${capacity ?? wireTeamSize ?? size}\n\n`);
           if (lobbyId) {
             const session = loadSession();
             session.currentLobbyId = lobbyId;
@@ -310,9 +313,11 @@ export function registerGameCommands(program: Command) {
           }
         } else {
           const lobbyId = result.lobbyId;
-          const teamSize = Math.min(6, Math.max(2, size));
+          const teamSize = wireTeamSize ?? size;
           process.stdout.write(`\n  Lobby created: ${lobbyId}\n`);
-          process.stdout.write(`  Team size: ${teamSize}v${teamSize}\n\n`);
+          process.stdout.write(`  Team size: ${teamSize}v${teamSize}`);
+          if (capacity != null) process.stdout.write(` (${capacity} seats)`);
+          process.stdout.write(`\n\n`);
           if (lobbyId) {
             const session = loadSession();
             session.currentLobbyId = lobbyId;

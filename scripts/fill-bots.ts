@@ -28,13 +28,6 @@
 
 import { api, authenticate, loadPool, POOL_PATH, runClaudeAgent } from './lib/bot-agent.js';
 
-// Mirrors the frontend's math in LobbiesPage.tsx. Per-game branching kept
-// here (the only caller) so scripts/lib/bot-agent.ts stays game-agnostic.
-// Future cleanup: add `capacity` to /api/lobbies so this lives server-side.
-function deriveCapacity(gameType: string, teamSize: number): number {
-  return gameType === 'oathbreaker' ? teamSize : teamSize * 2;
-}
-
 const SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 const MODEL = process.env.MODEL ?? 'haiku';
 
@@ -65,7 +58,16 @@ async function main() {
     process.exit(1);
   }
 
-  const capacity = deriveCapacity(lobby.gameType, lobby.teamSize);
+  // Server publishes a canonical `capacity` on every lobby row (see migration
+  // 0013 + the audit in `docs/plans/lobby-architecture-audit.md`). Fall back
+  // to `teamSize` as a last-resort for stale wrangler dev DBs.
+  const capacity: number = lobby.capacity ?? lobby.teamSize ?? 0;
+  if (capacity <= 0) {
+    console.error(
+      `  Lobby ${lobbyId} has no capacity field. Run migrations and recreate the lobby.`,
+    );
+    process.exit(1);
+  }
   const occupied = lobby.playerCount ?? 0;
   const remaining = Math.max(0, capacity - occupied);
   console.log(

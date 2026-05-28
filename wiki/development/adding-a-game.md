@@ -25,15 +25,22 @@ From just implementing the interface: game registration, lobby management, fill-
 
 ## Lobby Config
 
-Games with `phases: []` get simple collect-and-start. Games with phases get a `LobbyRunner` that executes them in sequence. The server picks automatically based on your config.
+Every game declares at least one `LobbyPhase` instance. The server iterates them in sequence: each phase's `init/handleAction/handleJoin/handleTimeout/getView` runs against opaque `state`, with the result of one phase feeding `accumulatedMetadata` into the next.
 
 ```typescript
 // Simple FFA (OATHBREAKER style)
-lobby: { queueType: 'open', phases: [], matchmaking: { minPlayers: 4, maxPlayers: 20, teamSize: 1, numTeams: 0 } }
+lobby: { phases: [new OpenQueuePhase(4)] }
 
-// Teams + pre-game (CtL style)  
-lobby: { queueType: 'open', phases: [{ phaseId: 'team-formation' }, { phaseId: 'class-selection' }], matchmaking: { minPlayers: 4, maxPlayers: 12, teamSize: 2, numTeams: 2 } }
+// Teams + pre-game (CtL style)
+lobby: {
+  phases: [
+    new TeamFormationPhase({ teamSize: 2, numTeams: 2 }),
+    new ClassSelectionPhase({ validClasses: ['rogue', 'knight', 'mage'] }),
+  ],
+}
 ```
+
+The Worker calls `phases[0].capacity(probeState)` at lobby-create time and stores the result on the discovery row (`lobbies.capacity`), so the CLI list, web cards, and `fill-bots.ts` all render the same canonical number. Wire `teamSize` from the create body flows into `phases[0].init([], { teamSize })`, giving phases the final say over their own sizing.
 
 ## The Tutorial
 

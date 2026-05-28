@@ -47,7 +47,10 @@ export interface LobbySummaryView {
   lobbyId: string;
   gameType?: string | undefined;
   phase: 'lobby' | 'in_progress' | 'finished';
+  /** Raw create-body input. Game-overloaded — render `capacity` instead. */
   teamSize?: number | undefined;
+  /** Canonical seats — derived server-side from the first lobby phase. */
+  capacity?: number | undefined;
   playerCount?: number | undefined;
   createdAt?: string | undefined;
   gameId?: string | null | undefined;

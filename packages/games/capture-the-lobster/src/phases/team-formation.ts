@@ -4,6 +4,12 @@
  * Players propose teams, accept invites, and leave teams.
  * On timeout, unassigned players are auto-merged into teams greedily.
  * Phase completes when `numTeams` teams of `teamSize` members exist.
+ *
+ * Sizing (`teamSize`, `numTeams`) lives in `state`, NOT on the instance.
+ * The plugin's `lobby.phases` array is a module-level singleton shared
+ * across every lobby for a given game type, so per-lobby config has to be
+ * resolved at `init()` time and stored in state. The constructor only
+ * declares fallback defaults.
  */
 
 import {
@@ -29,6 +35,9 @@ export interface TeamFormationState {
   teams: TeamFormationTeam[];
   unassigned: string[]; // player IDs not on any team
   teamCounter: number; // monotonic counter for team IDs
+  /** Frozen at init from lobby config (constructor defaults otherwise). */
+  teamSize: number;
+  numTeams: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,23 +107,35 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   readonly acceptsJoins = true;
   readonly timeout = 600; // 10 minutes
 
-  private teamSize: number;
-  private numTeams: number;
+  private readonly defaultTeamSize: number;
+  private readonly defaultNumTeams: number;
 
   constructor(config: TeamFormationConfig) {
-    this.teamSize = config.teamSize;
-    this.numTeams = config.numTeams;
+    this.defaultTeamSize = config.teamSize;
+    this.defaultNumTeams = config.numTeams;
   }
 
   // -------------------------------------------------------------------------
   // init
   // -------------------------------------------------------------------------
 
-  init(players: AgentInfo[], _config: Record<string, unknown>): TeamFormationState {
+  init(players: AgentInfo[], config: Record<string, unknown>): TeamFormationState {
+    const rawTeamSize = config?.teamSize;
+    const rawNumTeams = config?.numTeams;
+    const teamSize =
+      typeof rawTeamSize === 'number' && rawTeamSize >= 1
+        ? Math.floor(rawTeamSize)
+        : this.defaultTeamSize;
+    const numTeams =
+      typeof rawNumTeams === 'number' && rawNumTeams >= 1
+        ? Math.floor(rawNumTeams)
+        : this.defaultNumTeams;
     return {
       teams: [],
       unassigned: players.map((p) => p.id),
       teamCounter: 0,
+      teamSize,
+      numTeams,
     };
   }
 
@@ -184,7 +205,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
     // Fill incomplete teams with free agents
     for (const team of teams) {
-      while (team.members.length < this.teamSize && freeIdx < freeAgents.length) {
+      while (team.members.length < state.teamSize && freeIdx < freeAgents.length) {
         // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
         team.members.push(freeAgents[freeIdx++]);
       }
@@ -192,19 +213,19 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
 
     // Merge incomplete teams together (largest first)
     const incomplete = teams
-      .filter((t) => t.members.length < this.teamSize)
+      .filter((t) => t.members.length < state.teamSize)
       .sort((a, b) => b.members.length - a.members.length);
 
     for (let i = 0; i < incomplete.length; i++) {
       const target = incomplete[i];
       // @ts-expect-error TS18048: 'target' is possibly 'undefined'. — TODO(2.3-followup)
-      if (target.members.length >= this.teamSize) continue;
+      if (target.members.length >= state.teamSize) continue;
       for (let j = i + 1; j < incomplete.length; j++) {
         const source = incomplete[j];
         // @ts-expect-error TS18048: 'source' is possibly 'undefined'. — TODO(2.3-followup)
         if (source.members.length === 0) continue;
         // @ts-expect-error TS18048: 'target' is possibly 'undefined'. — TODO(2.3-followup)
-        if (target.members.length + source.members.length <= this.teamSize) {
+        if (target.members.length + source.members.length <= state.teamSize) {
           // @ts-expect-error TS18048: 'target' is possibly 'undefined'. — TODO(2.3-followup)
           target.members.push(...source.members);
           // @ts-expect-error TS18048: 'source' is possibly 'undefined'. — TODO(2.3-followup)
@@ -214,22 +235,22 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     }
 
     // Form new teams from remaining free agents
-    while (freeIdx + this.teamSize <= freeAgents.length) {
+    while (freeIdx + state.teamSize <= freeAgents.length) {
       const teamId = `team_${++teamCounter}`;
-      const members = freeAgents.slice(freeIdx, freeIdx + this.teamSize);
-      freeIdx += this.teamSize;
+      const members = freeAgents.slice(freeIdx, freeIdx + state.teamSize);
+      freeIdx += state.teamSize;
       teams.push({ id: teamId, members, invites: [] });
     }
 
     // Collect full teams (filter out empty shells from merging)
-    const fullTeams = teams.filter((t) => t.members.length === this.teamSize);
+    const fullTeams = teams.filter((t) => t.members.length === state.teamSize);
 
-    if (fullTeams.length < this.numTeams) {
+    if (fullTeams.length < state.numTeams) {
       return null; // Can't form enough teams — lobby fails
     }
 
     // Take exactly numTeams teams
-    const selectedTeams = fullTeams.slice(0, this.numTeams);
+    const selectedTeams = fullTeams.slice(0, state.numTeams);
     const selectedPlayerIds = new Set<string>();
     for (const t of selectedTeams) {
       for (const m of t.members) selectedPlayerIds.add(m);
@@ -268,8 +289,8 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
         invites: [...t.invites],
       })),
       unassigned: [...state.unassigned],
-      teamSize: this.teamSize,
-      numTeams: this.numTeams,
+      teamSize: state.teamSize,
+      numTeams: state.numTeams,
     };
   }
 
@@ -280,6 +301,14 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   getTeamForPlayer(state: TeamFormationState, playerId: string): string | null {
     const team = state.teams.find((t) => t.members.includes(playerId));
     return team?.id ?? null;
+  }
+
+  // -------------------------------------------------------------------------
+  // capacity — published on /api/lobbies
+  // -------------------------------------------------------------------------
+
+  capacity(state: TeamFormationState): number {
+    return state.teamSize * state.numTeams;
   }
 
   // -------------------------------------------------------------------------
@@ -334,7 +363,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     if (toTeam && !fromTeam) {
       // Target is on a team, proposer is solo — invite proposer to target's team
       const team = mustFind(newState.teams, (t) => t.id === toTeam.id, 'toTeam');
-      if (team.members.length >= this.teamSize) {
+      if (team.members.length >= state.teamSize) {
         return { state, error: { message: 'Team is full', status: 409 } };
       }
       if (!team.invites.includes(playerId)) team.invites.push(playerId);
@@ -344,7 +373,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     if (fromTeam && !toTeam) {
       // Proposer is on a team, target is solo — invite target
       const team = mustFind(newState.teams, (t) => t.id === fromTeam.id, 'fromTeam');
-      if (team.members.length >= this.teamSize) {
+      if (team.members.length >= state.teamSize) {
         return { state, error: { message: 'Team is full', status: 409 } };
       }
       if (!team.invites.includes(targetId)) team.invites.push(targetId);
@@ -384,7 +413,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
       return { state, error: { message: 'Not invited to this team', status: 403 } };
     }
 
-    if (team.members.length >= this.teamSize) {
+    if (team.members.length >= state.teamSize) {
       return { state, error: { message: 'Team is full', status: 409 } };
     }
 
@@ -443,10 +472,10 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
     state: TeamFormationState,
     players: AgentInfo[],
   ): PhaseActionResult<TeamFormationState> {
-    const fullTeams = state.teams.filter((t) => t.members.length >= this.teamSize);
+    const fullTeams = state.teams.filter((t) => t.members.length >= state.teamSize);
 
-    if (fullTeams.length >= this.numTeams) {
-      const selectedTeams = fullTeams.slice(0, this.numTeams);
+    if (fullTeams.length >= state.numTeams) {
+      const selectedTeams = fullTeams.slice(0, state.numTeams);
       const selectedPlayerIds = new Set<string>();
       for (const t of selectedTeams) {
         for (const m of t.members) selectedPlayerIds.add(m);

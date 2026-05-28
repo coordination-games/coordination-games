@@ -43,7 +43,10 @@ function TragedyLobbyCard({
   onClick?: (() => void) | undefined;
 }) {
   const playerCount = lobby.playerCount ?? 0;
-  const capacity = Math.min(6, Math.max(4, lobby.teamSize ?? 4));
+  // Server-computed capacity is canonical; legacy fallback for rows minted
+  // before the capacity column landed clamps the wire `teamSize` to the
+  // TotC range.
+  const capacity = lobby.capacity ?? Math.min(6, Math.max(4, lobby.teamSize ?? 4));
   return (
     <button
       type="button"

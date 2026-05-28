@@ -81,7 +81,6 @@ function fakeGame(
     gameTools: opts.gameTools,
     lobby: opts.phaseTools
       ? {
-          queueType: 'open',
           phases: Object.entries(opts.phaseTools).map(([id, tools]) => ({
             id,
             name: id,
@@ -93,13 +92,6 @@ function fakeGame(
             handleTimeout: () => null,
             getView: () => ({}),
           })),
-          matchmaking: {
-            minPlayers: 2,
-            maxPlayers: 4,
-            teamSize: 1,
-            numTeams: 2,
-            queueTimeoutMs: 60000,
-          },
         }
       : undefined,
     createInitialState: () => ({}),

@@ -69,19 +69,7 @@ function fakeGame(options: {
     version: '0.0.0-test',
     entryCost: 0n,
     gameTools: options.gameTools,
-    lobby: options.phases
-      ? {
-          queueType: 'open',
-          phases: options.phases,
-          matchmaking: {
-            minPlayers: 2,
-            maxPlayers: 4,
-            teamSize: 1,
-            numTeams: 2,
-            queueTimeoutMs: 60000,
-          },
-        }
-      : undefined,
+    lobby: options.phases ? { phases: options.phases } : undefined,
     // Stubs — not exercised by registerGame's collision check.
     createInitialState: () => ({}),
     validateAction: () => false,

@@ -176,10 +176,16 @@ export function getTurnLimitForRadius(radius: number): number {
   return 20 + radius * 2;
 }
 
+// Engine-level defaults for `createGameState` callers that don't supply a
+// full config. The plugin's `createConfig` always populates teamSize from
+// lobby metadata (or counted teams as a fallback), so these defaults exist
+// only for direct `createGameState` consumers (tests, replays). Aligned
+// with the plugin's smallest supported lobby (2v2) so a config-less call
+// produces something sane instead of the prior 4v4 ghost setting.
 const DEFAULT_CONFIG: Required<GameConfig> = {
   turnLimit: 30,
   turnTimerSeconds: 30,
-  teamSize: 4,
+  teamSize: 2,
 };
 
 // ---------------------------------------------------------------------------

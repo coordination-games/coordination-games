@@ -120,7 +120,10 @@ describe('Game (pure functions)', () => {
       const state = createGameState(map, makePlayers(1));
       expect(state.config.turnLimit).toBe(30);
       expect(state.config.turnTimerSeconds).toBe(30);
-      expect(state.config.teamSize).toBe(4);
+      // Aligns with the plugin's smallest supported lobby (2v2). The previous
+      // engine default of 4 disagreed with the plugin and never matched a
+      // real `createConfig` path; see `docs/plans/sizing-bugs.md` B10.
+      expect(state.config.teamSize).toBe(2);
     });
 
     it('starts in pre_game phase at turn 0', () => {

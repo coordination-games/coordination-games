@@ -238,10 +238,10 @@ export class LobbyDO extends DurableObject<Env> {
 
     const body = (await this.parseJson(request)) as
       | Response
-      | { lobbyId?: string; gameType?: string; noTimeout?: boolean };
+      | { lobbyId?: string; gameType?: string; noTimeout?: boolean; teamSize?: number };
     if (body instanceof Response) return body;
 
-    const { lobbyId, gameType, noTimeout } = body;
+    const { lobbyId, gameType, noTimeout, teamSize } = body;
     if (!lobbyId || !gameType) {
       return Response.json({ error: 'lobbyId and gameType are required' }, { status: 400 });
     }
@@ -261,12 +261,27 @@ export class LobbyDO extends DurableObject<Env> {
 
     const phases = lobbyConfig.phases;
     const firstPhase = phases[0];
+    if (!firstPhase) {
+      return Response.json(
+        { error: `Game "${gameType}" has no lobby phases configured` },
+        { status: 400 },
+      );
+    }
+
+    // Seed the metadata bag with the wire-time `teamSize`. Phases read it
+    // out of their `init(_, config)` and freeze the value into their own
+    // state — phase instances are module-level singletons, so per-lobby
+    // sizing has to flow through state, never through `this`. See
+    // `docs/plans/sizing-bugs.md` B1.
+    const accumulatedMetadata: Record<string, unknown> = {};
+    if (typeof teamSize === 'number' && teamSize >= 1) {
+      accumulatedMetadata.teamSize = Math.floor(teamSize);
+    }
 
     // Initialize first phase with empty player list
     let phaseState: unknown;
     try {
-      // @ts-expect-error TS18048: 'firstPhase' is possibly 'undefined'. — TODO(2.3-followup)
-      phaseState = firstPhase.init([], {});
+      phaseState = firstPhase.init([], accumulatedMetadata);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return Response.json({ error: `Phase init failed: ${msg}` }, { status: 500 });
@@ -275,17 +290,15 @@ export class LobbyDO extends DurableObject<Env> {
     const now = Date.now();
     const deadlineMs = noTimeout
       ? null
-      : // @ts-expect-error TS18048: 'firstPhase' is possibly 'undefined'. — TODO(2.3-followup)
-        firstPhase.timeout != null
-        ? // @ts-expect-error TS18048: 'firstPhase' is possibly 'undefined'. — TODO(2.3-followup)
-          now + firstPhase.timeout * 1000
+      : firstPhase.timeout != null
+        ? now + firstPhase.timeout * 1000
         : null;
 
     this._meta = {
       lobbyId,
       gameType,
       currentPhaseIndex: 0,
-      accumulatedMetadata: {},
+      accumulatedMetadata,
       phase: 'lobby',
       deadlineMs,
       gameId: null,
@@ -301,7 +314,7 @@ export class LobbyDO extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(deadlineMs);
     }
 
-    console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId}`);
+    console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize ?? '?'})`);
     return Response.json({ ok: true, lobbyId, gameType });
   }
 
@@ -333,21 +346,47 @@ export class LobbyDO extends DurableObject<Env> {
       );
     }
 
+    const playerId = this.headerPlayerId(request);
+
+    // Idempotent fast-path, BEFORE the acceptsJoins gate below: a player who
+    // is already on the roster is let through regardless of the current phase.
+    // A late /join retry (network retry, double-submit) from an existing
+    // member must return the same success it got the first time — not a "not
+    // accepting joins" 409 just because the lobby has since advanced to a
+    // non-joinable phase (e.g. CtL's ClassSelectionPhase). New joiners fall
+    // through to the gate.
+    if (playerId && this._agents.find((a) => a.id === playerId)) {
+      return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
+    }
+
+    // The `_meta.phase === 'lobby'` outer guard above is too coarse — a CtL
+    // lobby in ClassSelectionPhase still has `_meta.phase === 'lobby'`, but
+    // the active phase has `acceptsJoins: false`. Without this gate, a new
+    // joiner during class-selection would be pushed into `_agents` without
+    // ever reaching the phase's player list — the ghost-player bug. The gate
+    // is before the agent push (and before the credit check) so the only
+    // state a rejected new join touches is the read of the current phase.
+    const phase = this.getCurrentPhase();
+    if (!phase) {
+      await this.failLobby('No current phase');
+      return Response.json({ error: 'Lobby failed: no current phase' }, { status: 500 });
+    }
+    if (!phase.acceptsJoins) {
+      return Response.json(
+        { error: `Lobby not accepting joins during phase: ${phase.id}` },
+        { status: 409 },
+      );
+    }
+
     const body = (await this.parseJson(request)) as Response | { handle?: string; elo?: number };
     if (body instanceof Response) return body;
 
     const { handle, elo } = body;
-    const playerId = this.headerPlayerId(request);
     if (!playerId || !handle) {
       return Response.json(
         { error: 'X-Player-Id header and body.handle are required' },
         { status: 400 },
       );
-    }
-
-    // Idempotent — don't add twice
-    if (this._agents.find((a) => a.id === playerId)) {
-      return Response.json({ ok: true, ...(await this.buildLobbySpectatorPayload(playerId)) });
     }
 
     // Pre-game credit balance check. MVP: read-only "can this player afford
@@ -374,13 +413,7 @@ export class LobbyDO extends DurableObject<Env> {
     const agent: AgentEntry = { id: playerId, handle, elo: elo ?? 1000, joinedAt: Date.now() };
     this._agents.push(agent);
 
-    const phase = this.getCurrentPhase();
-    if (!phase) {
-      await this.failLobby('No current phase');
-      return Response.json({ error: 'Lobby failed: no current phase' }, { status: 500 });
-    }
-
-    if (phase.acceptsJoins && phase.handleJoin) {
+    if (phase.handleJoin) {
       const agentInfo: AgentInfo = { id: playerId, handle };
       try {
         const result = phase.handleJoin(this._phaseState, agentInfo, this.agentInfos());

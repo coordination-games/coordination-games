@@ -318,67 +318,48 @@ For delta-semantics fields produced by plugins (like chat's `newMessages`), use 
 
 ## Lobby Configuration
 
-Games declare their lobby requirements via `GameLobbyConfig`:
+Games declare their lobby requirements via `GameLobbyConfig`. A game lists `LobbyPhase` instances — the pre-game pipeline executes them in order, accumulates each phase's metadata, and hands it to `createConfig` at game-start.
 
 ```typescript
 export interface GameLobbyConfig {
-  queueType: 'open' | 'stake-tiered' | 'invite';
-  phases: LobbyPhaseConfig[];
-  matchmaking: MatchmakingConfig;
-}
-
-export interface MatchmakingConfig {
-  minPlayers: number;
-  maxPlayers: number;
-  teamSize: number;
-  numTeams: number;
-  queueTimeoutMs: number;
+  /** Phase instances. Every game must have at least one. */
+  phases: LobbyPhase[];
 }
 ```
+
+Per-lobby sizing flows through `accumulatedMetadata` (seeded with the create-body `teamSize`) and `LobbyPhase.init(players, config)` — phase instances are module-level singletons, so freeze any per-lobby config into the returned `state` rather than `this`. Phases that want to advertise capacity expose an optional `capacity(state): number | null` method; the Worker calls it on `phases[0]` at create time and writes the result to `lobbies.capacity`.
 
 ### CtL lobby -- teams + class selection
 
 ```typescript
 lobby: {
-  queueType: 'open',
   phases: [
-    { phaseId: 'team-formation', config: {} },
-    { phaseId: 'class-selection', config: {} },
+    new TeamFormationPhase({ teamSize: 2, numTeams: 2 }),
+    new ClassSelectionPhase({ validClasses: ['rogue', 'knight', 'mage'] }),
   ],
-  matchmaking: {
-    minPlayers: 4, maxPlayers: 12,
-    teamSize: 2, numTeams: 2,
-    queueTimeoutMs: 120000,
-  },
 }
 ```
 
-Two lobby phases: team formation (negotiate who plays with whom) then class selection (pick Rogue/Knight/Mage). Players discuss in chat during each phase.
+Two lobby phases: team formation (negotiate who plays with whom) then class selection (pick Rogue/Knight/Mage). Players discuss in chat during each phase. `TeamFormationPhase.init` reads `config.teamSize` if present, so a `coga create-lobby -s 4` runs as 4v4 instead of the constructor's 2v2.
 
-### OATHBREAKER lobby -- FFA, no phases
+### OATHBREAKER lobby -- FFA via the open-queue phase
 
 ```typescript
 lobby: {
-  queueType: 'open',
-  phases: [],      // no pre-game phases
-  matchmaking: {
-    minPlayers: 4, maxPlayers: 20,
-    teamSize: 1, numTeams: 0,    // FFA
-    queueTimeoutMs: 300000,
-  },
+  phases: [new OpenQueuePhase(4)],   // defaultTarget of 4 players
 }
 ```
 
-Free-for-all with no pre-game negotiation. Players queue up and the game starts when enough have joined.
+Free-for-all with no pre-game negotiation. Players queue up and the game starts the moment the lobby reaches its `target` (sourced from `config.teamSize` in `init`, falling back to the constructor default).
 
 ### Comparison
 
 | | Capture the Lobster | OATHBREAKER |
 |---|---|---|
-| Teams | 2 teams of 2-6 | FFA (teamSize: 1) |
-| Lobby phases | team-formation, class-selection | none |
-| Min/max players | 4-12 | 4-20 |
-| Queue timeout | 2 minutes | 5 minutes |
+| Teams | 2 teams of 2-6 | FFA |
+| Lobby phases | team-formation, class-selection | open-queue |
+| Capacity | `teamSize * 2` (2v2..6v6) | `target` (4-20) |
+| Queue timeout | 2x600s phase timers | none |
 | Entry cost | 10 credits | 1 credit |
 
 ## Building a Spectator Plugin
@@ -545,7 +526,7 @@ To ship a new game:
 - [ ] Implement `CoordinationGame<TConfig, TState, TAction, TOutcome>`
 - [ ] Define your config, state, action union, and outcome types
 - [ ] Implement all 6 methods + `entryCost` + `computePayouts`
-- [ ] Add lobby configuration (phases, matchmaking)
+- [ ] Add lobby configuration (`phases: LobbyPhase[]`)
 - [ ] Declare `gameTools: ToolDefinition[]` for every player-callable game action (names must match the `type` discriminator on `TAction`)
 - [ ] Export `YOUR_GAME_SYSTEM_ACTION_TYPES` as a frozen `readonly string[]` alongside the plugin
 - [ ] Add a `DRIFT_FIXTURES` entry for each new tool in `packages/workers-server/src/__tests__/tool-drift.test.ts`
