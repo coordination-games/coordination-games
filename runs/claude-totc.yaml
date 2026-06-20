@@ -1,0 +1,23 @@
+# Claude-only end-to-end smoke: 4 Haiku bots play Tragedy of the Commons to finish.
+# Uses bare `haiku` alias → backendForModel('haiku') = claude backend, and the
+# `claude` CLI understands `--model haiku` directly. Local ~/.claude creds; no key.
+game: tragedy-of-the-commons
+rounds: 8
+params:
+  teamSize: 4
+server: http://localhost:8787
+identities: ephemeral
+output: /home/lucian/workspace-core/capture-the-lobster/runs/out
+seats:
+  - persona: ./personas/peaceful-mediator
+    model: haiku
+    count: 2
+  - persona: ./personas/win-focused-opportunist
+    model: haiku
+    count: 2
+limits:
+  maxModelCallsPerBot: 200
+  wallClockMsPerRun: 900000
+analysis:
+  enabled: true
+  model: haiku
