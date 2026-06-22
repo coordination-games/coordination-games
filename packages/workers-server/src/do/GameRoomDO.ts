@@ -433,6 +433,39 @@ export class GameRoomDO extends DurableObject<Env> {
     const now = Date.now();
     const wsCount = this.ctx.getWebSockets().length;
 
+    // Game-agnostic outcome capture via the CoordinationGame contract — NO
+    // per-game field assumptions. getReplayChrome / getSummaryFromSpectator read
+    // a public spectator snapshot; getOutcome reads state and is valid only once
+    // isOver(). Consumers (e.g. the model harness) pass these through verbatim
+    // instead of reaching into game-specific score fields.
+    let replayChrome: unknown = null;
+    let summary: unknown = null;
+    let outcome: unknown = null;
+    if (this._plugin && this._state !== null && this._meta) {
+      try {
+        // Build a spectator view of the TRUE current state. Admin inspect is
+        // undelayed, so this reflects the final frame — unlike the last stored
+        // public snapshot, which lags a just-finished game by the spectator delay
+        // (it would report a still-"playing" winnerLabel). Mirrors the initial
+        // snapshot context (handles + empty relay); chrome/summary derive from
+        // state, not relay.
+        const ctx = { handles: this._meta.handleMap, relayMessages: [] };
+        const snapshot = this._plugin.buildSpectatorView(this._state, null, ctx);
+        replayChrome = this._plugin.getReplayChrome(snapshot);
+        summary =
+          typeof this._plugin.getSummaryFromSpectator === 'function'
+            ? this._plugin.getSummaryFromSpectator(snapshot)
+            : typeof this._plugin.getSummary === 'function'
+              ? this._plugin.getSummary(this._state)
+              : null;
+        if (this._plugin.isOver(this._state)) {
+          outcome = this._plugin.getOutcome(this._state);
+        }
+      } catch (err) {
+        console.warn(`[inspect] game-agnostic outcome capture failed: ${String(err)}`);
+      }
+    }
+
     const payload = {
       now,
       meta: this._meta,
@@ -455,6 +488,10 @@ export class GameRoomDO extends DurableObject<Env> {
       isOver: this._plugin && this._state !== null ? this._plugin.isOver(this._state) : null,
       pluginProgress:
         this._plugin && this._state !== null ? this._plugin.getProgressCounter(this._state) : null,
+      // Game-agnostic outcome surface (see above).
+      replayChrome,
+      summary,
+      outcome,
     };
 
     // gameState carries bigints (e.g. OB balances); default JSON.stringify

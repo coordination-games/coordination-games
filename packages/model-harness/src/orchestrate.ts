@@ -333,10 +333,10 @@ async function resolveSeats(
 // Lobby creation + join + auto-start polling (§4.5 step 2)
 // ---------------------------------------------------------------------------
 
-async function createAndFillLobby(
+async function createAndJoinLobby(
   spec: RunSpec,
   identities: Awaited<ReturnType<typeof resolveIdentities>>,
-): Promise<{ lobbyId: string; gameId: string }> {
+): Promise<{ lobbyId: string }> {
   // Create lobby — first authenticated bot creates it
   const firstIdentity = identities[0];
   if (!firstIdentity) throw new Error('No identities resolved');
@@ -368,67 +368,58 @@ async function createAndFillLobby(
     console.log(`  [lobby] ${identity.botName} joined`);
   }
 
-  // Poll for game auto-start — the game starts when all seats fill
-  // Read lobby.capacity and poll /api/lobbies until the lobby transitions to a game.
-  const deadline = Date.now() + 30_000; // 30s should be plenty for local/remote
-  let gameId: string | undefined;
+  return { lobbyId };
+}
 
-  while (Date.now() < deadline) {
-    await sleep(1000);
+/**
+ * Poll until the lobby transitions to a started game; return its gameId (or
+ * undefined if it never starts before `deadline` / once `isDone()` reports the
+ * sessions have ended). Game-generic: auto-start games (TotC, Oathbreaker)
+ * resolve in ~1s; games with an active lobby phase (CtL team formation) resolve
+ * once the *live* bot sessions drive that phase to completion — which is why the
+ * orchestrator launches sessions FIRST and discovers the gameId concurrently,
+ * rather than blocking on game-start before any bot is running.
+ */
+async function pollForGameId(
+  server: string,
+  lobbyId: string,
+  opts: { deadline: number; isDone?: () => boolean },
+): Promise<string | undefined> {
+  const lookup = async (): Promise<string | undefined> => {
     try {
       const lobbies: Array<{ lobbyId: string; phase: string; gameId?: string }> = await api(
-        spec.server,
+        server,
         '/api/lobbies',
       );
       const entry = lobbies.find((l) => l.lobbyId === lobbyId);
-      if (entry?.phase === 'game' && entry.gameId) {
-        gameId = entry.gameId;
-        break;
-      }
-      // Also try fetching lobby state directly. The lobby transitions to phase
-      // 'in_progress' (NOT 'game') and exposes the REAL game id at state.gameId.
-      // Note: meta.gameId confusingly echoes the lobbyId, so read state.gameId
-      // and require it to differ from the lobbyId before treating it as started.
-      const state = await api(spec.server, `/api/lobbies/${lobbyId}/state`).catch(() => null);
+      if (entry?.phase === 'game' && entry.gameId) return entry.gameId;
+      // The lobby transitions to phase 'in_progress' (NOT 'game') and exposes the
+      // REAL game id at state.gameId. meta.gameId confusingly echoes the lobbyId,
+      // so require gid !== lobbyId before trusting it.
+      const state = await api(server, `/api/lobbies/${lobbyId}/state`).catch(() => null);
       const gid = state?.gameId ?? state?.state?.gameId;
-      if (gid && gid !== lobbyId) {
-        gameId = gid;
-        break;
-      }
+      if (gid && gid !== lobbyId) return gid;
     } catch {
-      // transient — keep polling
+      // transient — caller retries
     }
-  }
+    return undefined;
+  };
 
-  if (!gameId) {
-    // Fallback: try the admin inspect endpoint to find the game
-    console.log('  [lobby] polling timed out, trying admin inspect...');
-    try {
-      const inspectToken = process.env.INSPECTOR_TOKEN ?? 'local-inspector-token';
-      const sessions = await api(spec.server, '/api/admin/sessions', {
-        headers: { 'X-Admin-Token': inspectToken },
-      });
-      // Find a session associated with this lobby
-      const session = Array.isArray(sessions)
-        ? sessions.find(
-            (s: { lobbyId?: string; gameId?: string }) => s.lobbyId === lobbyId && s.gameId,
-          )
-        : undefined;
-      if (session?.gameId) gameId = session.gameId;
-    } catch {
-      // admin endpoint may not exist
+  while (Date.now() < opts.deadline) {
+    const gid = await lookup();
+    if (gid) {
+      console.log(`  [lobby] game started: ${gid}`);
+      return gid;
     }
+    if (opts.isDone?.()) {
+      // Sessions finished without us seeing a start — one last look, then give up.
+      const last = await lookup();
+      if (last) console.log(`  [lobby] game started: ${last}`);
+      return last;
+    }
+    await sleep(1500);
   }
-
-  if (!gameId) {
-    throw new Error(
-      `Lobby ${lobbyId} did not transition to a game within 30s. ` +
-        'Check that all seats were filled and the server is running.',
-    );
-  }
-
-  console.log(`  [lobby] game started: ${gameId}`);
-  return { lobbyId, gameId };
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,23 +490,20 @@ function buildOutcome(inspect: any): unknown {
   if (!inspect || typeof inspect !== 'object') return null;
   const gi = inspect.gameInspect ?? {};
   const gs = gi.gameState ?? gi.state ?? {};
-  const handleMap = gi.meta?.handleMap ?? {};
-  const winnerId: string | null = gs.winner ?? null;
-  // biome-ignore lint/suspicious/noExplicitAny: player rows are game-defined.
-  const players: any[] = Array.isArray(gs.players) ? gs.players : [];
+  // biome-ignore lint/suspicious/noExplicitAny: loose admin-inspect blob.
+  const chrome: any = gi.replayChrome ?? {};
   return {
     phase: gs.phase ?? null,
     round: gs.round ?? null,
-    isFinished: gi.isOver ?? gs.phase === 'finished',
-    winner: winnerId,
-    winnerHandle: winnerId ? (handleMap[winnerId] ?? winnerId) : null,
-    // biome-ignore lint/suspicious/noExplicitAny: player rows are game-defined.
-    finalScores: players.map((p: any) => ({
-      id: p.id,
-      handle: handleMap[p.id] ?? p.id,
-      victoryPoints: p.victoryPoints ?? p.vp ?? null,
-      influence: p.influence ?? null,
-    })),
+    isFinished: gi.isOver ?? chrome.isFinished ?? gs.phase === 'finished',
+    // Game-agnostic winner from the contract's getReplayChrome — a human-readable
+    // label ("Team A", "Player Foo"), undefined for ties / in-progress.
+    winnerLabel: chrome.winnerLabel ?? null,
+    statusVariant: chrome.statusVariant ?? null,
+    // The game's own canonical outcome + summary, captured VERBATIM. The harness
+    // never interprets these — that's what keeps it game-agnostic.
+    outcome: gi.outcome ?? null,
+    summary: gi.summary ?? null,
   };
 }
 
@@ -676,14 +664,28 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
     console.log(`  seat: ${s.botName} model=${s.model} backend=${s.backend}`);
   }
 
-  // 3. Create lobby, join all, wait for game start
+  // 3. Create lobby + join all. Does NOT wait for game start.
   console.log('\n[orchestrate] lobby setup...');
-  const { lobbyId, gameId } = await createAndFillLobby(spec, identities);
+  const { lobbyId } = await createAndJoinLobby(spec, identities);
 
   // 4. Transcript writer
   const writer = makeTranscriptWriter(runDir);
 
-  // 5. Run all sessions concurrently
+  // 5. Discover the gameId concurrently with the sessions. Games whose first
+  //    lobby phase needs player actions (e.g. CtL team formation) only start once
+  //    the bots are live, so we MUST launch sessions before the game exists —
+  //    blocking on game-start here would deadlock. The poll runs in the
+  //    background and resolves the moment the lobby advances to a game.
+  let sessionsDone = false;
+  const gameIdPromise = pollForGameId(spec.server, lobbyId, {
+    deadline: Date.now() + spec.limits.wallClockMsPerRun,
+    isDone: () => sessionsDone,
+  });
+
+  // 6. Run all sessions concurrently. Each drives whatever phase the lobby is in
+  //    (team formation, pledging, gameplay) through to phase:finished — the coga
+  //    MCP tool surface already advertises lobby-phase tools, so no special
+  //    handling is needed per game.
   console.log(`\n[orchestrate] running ${seats.length} sessions concurrently...`);
   const sessionResults = new Map<string, SessionResult>();
 
@@ -721,23 +723,32 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
       );
     }),
   );
+  sessionsDone = true;
 
-  // 6. Flush transcript files
+  // 7. Flush transcript files
   await writer.flush();
 
-  // 7. Snapshot the terminal state. The admin inspect (X-Admin-Token header, not
+  // 8. Resolve the gameId (the game has started by now if it started at all) and
+  //    snapshot the terminal state. The admin inspect (X-Admin-Token header, not
   //    Bearer) carries BOTH the relay ground truth (gameInspect.relayMessages)
-  //    and the final game state (gameInspect.gameState) we distill into the
-  //    outcome. In batch mode a bot can exhaust its budget a beat before the
-  //    final round resolves, so poll (bounded) for phase:finished rather than
-  //    snapshotting a mid-game frame.
-  console.log('\n[orchestrate] waiting for finish, then snapshotting (relay + outcome)...');
-  const inspectToken = process.env.INSPECTOR_TOKEN ?? 'local-inspector-token';
-  const finalInspect = await waitForFinished(spec.server, gameId, inspectToken, 180_000);
-  await writeRelayLog(runDir, gameId, finalInspect);
-  const outcome = buildOutcome(finalInspect);
+  //    and the game-agnostic outcome (replayChrome/outcome/summary). In batch
+  //    mode a bot can exhaust its budget a beat before the final round resolves,
+  //    so poll (bounded) for phase:finished rather than snapshotting mid-game.
+  const gameId = (await gameIdPromise) ?? '';
+  let outcome: unknown = null;
+  if (!gameId) {
+    console.warn(
+      '  [orchestrate] lobby never advanced to a game — writing manifest without an outcome.',
+    );
+  } else {
+    console.log('\n[orchestrate] waiting for finish, then snapshotting (relay + outcome)...');
+    const inspectToken = process.env.INSPECTOR_TOKEN ?? 'local-inspector-token';
+    const finalInspect = await waitForFinished(spec.server, gameId, inspectToken, 180_000);
+    await writeRelayLog(runDir, gameId, finalInspect);
+    outcome = buildOutcome(finalInspect);
+  }
 
-  // 8. Write manifest
+  // 9. Write manifest
   console.log('[orchestrate] writing manifest...');
   await writeManifest(runDir, runId, spec, lobbyId, gameId, seats, sessionResults, writer, outcome);
 

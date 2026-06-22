@@ -259,8 +259,8 @@ function printCampaignSummary(summaries: CampaignRunSummary[], indexPath: string
   console.log(`\n=== Campaign complete ===`);
   for (const s of summaries) {
     if (s.status === 'ok') {
-      const o = s.outcome as { winnerHandle?: string; winner?: string } | null;
-      const winner = o?.winnerHandle ?? o?.winner ?? '?';
+      const o = s.outcome as { winnerLabel?: string } | null;
+      const winner = o?.winnerLabel ?? '(tie/none)';
       console.log(`  ✓ ${s.label.padEnd(28)} ${s.game.padEnd(26)} winner=${winner}`);
     } else {
       console.log(
