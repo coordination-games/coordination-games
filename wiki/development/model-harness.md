@@ -29,7 +29,7 @@ This **replaced** the old `scripts/run-model-harness.ts` (TotC-specific, sideste
 #    worker — see the wrangler.toml note; never re-add a [build] command there.
 cd packages/workers-server && npm run dev          # http://localhost:8787
 
-# 2. Resolve the seat plan without touching the network (no wallets, no calls):
+# 2. Resolve the run plan without touching the network (no wallets, no calls):
 npx tsx packages/model-harness/src/index.ts run --dry-run runs/treachery-study.yaml
 
 # 3. Run a batch (+ judge if analysis.enabled). OpenRouter seats need the key:
@@ -40,34 +40,40 @@ OPENROUTER_API_KEY=sk-or-... INSPECTOR_TOKEN=local-inspector-token \
 npx tsx packages/model-harness/src/index.ts run runs/campaign-example.yaml
 
 # 5. Re-judge an existing run dir without re-playing the game:
-npx tsx packages/model-harness/src/index.ts analyze runs/out/run-<id> [--model anthropic/claude-haiku]
+npx tsx packages/model-harness/src/index.ts analyze runs/out/campaign-<id>/run-<id> [--model anthropic/claude-haiku]
 ```
 
-## Run-spec shape
+## Spec shape
 
-A single YAML (`runs/*.yaml`) drives a whole batch. The load-bearing fields:
+**One format, always:** `globals` (campaign-wide) + `games[]` (per-game). A single run is just one entry in `games`; a sweep is many — there is no separate flat single-spec shape. The load-bearing fields:
 
 ```yaml
-game: tragedy-of-the-commons   # any game implementing the CoordinationGame contract
-rounds: 4                      # plumbed end-to-end → game maxRounds (see gotcha below)
-params: { teamSize: 4 }        # game sizing, forwarded to lobby create
-identities: ephemeral          # fresh wallets per run, or 'pool' for ~/.coordination/bot-pool.json
-output: ./runs/out             # a run-<id> subdir is created per run
-seats:
-  - persona: ./personas/peaceful-mediator       # bundle dir: persona.md (+ context/*.md, persona.yaml)
-    model: anthropic/claude-haiku               # model string drives backend selection
-    count: 2                                    # expands to N seats (personas cycle)
-  - persona: ./personas/win-focused-opportunist
-    model: openrouter/minimax/minimax-m2
-    count: 2
-limits:
-  maxModelCallsPerBot: 200     # backstop against a stalled bot, not a target
-  wallClockMsPerRun: 1200000   # ditto; run ends as soon as phase:finished
-analysis:
-  enabled: true
-  model: anthropic/claude-haiku  # judge model (any backend)
-  lenses: [betrayals, brokenPledges, deceptions, coordination, perBot, notableMoments, summary]
+globals:                         # campaign-wide — applied to every entry
+  server: http://localhost:8787
+  identities: ephemeral          # fresh wallets per run, or 'pool' for ~/.coordination/bot-pool.json
+  output: ./runs/out             # a campaign-<id>/run-<id>-<label> subdir per run
+  limits:
+    maxModelCallsPerBot: 200     # backstop against a stalled bot, not a target
+    wallClockMsPerRun: 1200000   # ditto; a run ends as soon as phase:finished
+  analysis:
+    enabled: true
+    model: anthropic/claude-haiku  # judge model (any backend)
+    lenses: [betrayals, brokenPledges, deceptions, coordination, perBot, notableMoments, summary]
+games:                           # one entry = one game setup (1 or many)
+  - game: tragedy-of-the-commons # any game implementing the CoordinationGame contract
+    rounds: 4                    # plumbed end-to-end → game maxRounds
+    params: { teamSize: 4 }      # game sizing, forwarded to lobby create
+    repeats: 1                   # run this setup N× for variance (optional)
+    seats:
+      - persona: ./personas/peaceful-mediator     # bundle dir: persona.md (+ context/*.md, persona.yaml)
+        model: anthropic/claude-haiku             # model string drives backend selection
+        count: 2                                  # expands to N seats (personas cycle)
+      - persona: ./personas/win-focused-opportunist
+        model: openrouter/minimax/minimax-m2
+        count: 2
 ```
+
+Scope is a **strict partition** — every field lives in exactly one section (`globals` vs a `games[]` entry), never both; a misplaced field is a hard error. See [Campaigns](#campaigns-research-sweeps) below for the full field table, `repeats`, and multi-game sweeps.
 
 A **persona is a directory bundle**, not a string: `persona.md` (required, behavior/voice/strategy), optional `context/*.md` (concatenated, sorted), optional `persona.yaml` (`defaultModel`, `extraMcpServers`). Personas are model-agnostic on purpose — that's what lets you benchmark one persona across models. Refs resolve as absolute paths, package-relative (`./personas/...`), or bare bundled names.
 
@@ -89,38 +95,42 @@ Research is "hold everything constant, vary one axis." Two canonical recipes:
 **Model A/B — same persona, two brains** (which model plays the strategy better?):
 
 ```yaml
-game: tragedy-of-the-commons
-rounds: 4
-params: { teamSize: 4 }
-server: http://localhost:8787
-identities: ephemeral
-output: ./runs/out
-seats:
-  - { persona: ./personas/win-focused-opportunist, model: haiku, count: 2 }
-  - { persona: ./personas/win-focused-opportunist, model: openrouter/minimax/minimax-m2, count: 2 }
-limits: { maxModelCallsPerBot: 200, wallClockMsPerRun: 1200000 }
-analysis: { enabled: true, model: haiku }
+globals:
+  server: http://localhost:8787
+  identities: ephemeral
+  output: ./runs/out
+  limits: { maxModelCallsPerBot: 200, wallClockMsPerRun: 1200000 }
+  analysis: { enabled: true, model: haiku }
+games:
+  - game: tragedy-of-the-commons
+    rounds: 4
+    params: { teamSize: 4 }
+    seats:
+      - { persona: ./personas/win-focused-opportunist, model: haiku, count: 2 }
+      - { persona: ./personas/win-focused-opportunist, model: openrouter/minimax/minimax-m2, count: 2 }
 ```
 
 **Persona showdown — same model, four strategies** (no key; which strategy wins on one brain?):
 
 ```yaml
-game: tragedy-of-the-commons
-rounds: 4
-params: { teamSize: 4 }
-server: http://localhost:8787
-identities: ephemeral
-output: ./runs/out
-seats:
-  - { persona: ./personas/peaceful-mediator, model: haiku, count: 1 }
-  - { persona: ./personas/anti-overextractor, model: haiku, count: 1 }
-  - { persona: ./personas/win-focused-builder, model: haiku, count: 1 }
-  - { persona: ./personas/win-focused-opportunist, model: haiku, count: 1 }
-limits: { maxModelCallsPerBot: 200, wallClockMsPerRun: 1200000 }
-analysis: { enabled: true, model: haiku }
+globals:
+  server: http://localhost:8787
+  identities: ephemeral
+  output: ./runs/out
+  limits: { maxModelCallsPerBot: 200, wallClockMsPerRun: 1200000 }
+  analysis: { enabled: true, model: haiku }
+games:
+  - game: tragedy-of-the-commons
+    rounds: 4
+    params: { teamSize: 4 }
+    seats:
+      - { persona: ./personas/peaceful-mediator, model: haiku, count: 1 }
+      - { persona: ./personas/anti-overextractor, model: haiku, count: 1 }
+      - { persona: ./personas/win-focused-builder, model: haiku, count: 1 }
+      - { persona: ./personas/win-focused-opportunist, model: haiku, count: 1 }
 ```
 
-To **vary the game** instead, change `game:` to `capture-the-lobster` or `oathbreaker` and adjust `params`/`teamSize` — the harness is game-agnostic, so nothing else moves.
+To **vary the game** instead, change the entry's `game:` to `capture-the-lobster` or `oathbreaker` and adjust `params`/`teamSize` — the harness is game-agnostic, so nothing else moves. To run several at once, add more `games[]` entries (that's a campaign — next).
 
 ## Campaigns (research sweeps)
 
@@ -172,9 +182,7 @@ Runnable example: `runs/campaign-example.yaml` (all-haiku, no key).
                              "outcome": { /* game's own getOutcome */ }, "summary": { /* getSummaryFromSpectator */ } } } ] }
   ```
   Read `campaign.json` to compare outcomes across the batch without opening every run. Failed runs appear with `"status": "error"` + the message.
-- **Preview before you fire.** `run --dry-run <campaign.yaml>` prints the expanded grid (entries, total run count, per-entry backend mix) so you don't accidentally launch 200 games.
-
-A bare single-spec file (no `games:` key) is still a valid one-run spec — unchanged behavior, flat output, no campaign dir.
+- **Preview before you fire.** `run --dry-run <spec.yaml>` prints the expanded grid (entries, total run count, per-entry backend mix) so you don't accidentally launch 200 games.
 
 ### Going on-chain is a two-line change
 
@@ -190,7 +198,7 @@ Because `server` and `identities` are **globals**, flipping a whole sweep to the
 
 `claudeCliModel(model)` normalizes a claude-backend string into a CLI-valid `--model` (strip `anthropic/`|`claude/` prefix; map `claude-haiku`→`haiku`, etc.). Shared by the gameplay runner **and** the judge so both resolve aliases identically. The OpenRouter runner strips the `openrouter/` prefix before sending the rest verbatim.
 
-## Output anatomy (`runs/out/run-<id>/`)
+## Output anatomy (`runs/out/campaign-<id>/run-<id>-<label>/`)
 
 - `bots/<botName>.jsonl` — one event per line: `session` (start/finished/cap/error), `model_request`, `model_response`, `tool_call`, `tool_result`. The append-only ground truth for what each agent thought and did. (MiniMax transcripts run large — reasoning + every tool turn.)
 - `relay.jsonl` — the **relay ground truth** (messaging, attestations, per-game action records), pulled from the admin inspect's `gameInspect.relayMessages`. This is the canonical "what happened," independent of any bot's view. The judge cites it by index (`relayRefs`).

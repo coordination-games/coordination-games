@@ -1,8 +1,9 @@
 /**
  * Spec parser and seat expansion for the Unified Model Harness.
  *
- * loadSpec(path) → RunSpec: parses a YAML (or JSON) run-spec file, validates
- * required fields, and applies defaults.
+ * loadCampaign(path) → CampaignRun[]: parses a YAML (or JSON) spec file in the
+ * single `{ globals?, games[] }` format, validates the scope partition, applies
+ * defaults, and flattens `repeats` into one CampaignRun per run.
  *
  * expandSeatPlan(spec) → SeatPlan[]: cycles personas across seat counts and
  * resolves backend via backendForModel. Identity minting (wallet creation/pool
@@ -19,7 +20,6 @@ import {
   type Backend,
   backendForModel,
   type CampaignRun,
-  type LoadedCampaign,
   type RunLimits,
   type RunSpec,
   type SeatSpec,
@@ -41,45 +41,30 @@ const DEFAULT_SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a YAML or JSON run-spec file (bare single-run shape). Applies defaults
- * for optional fields. Throws with a clear message if required fields are
- * missing or invalid.
+ * Load a spec file → the list of runs it describes. ONE format:
  *
- * @param filePath - Absolute or relative path to the run-spec YAML/JSON file.
- * @returns Validated, defaulted RunSpec.
- */
-export async function loadSpec(filePath: string): Promise<RunSpec> {
-  const { obj, abs } = await readYamlObject(filePath);
-  return parseRunSpecObject(obj, abs);
-}
-
-/**
- * Load a spec file as a campaign — supports both shapes:
- *  - Bare run-spec (no `games` key)  → one run, form 'single' (legacy; unchanged).
- *  - Campaign `{ globals?, games[] }` → N runs, form 'campaign'.
+ *   globals?: { server, identities, output, limits, analysis }   # campaign-wide
+ *   games:    [ { game, rounds, params, seats, repeats?, label? }, ... ]
  *
- * Campaign scope is a STRICT PARTITION: `globals` holds campaign-wide fields,
- * each `games[]` entry holds per-game fields, and no field may appear in both.
- * A misplaced field is a hard error — that's the payoff of no-overrides: we can
- * tell you exactly where a field belongs.
+ * Scope is a STRICT PARTITION: every field lives in exactly one section, and a
+ * misplaced field is a hard error (the payoff of no-overrides — we can tell you
+ * exactly where a field belongs). A single run is just a one-entry `games` list;
+ * there is no separate flat shape.
  */
-export async function loadCampaign(filePath: string): Promise<LoadedCampaign> {
+export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
   const { obj, abs } = await readYamlObject(filePath);
 
-  // Bare run-spec → a one-run "single" campaign (run dir stays `run-<ts>`).
   if (!('games' in obj)) {
-    const spec = parseRunSpecObject(obj, abs);
-    return {
-      form: 'single',
-      runs: [{ spec, baseLabel: spec.game, repeatIndex: 1, repeatTotal: 1 }],
-    };
+    throw new Error(
+      `spec at ${abs}: missing "games". A spec is { globals?, games: [...] } — ` +
+        'a single run is just one entry in "games".',
+    );
   }
 
-  // Campaign form.
   const globals = parseGlobals(obj.globals, abs);
   const rawGames = obj.games;
   if (!Array.isArray(rawGames) || rawGames.length === 0) {
-    throw new Error(`campaign at ${abs}: "games" must be a non-empty array`);
+    throw new Error(`spec at ${abs}: "games" must be a non-empty array`);
   }
 
   const runs: CampaignRun[] = [];
@@ -87,7 +72,7 @@ export async function loadCampaign(filePath: string): Promise<LoadedCampaign> {
 
   rawGames.forEach((entry: unknown, idx: number) => {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      throw new Error(`campaign at ${abs}: games[${idx}] must be an object`);
+      throw new Error(`spec at ${abs}: games[${idx}] must be an object`);
     }
     const g = entry as Record<string, unknown>;
     assertKeysAllowed(g, GAME_KEYS, `games[${idx}]`, abs);
@@ -110,7 +95,7 @@ export async function loadCampaign(filePath: string): Promise<LoadedCampaign> {
     }
   });
 
-  return { form: 'campaign', runs };
+  return runs;
 }
 
 // ---------------------------------------------------------------------------
