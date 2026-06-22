@@ -31,6 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { cogaServeArgs } from '../coga-client.js';
 import { BASE_PROTOCOL_PROMPT, RESUME_PROMPT } from '../prompts.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
+import { claudeCliModel } from '../types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — parse stream-json lines into TranscriptEvents
@@ -266,6 +267,10 @@ function parseStreamLine(line: string, bot: string, _model: string): ParsedLine 
 export class ClaudeAgentRunner implements AgentRunner {
   async runSession(opts: RunSessionOptions): Promise<SessionResult> {
     const { botName, privateKey, server, systemPrompt, model, limits, onEvent } = opts;
+    // The seat model may carry a backend-routing prefix (`anthropic/claude-haiku`)
+    // or a friendly tier alias the `claude` CLI doesn't accept raw — normalize to
+    // a CLI-valid `--model` value. The original seat model stays in the manifest.
+    const cliModel = claudeCliModel(model);
 
     const sessionId = randomUUID();
     const deadline = Date.now() + limits.wallClockMs;
@@ -307,7 +312,7 @@ export class ClaudeAgentRunner implements AgentRunner {
           '--mcp-config',
           mcpConfig,
           '--model',
-          model,
+          cliModel,
           '--verbose',
           '--output-format',
           'stream-json',
@@ -384,12 +389,12 @@ export class ClaudeAgentRunner implements AgentRunner {
                 t: Date.now(),
                 bot: botName,
                 kind: 'model_request',
-                model,
+                model: cliModel,
                 messages: [{ role: 'user', content: prompt }],
               });
             }
 
-            const { events, seenFinished } = parseStreamLine(line, botName, model);
+            const { events, seenFinished } = parseStreamLine(line, botName, cliModel);
             for (const ev of events) onEvent(ev);
             if (seenFinished) sessionSeenFinished = true;
           }

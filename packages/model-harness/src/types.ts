@@ -53,6 +53,27 @@ export function backendForModel(model: string): Backend {
   return 'openrouter';
 }
 
+/**
+ * Map a claude-backend model string to a value the `claude` CLI's `--model`
+ * accepts. The incoming string may be:
+ *   - `anthropic/claude-haiku` / `claude/claude-sonnet` → strip the routing prefix
+ *   - friendly tier alias `claude-haiku|sonnet|opus`     → the CLI rejects these
+ *     raw; map to the bare `haiku|sonnet|opus` aliases it understands.
+ *   - bare `haiku|sonnet|opus` or a full versioned id     → pass through unchanged
+ *     (`claude-haiku-4-5`, `claude-opus-4-8`, …).
+ * Shared by the Claude runner (gameplay) and the analysis judge so both resolve
+ * aliases identically.
+ */
+export function claudeCliModel(model: string): string {
+  const stripped = model.trim().replace(/^(anthropic|claude)\//i, '');
+  const tierAlias: Record<string, string> = {
+    'claude-haiku': 'haiku',
+    'claude-sonnet': 'sonnet',
+    'claude-opus': 'opus',
+  };
+  return tierAlias[stripped.toLowerCase()] ?? stripped;
+}
+
 // ---------------------------------------------------------------------------
 // Personas (§5) — a persona is a directory bundle, loaded into this shape.
 // ---------------------------------------------------------------------------

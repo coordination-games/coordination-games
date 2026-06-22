@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { backendForModel } from './types.js';
+import { backendForModel, claudeCliModel } from './types.js';
 
 // ---------------------------------------------------------------------------
 // §10 output schema
@@ -425,8 +425,9 @@ async function callOpenRouter(model: string, prompt: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function callClaude(model: string, prompt: string): Promise<string> {
-  // Strip anthropic/ prefix if present — claude CLI uses bare aliases
-  const cliModel = model.startsWith('anthropic/') ? model.slice('anthropic/'.length) : model;
+  // Normalize to a CLI-valid alias (strip routing prefix, map claude-haiku →
+  // haiku, …) — the same mapping the gameplay runner uses.
+  const cliModel = claudeCliModel(model);
 
   return new Promise((resolve, reject) => {
     const args = ['--print', '--model', cliModel, '--dangerously-skip-permissions'];

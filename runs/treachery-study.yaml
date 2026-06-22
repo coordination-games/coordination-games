@@ -21,7 +21,11 @@
 #   #    npx tsx packages/model-harness/src/index.ts run runs/treachery-study.yaml
 
 game: tragedy-of-the-commons
-rounds: 8
+# Game length. Now plumbed end-to-end: the harness forwards this to lobby create,
+# which seeds it as the game's maxRounds (previously ignored → games ran the
+# engine default of 12). Kept short so a mixed Claude+MiniMax table reaches
+# phase:finished well inside the batch budget; raise for a longer study.
+rounds: 4
 
 # Game sizing knobs forwarded to lobby create. teamSize 4 → a 4-seat lobby,
 # which exactly fills the four seats below so the game auto-starts.
@@ -47,10 +51,12 @@ seats:
     model: openrouter/minimax/minimax-m2
     count: 2
 
-# Per-bot and per-run safety limits (§6 defaults shown explicitly).
+# Per-bot safety caps. Batch mode (not live), so we tolerate long, deliberate
+# turns: generous ceilings. The run ends as soon as the game hits phase:finished,
+# so these are backstops against a stalled bot, not a target duration.
 limits:
-  maxModelCallsPerBot: 80
-  wallClockMsPerRun: 600000 # 10 minutes
+  maxModelCallsPerBot: 200
+  wallClockMsPerRun: 1200000 # 20 min cap
 
 # Automated judge pass over the relay ground truth.
 analysis:

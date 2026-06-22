@@ -334,6 +334,10 @@ async function createAndFillLobby(
   const lobbyBody: Record<string, unknown> = {
     gameType: spec.game,
     ...spec.params,
+    // The run-spec's `rounds` is the canonical game-length knob. LobbyDO seeds it
+    // into the lobby metadata bag, which the plugin's createConfig reads as
+    // maxRounds. (Without this the game silently used its built-in default.)
+    ...(typeof spec.rounds === 'number' && spec.rounds >= 1 ? { maxRounds: spec.rounds } : {}),
   };
   const lobby = await api(spec.server, '/api/lobbies/create', {
     method: 'POST',
@@ -505,6 +509,48 @@ function buildOutcome(inspect: any): unknown {
 }
 
 /**
+ * Poll the admin inspect until the game reaches phase:finished or `maxMs`
+ * elapses, then return the most recent inspect payload (finished or not) so the
+ * caller always snapshots the freshest state. Returns null only if every fetch
+ * failed. Bounded so a game that never finishes (e.g. a stalled bot under a
+ * no-timeout lobby) can't hang the run.
+ */
+async function waitForFinished(
+  server: string,
+  gameId: string,
+  inspectToken: string,
+  maxMs: number,
+): Promise<unknown> {
+  const deadline = Date.now() + maxMs;
+  let last: unknown = null;
+  let lastPhase: string | undefined;
+  while (true) {
+    try {
+      const inspect = await api(server, `/api/admin/session/${gameId}/inspect`, {
+        headers: { 'X-Admin-Token': inspectToken },
+      });
+      last = inspect;
+      // biome-ignore lint/suspicious/noExplicitAny: loose admin-inspect blob.
+      const gi = (inspect as any)?.gameInspect ?? {};
+      const gs = gi.gameState ?? gi.state ?? {};
+      const phase: string | undefined = gs.phase;
+      if (phase !== lastPhase) {
+        console.log(`  [orchestrate] game phase=${phase ?? '?'} round=${gs.round ?? '?'}`);
+        lastPhase = phase;
+      }
+      if (gi.isOver === true || phase === 'finished') return inspect;
+    } catch (err) {
+      console.log(`  [orchestrate] inspect poll failed: ${String(err).slice(0, 120)}`);
+    }
+    if (Date.now() >= deadline) {
+      console.log('  [orchestrate] finish-wait timed out; snapshotting current state.');
+      return last;
+    }
+    await sleep(3000);
+  }
+}
+
+/**
  * Write the relay ground-truth log from a pre-fetched admin inspect payload.
  * The relay lives at `gameInspect.relayMessages` — one envelope per JSONL line.
  */
@@ -529,25 +575,19 @@ async function writeRelayLog(runDir: string, gameId: string, inspect: any): Prom
 
 /**
  * Lazily import and instantiate the runner for the given backend.
- * The runner modules (claude-runner.ts, openrouter-runner.ts) are owned by
- * the ClaudeAgentRunner / OpenRouterAgentRunner agents; we import them here.
- * If they don't exist yet, we fall back to a stub so the orchestrator can be
- * tested independently.
+ * The runner modules (claude-runner.ts, openrouter-runner.ts) are thin
+ * re-export shims over claude.ts / openrouter.ts. If a runner fails to load
+ * (e.g. a missing optional dep), we fall back to a stub so the orchestrator
+ * stays testable in isolation.
  *
- * We use Function('return import(m)')() to avoid static module resolution
- * checks on paths that aren't built yet — the dynamic import still works at
- * runtime as soon as the files are present, but TypeScript doesn't check them
- * at compile time. This is intentional for the agent-parallel build order.
+ * The import specifier is a runtime-computed file URL, so tsx/esbuild leave it
+ * as a genuine dynamic import (no static resolution) and Node resolves it when
+ * called.
  */
 async function getRunner(backend: 'claude' | 'openrouter'): Promise<AgentRunner> {
-  // biome-ignore lint/security/noGlobalEval: deliberate — avoids premature TS module resolution for not-yet-built runner modules
-  const dynamicImport = new Function('m', 'return import(m)') as (
-    m: string,
-  ) => Promise<Record<string, unknown>>;
-
   if (backend === 'claude') {
     try {
-      const mod = await dynamicImport(new URL('./runners/claude-runner.js', import.meta.url).href);
+      const mod = await import(new URL('./runners/claude-runner.js', import.meta.url).href);
       const Cls = mod.ClaudeAgentRunner as new () => AgentRunner;
       return new Cls();
     } catch (err) {
@@ -556,9 +596,7 @@ async function getRunner(backend: 'claude' | 'openrouter'): Promise<AgentRunner>
     }
   } else {
     try {
-      const mod = await dynamicImport(
-        new URL('./runners/openrouter-runner.js', import.meta.url).href,
-      );
+      const mod = await import(new URL('./runners/openrouter-runner.js', import.meta.url).href);
       const Cls = mod.OpenRouterAgentRunner as new () => AgentRunner;
       return new Cls();
     } catch (err) {
@@ -675,19 +713,15 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
   // 6. Flush transcript files
   await writer.flush();
 
-  // 7. Fetch the final admin inspect ONCE (X-Admin-Token header, not Bearer) —
-  //    it carries BOTH the relay ground truth (gameInspect.relayMessages) and
-  //    the final game state (gameInspect.gameState) we distill into the outcome.
-  console.log('\n[orchestrate] fetching final inspect (relay + outcome)...');
+  // 7. Snapshot the terminal state. The admin inspect (X-Admin-Token header, not
+  //    Bearer) carries BOTH the relay ground truth (gameInspect.relayMessages)
+  //    and the final game state (gameInspect.gameState) we distill into the
+  //    outcome. In batch mode a bot can exhaust its budget a beat before the
+  //    final round resolves, so poll (bounded) for phase:finished rather than
+  //    snapshotting a mid-game frame.
+  console.log('\n[orchestrate] waiting for finish, then snapshotting (relay + outcome)...');
   const inspectToken = process.env.INSPECTOR_TOKEN ?? 'local-inspector-token';
-  let finalInspect: unknown = null;
-  try {
-    finalInspect = await api(spec.server, `/api/admin/session/${gameId}/inspect`, {
-      headers: { 'X-Admin-Token': inspectToken },
-    });
-  } catch (err) {
-    console.log(`  [orchestrate] final inspect failed: ${String(err).slice(0, 160)}`);
-  }
+  const finalInspect = await waitForFinished(spec.server, gameId, inspectToken, 180_000);
   await writeRelayLog(runDir, gameId, finalInspect);
   const outcome = buildOutcome(finalInspect);
 

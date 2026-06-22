@@ -1,0 +1,4 @@
+# Harness run outputs (transcripts, relay logs, manifests) are generated
+# artifacts — large and per-run. Mirrors runs/.gitignore at the repo root.
+# A curated sample belongs under examples/, not here.
+runs/out/
