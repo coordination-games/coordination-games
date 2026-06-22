@@ -1,0 +1,72 @@
+# Treachery study — a mixed-backend Tragedy of the Commons run.
+#
+# Four seats: two patient mediators on Claude Haiku (local ~/.claude creds, via
+# the `claude --print` backend) versus two leverage-driven opportunists on
+# MiniMax M2 (via the OpenRouter function-calling backend). The judge pass then
+# scores betrayals, broken pledges, deceptions, and coordination from the relay
+# ground truth.
+#
+# Backend selection is derived purely from each seat's model string:
+#   - anthropic/claude-haiku        → 'claude'     (local creds, no API key)
+#   - openrouter/minimax/minimax-m2 → 'openrouter' (OPENROUTER_API_KEY)
+#
+# Run it:
+#   # 1. Start the server in another terminal:
+#   #    cd packages/workers-server && wrangler dev   # http://localhost:8787
+#   # 2. Export the OpenRouter key for the MiniMax seats:
+#   #    export OPENROUTER_API_KEY=sk-or-...
+#   # 3. Dry-run to inspect the seat plan (no network):
+#   #    npx tsx packages/model-harness/src/index.ts run --dry-run runs/treachery-study.yaml
+#   # 4. Real batch:
+#   #    npx tsx packages/model-harness/src/index.ts run runs/treachery-study.yaml
+
+game: tragedy-of-the-commons
+# Game length. Now plumbed end-to-end: the harness forwards this to lobby create,
+# which seeds it as the game's maxRounds (previously ignored → games ran the
+# engine default of 12). Kept short so a mixed Claude+MiniMax table reaches
+# phase:finished well inside the batch budget; raise for a longer study.
+rounds: 4
+
+# Game sizing knobs forwarded to lobby create. teamSize 4 → a 4-seat lobby,
+# which exactly fills the four seats below so the game auto-starts.
+params:
+  teamSize: 4
+
+server: http://localhost:8787
+
+# Fresh wallets minted per run (no persistent pool needed for a study run).
+identities: ephemeral
+
+# Output root; a run-<timestamp> subdir is created per run.
+output: ./runs/out
+
+seats:
+  # Two patient coalition-builders on local-creds Claude Haiku.
+  - persona: ./personas/peaceful-mediator
+    model: anthropic/claude-haiku
+    count: 2
+
+  # Two leverage-driven opportunists on MiniMax M2 via OpenRouter.
+  - persona: ./personas/win-focused-opportunist
+    model: openrouter/minimax/minimax-m2
+    count: 2
+
+# Per-bot safety caps. Batch mode (not live), so we tolerate long, deliberate
+# turns: generous ceilings. The run ends as soon as the game hits phase:finished,
+# so these are backstops against a stalled bot, not a target duration.
+limits:
+  maxModelCallsPerBot: 200
+  wallClockMsPerRun: 1200000 # 20 min cap
+
+# Automated judge pass over the relay ground truth.
+analysis:
+  enabled: true
+  model: anthropic/claude-haiku
+  lenses:
+    - betrayals
+    - brokenPledges
+    - deceptions
+    - coordination
+    - perBot
+    - notableMoments
+    - summary

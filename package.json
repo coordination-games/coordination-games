@@ -15,7 +15,7 @@
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev --workspace=packages/workers-server",
     "dev:web": "npm run dev --workspace=packages/web",
-    "harness:model": "tsx scripts/run-model-harness.ts",
+    "harness:model": "tsx packages/model-harness/src/index.ts",
     "build:contracts": "npm run build --workspace=packages/contracts",
     "build:cli": "npm run build --workspace=packages/cli",
     "lint": "biome lint .",

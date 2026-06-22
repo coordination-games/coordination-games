@@ -18,16 +18,15 @@ Bots use Claude Haiku via the Agent SDK with in-process MCP.
 
 ## Spawning Bots
 
-Three dev test flows, all in `scripts/`:
+For **automated, all-bot runs** (spin up N agents and watch them play a whole game), use the **[Model Harness](model-harness.md)** — that is the canonical local path. The scripts below cover the human-in-the-loop and manual cases:
 
-- **`setup-bot-pool.ts`** — one-time. Creates 8 persistent bot wallets, registers + faucets them, writes `~/.coordination/bot-pool.json`.
-- **`fill-bots.ts <lobbyId> [count]`** — the game-designer workflow. You join a lobby yourself, run this, it joins pool bots into the remaining seats and spawns `claude --print` per bot. Bots discover the per-phase tool list from `state.currentPhase.tools` and call each tool by name. The harness has no hardcoded tool names — those come from the engine's MCP surface at runtime.
-- **`run-game.ts`** — full E2E. Spawns ephemeral wallets, creates a lobby, joins everyone, hands off to Claude. Same generic driver as fill-bots.
-- **`spawn-bots.sh`** — older script that exposes `coga serve --http` for manual MCP connection. Use when you want to drive bots from your own Claude session, not automated.
+- **`setup-bot-pool.ts`** — one-time. Creates 8 persistent bot wallets, registers + faucets them, writes `~/.coordination/bot-pool.json`. (Also backs the harness's `identities: pool` mode.)
+- **`fill-bots.ts <lobbyId> [count]`** — the game-designer workflow. You join a lobby yourself, run this, it joins pool bots into the remaining seats and spawns `claude --print` per bot. Bots discover the per-phase tool list from `state.currentPhase.tools` and call each tool by name — no hardcoded tool names; they come from the engine's MCP surface at runtime.
+- **`spawn-bots.sh`** — exposes `coga serve --http` for manual MCP connection. Use when you want to drive bots from your own Claude session.
 
 The lobby UI also has a "Fill Bots" button (admin password protected) that triggers bot creation server-side.
 
-All client-driven scripts share `scripts/lib/bot-agent.ts` (auth, pool persistence, `runClaudeAgent`). Per Phase 8.1 the bot prompt is fully game-agnostic — no per-game tool examples, no game-specific termination keywords. The harness library passes nothing game-specific to the agent; the agent learns rules and tools from `guide()`.
+These client-driven scripts share `scripts/lib/bot-agent.ts` (auth, pool persistence, `runClaudeAgent`). The bot prompt is fully game-agnostic — no per-game tool examples, no game-specific termination keywords; the agent learns rules and tools from `guide()`.
 
 ### Operational gotchas
 
@@ -60,6 +59,6 @@ The harness terminates the resume loop when it sees the canonical "this game is 
 
 ## Bot Auth
 
-Bots use the same ERC-8004 challenge-response flow as real players. Each bot has its own wallet (ephemeral in `run-game.ts` / `spawn-bots.sh`, persistent in `~/.coordination/bot-pool.json` for `fill-bots.ts`) and `GameClient` auto-authenticates before the first API call.
+Bots use the same ERC-8004 challenge-response flow as real players. Each bot has its own wallet (ephemeral in the model harness / `spawn-bots.sh`, persistent in `~/.coordination/bot-pool.json` for `fill-bots.ts` and the harness's `identities: pool` mode) and `GameClient` auto-authenticates before the first API call.
 
 This is load-bearing: there is no bot-specific auth bypass anywhere on the server. Any future auth hardening (rate limits, signature replay protection, registration gating) covers bots automatically because they traverse the same code path.

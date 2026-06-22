@@ -238,10 +238,16 @@ export class LobbyDO extends DurableObject<Env> {
 
     const body = (await this.parseJson(request)) as
       | Response
-      | { lobbyId?: string; gameType?: string; noTimeout?: boolean; teamSize?: number };
+      | {
+          lobbyId?: string;
+          gameType?: string;
+          noTimeout?: boolean;
+          teamSize?: number;
+          maxRounds?: number;
+        };
     if (body instanceof Response) return body;
 
-    const { lobbyId, gameType, noTimeout, teamSize } = body;
+    const { lobbyId, gameType, noTimeout, teamSize, maxRounds } = body;
     if (!lobbyId || !gameType) {
       return Response.json({ error: 'lobbyId and gameType are required' }, { status: 400 });
     }
@@ -276,6 +282,13 @@ export class LobbyDO extends DurableObject<Env> {
     const accumulatedMetadata: Record<string, unknown> = {};
     if (typeof teamSize === 'number' && teamSize >= 1) {
       accumulatedMetadata.teamSize = Math.floor(teamSize);
+    }
+    // Wire-time round cap. The plugin's `createConfig(_, _, metadata)` reads
+    // `metadata.maxRounds` (see e.g. tragedy-of-the-commons), so a lobby can set
+    // game length here instead of always taking the plugin's default. Games that
+    // ignore the key are unaffected.
+    if (typeof maxRounds === 'number' && maxRounds >= 1) {
+      accumulatedMetadata.maxRounds = Math.floor(maxRounds);
     }
 
     // Initialize first phase with empty player list

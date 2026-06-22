@@ -1,0 +1,140 @@
+{
+  "runId": "run-1781962429013",
+  "spec": {
+    "game": "tragedy-of-the-commons",
+    "rounds": 8,
+    "params": {
+      "teamSize": 4
+    },
+    "server": "http://localhost:8787",
+    "identities": "ephemeral",
+    "output": "/home/lucian/workspace-core/capture-the-lobster/runs/out",
+    "seats": [
+      {
+        "persona": "./personas/peaceful-mediator",
+        "model": "haiku",
+        "count": 2
+      },
+      {
+        "persona": "./personas/win-focused-opportunist",
+        "model": "haiku",
+        "count": 2
+      }
+    ],
+    "limits": {
+      "maxModelCallsPerBot": 200,
+      "wallClockMsPerRun": 900000
+    },
+    "analysis": {
+      "enabled": true,
+      "model": "haiku"
+    }
+  },
+  "lobbyId": "0b3a0bb1-f492-4b22-85d4-a05f90a1ab8f",
+  "gameId": "65ccd133-5df0-49ea-acff-989274475cec",
+  "seats": [
+    {
+      "bot": "bot1-2a4C5b",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/peaceful-mediator",
+      "model": "haiku",
+      "backend": "claude"
+    },
+    {
+      "bot": "bot2-78EFC5",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/peaceful-mediator",
+      "model": "haiku",
+      "backend": "claude"
+    },
+    {
+      "bot": "bot3-a7095d",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/win-focused-opportunist",
+      "model": "haiku",
+      "backend": "claude"
+    },
+    {
+      "bot": "bot4-875Adc",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/win-focused-opportunist",
+      "model": "haiku",
+      "backend": "claude"
+    }
+  ],
+  "outcome": {
+    "phase": "finished",
+    "round": 12,
+    "isFinished": true,
+    "winner": "09329112-ba7b-4fba-b624-7b83e6ce9f48",
+    "winnerHandle": "bot4-875Adc",
+    "finalScores": [
+      {
+        "id": "25eb3578-b856-41d6-92b2-a0028652cf9c",
+        "handle": "bot3-a7095d",
+        "victoryPoints": 2,
+        "influence": 2
+      },
+      {
+        "id": "09329112-ba7b-4fba-b624-7b83e6ce9f48",
+        "handle": "bot4-875Adc",
+        "victoryPoints": 3,
+        "influence": 1
+      },
+      {
+        "id": "f3fdfc71-d2f6-4274-886d-d953c988c830",
+        "handle": "bot1-2a4C5b",
+        "victoryPoints": 1,
+        "influence": 1
+      },
+      {
+        "id": "aae62294-a144-400d-a765-d1b277f8a1cd",
+        "handle": "bot2-78EFC5",
+        "victoryPoints": 1,
+        "influence": 0
+      }
+    ]
+  },
+  "perBot": [
+    {
+      "bot": "bot1-2a4C5b",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/peaceful-mediator",
+      "model": "haiku",
+      "backend": "claude",
+      "modelCalls": 3,
+      "consequentialTurns": 15,
+      "talkOnlyTurns": 1,
+      "finished": true,
+      "reason": "finished"
+    },
+    {
+      "bot": "bot2-78EFC5",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/peaceful-mediator",
+      "model": "haiku",
+      "backend": "claude",
+      "modelCalls": 2,
+      "consequentialTurns": 16,
+      "talkOnlyTurns": 1,
+      "finished": true,
+      "reason": "finished"
+    },
+    {
+      "bot": "bot3-a7095d",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/win-focused-opportunist",
+      "model": "haiku",
+      "backend": "claude",
+      "modelCalls": 1,
+      "consequentialTurns": 11,
+      "talkOnlyTurns": 0,
+      "finished": true,
+      "reason": "finished"
+    },
+    {
+      "bot": "bot4-875Adc",
+      "persona": "/home/lucian/workspace-core/capture-the-lobster/packages/model-harness/personas/win-focused-opportunist",
+      "model": "haiku",
+      "backend": "claude",
+      "modelCalls": 2,
+      "consequentialTurns": 15,
+      "talkOnlyTurns": 0,
+      "finished": true,
+      "reason": "finished"
+    }
+  ]
+}

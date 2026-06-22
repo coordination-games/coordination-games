@@ -4,8 +4,9 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "build:deps": "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat -w packages/plugins/reasoning -w packages/plugins/trust-projector-tragedy && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons",
+    "dev": "npm run build:deps && wrangler dev",
+    "deploy": "npm run build:deps && wrangler deploy",
     "test": "vitest run",
     "smoke:spectator": "GAME_SERVER=http://localhost:8787 tsx ../../scripts/smoke-spectator-delay.ts"
   },

@@ -4,7 +4,8 @@
  * Used by:
  *   scripts/setup-bot-pool.ts  — register + faucet bots, persist to pool.json
  *   scripts/fill-bots.ts        — fill an existing lobby with pool bots
- *   scripts/run-game.ts         — create a lobby + fill with ephemeral bots
+ *
+ * (Automated all-bot runs now live in packages/model-harness, not here.)
  *
  * The bot pool lives at ~/.coordination/bot-pool.json alongside the normal CLI
  * config so it survives across runs.

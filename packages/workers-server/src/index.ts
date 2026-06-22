@@ -607,6 +607,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     gameType?: string;
     noTimeout?: boolean;
     teamSize?: number;
+    maxRounds?: number;
   }>(request);
   if (body instanceof Response) return body;
 
@@ -624,6 +625,12 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   // clamps before this point; the canonical capacity is what the first
   // lobby phase computes from `teamSize` after the lobby is created.
   const teamSize = Math.min(20, Math.max(1, Math.floor(body?.teamSize ?? 2)));
+  // Optional game-length override forwarded to the plugin's createConfig as
+  // maxRounds (via LobbyDO metadata). Omitted → the plugin keeps its default.
+  const maxRounds =
+    typeof body?.maxRounds === 'number' && body.maxRounds >= 1
+      ? Math.floor(body.maxRounds)
+      : undefined;
 
   // Compute canonical capacity from the game's first lobby phase. This is
   // the value clients (CLI list, web cards, fill-bots) render — they no
@@ -661,7 +668,13 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     new Request('https://do/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lobbyId, gameType, teamSize, noTimeout }),
+      body: JSON.stringify({
+        lobbyId,
+        gameType,
+        teamSize,
+        noTimeout,
+        ...(maxRounds ? { maxRounds } : {}),
+      }),
     }),
   );
 

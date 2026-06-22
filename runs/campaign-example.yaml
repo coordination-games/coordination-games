@@ -1,0 +1,38 @@
+# campaign-example.yaml — a research sweep in the globals/games shape.
+#
+#   globals  = campaign-wide fields  (server, identities, output, limits, analysis)
+#   games[]  = per-game setups       (game, rounds, params, seats, repeats, label)
+#
+# Strict partition: every field lives in exactly ONE section — put a per-game
+# field in globals (or vice-versa) and the loader errors with where it belongs.
+# Runs execute sequentially, each its own lobby/game/run dir, grouped under
+# runs/out/campaign-<id>/ with a campaign.json index. All-haiku → no key needed.
+#
+#   npx tsx packages/model-harness/src/index.ts run --dry-run runs/campaign-example.yaml
+#   npx tsx packages/model-harness/src/index.ts run           runs/campaign-example.yaml
+
+globals:
+  server: http://localhost:8787
+  identities: ephemeral
+  output: ./runs/out
+  limits: { maxModelCallsPerBot: 120, wallClockMsPerRun: 900000 }
+  analysis: { enabled: true, model: haiku }
+
+games:
+  # Same model (haiku), contrasting strategies — repeated for variance.
+  - label: mediators-vs-opportunists
+    game: tragedy-of-the-commons
+    rounds: 3
+    params: { teamSize: 4 }
+    repeats: 2
+    seats:
+      - { persona: ./personas/peaceful-mediator, model: haiku, count: 2 }
+      - { persona: ./personas/win-focused-opportunist, model: haiku, count: 2 }
+
+  # A different table on the same game — all opportunists.
+  - label: all-opportunists
+    game: tragedy-of-the-commons
+    rounds: 3
+    params: { teamSize: 4 }
+    seats:
+      - { persona: ./personas/win-focused-opportunist, model: haiku, count: 4 }
