@@ -168,7 +168,8 @@ Runnable example: `runs/campaign-example.yaml` (all-haiku, no key).
   { "campaignId": "campaign-…", "total": 11,
     "runs": [ { "label": "mediators-vs-opportunists-r1", "game": "tragedy-of-the-commons",
                 "status": "ok", "runDir": "run-…", "gameId": "…", "analysis": true,
-                "outcome": { "winnerHandle": "…", "finalScores": [ … ] } } ] }
+                "outcome": { "isFinished": true, "winnerLabel": "Team A", "statusVariant": "win",
+                             "outcome": { /* game's own getOutcome */ }, "summary": { /* getSummaryFromSpectator */ } } } ] }
   ```
   Read `campaign.json` to compare outcomes across the batch without opening every run. Failed runs appear with `"status": "error"` + the message.
 - **Preview before you fire.** `run --dry-run <campaign.yaml>` prints the expanded grid (entries, total run count, per-entry backend mix) so you don't accidentally launch 200 games.
@@ -193,7 +194,7 @@ Because `server` and `identities` are **globals**, flipping a whole sweep to the
 
 - `bots/<botName>.jsonl` — one event per line: `session` (start/finished/cap/error), `model_request`, `model_response`, `tool_call`, `tool_result`. The append-only ground truth for what each agent thought and did. (MiniMax transcripts run large — reasoning + every tool turn.)
 - `relay.jsonl` — the **relay ground truth** (messaging, attestations, per-game action records), pulled from the admin inspect's `gameInspect.relayMessages`. This is the canonical "what happened," independent of any bot's view. The judge cites it by index (`relayRefs`).
-- `manifest.json` — `runId, spec, lobbyId, gameId, seats, outcome, perBot`. `outcome` is the distilled final state (winner, finalScores, round, phase). Diff two manifests to compare runs.
+- `manifest.json` — `runId, spec, lobbyId, gameId, seats, outcome, perBot`. `outcome` is a **game-agnostic** distillation: `phase`/`round`/`isFinished`, plus `winnerLabel`/`statusVariant` from the contract's `getReplayChrome`, plus the game's own canonical `outcome` (`getOutcome`) and `summary` (`getSummaryFromSpectator`) passed through verbatim — the harness never interprets game-specific score fields. Diff two manifests to compare runs.
 - `analysis.json` — the judge pass: per-lens findings + `perBot` (style, consequentialTurns, trustworthiness, notable) + `summary`.
 
 Run artifacts are gitignored (`runs/.gitignore`, `packages/model-harness/.gitignore`). A curated sample (e.g. `packages/model-harness/examples/sample-run-totc/`) belongs under `examples/`, not in `runs/out/`.
