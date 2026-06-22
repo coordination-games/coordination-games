@@ -87,24 +87,6 @@ export interface LoadedPersona {
    * Contains behavior/voice/strategy ONLY — no game-specific tool names/args.
    */
   systemPromptFragment: string;
-  /**
-   * Optional persona.yaml `defaultModel`. A convenience only — the run-spec's
-   * per-seat `model` always wins. Lets the same persona be benchmarked across
-   * models.
-   */
-  defaultModel?: string;
-  /**
-   * Optional persona.yaml `extraMcpServers`: extra MCP servers the runner also
-   * connects/exposes alongside coga. Out-of-the-box personas use none. (v1 may
-   * document-but-not-wire these; if so it is noted explicitly — no silent gaps.)
-   */
-  extraMcpServers?: ExtraMcpServer[];
-}
-
-export interface ExtraMcpServer {
-  name: string;
-  command: string;
-  args?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +114,6 @@ export interface AnalysisSpec {
   enabled: boolean;
   /** Judge model id (any backend, selected via backendForModel). */
   model: string;
-  /** Optional override of the default analysis lens set (§10). */
-  lenses?: string[];
 }
 
 export interface RunSpec {

@@ -307,9 +307,5 @@ function parseAnalysis(raw: unknown): RunSpec['analysis'] {
     typeof obj.model === 'string' && obj.model.trim()
       ? obj.model.trim()
       : 'anthropic/claude-sonnet';
-  const lenses =
-    Array.isArray(obj.lenses) && obj.lenses.every((l) => typeof l === 'string')
-      ? (obj.lenses as string[])
-      : undefined;
-  return { enabled, model, ...(lenses ? { lenses } : {}) };
+  return { enabled, model };
 }
