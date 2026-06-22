@@ -328,6 +328,11 @@ async function createAndJoinLobby(
     // into the lobby metadata bag, which the plugin's createConfig reads as
     // maxRounds. (Without this the game silently used its built-in default.)
     ...(typeof spec.rounds === 'number' && spec.rounds >= 1 ? { maxRounds: spec.rounds } : {}),
+    // Server-side projection ablation (e.g. trust). Flows lobby-create → LobbyDO
+    // metadata → GameMeta.disabledPlugins → gated in GameRoomDO.applyTrustProjector.
+    ...(spec.disablePlugins && spec.disablePlugins.length > 0
+      ? { disabledPlugins: spec.disablePlugins }
+      : {}),
   };
   const lobby = await api(spec.server, '/api/lobbies/create', {
     method: 'POST',
@@ -653,6 +658,8 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
           maxModelCalls: spec.limits.maxModelCallsPerBot,
           wallClockMs: spec.limits.wallClockMsPerRun,
         },
+        // Client-side ablation knob (COGA_DISABLE_PLUGINS on the bot's coga serve).
+        ...(spec.disablePlugins ? { disablePlugins: spec.disablePlugins } : {}),
         onEvent: (e) => writer.onEvent(e),
       });
 

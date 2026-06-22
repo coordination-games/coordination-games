@@ -37,3 +37,5 @@ TOTC live registration now uses the V2 plugin path.
 
 - `trust-projector-tragedy` keeps v0 region parsing only as compatibility.
 - V2 cards summarize structures, roads, solar investment, extraction pressure, and commons health.
+- **Projected server-side only.** `GameRoomDO.applyTrustProjector` is the single source of `trustCards` for both player and spectator payloads — agents consume it, they don't recompute it. (It briefly ran client-side in the CLI pipeline too; that duplicate was removed — see [Plugin Pipeline](plugin-pipeline.md).)
+- **Ablatable.** A run can disable trust via the harness's `disablePlugins: [trust-projector-tragedy]`, gated at this projector through `GameMeta.disabledPlugins` — bots then play with no trust summaries (see [Model Harness → Plugin ablation](../development/model-harness.md#plugin-ablation-disableplugins)).

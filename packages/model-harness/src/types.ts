@@ -136,6 +136,15 @@ export interface RunSpec {
   /** Optional automated analysis ("judge") pass config. */
   analysis?: AnalysisSpec;
   /**
+   * Plugin ids to disable for this run (research ablation — e.g. run Tragedy
+   * without the trust projector and measure the behavioral delta). Drives BOTH
+   * layers: the server-side projection gate (forwarded to lobby-create →
+   * GameMeta.disabledPlugins) AND the per-agent client-side pipeline knob
+   * (COGA_DISABLE_PLUGINS on each bot's `coga serve`). Each layer disables
+   * whatever it owns; ids it doesn't own are no-ops.
+   */
+  disablePlugins?: string[];
+  /**
    * Optional display label for this run, woven into the run-dir name and the
    * campaign index. Set by the campaign loader (globals/games form); a bare
    * single-spec leaves it unset, so its run dir stays `run-<ts>`.
@@ -273,6 +282,12 @@ export interface RunSessionOptions {
     /** Wall-clock budget in ms for this session (RunLimits.wallClockMsPerRun). */
     wallClockMs: number;
   };
+  /**
+   * Client-side plugin ids to disable for this bot, set as COGA_DISABLE_PLUGINS
+   * on the spawned `coga serve`. Server-side projections (trust) are gated
+   * separately, at lobby creation.
+   */
+  disablePlugins?: string[];
   /** Append-only transcript sink (§8). */
   onEvent: (e: TranscriptEvent) => void;
 }

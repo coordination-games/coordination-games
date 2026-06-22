@@ -104,7 +104,15 @@ export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
 
 /** Campaign scope partition — the single source of truth for which field lives where. */
 const GLOBAL_KEYS = ['server', 'identities', 'output', 'limits', 'analysis'] as const;
-const GAME_KEYS = ['game', 'rounds', 'params', 'seats', 'repeats', 'label'] as const;
+const GAME_KEYS = [
+  'game',
+  'rounds',
+  'params',
+  'seats',
+  'repeats',
+  'label',
+  'disablePlugins',
+] as const;
 
 async function readYamlObject(
   filePath: string,
@@ -136,6 +144,10 @@ function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec 
       : {};
   const limits: RunLimits = parseRunLimits(obj.limits);
   const analysis = parseAnalysis(obj.analysis);
+  const disablePlugins =
+    Array.isArray(obj.disablePlugins) && obj.disablePlugins.every((p) => typeof p === 'string')
+      ? (obj.disablePlugins as string[])
+      : undefined;
 
   return {
     game,
@@ -147,6 +159,7 @@ function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec 
     seats,
     limits,
     ...(analysis ? { analysis } : {}),
+    ...(disablePlugins ? { disablePlugins } : {}),
   };
 }
 

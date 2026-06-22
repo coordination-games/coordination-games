@@ -20,7 +20,7 @@
  *  5. systemPrompt is prepended to the initial user prompt (--print has no
  *     separate system-prompt flag; prepending is idiomatic for the CLI).
  *
- *  6. MCP config is built with cogaServeArgs() so both backends share exactly
+ *  6. MCP config is built with cogaServeCommand() so both backends share exactly
  *     the same coga serve invocation.
  *
  * MUST NOT set ANTHROPIC_API_KEY — local ~/.claude creds only.
@@ -28,7 +28,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cogaServeArgs } from '../coga-client.js';
+import { cogaServeCommand } from '../coga-client.js';
 import { BASE_PROTOCOL_PROMPT, RESUME_PROMPT } from '../prompts.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
 import { claudeCliModel } from '../types.js';
@@ -266,7 +266,8 @@ function parseStreamLine(line: string, bot: string, _model: string): ParsedLine 
 
 export class ClaudeAgentRunner implements AgentRunner {
   async runSession(opts: RunSessionOptions): Promise<SessionResult> {
-    const { botName, privateKey, server, systemPrompt, model, limits, onEvent } = opts;
+    const { botName, privateKey, server, systemPrompt, model, limits, onEvent, disablePlugins } =
+      opts;
     // The seat model may carry a backend-routing prefix (`anthropic/claude-haiku`)
     // or a friendly tier alias the `claude` CLI doesn't accept raw — normalize to
     // a CLI-valid `--model` value. The original seat model stays in the manifest.
@@ -275,14 +276,24 @@ export class ClaudeAgentRunner implements AgentRunner {
     const sessionId = randomUUID();
     const deadline = Date.now() + limits.wallClockMs;
 
+    const coga = cogaServeCommand(privateKey, botName, server);
     const mcpConfig = JSON.stringify({
       mcpServers: {
         coga: {
-          command: 'npx',
-          args: cogaServeArgs(privateKey, botName, server),
+          command: coga.command,
+          args: coga.args,
         },
       },
     });
+
+    // Env for the `claude` subprocess; the coga MCP server it spawns inherits
+    // this, so COGA_DISABLE_PLUGINS (if any) reaches coga's client-side pipeline.
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(disablePlugins && disablePlugins.length > 0
+        ? { COGA_DISABLE_PLUGINS: disablePlugins.join(',') }
+        : {}),
+    };
 
     let totalModelCalls = 0;
     let finished = false;
@@ -359,7 +370,7 @@ export class ClaudeAgentRunner implements AgentRunner {
 
         const proc = spawn(process.env.CLAUDE_BIN ?? 'claude', args, {
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env },
+          env: childEnv,
         });
 
         // Wall-clock kill timer

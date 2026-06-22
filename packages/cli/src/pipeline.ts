@@ -14,17 +14,43 @@
 import type { ToolPlugin } from '@coordination-games/engine';
 import { PluginLoader, type PluginPipeline } from '@coordination-games/engine';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
-import { TrustProjectorTragedyPlugin } from '@coordination-games/plugin-trust-projector-tragedy';
 
-const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin, TrustProjectorTragedyPlugin];
+// Client-side plugins only. Trust projection is deliberately NOT here: it is a
+// server-side projection (GameRoomDO.applyTrustProjector) that every player and
+// spectator reads from their state payload — agents *consume* trust, they don't
+// recompute it. Running it client-side too was duplicate work over a relay
+// *delta* (the pipeline only sees new messages since the cursor), so the client
+// copy was both redundant and evidence-degraded. The canonical computation lives
+// server-side; clients read results. See wiki/architecture/plugin-pipeline.md and
+// docs/plans/trust-attestations.md ("server-side canonical, client-side consumption").
+const DEFAULT_PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
 let registeredPlugins: ToolPlugin[] = [...DEFAULT_PLUGINS];
 let loader: PluginLoader | null = null;
 let pipeline: PluginPipeline | null = null;
 
+/**
+ * Per-agent client-side plugin ablation knob. Reads the COGA_DISABLE_PLUGINS
+ * denylist (comma-separated plugin ids) from the environment so the harness — or
+ * a human running `coga serve` — can disable a client-side plugin for a run and
+ * measure the behavioral delta. Server-side projections (trust) are gated
+ * separately on the server; see GameRoomDO.applyTrustProjector.
+ */
+function disabledPluginIdsFromEnv(): Set<string> {
+  const raw = process.env.COGA_DISABLE_PLUGINS;
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+}
+
 export function initPipeline(additionalPlugins: ToolPlugin[] = []): void {
   loader = new PluginLoader();
-  registeredPlugins = [...DEFAULT_PLUGINS, ...additionalPlugins];
+  const disabled = disabledPluginIdsFromEnv();
+  registeredPlugins = [...DEFAULT_PLUGINS, ...additionalPlugins].filter((p) => !disabled.has(p.id));
 
   for (const plugin of registeredPlugins) {
     loader.register(plugin);
