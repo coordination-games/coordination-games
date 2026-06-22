@@ -15,11 +15,12 @@
  * References: docs/plans/unified-model-harness.md §§4.5, 6, 7, 10.
  */
 
+import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { analyzeRun } from './analyze.js';
 import { resolvePersonaDir, runBatch } from './orchestrate.js';
-import { expandSeatPlan, loadSpec } from './spec.js';
-import type { RunSpec } from './types.js';
+import { expandSeatPlan, loadCampaign } from './spec.js';
+import type { CampaignRun, RunSpec } from './types.js';
 
 // ---------------------------------------------------------------------------
 // argv parsing — deliberately minimal (§: no arg-parsing dependency).
@@ -135,30 +136,194 @@ function printSeatPlan(spec: RunSpec): void {
 // ---------------------------------------------------------------------------
 
 async function cmdRun(specPath: string, dryRun: boolean): Promise<number> {
-  const spec = await loadSpec(specPath);
+  const { form, runs } = await loadCampaign(specPath);
 
   if (dryRun) {
-    printSeatPlan(spec);
+    printPlan(form, runs);
     return 0;
   }
 
-  const { runDir, lobbyId, gameId, manifest } = await runBatch(spec);
-  console.log(`\nrun complete:`);
-  console.log(`  runDir:  ${runDir}`);
-  console.log(`  lobbyId: ${lobbyId}`);
-  console.log(`  gameId:  ${gameId}`);
-  void manifest;
-
-  if (spec.analysis?.enabled) {
-    console.log(`\n[analyze] running judge (${spec.analysis.model})...`);
-    await analyzeRun(runDir, {
-      model: spec.analysis.model,
-      ...(spec.analysis.lenses ? { lenses: spec.analysis.lenses } : {}),
-    });
-    console.log(`  analysis: ${path.join(runDir, 'analysis.json')}`);
+  // Single bare spec → unchanged one-run behavior (flat output, no campaign index).
+  if (form === 'single') {
+    const cr = runs[0];
+    if (!cr) throw new Error(`no runs resolved from ${specPath}`);
+    const { runDir, lobbyId, gameId, manifest } = await runBatch(cr.spec);
+    console.log(`\nrun complete:`);
+    console.log(`  runDir:  ${runDir}`);
+    console.log(`  lobbyId: ${lobbyId}`);
+    console.log(`  gameId:  ${gameId}`);
+    void manifest;
+    await maybeAnalyze(cr.spec, runDir);
+    return 0;
   }
 
-  return 0;
+  return runCampaign(runs);
+}
+
+/** Run the judge over a finished run dir if the spec enables it. */
+async function maybeAnalyze(spec: RunSpec, runDir: string): Promise<void> {
+  if (!spec.analysis?.enabled) return;
+  console.log(`\n[analyze] running judge (${spec.analysis.model})...`);
+  await analyzeRun(runDir, {
+    model: spec.analysis.model,
+    ...(spec.analysis.lenses ? { lenses: spec.analysis.lenses } : {}),
+  });
+  console.log(`  analysis: ${path.join(runDir, 'analysis.json')}`);
+}
+
+// ---------------------------------------------------------------------------
+// Campaign execution (globals/games form) — sequential, failure-isolated.
+// ---------------------------------------------------------------------------
+
+interface CampaignRunSummary {
+  label: string;
+  game: string;
+  status: 'ok' | 'error';
+  runDir?: string;
+  lobbyId?: string;
+  gameId?: string;
+  analysis?: boolean;
+  outcome?: unknown;
+  error?: string;
+}
+
+/**
+ * Run a campaign: every run is its own batch (fresh lobby/game/run dir), executed
+ * SEQUENTIALLY under one campaign dir. One run failing does NOT abort the sweep —
+ * its error is recorded and the next run proceeds (load-bearing for overnight
+ * sweeps). A campaign.json index + a console summary are written at the end.
+ */
+async function runCampaign(runs: CampaignRun[]): Promise<number> {
+  const first = runs[0];
+  if (!first) throw new Error('campaign resolved to zero runs');
+
+  // Group the whole sweep under one campaign dir so its runs are easy to compare.
+  const campaignId = `campaign-${Date.now()}`;
+  const campaignDir = path.resolve(first.spec.output, campaignId);
+  await fsp.mkdir(campaignDir, { recursive: true });
+  console.log(`\n[campaign] ${campaignId} — ${runs.length} runs → ${campaignDir}\n`);
+
+  const summaries: CampaignRunSummary[] = [];
+
+  for (let i = 0; i < runs.length; i++) {
+    const cr = runs[i];
+    if (!cr) continue;
+    const label = cr.spec.label ?? cr.baseLabel;
+    const tag = `[${i + 1}/${runs.length}] ${label}`;
+    console.log(`\n========== ${tag} ==========`);
+    // Each run writes into the campaign dir.
+    const spec: RunSpec = { ...cr.spec, output: campaignDir };
+    try {
+      const { runDir, lobbyId, gameId, manifest } = await runBatch(spec);
+      let analysis = false;
+      try {
+        if (spec.analysis?.enabled) {
+          await analyzeRun(runDir, {
+            model: spec.analysis.model,
+            ...(spec.analysis.lenses ? { lenses: spec.analysis.lenses } : {}),
+          });
+          analysis = true;
+        }
+      } catch (err) {
+        console.error(`  [campaign] analysis failed for ${label}: ${errMsg(err)}`);
+      }
+      const outcome = (manifest as { outcome?: unknown } | null)?.outcome ?? null;
+      summaries.push({
+        label,
+        game: spec.game,
+        status: 'ok',
+        runDir: path.relative(campaignDir, runDir),
+        lobbyId,
+        gameId,
+        analysis,
+        outcome,
+      });
+      console.log(`  [campaign] ${tag} ✓`);
+    } catch (err) {
+      console.error(`  [campaign] ${tag} ✗ FAILED: ${errMsg(err)}`);
+      summaries.push({ label, game: spec.game, status: 'error', error: errMsg(err) });
+    }
+  }
+
+  const indexPath = path.join(campaignDir, 'campaign.json');
+  await fsp.writeFile(
+    indexPath,
+    JSON.stringify({ campaignId, total: runs.length, runs: summaries }, null, 2),
+  );
+
+  printCampaignSummary(summaries, indexPath);
+  return summaries.some((s) => s.status === 'error') ? 1 : 0;
+}
+
+function printCampaignSummary(summaries: CampaignRunSummary[], indexPath: string): void {
+  console.log(`\n=== Campaign complete ===`);
+  for (const s of summaries) {
+    if (s.status === 'ok') {
+      const o = s.outcome as { winnerHandle?: string; winner?: string } | null;
+      const winner = o?.winnerHandle ?? o?.winner ?? '?';
+      console.log(`  ✓ ${s.label.padEnd(28)} ${s.game.padEnd(26)} winner=${winner}`);
+    } else {
+      console.log(
+        `  ✗ ${s.label.padEnd(28)} ${s.game.padEnd(26)} ERROR: ${(s.error ?? '').slice(0, 80)}`,
+      );
+    }
+  }
+  const ok = summaries.filter((s) => s.status === 'ok').length;
+  console.log(`\n  ${ok}/${summaries.length} ok → ${indexPath}\n`);
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Print the resolved plan for a dry run (single seat plan, or campaign grid). */
+function printPlan(form: 'single' | 'campaign', runs: CampaignRun[]): void {
+  if (form === 'single') {
+    const cr = runs[0];
+    if (cr) printSeatPlan(cr.spec);
+    return;
+  }
+
+  console.log('\n=== Campaign plan (dry run) ===\n');
+  const first = runs[0]?.spec;
+  if (first) {
+    console.log(`server:     ${first.server}`);
+    console.log(`identities: ${first.identities}`);
+    console.log(`output:     ${first.output}`);
+    console.log(`analysis:   ${first.analysis ? `enabled (${first.analysis.model})` : '(none)'}`);
+  }
+
+  // Group by base label (an entry = one or more repeats sharing a base label).
+  const byLabel = new Map<string, CampaignRun[]>();
+  for (const r of runs) {
+    const arr = byLabel.get(r.baseLabel);
+    if (arr) arr.push(r);
+    else byLabel.set(r.baseLabel, [r]);
+  }
+
+  console.log(`\nentries:    ${byLabel.size}  |  total runs: ${runs.length}\n`);
+  for (const [label, group] of byLabel) {
+    const s = group[0]?.spec;
+    if (!s) continue;
+    const seatPlan = expandSeatPlan(s);
+    const mix = seatPlan.reduce<Record<string, number>>((acc, p) => {
+      acc[p.backend] = (acc[p.backend] ?? 0) + 1;
+      return acc;
+    }, {});
+    const mixStr = Object.entries(mix)
+      .map(([b, n]) => `${n} ${b}`)
+      .join(', ');
+    const teamSize = (s.params as { teamSize?: unknown }).teamSize ?? '?';
+    console.log(
+      `  ${label.padEnd(26)} game=${s.game.padEnd(26)} rounds=${String(s.rounds).padEnd(3)} teamSize=${String(teamSize).padEnd(3)} ×${group.length}  [${mixStr}]`,
+    );
+  }
+  console.log('');
+  if (runs.length > 12) {
+    console.log(
+      `  ⚠ ${runs.length} runs will execute sequentially — that's a lot. Ctrl-C to abort.\n`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

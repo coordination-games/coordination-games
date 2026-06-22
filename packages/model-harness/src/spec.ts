@@ -18,6 +18,8 @@ import { parse as parseYaml } from 'yaml';
 import {
   type Backend,
   backendForModel,
+  type CampaignRun,
+  type LoadedCampaign,
   type RunLimits,
   type RunSpec,
   type SeatSpec,
@@ -39,47 +41,118 @@ const DEFAULT_SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a YAML or JSON run-spec file. Applies defaults for optional fields.
- * Throws with a clear message if required fields are missing or invalid.
+ * Parse a YAML or JSON run-spec file (bare single-run shape). Applies defaults
+ * for optional fields. Throws with a clear message if required fields are
+ * missing or invalid.
  *
  * @param filePath - Absolute or relative path to the run-spec YAML/JSON file.
  * @returns Validated, defaulted RunSpec.
  */
 export async function loadSpec(filePath: string): Promise<RunSpec> {
+  const { obj, abs } = await readYamlObject(filePath);
+  return parseRunSpecObject(obj, abs);
+}
+
+/**
+ * Load a spec file as a campaign — supports both shapes:
+ *  - Bare run-spec (no `games` key)  → one run, form 'single' (legacy; unchanged).
+ *  - Campaign `{ globals?, games[] }` → N runs, form 'campaign'.
+ *
+ * Campaign scope is a STRICT PARTITION: `globals` holds campaign-wide fields,
+ * each `games[]` entry holds per-game fields, and no field may appear in both.
+ * A misplaced field is a hard error — that's the payoff of no-overrides: we can
+ * tell you exactly where a field belongs.
+ */
+export async function loadCampaign(filePath: string): Promise<LoadedCampaign> {
+  const { obj, abs } = await readYamlObject(filePath);
+
+  // Bare run-spec → a one-run "single" campaign (run dir stays `run-<ts>`).
+  if (!('games' in obj)) {
+    const spec = parseRunSpecObject(obj, abs);
+    return {
+      form: 'single',
+      runs: [{ spec, baseLabel: spec.game, repeatIndex: 1, repeatTotal: 1 }],
+    };
+  }
+
+  // Campaign form.
+  const globals = parseGlobals(obj.globals, abs);
+  const rawGames = obj.games;
+  if (!Array.isArray(rawGames) || rawGames.length === 0) {
+    throw new Error(`campaign at ${abs}: "games" must be a non-empty array`);
+  }
+
+  const runs: CampaignRun[] = [];
+  const labelCounts = new Map<string, number>();
+
+  rawGames.forEach((entry: unknown, idx: number) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new Error(`campaign at ${abs}: games[${idx}] must be an object`);
+    }
+    const g = entry as Record<string, unknown>;
+    assertKeysAllowed(g, GAME_KEYS, `games[${idx}]`, abs);
+
+    // Strict partition: globals (campaign-wide) + entry (per-game). No key is in
+    // both, so this is a partition merge, not an override.
+    const merged: Record<string, unknown> = { ...globals, ...g };
+    const spec = parseRunSpecObject(merged, abs);
+
+    // Label: explicit `label:` else the game slug; de-dupe (same game twice).
+    let baseLabel = typeof g.label === 'string' && g.label.trim() ? g.label.trim() : spec.game;
+    const seen = (labelCounts.get(baseLabel) ?? 0) + 1;
+    labelCounts.set(baseLabel, seen);
+    if (seen > 1) baseLabel = `${baseLabel}-${seen}`;
+
+    const repeats = parseRepeats(g.repeats, idx, abs);
+    for (let r = 1; r <= repeats; r++) {
+      const label = repeats > 1 ? `${baseLabel}-r${r}` : baseLabel;
+      runs.push({ spec: { ...spec, label }, baseLabel, repeatIndex: r, repeatTotal: repeats });
+    }
+  });
+
+  return { form: 'campaign', runs };
+}
+
+// ---------------------------------------------------------------------------
+// Internal parse machinery (shared by loadSpec + loadCampaign)
+// ---------------------------------------------------------------------------
+
+/** Campaign scope partition — the single source of truth for which field lives where. */
+const GLOBAL_KEYS = ['server', 'identities', 'output', 'limits', 'analysis'] as const;
+const GAME_KEYS = ['game', 'rounds', 'params', 'seats', 'repeats', 'label'] as const;
+
+async function readYamlObject(
+  filePath: string,
+): Promise<{ obj: Record<string, unknown>; abs: string }> {
   const abs = path.resolve(filePath);
   const raw = await fs.readFile(abs, 'utf8');
   // yaml.parse handles both YAML and JSON (JSON is valid YAML).
   const data: unknown = parseYaml(raw);
-
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new Error(`run-spec at ${abs}: expected a YAML/JSON object at root`);
+    throw new Error(`spec at ${abs}: expected a YAML/JSON object at root`);
   }
-  const obj = data as Record<string, unknown>;
+  return { obj: data as Record<string, unknown>, abs };
+}
 
-  // --- Required fields ---
+/** Parse a plain object into a validated, defaulted RunSpec. */
+function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec {
   const game = requireString(obj, 'game', abs);
   const rounds = requirePositiveInt(obj, 'rounds', abs);
   const seats = requireSeats(obj, abs);
 
-  // --- Optional fields with defaults ---
   const server: string =
     typeof obj.server === 'string' && obj.server.trim() ? obj.server.trim() : DEFAULT_SERVER;
-
   const identities: RunSpec['identities'] = obj.identities === 'pool' ? 'pool' : 'ephemeral';
-
   const output: string =
     typeof obj.output === 'string' && obj.output.trim() ? obj.output.trim() : './runs/out';
-
   const params: Record<string, unknown> =
     typeof obj.params === 'object' && obj.params !== null && !Array.isArray(obj.params)
       ? (obj.params as Record<string, unknown>)
       : {};
-
   const limits: RunLimits = parseRunLimits(obj.limits);
-
   const analysis = parseAnalysis(obj.analysis);
 
-  const spec: RunSpec = {
+  return {
     game,
     rounds,
     params,
@@ -90,8 +163,42 @@ export async function loadSpec(filePath: string): Promise<RunSpec> {
     limits,
     ...(analysis ? { analysis } : {}),
   };
+}
 
-  return spec;
+function assertKeysAllowed(
+  obj: Record<string, unknown>,
+  allowed: readonly string[],
+  where: string,
+  abs: string,
+): void {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.includes(key)) {
+      throw new Error(
+        `campaign at ${abs}: "${key}" is not allowed in ${where} — allowed here: ${allowed.join(', ')}. ` +
+          `Campaign scope is a strict partition (globals vs per-game); this field likely belongs in the other section.`,
+      );
+    }
+  }
+}
+
+function parseGlobals(raw: unknown, abs: string): Record<string, unknown> {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`campaign at ${abs}: "globals" must be an object`);
+  }
+  const g = raw as Record<string, unknown>;
+  assertKeysAllowed(g, GLOBAL_KEYS, 'globals', abs);
+  return g;
+}
+
+function parseRepeats(raw: unknown, idx: number, abs: string): number {
+  if (raw === undefined) return 1;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+    throw new Error(
+      `campaign at ${abs}: games[${idx}].repeats must be a positive integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
 }
 
 // ---------------------------------------------------------------------------

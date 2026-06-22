@@ -77,6 +77,17 @@ function existsDirSync(p: string): boolean {
   }
 }
 
+/** Filesystem-safe slug for a run label (used in the run-dir name). */
+function slugify(s: string): string {
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'run'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Persona loader (§5)
 // ---------------------------------------------------------------------------
@@ -647,8 +658,9 @@ export interface RunBatchResult {
 export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
   const adminToken = process.env.INSPECTOR_TOKEN ?? 'local-inspector-token';
 
-  // --- Run directory ---
-  const runId = `run-${Date.now()}`;
+  // --- Run directory --- (campaign runs carry a label → woven into the dir name)
+  const labelSuffix = spec.label ? `-${slugify(spec.label)}` : '';
+  const runId = `run-${Date.now()}${labelSuffix}`;
   const runDir = path.resolve(spec.output, runId);
   await fs.mkdir(runDir, { recursive: true });
   console.log(`\n[orchestrate] run ${runId} → ${runDir}`);

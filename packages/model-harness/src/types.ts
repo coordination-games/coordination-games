@@ -155,6 +155,38 @@ export interface RunSpec {
   limits: RunLimits;
   /** Optional automated analysis ("judge") pass config. */
   analysis?: AnalysisSpec;
+  /**
+   * Optional display label for this run, woven into the run-dir name and the
+   * campaign index. Set by the campaign loader (globals/games form); a bare
+   * single-spec leaves it unset, so its run dir stays `run-<ts>`.
+   */
+  label?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Campaign (globals/games form) — a sequential sweep of batches (§ research).
+// Scope is a STRICT PARTITION, not defaults+overrides: campaign-wide fields live
+// in `globals`, per-game fields in each `games[]` entry, and no field appears in
+// both. The loader rejects a field placed in the wrong section.
+// ---------------------------------------------------------------------------
+
+/** One fully-resolved run within a campaign (globals merged, repeats flattened). */
+export interface CampaignRun {
+  /** The resolved RunSpec, ready for runBatch (with `label` set). */
+  spec: RunSpec;
+  /** The entry's base label (explicit `label:` or the game slug, de-duped). */
+  baseLabel: string;
+  /** 1-based index within this entry's repeats. */
+  repeatIndex: number;
+  /** Total repeats for this entry. */
+  repeatTotal: number;
+}
+
+/** Result of loading a spec file: a bare single run, or a multi-run campaign. */
+export interface LoadedCampaign {
+  /** 'single' = a bare run-spec (legacy shape); 'campaign' = globals/games form. */
+  form: 'single' | 'campaign';
+  runs: CampaignRun[];
 }
 
 // ---------------------------------------------------------------------------
