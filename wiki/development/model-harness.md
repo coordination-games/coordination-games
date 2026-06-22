@@ -6,6 +6,8 @@ CLI: `coga-harness run|analyze`. Design blueprint: `docs/plans/unified-model-har
 
 Both backends are **validated end-to-end** (2026-06-22): a mixed table of 2 Claude-haiku + 2 `openrouter/minimax/minimax-m2` played Tragedy of the Commons to `phase:"finished"` — full pipeline clean (per-bot transcripts, relay ground truth, manifest, judge `analysis.json`), and a MiniMax seat actually won.
 
+> **Mode note (current):** runs assume the local server in **dev / mock mode** — identities are ephemeral keypairs that sign an auth challenge, no chain is touched, no ETH/credits/gas involved (see [Dual-Mode Infrastructure](../architecture/dual-mode-infra.md)). The on-chain path (real ERC-8004 registration, credits, entry fees, settlement) is **built behind the `RPC_URL` gate** and not far off — point the harness at an on-chain worker with `identities: pool` and it activates with zero per-game changes. Not exercised here yet; one deliberate gap is that agents don't *see* their balance mid-game, so "play for real stakes" is a future, separable step.
+
 ## Why this is the default loop
 
 This is the way we test, research, and develop on the platform. It is not a one-off script — it is the inner loop.
@@ -34,7 +36,10 @@ npx tsx packages/model-harness/src/index.ts run --dry-run runs/treachery-study.y
 OPENROUTER_API_KEY=sk-or-... INSPECTOR_TOKEN=local-inspector-token \
   npx tsx packages/model-harness/src/index.ts run runs/treachery-study.yaml
 
-# 4. Re-judge an existing run dir without re-playing the game:
+# 4. Run a whole sweep (many games/matchups) from one campaign file — see Campaigns:
+npx tsx packages/model-harness/src/index.ts run runs/campaign-example.yaml
+
+# 5. Re-judge an existing run dir without re-playing the game:
 npx tsx packages/model-harness/src/index.ts analyze runs/out/run-<id> [--model anthropic/claude-haiku]
 ```
 
@@ -116,6 +121,63 @@ analysis: { enabled: true, model: haiku }
 ```
 
 To **vary the game** instead, change `game:` to `capture-the-lobster` or `oathbreaker` and adjust `params`/`teamSize` — the harness is game-agnostic, so nothing else moves.
+
+## Campaigns (research sweeps)
+
+One spec file can drive **many** runs — a whole sweep of games / sizes / matchups, executed sequentially. This is the research playbook: vary the inputs, let it run, compare outcomes across the batch.
+
+The shape is `globals` + `games`, and the rule is a **strict partition**, not defaults-with-overrides: every field lives in exactly ONE section. There's no precedence to reason about, and a misplaced field is a hard error that tells you where it belongs (e.g. `"server" is not allowed in games[0] — allowed here: game, rounds, params, seats, repeats, label`).
+
+| Scope | Fields | Why |
+|---|---|---|
+| **`globals`** | `server`, `identities`, `output`, `limits`, `analysis` | One server, one identity strategy, one output root, one judge config (so runs are comparable). Limits are backstops — a generous global covers every game. |
+| **per-game (`games[]`)** | `game`, `rounds`, `params`, `seats`, `repeats`, `label` | All intrinsic to a single setup. `rounds` is per-game on purpose — game length is part of the setup (a quick TotC vs a longer Capture-the-Lobster). |
+
+```yaml
+globals:
+  server: http://localhost:8787
+  identities: ephemeral
+  output: ./runs/out
+  limits: { maxModelCallsPerBot: 200, wallClockMsPerRun: 1200000 }
+  analysis: { enabled: true, model: haiku }
+games:
+  - label: mediators-vs-opportunists      # optional; defaults to the game slug (deduped if repeated)
+    game: tragedy-of-the-commons
+    rounds: 4
+    params: { teamSize: 4 }
+    repeats: 10                            # run this exact setup 10× for variance
+    seats:
+      - { persona: ./personas/peaceful-mediator, model: haiku, count: 2 }
+      - { persona: ./personas/win-focused-opportunist, model: haiku, count: 2 }
+  - game: capture-the-lobster
+    rounds: 6
+    params: { teamSize: 6 }
+    seats: [ ... ]
+# → 10 + 1 = 11 runs, sequential, each its own lobby/game/run dir.
+```
+
+Runnable example: `runs/campaign-example.yaml` (all-haiku, no key).
+
+**`repeats`** is how you get statistical signal — LLM play is stochastic, so one game of a setup tells you little; `repeats: 10` runs it ten times (run dirs suffixed `-r1` … `-r10`). It's a different concept from `rounds` (turns *within* one game) — don't conflate them.
+
+### Execution & output
+
+- **Sequential, failure-isolated.** Runs execute one at a time (parallel would blow OpenRouter rate limits and muddy logs). One run erroring does **not** abort the sweep — its error is recorded and the next proceeds. Load-bearing for overnight sweeps.
+- **Grouped output.** The whole sweep lands under `runs/out/campaign-<id>/`, one `run-<ts>-<label>/` per run (the `label` is woven into the dir name), plus a **`campaign.json`** index:
+  ```json
+  { "campaignId": "campaign-…", "total": 11,
+    "runs": [ { "label": "mediators-vs-opportunists-r1", "game": "tragedy-of-the-commons",
+                "status": "ok", "runDir": "run-…", "gameId": "…", "analysis": true,
+                "outcome": { "winnerHandle": "…", "finalScores": [ … ] } } ] }
+  ```
+  Read `campaign.json` to compare outcomes across the batch without opening every run. Failed runs appear with `"status": "error"` + the message.
+- **Preview before you fire.** `run --dry-run <campaign.yaml>` prints the expanded grid (entries, total run count, per-entry backend mix) so you don't accidentally launch 200 games.
+
+A bare single-spec file (no `games:` key) is still a valid one-run spec — unchanged behavior, flat output, no campaign dir.
+
+### Going on-chain is a two-line change
+
+Because `server` and `identities` are **globals**, flipping a whole sweep to the real on-chain version (see the mode note up top) is `server:` → the on-chain worker + `identities: pool`, with **zero per-game edits**. The partition pays off here: the world is global, the things you're studying aren't.
 
 ## Backend selection (no per-seat backend field)
 
