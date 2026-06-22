@@ -229,8 +229,12 @@ describe('SettlementStateMachine — receipt poll retry path', () => {
     });
     const { sm, alarms } = buildSm({ chain });
 
-    await sm.submit(PAYLOAD);
+    // Capture the reference time BEFORE submit — submit schedules the first
+    // alarm at Date.now()+100, so a baseline taken after it makes d0 (when -
+    // baseTimeBefore) land at 99 whenever ≥1ms elapses (flaky). Taken before,
+    // d0 is deterministically ≥100.
     const baseTimeBefore = Date.now();
+    await sm.submit(PAYLOAD);
     await sm.tick(); // pending #1 → attempts=1
     await sm.tick(); // pending #2 → attempts=2
     await sm.tick(); // confirmed
