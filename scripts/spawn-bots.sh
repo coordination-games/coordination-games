@@ -6,9 +6,10 @@
 # Each bot gets its own ephemeral wallet, authenticates, joins the lobby, then
 # starts an HTTP MCP server so a Claude agent can connect and play.
 #
-# For automated testing, prefer:
-#   tsx scripts/run-game.ts        — full e2e (ephemeral wallets, creates lobby)
-#   tsx scripts/fill-bots.ts <id>  — fill an existing lobby from the pool
+# For automated all-bot runs, prefer the model harness:
+#   npx tsx packages/model-harness/src/index.ts run <spec.yaml>
+# To fill an existing lobby from the pool:
+#   tsx scripts/fill-bots.ts <id>
 #
 # Prerequisites:
 #   - coga CLI installed globally: npm i -g coordination-games

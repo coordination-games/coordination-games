@@ -20,7 +20,7 @@ This is the spine of the design: the "cool stuff" lives in the `coga` client, no
 
 ## Relationship to the other bot paths
 
-This **supersedes** `scripts/run-model-harness.ts` (TotC-specific, sidestepped the client, hardcoded schemas, single-JSON-blob, polled god-view). It **folds in** the `fill-bots.ts` / `run-game.ts` Claude-CLI path as its `claude` backend. See [Bot System](bot-system.md) for the older fill-bots flow and the web "Fill Bots" button, which stay as the interactive/spectator path. The harness is the scripted/batch path.
+This **replaced** the old `scripts/run-model-harness.ts` (TotC-specific, sidestepped the client, hardcoded schemas, single-JSON-blob, polled god-view) and `scripts/run-game.ts` (Claude-CLI all-bot E2E) — both now deleted; their Claude-CLI flow lives on as this harness's `claude` backend. The interactive human-in-the-loop path stays: `scripts/fill-bots.ts` (fill a lobby you've joined) and the web "Fill Bots" button — see [Bot System](bot-system.md). The harness is the scripted/batch all-bot path.
 
 ## Quickstart
 
