@@ -3,13 +3,18 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Rebuild worker-side workspace deps before bundling. The worker imports from
-# `@coordination-games/{engine, plugin-chat, game-*}` which resolve to sibling
-# packages' `dist/`; stale dists have shipped wrong money field names + wrong
-# types to prod twice. Web is deployed separately via Pages and has a
-# flaky npm-workspace install — excluded to keep server deploy resilient.
-[build]
-command = "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat -w packages/plugins/reasoning -w packages/plugins/trust-projector-tragedy && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons"
+# NOTE: there is deliberately NO [build] command here. Wrangler runs the custom
+# build on EVERY dev reload, and that build writes into sibling `dist/` dirs that
+# live in the worker's module graph — so wrangler's own watcher saw the writes as
+# "files changed", reloaded, and rebuilt again: an 8-package tsc fan-out per pass
+# with no backoff (it once piled up ~700 procs / 26 GB before being caught).
+#
+# The worker-side dep build still matters — stale dists have shipped wrong money
+# field names + wrong types to prod twice. So it now lives in the `build:deps` npm
+# script, which both `dev` and `deploy` run ONCE up front (see package.json). That
+# keeps the stale-dist guard for deploys without the dev-reload feedback loop. Web
+# is deployed separately via Pages (flaky npm-workspace install) and stays out of
+# build:deps to keep server deploy resilient.
 
 [[d1_databases]]
 binding = "DB"
