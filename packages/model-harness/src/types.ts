@@ -182,13 +182,6 @@ export interface CampaignRun {
   repeatTotal: number;
 }
 
-/** Result of loading a spec file: a bare single run, or a multi-run campaign. */
-export interface LoadedCampaign {
-  /** 'single' = a bare run-spec (legacy shape); 'campaign' = globals/games form. */
-  form: 'single' | 'campaign';
-  runs: CampaignRun[];
-}
-
 // ---------------------------------------------------------------------------
 // Resolved seat — one concrete bot the orchestrator will run.
 // ---------------------------------------------------------------------------

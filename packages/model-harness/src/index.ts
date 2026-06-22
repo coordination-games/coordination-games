@@ -18,7 +18,7 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { analyzeRun } from './analyze.js';
-import { resolvePersonaDir, runBatch } from './orchestrate.js';
+import { runBatch } from './orchestrate.js';
 import { expandSeatPlan, loadCampaign } from './spec.js';
 import type { CampaignRun, RunSpec } from './types.js';
 
@@ -68,111 +68,20 @@ Notes:
 `;
 
 // ---------------------------------------------------------------------------
-// Dry-run: resolve and print the seat plan, no side effects.
-// ---------------------------------------------------------------------------
-
-function printSeatPlan(spec: RunSpec): void {
-  const plans = expandSeatPlan(spec);
-
-  const totalSeats = plans.length;
-  const backendCounts = plans.reduce<Record<string, number>>((acc, p) => {
-    acc[p.backend] = (acc[p.backend] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  console.log('\n=== Resolved seat plan (dry run) ===\n');
-  console.log(`game:       ${spec.game}`);
-  console.log(`rounds:     ${spec.rounds}`);
-  console.log(`server:     ${spec.server}`);
-  console.log(`identities: ${spec.identities}`);
-  console.log(`output:     ${spec.output}`);
-  console.log(`params:     ${JSON.stringify(spec.params)}`);
-  console.log(
-    `limits:     maxModelCallsPerBot=${spec.limits.maxModelCallsPerBot}, ` +
-      `wallClockMsPerRun=${spec.limits.wallClockMsPerRun}`,
-  );
-  if (spec.analysis) {
-    console.log(
-      `analysis:   enabled=${spec.analysis.enabled}, model=${spec.analysis.model}` +
-        (spec.analysis.lenses ? `, lenses=[${spec.analysis.lenses.join(', ')}]` : ''),
-    );
-  } else {
-    console.log('analysis:   (none)');
-  }
-
-  console.log(
-    `\nseats:      ${totalSeats} total — ` +
-      Object.entries(backendCounts)
-        .map(([b, n]) => `${n} ${b}`)
-        .join(', '),
-  );
-  console.log('');
-
-  const seatRows = plans.map((p) => {
-    const dir = resolvePersonaDir(p.persona);
-    return {
-      seat: p.seatIndex,
-      persona: p.persona,
-      personaDir: dir,
-      model: p.model,
-      backend: p.backend,
-    };
-  });
-
-  for (const row of seatRows) {
-    console.log(
-      `  seat ${String(row.seat).padStart(2)}  ` +
-        `persona=${row.persona.padEnd(26)}  ` +
-        `model=${row.model.padEnd(36)}  ` +
-        `backend=${row.backend}`,
-    );
-    console.log(`           → ${row.personaDir}`);
-  }
-  console.log('');
-}
-
-// ---------------------------------------------------------------------------
-// run
+// run — every spec is a list of runs (1 or many); always go through runCampaign.
 // ---------------------------------------------------------------------------
 
 async function cmdRun(specPath: string, dryRun: boolean): Promise<number> {
-  const { form, runs } = await loadCampaign(specPath);
-
+  const runs = await loadCampaign(specPath);
   if (dryRun) {
-    printPlan(form, runs);
+    printPlan(runs);
     return 0;
   }
-
-  // Single bare spec → unchanged one-run behavior (flat output, no campaign index).
-  if (form === 'single') {
-    const cr = runs[0];
-    if (!cr) throw new Error(`no runs resolved from ${specPath}`);
-    const { runDir, lobbyId, gameId, manifest } = await runBatch(cr.spec);
-    console.log(`\nrun complete:`);
-    console.log(`  runDir:  ${runDir}`);
-    console.log(`  lobbyId: ${lobbyId}`);
-    console.log(`  gameId:  ${gameId}`);
-    void manifest;
-    await maybeAnalyze(cr.spec, runDir);
-    return 0;
-  }
-
   return runCampaign(runs);
 }
 
-/** Run the judge over a finished run dir if the spec enables it. */
-async function maybeAnalyze(spec: RunSpec, runDir: string): Promise<void> {
-  if (!spec.analysis?.enabled) return;
-  console.log(`\n[analyze] running judge (${spec.analysis.model})...`);
-  await analyzeRun(runDir, {
-    model: spec.analysis.model,
-    ...(spec.analysis.lenses ? { lenses: spec.analysis.lenses } : {}),
-  });
-  console.log(`  analysis: ${path.join(runDir, 'analysis.json')}`);
-}
-
 // ---------------------------------------------------------------------------
-// Campaign execution (globals/games form) — sequential, failure-isolated.
+// Run execution — sequential, failure-isolated, grouped under one campaign dir.
 // ---------------------------------------------------------------------------
 
 interface CampaignRunSummary {
@@ -276,15 +185,9 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Print the resolved plan for a dry run (single seat plan, or campaign grid). */
-function printPlan(form: 'single' | 'campaign', runs: CampaignRun[]): void {
-  if (form === 'single') {
-    const cr = runs[0];
-    if (cr) printSeatPlan(cr.spec);
-    return;
-  }
-
-  console.log('\n=== Campaign plan (dry run) ===\n');
+/** Print the resolved run plan for a dry run (the expanded grid + total count). */
+function printPlan(runs: CampaignRun[]): void {
+  console.log('\n=== Run plan (dry run) ===\n');
   const first = runs[0]?.spec;
   if (first) {
     console.log(`server:     ${first.server}`);
