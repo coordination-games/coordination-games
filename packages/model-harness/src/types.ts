@@ -87,24 +87,6 @@ export interface LoadedPersona {
    * Contains behavior/voice/strategy ONLY — no game-specific tool names/args.
    */
   systemPromptFragment: string;
-  /**
-   * Optional persona.yaml `defaultModel`. A convenience only — the run-spec's
-   * per-seat `model` always wins. Lets the same persona be benchmarked across
-   * models.
-   */
-  defaultModel?: string;
-  /**
-   * Optional persona.yaml `extraMcpServers`: extra MCP servers the runner also
-   * connects/exposes alongside coga. Out-of-the-box personas use none. (v1 may
-   * document-but-not-wire these; if so it is noted explicitly — no silent gaps.)
-   */
-  extraMcpServers?: ExtraMcpServer[];
-}
-
-export interface ExtraMcpServer {
-  name: string;
-  command: string;
-  args?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +114,6 @@ export interface AnalysisSpec {
   enabled: boolean;
   /** Judge model id (any backend, selected via backendForModel). */
   model: string;
-  /** Optional override of the default analysis lens set (§10). */
-  lenses?: string[];
 }
 
 export interface RunSpec {
@@ -155,6 +135,15 @@ export interface RunSpec {
   limits: RunLimits;
   /** Optional automated analysis ("judge") pass config. */
   analysis?: AnalysisSpec;
+  /**
+   * Plugin ids to disable for this run (research ablation — e.g. run Tragedy
+   * without the trust projector and measure the behavioral delta). Drives BOTH
+   * layers: the server-side projection gate (forwarded to lobby-create →
+   * GameMeta.disabledPlugins) AND the per-agent client-side pipeline knob
+   * (COGA_DISABLE_PLUGINS on each bot's `coga serve`). Each layer disables
+   * whatever it owns; ids it doesn't own are no-ops.
+   */
+  disablePlugins?: string[];
   /**
    * Optional display label for this run, woven into the run-dir name and the
    * campaign index. Set by the campaign loader (globals/games form); a bare
@@ -293,6 +282,12 @@ export interface RunSessionOptions {
     /** Wall-clock budget in ms for this session (RunLimits.wallClockMsPerRun). */
     wallClockMs: number;
   };
+  /**
+   * Client-side plugin ids to disable for this bot, set as COGA_DISABLE_PLUGINS
+   * on the spawned `coga serve`. Server-side projections (trust) are gated
+   * separately, at lobby creation.
+   */
+  disablePlugins?: string[];
   /** Append-only transcript sink (§8). */
   onEvent: (e: TranscriptEvent) => void;
 }

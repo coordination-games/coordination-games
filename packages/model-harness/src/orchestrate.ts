@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 import { api, authenticate, faucetBot, loadPool, registerBotOnChain } from './coga-client.js';
 import { BASE_PROTOCOL_PROMPT } from './prompts.js';
+import { ClaudeAgentRunner } from './runners/claude.js';
+import { OpenRouterAgentRunner } from './runners/openrouter.js';
 import { consequentialCounts } from './transcript.js';
 import {
   type AgentRunner,
@@ -96,7 +98,6 @@ function slugify(s: string): string {
  * Load a persona bundle from a directory.
  *   - persona.md  (required) — behavior/voice/strategy fragment
  *   - context/*.md (optional) — extra reference material concatenated after
- *   - persona.yaml (optional) — metadata (defaultModel, extraMcpServers)
  *
  * Accepts absolute paths, package-relative paths, or bare bundled-persona
  * names; see resolvePersonaDir for the resolution rules.
@@ -126,31 +127,9 @@ export async function loadPersona(dirPath: string): Promise<LoadedPersona> {
     // context/ dir absent — fine
   }
 
-  // Optional: persona.yaml
-  let defaultModel: string | undefined;
-  let extraMcpServers: LoadedPersona['extraMcpServers'];
-  try {
-    // Lazy import yaml — only available in this package's deps, not in types.ts
-    const { parse: parseYaml } = await import('yaml');
-    const raw = await fs.readFile(path.join(dir, 'persona.yaml'), 'utf8');
-    const meta = parseYaml(raw) as Record<string, unknown>;
-    if (typeof meta.defaultModel === 'string') defaultModel = meta.defaultModel;
-    if (Array.isArray(meta.extraMcpServers)) {
-      // TODO: wire extraMcpServers into runner MCP config (documented, not wired in v1)
-      extraMcpServers = meta.extraMcpServers as LoadedPersona['extraMcpServers'];
-    }
-  } catch {
-    // persona.yaml absent — fine
-  }
-
   const systemPromptFragment = personaMd + contextMd;
 
-  return {
-    dir,
-    systemPromptFragment,
-    ...(defaultModel !== undefined ? { defaultModel } : {}),
-    ...(extraMcpServers !== undefined ? { extraMcpServers } : {}),
-  };
+  return { dir, systemPromptFragment };
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +328,11 @@ async function createAndJoinLobby(
     // into the lobby metadata bag, which the plugin's createConfig reads as
     // maxRounds. (Without this the game silently used its built-in default.)
     ...(typeof spec.rounds === 'number' && spec.rounds >= 1 ? { maxRounds: spec.rounds } : {}),
+    // Server-side projection ablation (e.g. trust). Flows lobby-create → LobbyDO
+    // metadata → GameMeta.disabledPlugins → gated in GameRoomDO.applyTrustProjector.
+    ...(spec.disablePlugins && spec.disablePlugins.length > 0
+      ? { disabledPlugins: spec.disablePlugins }
+      : {}),
   };
   const lobby = await api(spec.server, '/api/lobbies/create', {
     method: 'POST',
@@ -573,57 +557,17 @@ async function writeRelayLog(runDir: string, gameId: string, inspect: any): Prom
 // ---------------------------------------------------------------------------
 
 /**
- * Lazily import and instantiate the runner for the given backend.
- * The runner modules (claude-runner.ts, openrouter-runner.ts) are thin
- * re-export shims over claude.ts / openrouter.ts. If a runner fails to load
- * (e.g. a missing optional dep), we fall back to a stub so the orchestrator
- * stays testable in isolation.
- *
- * The import specifier is a runtime-computed file URL, so tsx/esbuild leave it
- * as a genuine dynamic import (no static resolution) and Node resolves it when
- * called.
+ * Instantiate the AgentRunner for a backend. Both runners are real and stable,
+ * so this is a plain switch over static imports — a failed import is a genuine
+ * load error that should surface loudly, not silently degrade to a no-op game.
  */
-async function getRunner(backend: 'claude' | 'openrouter'): Promise<AgentRunner> {
-  if (backend === 'claude') {
-    try {
-      const mod = await import(new URL('./runners/claude-runner.js', import.meta.url).href);
-      const Cls = mod.ClaudeAgentRunner as new () => AgentRunner;
-      return new Cls();
-    } catch (err) {
-      console.warn(`[orchestrate] ClaudeAgentRunner not available: ${err}. Using stub.`);
-      return makeStubRunner('claude');
-    }
-  } else {
-    try {
-      const mod = await import(new URL('./runners/openrouter-runner.js', import.meta.url).href);
-      const Cls = mod.OpenRouterAgentRunner as new () => AgentRunner;
-      return new Cls();
-    } catch (err) {
-      console.warn(`[orchestrate] OpenRouterAgentRunner not available: ${err}. Using stub.`);
-      return makeStubRunner('openrouter');
-    }
+function getRunner(backend: 'claude' | 'openrouter'): AgentRunner {
+  switch (backend) {
+    case 'claude':
+      return new ClaudeAgentRunner();
+    case 'openrouter':
+      return new OpenRouterAgentRunner();
   }
-}
-
-/**
- * Stub runner — used when the real runner module is not yet built.
- * Immediately resolves with reason:'error' so the orchestrator can still
- * produce a manifest and relay log.
- */
-function makeStubRunner(backend: string): AgentRunner {
-  return {
-    async runSession(opts) {
-      opts.onEvent({
-        t: Date.now(),
-        bot: opts.botName,
-        kind: 'session',
-        event: 'error',
-        detail: `${backend} runner not yet implemented (stub)`,
-      });
-      // TODO: remove stub once ClaudeAgentRunner / OpenRouterAgentRunner land
-      return { finished: false, modelCalls: 0, reason: 'error' };
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +637,7 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
   const runnerCache = new Map<string, AgentRunner>();
   for (const seat of seats) {
     if (!runnerCache.has(seat.backend)) {
-      runnerCache.set(seat.backend, await getRunner(seat.backend));
+      runnerCache.set(seat.backend, getRunner(seat.backend));
     }
   }
 
@@ -714,6 +658,8 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
           maxModelCalls: spec.limits.maxModelCallsPerBot,
           wallClockMs: spec.limits.wallClockMsPerRun,
         },
+        // Client-side ablation knob (COGA_DISABLE_PLUGINS on the bot's coga serve).
+        ...(spec.disablePlugins ? { disablePlugins: spec.disablePlugins } : {}),
         onEvent: (e) => writer.onEvent(e),
       });
 

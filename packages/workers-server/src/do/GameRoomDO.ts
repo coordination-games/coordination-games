@@ -131,6 +131,15 @@ interface GameMeta {
    * never retroactively change visibility for in-flight games.
    */
   spectatorDelay: number;
+  /**
+   * Plugin ids whose server-side projection is disabled for this game (research
+   * ablation — e.g. run Tragedy without the trust projector to measure the
+   * behavioral delta). Seeded at creation from the lobby-create request and
+   * frozen here so deploys never retroactively change what in-flight games
+   * project. Today only the trust projector is server-side; gated in
+   * applyTrustProjector.
+   */
+  disabledPlugins?: string[];
 }
 
 interface ProgressState {
@@ -654,6 +663,7 @@ export class GameRoomDO extends DurableObject<Env> {
       handleMap,
       teamMap,
       gameId: bodyGameId,
+      disabledPlugins: rawDisabledPlugins,
     } = body ?? ({} as Record<string, unknown>);
     if (!rawGameType || !config || !Array.isArray(playerIds)) {
       return Response.json(
@@ -695,6 +705,9 @@ export class GameRoomDO extends DurableObject<Env> {
       createdAt: new Date().toISOString(),
       finished: false,
       spectatorDelay: plugin.spectatorDelay ?? 0,
+      disabledPlugins: Array.isArray(rawDisabledPlugins)
+        ? rawDisabledPlugins.filter((p): p is string => typeof p === 'string')
+        : [],
     };
     const progress: ProgressState = { counter: 0 };
 
@@ -1683,6 +1696,11 @@ export class GameRoomDO extends DurableObject<Env> {
   ): unknown {
     if (!this._meta || typeof state !== 'object' || state === null || Array.isArray(state))
       return state;
+    // Research ablation: a game can disable the trust projection server-side, so
+    // bots (and spectators) receive no trust summaries. This is the single
+    // server-side trust-injection point for both player and spectator payloads,
+    // so gating here fully removes server-projected trust for the game.
+    if (this._meta.disabledPlugins?.includes(TrustProjectorTragedyPlugin.id)) return state;
     const projected = TrustProjectorTragedyPlugin.handleData(
       'trust-cards',
       new Map<string, unknown>([

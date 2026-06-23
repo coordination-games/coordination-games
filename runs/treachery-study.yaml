@@ -39,14 +39,6 @@ globals:
   analysis:
     enabled: true
     model: anthropic/claude-haiku
-    lenses:
-      - betrayals
-      - brokenPledges
-      - deceptions
-      - coordination
-      - perBot
-      - notableMoments
-      - summary
 
 games:
   - game: tragedy-of-the-commons

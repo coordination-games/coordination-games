@@ -3,7 +3,7 @@
  *
  * A standard MCP stdio client + an OpenAI-style native function-calling loop:
  *
- *   1. Spawn `coga serve --stdio ...` (via cogaServeArgs) and connect with the
+ *   1. Spawn `coga serve --stdio ...` (via cogaServeCommand) and connect with the
  *      MCP SDK `Client` over `StdioClientTransport`.
  *   2. `listTools()` → map each MCP tool to OpenAI tools format. NO hardcoded
  *      schemas — this is what keeps the runner game-generic.
@@ -31,7 +31,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { cogaServeArgs } from '../coga-client.js';
+import { cogaServeCommand } from '../coga-client.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, ToolResultEvent } from '../types.js';
 
 // ---------------------------------------------------------------------------
@@ -67,7 +67,8 @@ const EMPTY_SCHEMA: Record<string, unknown> = { type: 'object', properties: {} }
 
 export class OpenRouterAgentRunner implements AgentRunner {
   async runSession(opts: RunSessionOptions): Promise<SessionResult> {
-    const { botName, privateKey, server, systemPrompt, model, limits, onEvent } = opts;
+    const { botName, privateKey, server, systemPrompt, model, limits, onEvent, disablePlugins } =
+      opts;
     const startedAt = Date.now();
     const deadline = startedAt + limits.wallClockMs;
 
@@ -89,12 +90,15 @@ export class OpenRouterAgentRunner implements AgentRunner {
     }
 
     // --- Connect to the single integration point: coga serve --stdio. --------
+    const coga = cogaServeCommand(privateKey, botName, server);
     const transport = new StdioClientTransport({
-      command: 'npx',
-      args: cogaServeArgs(privateKey, botName, server),
+      command: coga.command,
+      args: coga.args,
       // Inherit the parent env so PATH (global npm bin) and any creds resolve;
-      // the SDK's default env strips most vars, which breaks `npx`/`coga`.
-      env: inheritedEnv(),
+      // the SDK's default env strips most vars, which breaks `npx`/`coga`. The
+      // COGA_DISABLE_PLUGINS denylist (if any) rides along so the spawned coga's
+      // client-side pipeline drops the named plugins.
+      env: inheritedEnv(disablePlugins),
       stderr: 'inherit',
     });
     const client = new Client(
@@ -494,14 +498,19 @@ function numAt(obj: Record<string, unknown>, key: string): number | undefined {
 }
 
 /**
- * Build the env for the spawned `npx coga serve` subprocess. We forward the
- * parent env (so PATH, HOME, and any creds resolve), dropping undefined values
- * so it satisfies `Record<string, string>`.
+ * Build the env for the spawned `coga serve` subprocess. We forward the parent
+ * env (so PATH, HOME, and any creds resolve), dropping undefined values so it
+ * satisfies `Record<string, string>`. The optional `disablePlugins` denylist is
+ * passed through as COGA_DISABLE_PLUGINS so the spawned coga's client-side
+ * pipeline drops the named plugins (per-agent ablation knob).
  */
-function inheritedEnv(): Record<string, string> {
+function inheritedEnv(disablePlugins?: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === 'string') out[k] = v;
+  }
+  if (disablePlugins && disablePlugins.length > 0) {
+    out.COGA_DISABLE_PLUGINS = disablePlugins.join(',');
   }
   return out;
 }

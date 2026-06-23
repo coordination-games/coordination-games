@@ -608,6 +608,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     noTimeout?: boolean;
     teamSize?: number;
     maxRounds?: number;
+    disabledPlugins?: string[];
   }>(request);
   if (body instanceof Response) return body;
 
@@ -631,6 +632,11 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     typeof body?.maxRounds === 'number' && body.maxRounds >= 1
       ? Math.floor(body.maxRounds)
       : undefined;
+  // Optional per-game plugin ablation set (research). Forwarded to LobbyDO
+  // metadata → GameRoomDO so server-side projections (trust) can be gated.
+  const disabledPlugins = Array.isArray(body?.disabledPlugins)
+    ? body.disabledPlugins.filter((p): p is string => typeof p === 'string')
+    : undefined;
 
   // Compute canonical capacity from the game's first lobby phase. This is
   // the value clients (CLI list, web cards, fill-bots) render — they no
@@ -674,6 +680,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
         teamSize,
         noTimeout,
         ...(maxRounds ? { maxRounds } : {}),
+        ...(disabledPlugins && disabledPlugins.length > 0 ? { disabledPlugins } : {}),
       }),
     }),
   );

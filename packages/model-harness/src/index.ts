@@ -127,10 +127,7 @@ async function runCampaign(runs: CampaignRun[]): Promise<number> {
       let analysis = false;
       try {
         if (spec.analysis?.enabled) {
-          await analyzeRun(runDir, {
-            model: spec.analysis.model,
-            ...(spec.analysis.lenses ? { lenses: spec.analysis.lenses } : {}),
-          });
+          await analyzeRun(runDir, { model: spec.analysis.model });
           analysis = true;
         }
       } catch (err) {
@@ -240,16 +237,14 @@ async function cmdAnalyze(runDir: string, flags: Set<string>, modelFlag?: string
 
   // Prefer an explicit --model flag; otherwise read the manifest's spec.analysis.
   let model = modelFlag;
-  let lenses: string[] | undefined;
   if (!model) {
     try {
       const { promises: fs } = await import('node:fs');
       const manifestRaw = await fs.readFile(path.join(abs, 'manifest.json'), 'utf8');
       const manifest = JSON.parse(manifestRaw) as {
-        spec?: { analysis?: { model?: string; lenses?: string[] } };
+        spec?: { analysis?: { model?: string } };
       };
       model = manifest.spec?.analysis?.model;
-      lenses = manifest.spec?.analysis?.lenses;
     } catch {
       // No manifest / unreadable — fall through to default.
     }
@@ -258,7 +253,7 @@ async function cmdAnalyze(runDir: string, flags: Set<string>, modelFlag?: string
   void flags;
 
   console.log(`[analyze] runDir=${abs} model=${model}`);
-  await analyzeRun(abs, { model, ...(lenses ? { lenses } : {}) });
+  await analyzeRun(abs, { model });
   console.log(`  analysis: ${path.join(abs, 'analysis.json')}`);
   return 0;
 }

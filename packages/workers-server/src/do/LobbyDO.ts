@@ -244,10 +244,11 @@ export class LobbyDO extends DurableObject<Env> {
           noTimeout?: boolean;
           teamSize?: number;
           maxRounds?: number;
+          disabledPlugins?: string[];
         };
     if (body instanceof Response) return body;
 
-    const { lobbyId, gameType, noTimeout, teamSize, maxRounds } = body;
+    const { lobbyId, gameType, noTimeout, teamSize, maxRounds, disabledPlugins } = body;
     if (!lobbyId || !gameType) {
       return Response.json({ error: 'lobbyId and gameType are required' }, { status: 400 });
     }
@@ -289,6 +290,14 @@ export class LobbyDO extends DurableObject<Env> {
     // ignore the key are unaffected.
     if (typeof maxRounds === 'number' && maxRounds >= 1) {
       accumulatedMetadata.maxRounds = Math.floor(maxRounds);
+    }
+    // Plugin ablation set (research). Carried as metadata and handed to the
+    // GameRoomDO at creation so its server-side projections (trust) can be gated
+    // for this game. Projections not named here are unaffected.
+    if (Array.isArray(disabledPlugins) && disabledPlugins.length > 0) {
+      accumulatedMetadata.disabledPlugins = disabledPlugins.filter(
+        (p): p is string => typeof p === 'string',
+      );
     }
 
     // Initialize first phase with empty player list
@@ -764,6 +773,7 @@ export class LobbyDO extends DurableObject<Env> {
             playerIds,
             handleMap,
             teamMap,
+            disabledPlugins: this._meta.accumulatedMetadata.disabledPlugins,
           }),
         }),
       );

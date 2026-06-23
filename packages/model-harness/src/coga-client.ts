@@ -6,8 +6,9 @@
  * identical to the proven scripts — these are the auth / pool / faucet /
  * on-chain-register paths the existing fill-bots and run-game flows use.
  *
- * Also adds `cogaServeArgs`: the argv both backends pass to `coga serve` so
- * the MCP integration point is identical to what runClaudeAgent uses today.
+ * Also adds `cogaServeCommand`: the { command, args } both backends spawn for
+ * `coga serve` so the MCP integration point is identical across them (and can be
+ * pointed at a local build via COGA_SERVE_CMD).
  */
 
 import { promises as fs } from 'node:fs';
@@ -259,20 +260,33 @@ function sleep(ms: number) {
 // coga serve --stdio invocation
 //
 // Both backends connect to the SAME coga MCP server — the single integration
-// point (§3). This returns the argv to invoke it via `npx -y
-// coordination-games@latest serve ...`, exactly the invocation
-// runClaudeAgent uses today. The leading element is the program (`npx`); the
-// rest are its arguments. Backends spawn `npx` with these args, or feed
-// { command, args } to the MCP stdio transport.
+// point (§3). This returns the { command, args } to spawn it, which the runners
+// feed to the MCP stdio transport (OpenRouter) or the claude --mcp-config
+// (Claude).
 //
-// `-y coordination-games@latest` forces npx to fetch the current npm release
-// each run instead of falling through to a stale global `coga` binary.
+// Default: `npx -y coordination-games@latest serve ...` — forces npx to fetch
+// the current npm release each run instead of falling through to a stale global
+// `coga` binary.
+//
+// Override: set `COGA_SERVE_CMD` to spawn a LOCAL build instead of the published
+// release — e.g. `COGA_SERVE_CMD="npx tsx packages/cli/src/index.ts"` from the
+// repo root, or `COGA_SERVE_CMD="node packages/cli/dist/index.js"`. The override
+// is the program + any leading args; the `serve ...` arguments are appended.
+// This is what lets a LOCAL pipeline change (e.g. the COGA_DISABLE_PLUGINS knob)
+// take effect for the bots without publishing — the harness's research/dev loop.
 // ---------------------------------------------------------------------------
 
-export function cogaServeArgs(privateKey: string, botName: string, server: string): string[] {
-  return [
-    '-y',
-    'coordination-games@latest',
+export interface CogaServeInvocation {
+  command: string;
+  args: string[];
+}
+
+export function cogaServeCommand(
+  privateKey: string,
+  botName: string,
+  server: string,
+): CogaServeInvocation {
+  const serveArgs = [
     'serve',
     '--stdio',
     '--bot-mode',
@@ -283,4 +297,10 @@ export function cogaServeArgs(privateKey: string, botName: string, server: strin
     '--server-url',
     server,
   ];
+  const override = process.env.COGA_SERVE_CMD?.trim();
+  if (override) {
+    const [command, ...leadingArgs] = override.split(/\s+/);
+    return { command: command ?? 'npx', args: [...leadingArgs, ...serveArgs] };
+  }
+  return { command: 'npx', args: ['-y', 'coordination-games@latest', ...serveArgs] };
 }

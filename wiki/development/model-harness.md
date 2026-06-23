@@ -58,7 +58,6 @@ globals:                         # campaign-wide — applied to every entry
   analysis:
     enabled: true
     model: anthropic/claude-haiku  # judge model (any backend)
-    lenses: [betrayals, brokenPledges, deceptions, coordination, perBot, notableMoments, summary]
 games:                           # one entry = one game setup (1 or many)
   - game: tragedy-of-the-commons # any game implementing the CoordinationGame contract
     rounds: 4                    # plumbed end-to-end → game maxRounds
@@ -75,7 +74,7 @@ games:                           # one entry = one game setup (1 or many)
 
 Scope is a **strict partition** — every field lives in exactly one section (`globals` vs a `games[]` entry), never both; a misplaced field is a hard error. See [Campaigns](#campaigns-research-sweeps) below for the full field table, `repeats`, and multi-game sweeps.
 
-A **persona is a directory bundle**, not a string: `persona.md` (required, behavior/voice/strategy), optional `context/*.md` (concatenated, sorted), optional `persona.yaml` (`defaultModel`, `extraMcpServers`). Personas are model-agnostic on purpose — that's what lets you benchmark one persona across models. Refs resolve as absolute paths, package-relative (`./personas/...`), or bare bundled names.
+A **persona is a directory bundle**, not a string: `persona.md` (required, behavior/voice/strategy) plus optional `context/*.md` (concatenated, sorted). Personas are model-agnostic on purpose — that's what lets you benchmark one persona across models. Refs resolve as absolute paths, package-relative (`./personas/...`), or bare bundled names.
 
 Bundled personas (`packages/model-harness/personas/`): `peaceful-mediator`, `anti-overextractor`, `win-focused-builder`, `win-focused-opportunist`. Games: `tragedy-of-the-commons`, `capture-the-lobster`, `oathbreaker`.
 
@@ -136,12 +135,12 @@ To **vary the game** instead, change the entry's `game:` to `capture-the-lobster
 
 One spec file can drive **many** runs — a whole sweep of games / sizes / matchups, executed sequentially. This is the research playbook: vary the inputs, let it run, compare outcomes across the batch.
 
-The shape is `globals` + `games`, and the rule is a **strict partition**, not defaults-with-overrides: every field lives in exactly ONE section. There's no precedence to reason about, and a misplaced field is a hard error that tells you where it belongs (e.g. `"server" is not allowed in games[0] — allowed here: game, rounds, params, seats, repeats, label`).
+The shape is `globals` + `games`, and the rule is a **strict partition**, not defaults-with-overrides: every field lives in exactly ONE section. There's no precedence to reason about, and a misplaced field is a hard error that tells you where it belongs (e.g. `"server" is not allowed in games[0] — allowed here: game, rounds, params, seats, repeats, label, disablePlugins`).
 
 | Scope | Fields | Why |
 |---|---|---|
 | **`globals`** | `server`, `identities`, `output`, `limits`, `analysis` | One server, one identity strategy, one output root, one judge config (so runs are comparable). Limits are backstops — a generous global covers every game. |
-| **per-game (`games[]`)** | `game`, `rounds`, `params`, `seats`, `repeats`, `label` | All intrinsic to a single setup. `rounds` is per-game on purpose — game length is part of the setup (a quick TotC vs a longer Capture-the-Lobster). |
+| **per-game (`games[]`)** | `game`, `rounds`, `params`, `seats`, `repeats`, `label`, `disablePlugins` | All intrinsic to a single setup. `rounds` is per-game on purpose — game length is part of the setup (a quick TotC vs a longer Capture-the-Lobster). `disablePlugins` ablates plugins for that setup (see [Plugin ablation](#plugin-ablation-disableplugins)). |
 
 ```yaml
 globals:
@@ -188,6 +187,34 @@ Runnable example: `runs/campaign-example.yaml` (all-haiku, no key).
 
 Because `server` and `identities` are **globals**, flipping a whole sweep to the real on-chain version (see the mode note up top) is `server:` → the on-chain worker + `identities: pool`, with **zero per-game edits**. The partition pays off here: the world is global, the things you're studying aren't.
 
+## Plugin ablation (`disablePlugins`)
+
+The harness's core research move: run a game *with* a plugin and *without* it, and read the behavioral delta. Set per-game `disablePlugins: [<pluginId>, ...]` to drop a plugin for that setup.
+
+```yaml
+games:
+  - game: tragedy-of-the-commons
+    rounds: 4
+    params: { teamSize: 4 }
+    disablePlugins: [trust-projector-tragedy]   # bots play with NO trust summaries
+    seats: [ ... ]
+```
+
+One list, **two gates** — each disables only what it owns; an id a gate doesn't own is a silent no-op:
+
+- **Server-side projections (trust).** Trust cards are projected **on the server** (`GameRoomDO.applyTrustProjector`) into every player/spectator payload — agents *consume* trust, they don't compute it (see [Plugin Pipeline](../architecture/plugin-pipeline.md); the server projection is the single source of player trust). `disablePlugins` flows lobby-create → `LobbyDO` metadata → `GameMeta.disabledPlugins`, and the projector is skipped for that game. **This** is what removes trust from what bots see.
+- **Client-side pipeline plugins (chat, future BYOA).** The same list is set as `COGA_DISABLE_PLUGINS` (comma-separated) on each bot's spawned `coga serve`; `initPipeline` filters those ids out of the client pipeline. `trust-projector-tragedy` is server-side, so the client knob ignores it — the server gate does the work.
+
+**Validating a client-side change needs the LOCAL coga.** Bots spawn `npx -y coordination-games@latest serve` by default — the *published* release — so an unpublished pipeline change (or the `COGA_DISABLE_PLUGINS` filter) won't take effect. Point the harness at your working tree with `COGA_SERVE_CMD` (the program + leading args; `serve ...` is appended):
+
+```bash
+COGA_SERVE_CMD="npx tsx $(pwd)/packages/cli/src/index.ts" \
+  INSPECTOR_TOKEN=local-inspector-token \
+  npx tsx packages/model-harness/src/index.ts run runs/your-spec.yaml
+```
+
+Unset → the published release (prod fidelity). The server gate is exercised regardless (the server is always your local `wrangler dev` build).
+
 ## Backend selection (no per-seat backend field)
 
 `backendForModel(model)` in `src/types.ts` decides purely from the model string:
@@ -203,7 +230,7 @@ Because `server` and `identities` are **globals**, flipping a whole sweep to the
 - `bots/<botName>.jsonl` — one event per line: `session` (start/finished/cap/error), `model_request`, `model_response`, `tool_call`, `tool_result`. The append-only ground truth for what each agent thought and did. (MiniMax transcripts run large — reasoning + every tool turn.)
 - `relay.jsonl` — the **relay ground truth** (messaging, attestations, per-game action records), pulled from the admin inspect's `gameInspect.relayMessages`. This is the canonical "what happened," independent of any bot's view. The judge cites it by index (`relayRefs`).
 - `manifest.json` — `runId, spec, lobbyId, gameId, seats, outcome, perBot`. `outcome` is a **game-agnostic** distillation: `phase`/`round`/`isFinished`, plus `winnerLabel`/`statusVariant` from the contract's `getReplayChrome`, plus the game's own canonical `outcome` (`getOutcome`) and `summary` (`getSummaryFromSpectator`) passed through verbatim — the harness never interprets game-specific score fields. Diff two manifests to compare runs.
-- `analysis.json` — the judge pass: per-lens findings + `perBot` (style, consequentialTurns, trustworthiness, notable) + `summary`.
+- `analysis.json` — the judge pass: the fixed finding sections (betrayals, broken pledges, deceptions, coordination) + `perBot` (style, consequentialTurns, trustworthiness, notable) + `notableMoments` + `summary`.
 
 Run artifacts are gitignored (`runs/.gitignore`, `packages/model-harness/.gitignore`). A curated sample (e.g. `packages/model-harness/examples/sample-run-totc/`) belongs under `examples/`, not in `runs/out/`.
 
@@ -220,4 +247,4 @@ Run artifacts are gitignored (`runs/.gitignore`, `packages/model-harness/.gitign
 
 ## Adding a third backend
 
-One small class implementing `AgentRunner` (`runSession(opts) → SessionResult`), plus a branch in `getRunner()` and `backendForModel()`. The OpenRouter runner (`src/runners/openrouter.ts`) is the template: MCP `listTools()` → provider tool format (no hardcoded schemas), a native function-calling loop, `phase:"finished"` in a tool result ends the session. Zero game-specific code — that's the invariant.
+One small class implementing `AgentRunner` (`runSession(opts) → SessionResult`), plus a `case` in `getRunner()` and a branch in `backendForModel()`. The OpenRouter runner (`src/runners/openrouter.ts`) is the template: MCP `listTools()` → provider tool format (no hardcoded schemas), a native function-calling loop, `phase:"finished"` in a tool result ends the session. Zero game-specific code — that's the invariant.
