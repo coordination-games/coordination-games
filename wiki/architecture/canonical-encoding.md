@@ -1,6 +1,8 @@
 # Canonical Encoding
 > If you're writing a `CoordinationGame`, the shape of your `TState` and `TOutcome` is constrained by one rule: the encoder that produces the bytes anchored on-chain must give two clients with semantically-identical values byte-identical output. This doc tells you exactly what's allowed in those values and what to do about the obvious things that aren't.
 
+> **Direction-of-travel note.** Under `docs/plans/atproto-platform-direction.md`, this canonical-JSON encoder is replaced with atproto-native record CIDs (DAG-CBOR + sha256 multihash). On-chain anchors become CIDs; verifiers fetch records by CID and check the hash. The encoder stays in the codebase as a debugging/inspection tool but stops producing on-chain bytes. The constraints below still describe today's behavior — write to them until the atproto cutover lands.
+
 ## Why
 
 Two clients running the same game off the same action log have to derive the same `outcomeBytes` for the on-chain Merkle anchor and the spectator/replay verification path to mean anything. JavaScript makes this hard for free reasons: `JSON.stringify` walks object keys in insertion order, silently drops `Map` and `Set` to `{}`, has no `bigint` representation, and accepts `NaN` as `null` instead of refusing it. Any one of those produces an `outcomeBytes` that depends on which build constructed the value — exactly the failure mode an on-chain anchor is supposed to rule out.
