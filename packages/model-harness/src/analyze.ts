@@ -10,6 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { backendForModel, claudeCliModel } from './types.js';
 
@@ -420,6 +421,9 @@ async function callClaude(model: string, prompt: string): Promise<string> {
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,
+      // Neutral cwd: keep the repo's project context (CLAUDE.md, .claude/) out
+      // of the judge's prompt — same isolation the gameplay runner applies.
+      cwd: tmpdir(),
     });
 
     const stdout: Buffer[] = [];

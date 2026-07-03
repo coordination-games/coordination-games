@@ -28,6 +28,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { cogaServeCommand } from '../coga-client.js';
 import { BASE_PROTOCOL_PROMPT, RESUME_PROMPT } from '../prompts.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
@@ -371,6 +372,15 @@ export class ClaudeAgentRunner implements AgentRunner {
         const proc = spawn(process.env.CLAUDE_BIN ?? 'claude', args, {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: childEnv,
+          // NEUTRAL cwd, never the repo. From inside the repo, `claude` loads
+          // the project context (.claude/, CLAUDE.md + wiki import) and session
+          // init gets heavy enough that the coga MCP server is still "pending"
+          // when the session snapshots its tool list. Claude-5-family sessions
+          // never pick the server up after that snapshot → bot sees ZERO coga
+          // tools and burns the session (haiku recovers from pending, which is
+          // why this stayed hidden). Reproduced 2026-07-03: identical invocation
+          // from repo root = pending/0 tools; from a neutral dir = connected/22.
+          cwd: tmpdir(),
         });
 
         // Wall-clock kill timer
@@ -447,7 +457,13 @@ export class ClaudeAgentRunner implements AgentRunner {
     // TODO: if a finer-grained call count (per-turn) is needed, parse the
     // `result` lines' turn counts from the stream-json output.
 
-    const maxSessions = Math.ceil(limits.maxModelCalls / 50); // conservative
+    // Floor of 2: a seat must survive one bad subprocess session. MCP startup
+    // can race the session's tool-list snapshot (server "pending" at init →
+    // model sees zero coga tools); Claude-5-family models then decline to play
+    // and end the session. The resume respawns coga (now warm) and recovers.
+    // With maxModelCalls < 50 the old formula gave maxSessions=1 — no retry —
+    // which killed such seats outright (observed 2026-07-03, sonnet-5).
+    const maxSessions = Math.max(2, Math.ceil(limits.maxModelCalls / 50));
 
     // Build the initial prompt: system prompt prepended to the protocol prompt
     // (the claude --print CLI has no separate --system flag for non-interactive
