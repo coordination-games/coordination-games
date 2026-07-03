@@ -347,7 +347,12 @@ export class ClaudeAgentRunner implements AgentRunner {
     const runOnce = async (
       prompt: string,
       isResume: boolean,
-    ): Promise<{ seenFinished: boolean; timedOut: boolean; mcpFailed?: boolean }> => {
+    ): Promise<{
+      seenFinished: boolean;
+      timedOut: boolean;
+      mcpFailed?: boolean;
+      limitHit?: boolean;
+    }> => {
       const releaseBoot = await acquireBootLock();
       let bootReleased = false;
       const releaseBootOnce = () => {
@@ -447,6 +452,7 @@ export class ClaudeAgentRunner implements AgentRunner {
 
         let timedOut = false;
         let mcpFailed = false;
+        let limitHit = false;
         let sawCogaToolCall = false;
         let stdoutBuf = '';
         let sessionSeenFinished = false;
@@ -487,6 +493,17 @@ export class ClaudeAgentRunner implements AgentRunner {
               if (ev.kind === 'tool_call' && ev.name.startsWith('mcp__coga')) {
                 sawCogaToolCall = true;
               }
+              // Subscription usage cap ("You've hit your session limit ·
+              // resets 3:30pm"): NOT a boot failure — retrying burns nothing
+              // but produces junk unfinished runs marked ok (observed: a 12-run
+              // sweep of empty games, 2026-07-03). Fail the seat loudly.
+              if (
+                ev.kind === 'model_response' &&
+                typeof ev.text === 'string' &&
+                /hit your (session|usage) limit/i.test(ev.text)
+              ) {
+                limitHit = true;
+              }
               onEvent(ev);
             }
             if (seenFinished) sessionSeenFinished = true;
@@ -515,8 +532,8 @@ export class ClaudeAgentRunner implements AgentRunner {
           // model typically states it has no coga tools and stops). One wasted
           // model call; runOnceGuarded retries with a FRESH session (a resumed
           // session keeps the frozen tool list, so resuming can never recover).
-          if (!sessionSeenFinished && !timedOut && !sawCogaToolCall) mcpFailed = true;
-          resolve({ seenFinished: sessionSeenFinished, timedOut, mcpFailed });
+          if (!sessionSeenFinished && !timedOut && !sawCogaToolCall && !limitHit) mcpFailed = true;
+          resolve({ seenFinished: sessionSeenFinished, timedOut, mcpFailed, limitHit });
         });
 
         proc.on('error', (err) => {
@@ -542,6 +559,11 @@ export class ClaudeAgentRunner implements AgentRunner {
     ): Promise<{ seenFinished: boolean; timedOut: boolean }> => {
       for (let attempt = 0; attempt < MCP_ATTACH_RETRIES; attempt++) {
         const result = await runOnce(prompt, isResume);
+        if (result.limitHit) {
+          throw new Error(
+            'Claude subscription usage limit reached — seat aborted (the model replied "You\'ve hit your session limit"). Re-run after the limit window resets.',
+          );
+        }
         if (!result.mcpFailed) return result;
         if (!isResume) sessionId = randomUUID();
         onEvent({
