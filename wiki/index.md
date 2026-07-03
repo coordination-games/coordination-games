@@ -25,6 +25,7 @@ Non-obvious knowledge, design decisions, specs, and gotchas. For the game author
 - [Adding a Plugin](development/adding-a-plugin.md) — server + web halves, capability subsetting, where to register, real abstraction gaps
 - [Bot System](development/bot-system.md) — Haiku bots via Agent SDK, auth bypass, generic harness, fill-bots PATH gotcha
 - [Model Harness](development/model-harness.md) — the default test/research/dev loop; game-agnostic multi-backend runner (Claude + OpenRouter), spec-driven batches, judge analysis, run-output anatomy
+- [Campaign Console](development/campaign-console.md) — local dashboard over the harness: spec builder, live SSE runs, judge-report viewer, model comparison; wraps the coga-harness CLI, reads runs/out/
 - [CtL Animations](development/ctl-animations.md) — Capture the Lobster's per-game animation timeline, `deathPositions`, `useHexAnimations`
 - [Hex Grid Rendering](development/hex-grid-rendering.md) — flat-top coords, Wesnoth assets, forest layering, map scaling
 - [Biome](development/biome.md) — workspace lint + format config, npm scripts, editor integration

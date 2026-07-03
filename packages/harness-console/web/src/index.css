@@ -1,0 +1,111 @@
+/* biome-ignore-all lint/suspicious/noUnknownAtRules: Tailwind directives — resolved by the Tailwind PostCSS plugin at build time; Biome doesn't know about them. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #101210;
+  --panel: #181b18;
+  --panel-2: #1f231f;
+  --line: #2c322c;
+  --ink: #e8e6df;
+  --ink-dim: #9a9a90;
+  --mint: #7fd8a4;
+  --amber: #e5b567;
+  --hot: #e56767;
+  --blue: #7fb4d8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: "Space Grotesk", Inter, sans-serif;
+}
+
+.font-mono {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  width: 100%;
+}
+
+.input:focus {
+  outline: 1px solid var(--mint);
+}
+
+.btn {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--mint);
+}
+
+.btn-primary {
+  background: var(--mint);
+  border-color: var(--mint);
+  color: #10241a;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.btn-danger:hover {
+  border-color: var(--hot);
+  color: var(--hot);
+}
+
+.terminal {
+  background: #0b0d0b;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c9d1c9;
+  padding: 12px 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

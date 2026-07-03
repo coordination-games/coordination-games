@@ -2,3 +2,6 @@
 # artifacts — large and per-run. A curated sample lives under
 # packages/model-harness/examples/ instead.
 out/
+# Campaign Console generated files: launched spec YAMLs + custom persona bundles.
+specs/
+personas/

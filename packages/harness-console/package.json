@@ -1,0 +1,31 @@
+{
+  "name": "@coordination-games/harness-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Campaign Console — local research dashboard over the Unified Model Harness: configure and launch campaigns, watch runs live, browse judge results, compare models. Thin wrapper around the coga-harness CLI; runs/out/** on disk is the source of truth.",
+  "scripts": {
+    "server": "tsx src/server.ts",
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-router-dom": "^6.26.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1"
+  }
+}

@@ -16,6 +16,8 @@
     "dev": "npm run dev --workspace=packages/workers-server",
     "dev:web": "npm run dev --workspace=packages/web",
     "harness:model": "tsx packages/model-harness/src/index.ts",
+    "console": "npm run server --workspace=packages/harness-console",
+    "console:web": "npm run dev --workspace=packages/harness-console",
     "build:contracts": "npm run build --workspace=packages/contracts",
     "build:cli": "npm run build --workspace=packages/cli",
     "lint": "biome lint .",
