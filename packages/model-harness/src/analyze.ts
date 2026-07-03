@@ -417,7 +417,16 @@ async function callClaude(model: string, prompt: string): Promise<string> {
   const cliModel = claudeCliModel(model);
 
   return new Promise((resolve, reject) => {
-    const args = ['--print', '--model', cliModel, '--dangerously-skip-permissions'];
+    // --setting-sources '': hermetic judge — no operator hooks/config, and no
+    // personal CLAUDE.md coloring the scoring (pairs with the tmpdir cwd).
+    const args = [
+      '--print',
+      '--setting-sources',
+      '',
+      '--model',
+      cliModel,
+      '--dangerously-skip-permissions',
+    ];
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: process.env,

@@ -642,9 +642,16 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
   }
 
   await Promise.all(
-    seats.map(async (seat) => {
+    seats.map(async (seat, seatIndex) => {
       const runner = runnerCache.get(seat.backend);
       if (!runner) throw new Error(`No runner for backend ${seat.backend}`);
+
+      // Tiny stagger so seats enqueue on the runner's boot lock in stable
+      // order. Boots are serialized by that lock (runners/claude.ts) and each
+      // is boot-verified before gameplay, so all seats get their tool
+      // snapshot early — BEFORE gameplay load builds up. (A long stagger is
+      // counterproductive: late seats would boot into peak load.)
+      if (seatIndex > 0) await new Promise((r) => setTimeout(r, seatIndex * 750));
 
       const systemPrompt = assemblePrompt(seat.botName, seat.persona);
 

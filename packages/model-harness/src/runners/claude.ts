@@ -28,9 +28,31 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+// ---------------------------------------------------------------------------
+// Session-boot lock. Concurrent `claude` session boots race their MCP servers'
+// startup against the session's tool-list snapshot; solo boots reliably attach.
+// All seats of a run live in this process (orchestrate's Promise.all), so a
+// module-level FIFO lock serializing spawn → init makes attach deterministic
+// while keeping gameplay fully concurrent.
+// ---------------------------------------------------------------------------
+let bootQueueTail: Promise<void> = Promise.resolve();
+
+function acquireBootLock(): Promise<() => void> {
+  let release!: () => void;
+  const held = new Promise<void>((res) => {
+    release = res;
+  });
+  const acquired = bootQueueTail.then(() => release);
+  bootQueueTail = bootQueueTail.then(() => held);
+  return acquired;
+}
+
 import { cogaServeCommand } from '../coga-client.js';
-import { BASE_PROTOCOL_PROMPT, RESUME_PROMPT } from '../prompts.js';
+import { BASE_PROTOCOL_PROMPT, BOOT_VERIFY_PROMPT, RESUME_PROMPT } from '../prompts.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
 import { claudeCliModel } from '../types.js';
 
@@ -274,8 +296,14 @@ export class ClaudeAgentRunner implements AgentRunner {
     // a CLI-valid `--model` value. The original seat model stays in the manifest.
     const cliModel = claudeCliModel(model);
 
-    const sessionId = randomUUID();
+    // Mutable: regenerated when an MCP-attach retry needs a FRESH session
+    // (the failed session id already exists server-side and its tool list is
+    // frozen without coga — resuming it can never recover, see runOnceGuarded).
+    let sessionId = randomUUID();
     const deadline = Date.now() + limits.wallClockMs;
+
+    // One private working dir per seat (see the spawn cwd comment below).
+    const botCwd = mkdtempSync(path.join(tmpdir(), `coga-${botName.slice(0, 24)}-`));
 
     const coga = cogaServeCommand(privateKey, botName, server);
     const mcpConfig = JSON.stringify({
@@ -289,8 +317,12 @@ export class ClaudeAgentRunner implements AgentRunner {
 
     // Env for the `claude` subprocess; the coga MCP server it spawns inherits
     // this, so COGA_DISABLE_PLUGINS (if any) reaches coga's client-side pipeline.
+    // MCP_TIMEOUT: give coga's startup (node boot + wallet auth round-trips
+    // against a possibly busy dev server) more patience before the session
+    // gives up on the server — pairs with the attach guard below.
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      MCP_TIMEOUT: process.env.MCP_TIMEOUT ?? '60000',
       ...(disablePlugins && disablePlugins.length > 0
         ? { COGA_DISABLE_PLUGINS: disablePlugins.join(',') }
         : {}),
@@ -306,20 +338,44 @@ export class ClaudeAgentRunner implements AgentRunner {
      * Run one `claude --print` subprocess and return the accumulated raw
      * stdout (needed for the looksFinished fallback). Emits TranscriptEvents
      * as lines arrive.
+     *
+     * Boot is SERIALIZED across seats (module-level lock, released on the
+     * init line): every solo session boot observed attaches its MCP server;
+     * only concurrent boots race the tool-list snapshot. Play remains fully
+     * concurrent — the lock covers spawn → init only (~seconds per seat).
      */
-    const runOnce = (
+    const runOnce = async (
       prompt: string,
       isResume: boolean,
-    ): Promise<{ seenFinished: boolean; timedOut: boolean }> => {
+    ): Promise<{ seenFinished: boolean; timedOut: boolean; mcpFailed?: boolean }> => {
+      const releaseBoot = await acquireBootLock();
+      let bootReleased = false;
+      const releaseBootOnce = () => {
+        if (!bootReleased) {
+          bootReleased = true;
+          releaseBoot();
+        }
+      };
       return new Promise((resolve, reject) => {
         const remaining = deadline - Date.now();
         if (remaining <= 0) {
+          releaseBootOnce();
           resolve({ seenFinished: false, timedOut: true });
           return;
         }
 
         const args: string[] = [
           '--print',
+          // HERMETIC SESSION — load no user/project/local settings. Two reasons:
+          // (1) determinism: the operator's SessionStart hooks + user config
+          //     slow session init enough that the coga MCP server is still
+          //     "pending" when the tool list snapshots — measured 4/4 connected
+          //     hermetic vs 1/4 with default settings under identical 4-seat
+          //     concurrency (2026-07-03). (2) science: a research bot must not
+          //     carry the operator's personal context (global CLAUDE.md, hooks,
+          //     connectors) into gameplay.
+          '--setting-sources',
+          '',
           '--strict-mcp-config',
           '--mcp-config',
           mcpConfig,
@@ -372,15 +428,16 @@ export class ClaudeAgentRunner implements AgentRunner {
         const proc = spawn(process.env.CLAUDE_BIN ?? 'claude', args, {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: childEnv,
-          // NEUTRAL cwd, never the repo. From inside the repo, `claude` loads
-          // the project context (.claude/, CLAUDE.md + wiki import) and session
-          // init gets heavy enough that the coga MCP server is still "pending"
-          // when the session snapshots its tool list. Claude-5-family sessions
-          // never pick the server up after that snapshot → bot sees ZERO coga
-          // tools and burns the session (haiku recovers from pending, which is
-          // why this stayed hidden). Reproduced 2026-07-03: identical invocation
-          // from repo root = pending/0 tools; from a neutral dir = connected/22.
-          cwd: tmpdir(),
+          // PRIVATE, NEUTRAL cwd per seat — two separate necessities:
+          // • Neutral (never the repo): from inside the repo, `claude` loads
+          //   the project context (.claude/, CLAUDE.md + wiki) and session init
+          //   gets heavy enough that coga loses the tool-snapshot race.
+          // • Private (never SHARED): the CLI persists per-project state keyed
+          //   by cwd; N concurrent sessions in one cwd read-modify-write the
+          //   same record, and late seats deterministically come up blind to
+          //   their MCP server (observed: the 4th seat failed 10/10 fresh boots
+          //   with a shared tmpdir() while seats 1-3 attached).
+          cwd: botCwd,
         });
 
         // Wall-clock kill timer
@@ -389,6 +446,8 @@ export class ClaudeAgentRunner implements AgentRunner {
         }, remaining);
 
         let timedOut = false;
+        let mcpFailed = false;
+        let sawCogaToolCall = false;
         let stdoutBuf = '';
         let sessionSeenFinished = false;
         let emittedModelRequest = false;
@@ -401,11 +460,19 @@ export class ClaudeAgentRunner implements AgentRunner {
           for (const line of lines) {
             if (!line.trim()) continue;
 
-            // On the first system:init, emit a model_request event carrying
-            // the model and a representation of the prompt as the messages.
             const raw = tryParse(line) as Record<string, unknown> | undefined;
             if (!emittedModelRequest && raw?.type === 'system' && raw.subtype === 'init') {
               emittedModelRequest = true;
+              // Boot is done — let the next seat start booting. NOTE: the init
+              // line's mcp_servers status is NOT trustworthy as a kill signal:
+              // it is emitted milliseconds before the connect completes (MCP
+              // debug logs show ~300ms connects on sessions whose init said
+              // "pending"), so acting on it kills healthy sessions. The real
+              // toolless-session detection is behavioral, on close (below).
+              releaseBootOnce();
+
+              // On the first system:init, emit a model_request event carrying
+              // the model and a representation of the prompt.
               onEvent({
                 t: Date.now(),
                 bot: botName,
@@ -416,7 +483,12 @@ export class ClaudeAgentRunner implements AgentRunner {
             }
 
             const { events, seenFinished } = parseStreamLine(line, botName, cliModel);
-            for (const ev of events) onEvent(ev);
+            for (const ev of events) {
+              if (ev.kind === 'tool_call' && ev.name.startsWith('mcp__coga')) {
+                sawCogaToolCall = true;
+              }
+              onEvent(ev);
+            }
             if (seenFinished) sessionSeenFinished = true;
           }
         });
@@ -435,15 +507,54 @@ export class ClaudeAgentRunner implements AgentRunner {
 
         proc.on('close', (_code, signal) => {
           clearTimeout(killTimer);
+          releaseBootOnce();
           if (signal === 'SIGTERM') timedOut = true;
-          resolve({ seenFinished: sessionSeenFinished, timedOut });
+          // TOOLLESS-SESSION GUARD (behavioral). A session that ends on its own,
+          // unfinished, without a single coga tool call was blind to the game —
+          // its tool list was snapshotted before the MCP server connected (the
+          // model typically states it has no coga tools and stops). One wasted
+          // model call; runOnceGuarded retries with a FRESH session (a resumed
+          // session keeps the frozen tool list, so resuming can never recover).
+          if (!sessionSeenFinished && !timedOut && !sawCogaToolCall) mcpFailed = true;
+          resolve({ seenFinished: sessionSeenFinished, timedOut, mcpFailed });
         });
 
         proc.on('error', (err) => {
           clearTimeout(killTimer);
+          releaseBootOnce();
           reject(err);
         });
       });
+    };
+
+    /**
+     * runOnce + MCP attach retries. On a failed attach (coga not "connected"
+     * at the init snapshot — see the guard in runOnce) the subprocess was
+     * killed before any turn ran; respawn with a FRESH session id (the dead
+     * session's tool list is frozen without coga forever) and linear backoff
+     * so a cold/contended coga start gets time to warm. Resume attempts keep
+     * their session id — the game progress lives in that session.
+     */
+    const MCP_ATTACH_RETRIES = 10;
+    const runOnceGuarded = async (
+      prompt: string,
+      isResume: boolean,
+    ): Promise<{ seenFinished: boolean; timedOut: boolean }> => {
+      for (let attempt = 0; attempt < MCP_ATTACH_RETRIES; attempt++) {
+        const result = await runOnce(prompt, isResume);
+        if (!result.mcpFailed) return result;
+        if (!isResume) sessionId = randomUUID();
+        onEvent({
+          t: Date.now(),
+          bot: botName,
+          kind: 'session',
+          event: 'start',
+          detail: `mcp attach retry ${attempt + 1}`,
+        });
+        // Failed boots cost no tokens (killed at init) — retry briskly, capped.
+        await new Promise((r) => setTimeout(r, Math.min(5000, 1500 * (attempt + 1))));
+      }
+      throw new Error(`coga MCP server failed to attach after ${MCP_ATTACH_RETRIES} attempts`);
     };
 
     // -----------------------------------------------------------------------
@@ -471,7 +582,25 @@ export class ClaudeAgentRunner implements AgentRunner {
     const initialPrompt = `${systemPrompt}\n\n${BASE_PROTOCOL_PROMPT(botName)}`;
 
     try {
-      let { seenFinished, timedOut } = await runOnce(initialPrompt, false);
+      // Phase 1 — boot-verify: a trivial guide call that proves this session
+      // sees the coga tools. Blind boots (tool list snapshotted pre-connect)
+      // fail the toolless guard in ~seconds and are respawned fresh by
+      // runOnceGuarded, so gameplay never starts in a blind session.
+      const boot = await runOnceGuarded(BOOT_VERIFY_PROMPT, false);
+      totalModelCalls++;
+      if (boot.timedOut) {
+        onEvent({
+          t: Date.now(),
+          bot: botName,
+          kind: 'session',
+          event: 'cap',
+          detail: `wall-clock limit ${limits.wallClockMs}ms exceeded during boot-verify`,
+        });
+        return { finished: false, modelCalls: totalModelCalls, reason: 'cap' };
+      }
+
+      // Phase 2 — gameplay, resumed into the verified session.
+      let { seenFinished, timedOut } = await runOnceGuarded(initialPrompt, true);
       totalModelCalls++;
 
       if (seenFinished) finished = true;
@@ -487,7 +616,7 @@ export class ClaudeAgentRunner implements AgentRunner {
           detail: `resume ${i}`,
         });
 
-        const result = await runOnce(RESUME_PROMPT, true);
+        const result = await runOnceGuarded(RESUME_PROMPT, true);
         timedOut = result.timedOut;
         totalModelCalls++;
 

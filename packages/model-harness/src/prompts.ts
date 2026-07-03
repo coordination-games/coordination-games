@@ -49,4 +49,14 @@ Error handling — the dispatcher returns structured codes you can self-correct 
 /**
  * Resume prompt — replayed when a backend session ends before phase:"finished".
  */
+/**
+ * Boot-verify prompt — phase 1 of every claude-backend session. A trivial
+ * one-tool-call task that PROVES the session can see the coga MCP server
+ * (sessions whose tool list was snapshotted before coga connected are blind
+ * for their whole life; see the toolless-session guard in runners/claude.ts).
+ * Costs one near-empty model call; gameplay follows in the same session via
+ * --resume, inheriting the verified tool list.
+ */
+export const BOOT_VERIFY_PROMPT = `Call the mcp__coga__guide tool once now. After it returns, reply with exactly: READY. Do nothing else — further instructions follow.`;
+
 export const RESUME_PROMPT = `The session is still in progress. Keep playing — call state, read state.currentPhase.tools and any trustCards, pick the right per-name tool, call it, then wait. Treat trustCards as compact viewer-visible evidence summaries, not private knowledge or final reputation scores. Use chat when the guide says coordination matters. On WRONG_PHASE or UNKNOWN_TOOL, re-read state and self-correct. Repeat until state.phase === "finished". Do not summarize.`;
