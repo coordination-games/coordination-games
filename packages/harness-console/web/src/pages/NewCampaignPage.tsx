@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import { ErrorNote, Field, Section } from '../components/ui';
+import { ErrorNote, Field, ModelSelect, Section } from '../components/ui';
 import type { CampaignSpecDraft, ConsoleMeta, GameEntryDraft, SeatDraft } from '../types';
 
 const CUSTOM_PREFIX = 'custom:';
@@ -31,6 +31,75 @@ function emptySeat(model = 'anthropic/claude-haiku'): SeatUI {
 function emptyEntry(game: string): EntryUI {
   return { uiKey: nextUiKey(), game, rounds: 4, params: { teamSize: 4 }, seats: [emptySeat()] };
 }
+
+// --- one-click experiment presets — encode the methodology into the tool ------
+
+const HAIKU = 'anthropic/claude-haiku';
+const SONNET5 = 'anthropic/claude-sonnet-5';
+const TRAGEDY = 'tragedy-of-the-commons';
+
+function presetSeat(persona: string, model: string, count: number): SeatUI {
+  return { uiKey: nextUiKey(), persona, model, count };
+}
+
+function presetEntry(label: string, repeats: number, seats: SeatUI[]): EntryUI {
+  return {
+    uiKey: nextUiKey(),
+    game: TRAGEDY,
+    rounds: 3,
+    params: { teamSize: 4 },
+    label,
+    repeats,
+    seats,
+  };
+}
+
+interface Preset {
+  name: string;
+  blurb: string;
+  entries: () => EntryUI[];
+}
+
+const PRESETS: Preset[] = [
+  {
+    name: 'quick game',
+    blurb: '1 game · 4 haiku seats · ~5 min',
+    entries: () => [
+      presetEntry('quick-game', 1, [
+        presetSeat('peaceful-mediator', HAIKU, 2),
+        presetSeat('win-focused-opportunist', HAIKU, 2),
+      ]),
+    ],
+  },
+  {
+    name: 'model face-off',
+    blurb: 'haiku vs sonnet-5, personas balanced · 3 games',
+    entries: () => [
+      presetEntry('haiku-vs-sonnet5', 3, [
+        presetSeat('peaceful-mediator', HAIKU, 1),
+        presetSeat('win-focused-opportunist', HAIKU, 1),
+        presetSeat('peaceful-mediator', SONNET5, 1),
+        presetSeat('win-focused-opportunist', SONNET5, 1),
+      ]),
+    ],
+  },
+  {
+    name: 'composition sweep',
+    blurb: 'mediator dose 0/1/2/4 · 12 games — "does a mediator save the commons?"',
+    entries: () => [
+      presetEntry('med0', 3, [presetSeat('win-focused-opportunist', HAIKU, 4)]),
+      presetEntry('med1', 3, [
+        presetSeat('peaceful-mediator', HAIKU, 1),
+        presetSeat('win-focused-opportunist', HAIKU, 3),
+      ]),
+      presetEntry('med2', 3, [
+        presetSeat('peaceful-mediator', HAIKU, 2),
+        presetSeat('win-focused-opportunist', HAIKU, 2),
+      ]),
+      presetEntry('med4', 3, [presetSeat('peaceful-mediator', HAIKU, 4)]),
+    ],
+  },
+];
 
 export function NewCampaignPage() {
   const navigate = useNavigate();
@@ -135,6 +204,23 @@ export function NewCampaignPage() {
     <div>
       <ErrorNote error={error} />
 
+      <Section title="start from a preset">
+        <div className="flex gap-3 flex-wrap">
+          {PRESETS.map((p) => (
+            <button
+              key={p.name}
+              type="button"
+              className="btn text-left"
+              style={{ padding: '10px 14px' }}
+              onClick={() => setEntries(p.entries())}
+            >
+              <div style={{ color: 'var(--mint)' }}>{p.name}</div>
+              <div className="label normal-case mt-1">{p.blurb}</div>
+            </button>
+          ))}
+        </div>
+      </Section>
+
       <Section title="campaign globals">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Field label="game server">
@@ -160,12 +246,11 @@ export function NewCampaignPage() {
             </select>
           </Field>
           <Field label="judge model">
-            <input
-              className="input"
-              list="model-suggestions"
+            <ModelSelect
               value={analysisModel}
+              onChange={setAnalysisModel}
+              options={meta.modelSuggestions.claude}
               disabled={!analysisEnabled}
-              onChange={(e) => setAnalysisModel(e.target.value)}
             />
           </Field>
         </div>
@@ -265,11 +350,10 @@ export function NewCampaignPage() {
                 </select>
               </Field>
               <Field label="model">
-                <input
-                  className="input"
-                  list="model-suggestions"
+                <ModelSelect
                   value={seat.model}
-                  onChange={(e) => updateSeat(i, k, { model: e.target.value })}
+                  onChange={(v) => updateSeat(i, k, { model: v })}
+                  options={modelOptions}
                 />
               </Field>
               <Field label="count">
@@ -366,12 +450,6 @@ export function NewCampaignPage() {
           </div>
         </Section>
       )}
-
-      <datalist id="model-suggestions">
-        {modelOptions.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
 
       <div className="panel p-4 flex items-center justify-between">
         <div className="font-mono text-xs" style={{ color: 'var(--ink-dim)' }}>

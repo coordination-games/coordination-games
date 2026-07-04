@@ -9,6 +9,12 @@ function fmtTime(ts: number | null): string {
   return new Date(ts).toLocaleString();
 }
 
+/** Game-agnostic peek at the outcome's summary for a headline welfare metric. */
+function healthOf(outcome: { summary?: unknown } | null | undefined): string {
+  const s = outcome?.summary as { commonsHealthPercent?: number } | undefined;
+  return typeof s?.commonsHealthPercent === 'number' ? `${s.commonsHealthPercent}%` : '—';
+}
+
 export function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<CampaignInfo[]>([]);
   const [jobs, setJobs] = useState<JobPublic[]>([]);
@@ -87,6 +93,7 @@ export function CampaignsPage() {
                     <th className="py-1 pr-4 font-normal">game</th>
                     <th className="py-1 pr-4 font-normal">status</th>
                     <th className="py-1 pr-4 font-normal">winner</th>
+                    <th className="py-1 pr-4 font-normal">commons</th>
                     <th className="py-1 pr-4 font-normal">judge</th>
                   </tr>
                 </thead>
@@ -115,6 +122,9 @@ export function CampaignsPage() {
                       </td>
                       <td className="py-2 pr-4 font-mono text-xs">
                         {r.status === 'ok' ? fmtWinner(r.outcome?.winnerLabel) : '—'}
+                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs" style={{ color: 'var(--mint)' }}>
+                        {r.status === 'ok' ? healthOf(r.outcome) : '—'}
                       </td>
                       <td className="py-2 pr-4 font-mono text-xs">{r.analysis ? '✓' : '—'}</td>
                     </tr>

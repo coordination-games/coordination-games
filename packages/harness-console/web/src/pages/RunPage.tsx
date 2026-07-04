@@ -76,6 +76,7 @@ function Overview({ info }: { info: RunInfo }) {
   if (!m) return <Empty>manifest.json not written yet — this run is still in flight.</Empty>;
   return (
     <div>
+      {info.hasAnalysis && <JudgeTeaser campaignId={info.campaignId} runId={info.runId} />}
       <Section title="outcome">
         <div className="flex gap-6 flex-wrap font-mono text-sm mb-3">
           <div>
@@ -144,6 +145,53 @@ function Overview({ info }: { info: RunInfo }) {
         <JsonBlock value={m.spec} />
       </Section>
     </div>
+  );
+}
+
+/** The judge's verdict, front and center on the overview — summary + trust chips. */
+function JudgeTeaser({ campaignId, runId }: { campaignId: string; runId: string }) {
+  const [report, setReport] = useState<AnalysisReport | null>(null);
+  useEffect(() => {
+    api
+      .analysis(campaignId, runId)
+      .then(setReport)
+      .catch(() => setReport(null));
+  }, [campaignId, runId]);
+  if (!report) return null;
+  const incidents =
+    (report.betrayals?.length ?? 0) +
+    (report.brokenPledges?.length ?? 0) +
+    (report.deceptions?.length ?? 0);
+  return (
+    <Section title="judge verdict">
+      {report.summary && <p className="text-sm leading-relaxed mb-3">{report.summary}</p>}
+      <div className="flex gap-2 flex-wrap">
+        <span
+          className="font-mono text-[11px] px-2 py-0.5 rounded-full border"
+          style={{
+            color: incidents === 0 ? 'var(--mint)' : 'var(--hot)',
+            borderColor: incidents === 0 ? 'var(--mint)' : 'var(--hot)',
+          }}
+        >
+          {incidents === 0 ? 'no betrayals · no deceptions' : `${incidents} incident(s)`}
+        </span>
+        <span
+          className="font-mono text-[11px] px-2 py-0.5 rounded-full border"
+          style={{ color: 'var(--blue)', borderColor: 'var(--blue)' }}
+        >
+          {report.coordination?.length ?? 0} coordination pact(s)
+        </span>
+        {(report.perBot ?? []).map((b) => (
+          <span
+            key={b.bot}
+            className="font-mono text-[11px] px-2 py-0.5 rounded-full border"
+            style={{ color: 'var(--amber)', borderColor: 'var(--line)' }}
+          >
+            {b.bot} · trust {b.trustworthiness ?? '?'}/5
+          </span>
+        ))}
+      </div>
+    </Section>
   );
 }
 

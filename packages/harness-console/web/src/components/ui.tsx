@@ -69,6 +69,53 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+/**
+ * Model picker: a real <select> over the known models (datalist is unreliable
+ * in Safari) with a "custom…" escape hatch for anything else.
+ */
+export function ModelSelect({
+  value,
+  onChange,
+  options,
+  disabled = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  disabled?: boolean;
+}) {
+  const isCustom = !options.includes(value);
+  return (
+    <div className="flex gap-2">
+      <select
+        className="input"
+        disabled={disabled}
+        value={isCustom ? '__custom__' : value}
+        onChange={(e) => {
+          if (e.target.value === '__custom__') onChange('');
+          else onChange(e.target.value);
+        }}
+      >
+        {options.map((m) => (
+          <option key={m} value={m}>
+            {m.replace(/^anthropic\//, '')}
+          </option>
+        ))}
+        <option value="__custom__">custom…</option>
+      </select>
+      {isCustom && (
+        <input
+          className="input"
+          disabled={disabled}
+          value={value}
+          placeholder="model id (e.g. openrouter/minimax/minimax-m2)"
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
 export function ErrorNote({ error }: { error: string | null }) {
   if (!error) return null;
   return (
