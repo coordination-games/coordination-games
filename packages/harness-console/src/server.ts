@@ -21,6 +21,7 @@ import {
   readRun,
   readTranscript,
 } from './artifacts.js';
+import { buildFindings, buildFindingsHtml } from './findings.js';
 import { gameServerStatus, startGameServer, stopGameServer } from './game-server.js';
 import {
   activeCampaignIds,
@@ -159,6 +160,21 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL): Promi
 
   if (pathname === '/api/aggregate' && method === 'GET') {
     return sendJson(res, 200, { models: await aggregateModels() });
+  }
+
+  const findingsMatch = /^\/api\/campaigns\/([^/]+)\/findings(\.html)?$/.exec(pathname);
+  if (findingsMatch && method === 'GET') {
+    const campaignId = decodeURIComponent(findingsMatch[1] ?? '');
+    const findings = await buildFindings(campaignId);
+    if (findingsMatch[2]) {
+      const html = buildFindingsHtml(findings);
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-disposition': `attachment; filename="${campaignId}-findings.html"`,
+      });
+      return void res.end(html);
+    }
+    return sendJson(res, 200, findings);
   }
 
   if (pathname === '/api/jobs' && method === 'GET') {

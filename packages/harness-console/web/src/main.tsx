@@ -5,6 +5,7 @@ import { App } from './App';
 import './index.css';
 import { CampaignsPage } from './pages/CampaignsPage';
 import { ComparePage } from './pages/ComparePage';
+import { FindingsPage } from './pages/FindingsPage';
 import { JobPage } from './pages/JobPage';
 import { NewCampaignPage } from './pages/NewCampaignPage';
 import { RunPage } from './pages/RunPage';
@@ -17,6 +18,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <CampaignsPage /> },
       { path: 'new', element: <NewCampaignPage /> },
+      { path: 'campaign/:campaignId', element: <FindingsPage /> },
       { path: 'campaign/:campaignId/run/:runId', element: <RunPage /> },
       { path: 'job/:jobId', element: <JobPage /> },
       { path: 'compare', element: <ComparePage /> },
