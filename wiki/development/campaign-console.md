@@ -24,6 +24,12 @@ Needs the game server up — the console can start it itself (Settings → start
 - **Secrets:** `~/.coordination/console-secrets.json` (0600), presence-only over the API, enter runs solely as child env (`OPENROUTER_API_KEY`, `INSPECTOR_TOKEN` — defaults to the `.dev.vars` `local-inspector-token`). Every streamed log line passes `redact()`.
 - **SSE** (`GET /api/jobs/:id/events`): `status` + `log` events, buffer replayed on connect.
 
+## The demo stack (three services)
+
+- **Console** :4310 — LaunchAgent `coop.games.campaign-console` (KeepAlive, RunAtLoad). Home = three one-click demos; Lab = full config. Boot auto-starts the game server.
+- **Game server** :8787 — spawned by the console with `wrangler dev --ip 0.0.0.0` (tailnet spectating; dev ADMIN_TOKEN — trusted networks only).
+- **Spectator** :4173 — LaunchAgent `coop.games.spectator` serving packages/web's built app (`vite preview`). Rebuild with `npm run build:local -w packages/web` — NOT plain `build`: `.env.production` pins the prod API URL, and a `--mode` workaround would bake the dev inspector token into the bundle (see packages/web/package.json). RunPage's "▶ watch replay" buttons point here via `window.location.hostname`.
+
 ## Gotchas
 
 - Manifest-less run dirs are shown `running` (campaign has a live job) or `incomplete` (interrupted) — synthesized states the harness itself never writes.
