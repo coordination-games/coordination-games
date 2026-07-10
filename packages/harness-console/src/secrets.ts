@@ -65,14 +65,22 @@ export async function deleteSecret(name: SecretName): Promise<void> {
 }
 
 /**
- * Env additions for a spawned harness/analyze child. The inspector token falls
- * back to the local dev default (matches workers-server .dev.vars ADMIN_TOKEN).
+ * The inspector (admin) token: saved secret, else INSPECTOR_TOKEN env, else the
+ * local dev default (matches workers-server .dev.vars ADMIN_TOKEN). Single
+ * source of truth for anything that authenticates to the game server's
+ * admin-inspect endpoint — spawned harness/analyze children (via childEnv,
+ * below) and the console's own outbound live-feed proxy (live.ts) both need
+ * to agree on it, or a custom saved token would 401 one of the two paths.
  */
+export async function inspectorToken(): Promise<string> {
+  const s = await readFileSafe();
+  return s.inspector ?? process.env.INSPECTOR_TOKEN ?? 'local-inspector-token';
+}
+
+/** Env additions for a spawned harness/analyze child. */
 export async function childEnv(): Promise<Record<string, string>> {
   const s = await readFileSafe();
-  const env: Record<string, string> = {
-    INSPECTOR_TOKEN: s.inspector ?? process.env.INSPECTOR_TOKEN ?? 'local-inspector-token',
-  };
+  const env: Record<string, string> = { INSPECTOR_TOKEN: await inspectorToken() };
   const openrouter = s.openrouter ?? process.env.OPENROUTER_API_KEY;
   if (openrouter) env.OPENROUTER_API_KEY = openrouter;
   // Saved setup-token wins over ambient login so runs are reproducible for

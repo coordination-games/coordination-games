@@ -11,6 +11,7 @@ import { JobPage } from './pages/JobPage';
 import { NewCampaignPage } from './pages/NewCampaignPage';
 import { RunPage } from './pages/RunPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { WatchPage } from './pages/WatchPage';
 
 const router = createBrowserRouter([
   {
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
       { path: 'campaign/:campaignId', element: <FindingsPage /> },
       { path: 'campaign/:campaignId/run/:runId', element: <RunPage /> },
       { path: 'job/:jobId', element: <JobPage /> },
+      { path: 'watch/:jobId', element: <WatchPage /> },
       { path: 'compare', element: <ComparePage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],

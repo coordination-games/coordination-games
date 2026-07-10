@@ -32,6 +32,7 @@ import {
   startCampaign,
   stopJob,
 } from './jobs.js';
+import { fetchLiveFeed } from './live.js';
 import { consoleMeta, saveCustomPersona } from './meta.js';
 import { assertSafeId, HttpError, OUTPUT_DIR } from './paths.js';
 import { deleteSecret, isSecretName, secretStatus, setSecret } from './secrets.js';
@@ -252,6 +253,13 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL): Promi
 
   if (pathname === '/api/jobs' && method === 'GET') {
     return sendJson(res, 200, { jobs: listJobs() });
+  }
+
+  const liveFeedMatch = /^\/api\/live\/([^/]+)\/feed$/.exec(pathname);
+  if (liveFeedMatch && method === 'GET') {
+    const gameId = decodeURIComponent(liveFeedMatch[1] ?? '');
+    const since = Number.parseInt(url.searchParams.get('since') ?? '-1', 10);
+    return sendJson(res, 200, await fetchLiveFeed(gameId, Number.isFinite(since) ? since : -1));
   }
   const jobMatch = /^\/api\/jobs\/([^/]+)\/(events|stop)$/.exec(pathname);
   if (jobMatch) {

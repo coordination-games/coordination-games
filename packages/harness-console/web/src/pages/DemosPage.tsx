@@ -30,7 +30,7 @@ export function DemosPage() {
     setFailedId(null);
     try {
       const job = await api.runDemo(id);
-      navigate(`/job/${job.id}`);
+      navigate(`/watch/${job.id}`);
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err));
       setFailedId(id);
