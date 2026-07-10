@@ -82,7 +82,13 @@ export function CampaignsPage() {
           campaigns.map((c) => (
             <div key={c.id} className="mb-5">
               <div className="flex items-baseline gap-3 mb-2">
-                <span className="font-display font-semibold">{c.id}</span>
+                <Link
+                  to={`/campaign/${encodeURIComponent(c.id)}`}
+                  className="font-display font-semibold"
+                  style={{ color: 'var(--mint)' }}
+                >
+                  {c.id}
+                </Link>
                 <span className="label">{fmtTime(c.startedAt)}</span>
                 {!c.complete && <StatusPill status="running" />}
               </div>

@@ -145,6 +145,24 @@ export interface ModelAggregate {
   trustSamples: number;
 }
 
+export interface FindingsCondition {
+  label: string;
+  n: number;
+  health: { avg: number; min: number; max: number } | null;
+  ecosystemsAvg: number | null;
+  incidents: { betrayals: number; brokenPledges: number; deceptions: number };
+  coordination: number;
+  trust: { avg: number; n: number } | null;
+  judgeExcerpt: string | null;
+}
+
+export interface Findings {
+  campaignId: string;
+  totalRuns: number;
+  conditions: FindingsCondition[];
+  verdict: string[];
+}
+
 export interface GameServerStatus {
   reachable: boolean;
   target: string;

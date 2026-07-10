@@ -82,7 +82,7 @@ export interface RunInfo {
 
 // --- helpers -----------------------------------------------------------------
 
-async function readJson<T>(file: string): Promise<T | null> {
+export async function readJson<T>(file: string): Promise<T | null> {
   try {
     return JSON.parse(await fsp.readFile(file, 'utf8')) as T;
   } catch {
@@ -90,7 +90,7 @@ async function readJson<T>(file: string): Promise<T | null> {
   }
 }
 
-async function exists(file: string): Promise<boolean> {
+export async function exists(file: string): Promise<boolean> {
   try {
     await fsp.access(file);
     return true;

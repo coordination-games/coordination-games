@@ -4,6 +4,7 @@ import type {
   CampaignSpecDraft,
   ConsoleMeta,
   DemoSummary,
+  Findings,
   GameServerStatus,
   JobPublic,
   ModelAggregate,
@@ -57,6 +58,10 @@ export const api = {
   jobs: () => request<{ jobs: JobPublic[] }>('/api/jobs'),
   stopJob: (id: string) => request<JobPublic>(`/api/jobs/${encodeURIComponent(id)}/stop`, post({})),
   aggregate: () => request<{ models: ModelAggregate[] }>('/api/aggregate'),
+  findings: (campaignId: string) =>
+    request<Findings>(`/api/campaigns/${encodeURIComponent(campaignId)}/findings`),
+  findingsHtmlUrl: (campaignId: string) =>
+    `/api/campaigns/${encodeURIComponent(campaignId)}/findings.html`,
   secrets: () => request<SecretStatus>('/api/secrets'),
   setSecret: (name: string, value: string) =>
     request<SecretStatus>('/api/secrets', post({ name, value })),
