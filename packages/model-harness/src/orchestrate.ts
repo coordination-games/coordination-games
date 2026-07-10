@@ -153,17 +153,24 @@ interface TranscriptWriter {
 function makeTranscriptWriter(runDir: string): TranscriptWriter {
   // Map from botName → events accumulated so far
   const eventsByBot = new Map<string, TranscriptEvent[]>();
-  // Open write handles (lazy) so we stream events as they arrive
-  const handles = new Map<string, fs.FileHandle>();
+  // Open write handles (lazy) so we stream events as they arrive. The map
+  // caches the OPEN PROMISE, not the handle: onEvent fires getHandle
+  // concurrently, and caching the resolved handle let two racing opens both
+  // create files — the loser was overwritten in the map and orphaned, and
+  // Node 25 makes a GC'd-open FileHandle a fatal process error (observed
+  // killing a whole run mid-wait, 2026-07-10).
+  const handles = new Map<string, Promise<fs.FileHandle>>();
 
-  async function getHandle(botName: string): Promise<fs.FileHandle> {
+  function getHandle(botName: string): Promise<fs.FileHandle> {
     const existing = handles.get(botName);
     if (existing) return existing;
-    const botsDir = path.join(runDir, 'bots');
-    await fs.mkdir(botsDir, { recursive: true });
-    const fh = await fs.open(path.join(botsDir, `${botName}.jsonl`), 'a');
-    handles.set(botName, fh);
-    return fh;
+    const opening = (async () => {
+      const botsDir = path.join(runDir, 'bots');
+      await fs.mkdir(botsDir, { recursive: true });
+      return fs.open(path.join(botsDir, `${botName}.jsonl`), 'a');
+    })();
+    handles.set(botName, opening);
+    return opening;
   }
 
   function onEvent(e: TranscriptEvent): void {
@@ -184,9 +191,9 @@ function makeTranscriptWriter(runDir: string): TranscriptWriter {
 
   async function flush(): Promise<void> {
     // Close all file handles
-    for (const [botName, fh] of handles) {
+    for (const [botName, opening] of handles) {
       try {
-        await fh.close();
+        await (await opening).close();
       } catch (err) {
         console.error(`[transcript] close error for ${botName}: ${err}`);
       }

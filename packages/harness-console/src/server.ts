@@ -115,6 +115,31 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Preflight: is the `claude` CLI actually reachable from THIS process?
+ * A launchd/systemd console does not inherit the shell PATH, and without this
+ * check a demo dies as four silent `spawn claude ENOENT` seats (observed
+ * 2026-07-10). A demo must fail as a sentence, not a stack of dead bots.
+ */
+async function ensureClaudeCli(): Promise<void> {
+  const explicit = process.env.CLAUDE_BIN;
+  const candidates = explicit
+    ? [explicit]
+    : (process.env.PATH ?? '').split(':').map((dir) => path.join(dir, 'claude'));
+  for (const candidate of candidates) {
+    try {
+      await fsp.access(candidate);
+      return;
+    } catch {
+      // keep looking
+    }
+  }
+  throw new HttpError(
+    503,
+    'The Claude CLI is not reachable from the console (checked CLAUDE_BIN and PATH). Set CLAUDE_BIN to the absolute path of the claude binary in the console’s environment, then try again.',
+  );
+}
+
+/**
  * Block until the game server answers, starting it if it's down and polling
  * every 2s up to 90s. A demo must never surface a stack trace: the only way
  * out of here is success or an HttpError with a plain-English message, which
@@ -169,6 +194,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL): Promi
     const id = decodeURIComponent(demoRunMatch[1] ?? '');
     const demo = DEMOS.find((d) => d.id === id);
     if (!demo) throw new HttpError(404, `no such demo: ${id}`);
+    await ensureClaudeCli();
     await ensureGameServer(DEMO_GAME_SERVER);
     const spec = await prepareLaunch({ spec: demo.spec });
     return sendJson(res, 201, await startCampaign(spec));
