@@ -672,6 +672,10 @@ export class ClaudeAgentRunner implements AgentRunner {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       onEvent({ t: Date.now(), bot: botName, kind: 'session', event: 'error', detail });
+      // Also surface the reason on stdout — supervisors (Campaign Console)
+      // only see this stream, and a usage-limit hit should read as a sentence
+      // there, not as a bare nonzero exit.
+      console.error(`  [${botName}] session error: ${detail.slice(0, 300)}`);
       return { finished: false, modelCalls: totalModelCalls, reason: 'error' };
     }
   }
