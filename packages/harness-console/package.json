@@ -8,7 +8,8 @@
     "server": "tsx src/server.ts",
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.web.json",
+    "demo-check": "tsx scripts/demo-check.ts"
   },
   "dependencies": {
     "react": "^18.3.0",

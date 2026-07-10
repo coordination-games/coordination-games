@@ -173,6 +173,26 @@ export interface GameServerStatus {
 
 export type SecretStatus = { openrouter: boolean; inspector: boolean; claude: boolean };
 
+// --- preflight (docs/plans/ui-rethink.md, "reliability doctrine") ------------
+
+export type CheckSeverity = 'fail' | 'warn';
+
+export interface PreflightCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  severity: CheckSeverity;
+  /** Plain sentence including the exact fix action — present when !ok. */
+  detail?: string;
+}
+
+export interface PreflightReport {
+  ok: boolean;
+  checks: PreflightCheck[];
+  nodeVersion: string;
+  checkedAt: number;
+}
+
 // --- campaign spec builder shapes (what POST /api/campaigns expects) ----------
 
 export interface SeatDraft {

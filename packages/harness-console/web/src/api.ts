@@ -8,6 +8,7 @@ import type {
   GameServerStatus,
   JobPublic,
   ModelAggregate,
+  PreflightReport,
   RunInfo,
   SecretStatus,
   TranscriptEvent,
@@ -36,6 +37,7 @@ const post = (body: unknown): RequestInit => ({
 
 export const api = {
   meta: () => request<ConsoleMeta>('/api/meta'),
+  preflight: () => request<PreflightReport>('/api/preflight'),
   demos: () => request<{ demos: DemoSummary[] }>('/api/demos'),
   runDemo: (id: string) => request<JobPublic>(`/api/demos/${encodeURIComponent(id)}/run`, post({})),
   campaigns: () => request<{ campaigns: CampaignInfo[] }>('/api/campaigns'),

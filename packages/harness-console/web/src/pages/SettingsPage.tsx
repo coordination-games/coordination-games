@@ -1,9 +1,75 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { ErrorNote, Field, Section, StatusPill } from '../components/ui';
-import type { GameServerStatus, SecretStatus } from '../types';
+import type { GameServerStatus, PreflightCheck, PreflightReport, SecretStatus } from '../types';
 
 const SPECTATOR_URL = 'http://127.0.0.1:4173';
+
+/** ok → mint, warn-but-failing → amber, fail → hot — all colors StatusPill
+ * already knows via its 'ok' / 'incomplete' / 'error' status vocabulary. */
+function checkPillStatus(c: PreflightCheck): string {
+  if (c.ok) return 'ok';
+  return c.severity === 'fail' ? 'error' : 'incomplete';
+}
+
+/** Full preflight checklist, with a manual re-check — the researcher's
+ * "is this thing actually going to work" panel, first thing on the page. */
+function HealthSection() {
+  const [report, setReport] = useState<PreflightReport | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    setChecking(true);
+    api
+      .preflight()
+      .then((r) => {
+        setReport(r);
+        setError(null);
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setChecking(false));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return (
+    <Section
+      title="console health"
+      right={
+        <button type="button" className="btn" onClick={refresh} disabled={checking}>
+          {checking ? 're-checking…' : 're-check'}
+        </button>
+      }
+    >
+      <ErrorNote error={error} />
+      {!report ? (
+        <span className="label">checking…</span>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {report.checks.map((c) => (
+            <div key={c.id} className="flex items-start gap-3">
+              <StatusPill status={checkPillStatus(c)} />
+              <div>
+                <div className="font-mono text-xs" style={{ color: 'var(--ink)' }}>
+                  {c.label}
+                </div>
+                {c.detail && (
+                  <div className="text-xs mt-0.5" style={{ color: 'var(--ink-dim)' }}>
+                    {c.detail}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div className="label">node {report.nodeVersion}</div>
+        </div>
+      )}
+    </Section>
+  );
+}
 
 /**
  * Status-only card for the spectator UI (packages/web, served separately via
@@ -83,6 +149,8 @@ export function SettingsPage() {
 
   return (
     <div>
+      <HealthSection />
+
       <ErrorNote error={error} />
 
       <Section title="game server">
