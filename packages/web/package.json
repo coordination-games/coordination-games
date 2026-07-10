@@ -8,6 +8,7 @@
     "dev": "vite",
     "prebuild": "tsx scripts/sync-game-assets.ts",
     "build": "tsc -b && vite build",
+    "build:local": "VITE_API_URL= npm run build",
     "preview": "vite preview",
     "test": "vitest run"
   },

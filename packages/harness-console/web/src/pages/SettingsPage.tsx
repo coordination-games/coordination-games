@@ -3,6 +3,52 @@ import { api } from '../api';
 import { ErrorNote, Field, Section, StatusPill } from '../components/ui';
 import type { GameServerStatus, SecretStatus } from '../types';
 
+const SPECTATOR_URL = 'http://127.0.0.1:4173';
+
+/**
+ * Status-only card for the spectator UI (packages/web, served separately via
+ * `vite preview`). No process management here — RunPage links assume it's
+ * already up; this just tells you whether it is.
+ */
+function SpectatorStatus() {
+  const [reachable, setReachable] = useState<boolean | null>(null);
+
+  const check = useCallback(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    fetch(SPECTATOR_URL, { signal: controller.signal, mode: 'no-cors' })
+      .then(() => setReachable(true))
+      .catch(() => setReachable(false))
+      .finally(() => clearTimeout(timer));
+  }, []);
+
+  useEffect(() => {
+    check();
+    const timer = setInterval(check, 5000);
+    return () => clearInterval(timer);
+  }, [check]);
+
+  return (
+    <Section title="spectator">
+      <div className="flex items-center gap-3 mb-2">
+        {reachable === null ? (
+          <span className="label">checking…</span>
+        ) : (
+          <StatusPill status={reachable ? 'ok' : 'error'} />
+        )}
+        <span className="font-mono text-xs" style={{ color: 'var(--ink-dim)' }}>
+          {reachable ? `${SPECTATOR_URL} is serving` : `not reachable at ${SPECTATOR_URL}`}
+        </span>
+      </div>
+      <p className="label">cd packages/web && npm run build:local && npm run preview</p>
+      <p className="label mt-1">
+        build:local (not build) — packages/web/.env.production pins the prod API URL, which would
+        otherwise override the local game server
+      </p>
+    </Section>
+  );
+}
+
 export function SettingsPage() {
   const [secrets, setSecrets] = useState<SecretStatus | null>(null);
   const [openrouterKey, setOpenrouterKey] = useState('');
@@ -75,6 +121,8 @@ export function SettingsPage() {
           <pre className="terminal max-h-64">{server.logs.join('\n')}</pre>
         )}
       </Section>
+
+      <SpectatorStatus />
 
       <Section title="secrets — stored in ~/.coordination/console-secrets.json (0600), passed to runs as env only">
         <div className="grid md:grid-cols-3 gap-6">

@@ -76,7 +76,12 @@ export function startGameServer(): { started: boolean } {
   state.logs = [];
   state.readyUrl = null;
   const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const child = spawn(npmCmd, ['run', 'dev'], {
+  // `--ip 0.0.0.0` forwards through npm's compound `dev` script to the final
+  // command (`wrangler dev`), binding beyond loopback so spectators on the
+  // tailnet can reach the game server. ADMIN_TOKEN remains the dev default
+  // (workers-server .dev.vars) — fine on a trusted tailnet, not for exposing
+  // this publicly.
+  const child = spawn(npmCmd, ['run', 'dev', '--', '--ip', '0.0.0.0'], {
     cwd: WORKERS_DIR,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],

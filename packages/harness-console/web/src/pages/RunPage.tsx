@@ -77,7 +77,7 @@ function Overview({ info }: { info: RunInfo }) {
   return (
     <div>
       {info.hasAnalysis && <JudgeTeaser campaignId={info.campaignId} runId={info.runId} />}
-      <Section title="outcome">
+      <Section title="outcome" right={m.gameId ? <WatchReplayLink gameId={m.gameId} /> : undefined}>
         <div className="flex gap-6 flex-wrap font-mono text-sm mb-3">
           <div>
             <div className="label">winner</div>
@@ -145,6 +145,27 @@ function Overview({ info }: { info: RunInfo }) {
         <JsonBlock value={m.spec} />
       </Section>
     </div>
+  );
+}
+
+/**
+ * Link to the spectator UI's replay for this run's game.
+ *
+ * Only available once the manifest is written (finished runs) — the console
+ * has no other source for gameId while a run is in flight. Assumes
+ * `packages/web` is being served via `npm run build:local && npm run preview`
+ * (see the spectator card on the settings page).
+ */
+function WatchReplayLink({ gameId }: { gameId: string }) {
+  return (
+    <a
+      className="btn btn-primary"
+      href={`http://${window.location.hostname}:4173/replay/${gameId}`}
+      target="_blank"
+      rel="noreferrer"
+    >
+      ▶ watch replay
+    </a>
   );
 }
 
