@@ -123,6 +123,15 @@ export interface ConsoleMeta {
   outputDir: string;
 }
 
+/** GET /api/demos entries — the front door's canned demonstrations. */
+export interface DemoSummary {
+  id: string;
+  title: string;
+  question: string;
+  blurb: string;
+  estMinutes: number;
+}
+
 export interface ModelAggregate {
   model: string;
   backend: string;

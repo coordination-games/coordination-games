@@ -21,6 +21,7 @@ import {
   readRun,
   readTranscript,
 } from './artifacts.js';
+import { DEMO_GAME_SERVER, DEMOS } from './demos.js';
 import { gameServerStatus, startGameServer, stopGameServer } from './game-server.js';
 import {
   activeCampaignIds,
@@ -108,6 +109,31 @@ async function prepareLaunch(body: Record<string, unknown>): Promise<Record<stri
   return spec;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Block until the game server answers, starting it if it's down and polling
+ * every 2s up to 90s. A demo must never surface a stack trace: the only way
+ * out of here is success or an HttpError with a plain-English message, which
+ * the route() catch handler turns into JSON with no stack, same as any other
+ * route failure.
+ */
+async function ensureGameServer(target: string): Promise<void> {
+  if ((await gameServerStatus(target)).reachable) return;
+  startGameServer();
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    await sleep(2000);
+    if ((await gameServerStatus(target)).reachable) return;
+  }
+  throw new HttpError(
+    503,
+    'The game server is taking too long to start. Please try the demo again in a minute.',
+  );
+}
+
 // --- router --------------------------------------------------------------------
 
 async function route(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -123,6 +149,27 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL): Promi
   }
   if (pathname === '/api/campaigns' && method === 'POST') {
     const spec = await prepareLaunch(asRecord(await readBody(req)));
+    return sendJson(res, 201, await startCampaign(spec));
+  }
+
+  if (pathname === '/api/demos' && method === 'GET') {
+    return sendJson(res, 200, {
+      demos: DEMOS.map(({ id, title, question, blurb, estMinutes }) => ({
+        id,
+        title,
+        question,
+        blurb,
+        estMinutes,
+      })),
+    });
+  }
+  const demoRunMatch = /^\/api\/demos\/([^/]+)\/run$/.exec(pathname);
+  if (demoRunMatch && method === 'POST') {
+    const id = decodeURIComponent(demoRunMatch[1] ?? '');
+    const demo = DEMOS.find((d) => d.id === id);
+    if (!demo) throw new HttpError(404, `no such demo: ${id}`);
+    await ensureGameServer(DEMO_GAME_SERVER);
+    const spec = await prepareLaunch({ spec: demo.spec });
     return sendJson(res, 201, await startCampaign(spec));
   }
 
@@ -250,7 +297,26 @@ const server = createServer((req, res) => {
   });
 });
 
+/** Best-effort warm-up so a viewer's first demo click doesn't eat the up to
+ * 90s cold start. Never throws out of here — ensureGameServer() is still the
+ * authority a demo run blocks on if this didn't finish (or failed) in time. */
+async function bootGameServerCheck(): Promise<void> {
+  try {
+    if ((await gameServerStatus(DEMO_GAME_SERVER)).reachable) {
+      console.log(`[console] game server already up at ${DEMO_GAME_SERVER}`);
+      return;
+    }
+    startGameServer();
+    console.log('[console] game server was down at boot — starting it now');
+  } catch (err) {
+    console.log(
+      `[console] game server boot check failed, continuing without it: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`[console] Campaign Console on http://${HOST}:${PORT}`);
   console.log(`[console] scanning ${OUTPUT_DIR}`);
+  void bootGameServerCheck();
 });

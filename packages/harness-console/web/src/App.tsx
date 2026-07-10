@@ -1,9 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const NAV = [
-  { num: '00', label: 'Campaigns', to: '/' },
-  { num: '01', label: 'New Campaign', to: '/new' },
-  { num: '02', label: 'Compare Models', to: '/compare' },
+  { num: '00', label: 'Demos', to: '/' },
+  { num: '01', label: 'Lab', to: '/lab' },
+  { num: '02', label: 'Compare', to: '/compare' },
   { num: '03', label: 'Settings', to: '/settings' },
 ];
 

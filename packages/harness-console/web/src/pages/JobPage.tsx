@@ -44,6 +44,10 @@ export function JobPage() {
             >
               stop run
             </button>
+          ) : job?.status === 'done' && job.campaignId ? (
+            <Link className="btn btn-primary" to="/lab">
+              view results →
+            </Link>
           ) : undefined
         }
       >
@@ -52,7 +56,7 @@ export function JobPage() {
           <span>{job?.kind}</span>
           {job?.specPath && <span style={{ color: 'var(--ink-dim)' }}>{job.specPath}</span>}
           {job?.campaignId && (
-            <Link to="/" style={{ color: 'var(--blue)' }}>
+            <Link to="/lab" style={{ color: 'var(--blue)' }}>
               {job.campaignId} → results
             </Link>
           )}

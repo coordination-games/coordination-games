@@ -34,8 +34,8 @@ export function RunPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <Link to="/" className="font-mono text-xs" style={{ color: 'var(--ink-dim)' }}>
-          ← campaigns
+        <Link to="/lab" className="font-mono text-xs" style={{ color: 'var(--ink-dim)' }}>
+          ← lab
         </Link>
         <span className="font-display font-semibold">
           {campaignId} / {runId}

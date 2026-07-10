@@ -3,6 +3,7 @@ import type {
   CampaignInfo,
   CampaignSpecDraft,
   ConsoleMeta,
+  DemoSummary,
   GameServerStatus,
   JobPublic,
   ModelAggregate,
@@ -34,6 +35,8 @@ const post = (body: unknown): RequestInit => ({
 
 export const api = {
   meta: () => request<ConsoleMeta>('/api/meta'),
+  demos: () => request<{ demos: DemoSummary[] }>('/api/demos'),
+  runDemo: (id: string) => request<JobPublic>(`/api/demos/${encodeURIComponent(id)}/run`, post({})),
   campaigns: () => request<{ campaigns: CampaignInfo[] }>('/api/campaigns'),
   run: (c: string, r: string) =>
     request<RunInfo>(`/api/runs/${encodeURIComponent(c)}/${encodeURIComponent(r)}`),
