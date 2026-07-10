@@ -7,6 +7,7 @@ import type {
   Findings,
   GameServerStatus,
   JobPublic,
+  LiveFeed,
   ModelAggregate,
   PreflightReport,
   RunInfo,
@@ -59,6 +60,8 @@ export const api = {
     request<JobPublic>('/api/analyze', post({ campaign, run, model })),
   jobs: () => request<{ jobs: JobPublic[] }>('/api/jobs'),
   stopJob: (id: string) => request<JobPublic>(`/api/jobs/${encodeURIComponent(id)}/stop`, post({})),
+  liveFeed: (gameId: string, since = -1) =>
+    request<LiveFeed>(`/api/live/${encodeURIComponent(gameId)}/feed?since=${since}`),
   aggregate: () => request<{ models: ModelAggregate[] }>('/api/aggregate'),
   findings: (campaignId: string) =>
     request<Findings>(`/api/campaigns/${encodeURIComponent(campaignId)}/findings`),

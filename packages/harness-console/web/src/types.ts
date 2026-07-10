@@ -107,6 +107,34 @@ export interface JobPublic {
   specPath?: string;
   campaignId?: string;
   exitCode?: number | null;
+  /** Live game ids in discovery order — the last entry is the current game. */
+  gameIds: string[];
+  /** Total runs in the sweep, once known. */
+  runsTotal?: number;
+  /** Plain-language usage-limit notice, once the harness has hit one. */
+  limitNotice?: string;
+}
+
+/** GET /api/live/:gameId/feed — the Watch page's narrated feed (src/live.ts). */
+export type NarratedKind = 'chat' | 'action' | 'reasoning' | 'trust' | 'system';
+
+export interface NarratedEvent {
+  i: number;
+  t: number;
+  kind: NarratedKind;
+  actor: string | null;
+  body: string;
+  scope: string;
+}
+
+export interface LiveMeter {
+  label: string;
+  percent: number;
+}
+
+export interface LiveFeed {
+  events: NarratedEvent[];
+  meter: LiveMeter | null;
 }
 
 export interface PersonaInfo {

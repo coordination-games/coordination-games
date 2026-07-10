@@ -38,6 +38,15 @@ export interface JobPublic {
   /** Discovered from harness stdout ("[campaign] campaign-<ts> — N runs → dir"). */
   campaignId?: string;
   exitCode?: number | null;
+  /** Live game ids discovered from harness stdout ("[lobby] game started: <uuid>"),
+   * one per run, in discovery order — the LAST entry is the game currently playing. */
+  gameIds: string[];
+  /** Total runs in the sweep, parsed alongside campaignId off the same log line. */
+  runsTotal?: number;
+  /** Plain-language usage-limit notice ("Claude's usage window is full — resets ..."),
+   * set once a log line signals a hit session/usage limit, so a failed job reads as a
+   * sentence instead of a bare exit code. */
+  limitNotice?: string;
 }
 
 interface JobRecord {
@@ -72,18 +81,45 @@ function broadcast(job: JobRecord, event: string, data: unknown): void {
   }
 }
 
+const GAME_STARTED_RE =
+  /\[lobby\] game started: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
 function appendLog(job: JobRecord, line: string): void {
   const safe = redact(line);
   job.logs.push(safe);
   if (job.logs.length > MAX_LOG_LINES) job.logs.splice(0, job.logs.length - MAX_LOG_LINES);
-  // Discover the campaign dir so the UI can link job → results as soon as it exists.
+  let changed = false;
+
+  // Discover the campaign dir (and its run count) so the UI can link job →
+  // results, and show "game N of M", as soon as they exist.
   if (!job.pub.campaignId) {
-    const m = /\[campaign\] (campaign-\d+) — \d+ runs/.exec(safe);
+    const m = /\[campaign\] (campaign-\d+) — (\d+) runs/.exec(safe);
     if (m?.[1]) {
       job.pub.campaignId = m[1];
-      broadcast(job, 'status', job.pub);
+      const n = Number.parseInt(m[2] ?? '', 10);
+      if (Number.isFinite(n)) job.pub.runsTotal = n;
+      changed = true;
     }
   }
+
+  // Discover each new game as the harness starts it ("  [lobby] game started: <uuid>"),
+  // one per run — the Watch page follows the last entry as "the current game".
+  const gameMatch = GAME_STARTED_RE.exec(safe);
+  if (gameMatch?.[1] && !job.pub.gameIds.includes(gameMatch[1])) {
+    job.pub.gameIds.push(gameMatch[1]);
+    changed = true;
+  }
+
+  // Usage-limit hit — bubble a plain sentence instead of a generic failed job.
+  if (!job.pub.limitNotice && /hit your (session|usage) limit/i.test(safe)) {
+    const resetMatch = /resets\s+(.+)$/i.exec(safe);
+    job.pub.limitNotice = resetMatch?.[1]
+      ? `Claude's usage window is full — resets ${resetMatch[1].trim()}`
+      : "Claude's usage window is full.";
+    changed = true;
+  }
+
+  if (changed) broadcast(job, 'status', job.pub);
   broadcast(job, 'log', { line: safe });
 }
 
@@ -158,7 +194,7 @@ async function spawnHarness(kind: JobKind, args: string[]): Promise<JobRecord> {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const job: JobRecord = {
-    pub: { id: nextJobId(kind), kind, status: 'running', startedAt: Date.now() },
+    pub: { id: nextJobId(kind), kind, status: 'running', startedAt: Date.now(), gameIds: [] },
     child,
     logs: [],
     clients: new Set(),
