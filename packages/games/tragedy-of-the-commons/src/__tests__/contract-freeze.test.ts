@@ -44,7 +44,7 @@ function netPayoutSum(payouts: Map<string, bigint>): bigint {
 }
 
 describe('Tragedy v0 public contract freeze', () => {
-  it('keeps computePayouts zero-sum and assigns the whole healthy-commons pot to the canonical tied winner', () => {
+  it('keeps computePayouts zero-sum and shares a healthy full tie equally', () => {
     const payouts = computePayouts(
       {
         rankings: [
@@ -62,9 +62,9 @@ describe('Tragedy v0 public contract freeze', () => {
     );
 
     expect([...payouts.entries()]).toEqual([
-      ['gamma', -10n],
-      ['alpha', 20n],
-      ['beta', -10n],
+      ['gamma', 0n],
+      ['alpha', 0n],
+      ['beta', 0n],
     ]);
     expect(netPayoutSum(payouts)).toBe(0n);
   });
@@ -94,7 +94,7 @@ describe('Tragedy v0 public contract freeze', () => {
     expect(netPayoutSum(payouts)).toBe(0n);
   });
 
-  it('keeps computePayouts integer reserve rounding at the 33-percent commons-health boundary', () => {
+  it('keeps computePayouts bounded integer rounding at the 33-percent commons-health boundary', () => {
     const payouts = computePayouts(
       {
         rankings: [
@@ -112,9 +112,9 @@ describe('Tragedy v0 public contract freeze', () => {
     );
 
     expect([...payouts.entries()]).toEqual([
-      ['gamma', -3n],
-      ['alpha', 6n],
-      ['beta', -3n],
+      ['gamma', -2n],
+      ['alpha', 2n],
+      ['beta', 0n],
     ]);
     expect(netPayoutSum(payouts)).toBe(0n);
   });

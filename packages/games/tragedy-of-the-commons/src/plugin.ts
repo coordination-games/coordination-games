@@ -21,13 +21,13 @@ import {
   validateAction,
   validateV2Action,
 } from './game.js';
+import { computeCarrySafePayouts } from './payouts.js';
 import {
   DEFAULT_TRAGEDY_CONFIG,
   DEFAULT_V2_CONFIG,
   type TragedyAction,
   type TragedyConfig,
   type TragedyOutcome,
-  type TragedyPlayerRanking,
   type TragedyState,
   type TragedyV2Action,
   type TragedyV2Config,
@@ -54,7 +54,7 @@ Tragedy of the Commons is a free-for-all coordination game about shared scarcity
 - \`pass\`
 
 ## Win condition
-Highest VP wins when the round limit is reached. Influence is the tie-breaker. Final payouts are softened by commons health: a damaged ecosystem returns more of the pot as equal reserve instead of letting one player claim the full prize.
+Highest VP ranks first when the round limit is reached, with Influence as the tie-breaker. The pot includes an equal reserve plus a ranked competitive pool scaled by commons health up to half the pot; exact VP and Influence ties share their occupied rank weight.
 
 ## Notes
 This is an intentionally reduced v0 upstream port. Richer trust, commitments, and Olympiad portability are planned for later slices.
@@ -79,58 +79,6 @@ const RESOURCE_BUNDLE_SCHEMA = {
   },
   additionalProperties: false,
 } as const;
-
-function compareRanking(left: TragedyPlayerRanking, right: TragedyPlayerRanking): number {
-  if (right.vp !== left.vp) return right.vp - left.vp;
-  if (right.influence !== left.influence) return right.influence - left.influence;
-  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
-}
-
-function validateRankingIntegrity(
-  rankings: readonly TragedyPlayerRanking[],
-  playerIds: readonly string[],
-): void {
-  if (rankings.length !== playerIds.length) {
-    throw new Error('Tragedy payout rankings must include every player exactly once');
-  }
-
-  const playerSet = new Set(playerIds);
-  const seen = new Set<string>();
-  for (const ranking of rankings) {
-    if (!playerSet.has(ranking.id)) {
-      throw new Error(`Tragedy payout ranking contains unknown player: ${ranking.id}`);
-    }
-    if (seen.has(ranking.id)) {
-      throw new Error(`Tragedy payout ranking contains duplicate player: ${ranking.id}`);
-    }
-    if (!Number.isSafeInteger(ranking.vp) || !Number.isSafeInteger(ranking.influence)) {
-      throw new Error(
-        `Tragedy payout ranking contains non-integer score for player: ${ranking.id}`,
-      );
-    }
-    seen.add(ranking.id);
-  }
-}
-
-function normalizedCommonsHealthPercent(outcome: TragedyOutcome): bigint {
-  if (!Number.isSafeInteger(outcome.commonsHealthPercent)) {
-    throw new Error('Tragedy payout outcome contains non-integer commons health percent');
-  }
-  const bounded = Math.max(0, Math.min(100, outcome.commonsHealthPercent));
-  return BigInt(bounded);
-}
-
-function deterministicReserveShare(
-  id: string,
-  playerIds: readonly string[],
-  reservePool: bigint,
-): bigint {
-  const orderedIds = [...playerIds].sort();
-  const base = reservePool / BigInt(orderedIds.length);
-  const remainder = Number(reservePool % BigInt(orderedIds.length));
-  const index = orderedIds.indexOf(id);
-  return base + (index >= 0 && index < remainder ? 1n : 0n);
-}
 
 const GAME_TOOLS: ToolDefinition[] = [
   {
@@ -254,20 +202,7 @@ export const TragedyOfTheCommonsPlugin: CoordinationGame<
     playerIds: string[],
     entryCost: bigint,
   ): Map<string, bigint> {
-    const payouts = new Map<string, bigint>();
-    validateRankingIntegrity(outcome.rankings, playerIds);
-    const winner = [...outcome.rankings].sort(compareRanking)[0];
-    const potTotal = entryCost * BigInt(playerIds.length);
-    const healthPercent = normalizedCommonsHealthPercent(outcome);
-    const winnerPool = (potTotal * healthPercent) / 100n;
-    const reservePool = potTotal - winnerPool;
-
-    for (const id of playerIds) {
-      const reserveShare = deterministicReserveShare(id, playerIds, reservePool);
-      const share = reserveShare + (id === winner?.id ? winnerPool : 0n);
-      payouts.set(id, share - entryCost);
-    }
-    return payouts;
+    return computeCarrySafePayouts(outcome, playerIds, entryCost);
   },
 
   getPlayerStatus(state: TragedyState, playerId: string): string {
@@ -393,7 +328,7 @@ Tragedy of the Commons is a free-for-all coordination game about shared scarcity
 - Solar buildings generate clean energy without extraction
 
 ## Win condition
-Highest VP wins when the round limit is reached. Influence is the tie-breaker. Final payouts are softened by commons health.
+Highest VP ranks first when the round limit is reached, with Influence as the tie-breaker. The pot includes an equal reserve plus a ranked competitive pool scaled by commons health up to half the pot; exact VP and Influence ties share their occupied rank weight.
 `;
 
 const PLACE_STARTING_CAMP_TOOL: ToolDefinition = {
@@ -607,20 +542,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
     playerIds: string[],
     entryCost: bigint,
   ): Map<string, bigint> {
-    const payouts = new Map<string, bigint>();
-    validateRankingIntegrity(outcome.rankings, playerIds);
-    const winner = [...outcome.rankings].sort(compareRanking)[0];
-    const potTotal = entryCost * BigInt(playerIds.length);
-    const healthPercent = normalizedCommonsHealthPercent(outcome);
-    const winnerPool = (potTotal * healthPercent) / 100n;
-    const reservePool = potTotal - winnerPool;
-
-    for (const id of playerIds) {
-      const reserveShare = deterministicReserveShare(id, playerIds, reservePool);
-      const share = reserveShare + (id === winner?.id ? winnerPool : 0n);
-      payouts.set(id, share - entryCost);
-    }
-    return payouts;
+    return computeCarrySafePayouts(outcome, playerIds, entryCost);
   },
 
   getPlayerStatus(state: TragedyV2State, playerId: string): string {

@@ -26,7 +26,64 @@ function sum(values: Iterable<bigint>): bigint {
 }
 
 describe('TragedyOfTheCommonsPlugin.computePayouts', () => {
-  it('pays the same canonical winner used by ranking policy', () => {
+  it('does not let a healthy four-player winner take three entries from the field', () => {
+    // Given: a healthy commons and an unambiguous four-player ranking.
+    const ids = ['alpha', 'beta', 'gamma', 'delta'];
+
+    // When: the full pot is distributed.
+    const payouts = TragedyOfTheCommonsPlugin.computePayouts(
+      outcome([
+        ranking('alpha', 4, 0),
+        ranking('beta', 3, 0),
+        ranking('gamma', 2, 0),
+        ranking('delta', 1, 0),
+      ]),
+      ids,
+      10n,
+    );
+
+    // Then: no player moves by more than half an entry plus one rounding unit.
+    expect([...payouts.values()].every((payout) => payout >= -6n && payout <= 6n)).toBe(true);
+    expect([...payouts.values()]).not.toEqual([30n, -10n, -10n, -10n]);
+    expect(sum(payouts.values())).toBe(0n);
+  });
+
+  it('lets a later winner catch an early winner without a two-game snowball', () => {
+    // Given: two healthy games with alpha and beta swapping first and second place.
+    const ids = ['alpha', 'beta', 'gamma', 'delta'];
+    const firstGame = outcome([
+      ranking('alpha', 4, 0),
+      ranking('beta', 3, 0),
+      ranking('gamma', 2, 0),
+      ranking('delta', 1, 0),
+    ]);
+    const secondGame = outcome([
+      ranking('beta', 4, 0),
+      ranking('alpha', 3, 0),
+      ranking('gamma', 2, 0),
+      ranking('delta', 1, 0),
+    ]);
+
+    // When: tournament balances carry across both games.
+    const firstPayouts = TragedyOfTheCommonsPlugin.computePayouts(firstGame, ids, 10n);
+    const secondPayouts = TragedyOfTheCommonsPlugin.computePayouts(secondGame, ids, 10n);
+    const cumulative = new Map(
+      ids.map((id) => [id, (firstPayouts.get(id) ?? 0n) + (secondPayouts.get(id) ?? 0n)]),
+    );
+
+    // Then: each game is carry-safe, the two winners converge, and the spread stays bounded.
+    expect(
+      [...firstPayouts.values(), ...secondPayouts.values()].every(
+        (payout) => payout >= -6n && payout <= 6n,
+      ),
+    ).toBe(true);
+    expect(cumulative.get('alpha')).toBe(cumulative.get('beta'));
+    expect((cumulative.get('alpha') ?? 0n) - (cumulative.get('delta') ?? 0n)).toBeLessThanOrEqual(
+      10n,
+    );
+  });
+
+  it('shares occupied-position weight across an exact first-place tie', () => {
     const ids = ['alpha', 'beta', 'gamma', 'delta'];
     const payouts = TragedyOfTheCommonsPlugin.computePayouts(
       outcome([
@@ -39,14 +96,14 @@ describe('TragedyOfTheCommonsPlugin.computePayouts', () => {
       10n,
     );
 
-    expect(payouts.get('alpha')).toBe(30n);
-    expect(payouts.get('beta')).toBe(-10n);
-    expect(payouts.get('gamma')).toBe(-10n);
-    expect(payouts.get('delta')).toBe(-10n);
+    expect(payouts.get('alpha')).toBe(2n);
+    expect(payouts.get('beta')).toBe(2n);
+    expect(payouts.get('gamma')).toBe(-3n);
+    expect(payouts.get('delta')).toBe(-1n);
     expect(sum(payouts.values())).toBe(0n);
   });
 
-  it('softens winner-take-all payouts when commons health is damaged', () => {
+  it('scales the competitive reward with commons health', () => {
     const ids = ['alpha', 'beta', 'gamma', 'delta'];
     const payouts = TragedyOfTheCommonsPlugin.computePayouts(
       outcome(
@@ -62,10 +119,10 @@ describe('TragedyOfTheCommonsPlugin.computePayouts', () => {
       10n,
     );
 
-    expect(payouts.get('alpha')).toBe(15n);
-    expect(payouts.get('beta')).toBe(-5n);
-    expect(payouts.get('gamma')).toBe(-5n);
-    expect(payouts.get('delta')).toBe(-5n);
+    expect(payouts.get('alpha')).toBe(2n);
+    expect(payouts.get('beta')).toBe(1n);
+    expect(payouts.get('gamma')).toBe(-1n);
+    expect(payouts.get('delta')).toBe(-2n);
     expect(sum(payouts.values())).toBe(0n);
   });
 
