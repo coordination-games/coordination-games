@@ -11,9 +11,10 @@
  * pointed at a local build via COGA_SERVE_CMD).
  */
 
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 
 // ---------------------------------------------------------------------------
@@ -264,17 +265,34 @@ function sleep(ms: number) {
 // feed to the MCP stdio transport (OpenRouter) or the claude --mcp-config
 // (Claude).
 //
-// Default: `npx -y coordination-games@latest serve ...` — forces npx to fetch
-// the current npm release each run instead of falling through to a stale global
-// `coga` binary.
-//
-// Override: set `COGA_SERVE_CMD` to spawn a LOCAL build instead of the published
-// release — e.g. `COGA_SERVE_CMD="npx tsx packages/cli/src/index.ts"` from the
-// repo root, or `COGA_SERVE_CMD="node packages/cli/dist/index.js"`. The override
-// is the program + any leading args; the `serve ...` arguments are appended.
-// This is what lets a LOCAL pipeline change (e.g. the COGA_DISABLE_PLUGINS knob)
-// take effect for the bots without publishing — the harness's research/dev loop.
+// Resolution order:
+//   1. `COGA_SERVE_CMD` override — spawn an explicit LOCAL build, e.g.
+//      `COGA_SERVE_CMD="npx tsx packages/cli/src/index.ts"` from the repo
+//      root, or `COGA_SERVE_CMD="node packages/cli/dist/index.js"`. The
+//      override is the program + any leading args; the `serve ...` arguments
+//      are appended. This is what lets a LOCAL pipeline change (e.g. the
+//      COGA_DISABLE_PLUGINS knob) take effect for the bots without
+//      publishing — the harness's research/dev loop.
+//   2. The repo's own built CLI at packages/cli/dist/index.cjs, resolved
+//      relative to this package (works from any cwd, worktree, or clone
+//      that's been built) — spawned directly as `node <dist>`.
+//   3. `npx -y coordination-games@latest serve ...` — last-resort fallback
+//      when neither of the above applies (e.g. an unbuilt fresh clone).
+//      KNOWN FAILURE MODE: npx's cold start (registry lookup + package
+//      fetch/cache, no local dist) is slow enough to lose the claude
+//      session's tool-list snapshot race on a busy box — the session sees
+//      coga "pending", the model reports zero coga tools, and the
+//      toolless-session guard (runners/claude.ts) burns a wasted model call
+//      recovering (in the worst case, exhausts MCP_ATTACH_RETRIES and kills
+//      the seat outright). Every direct-CLI run (bypassing Campaign Console,
+//      which always pins step 2) hits this unless the workspace is built —
+//      `npm run build -w packages/cli` fixes it for free via step 2.
 // ---------------------------------------------------------------------------
+
+const LOCAL_CLI_DIST = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../cli/dist/index.cjs',
+);
 
 export interface CogaServeInvocation {
   command: string;
@@ -301,6 +319,9 @@ export function cogaServeCommand(
   if (override) {
     const [command, ...leadingArgs] = override.split(/\s+/);
     return { command: command ?? 'npx', args: [...leadingArgs, ...serveArgs] };
+  }
+  if (existsSync(LOCAL_CLI_DIST)) {
+    return { command: 'node', args: [LOCAL_CLI_DIST, ...serveArgs] };
   }
   return { command: 'npx', args: ['-y', 'coordination-games@latest', ...serveArgs] };
 }

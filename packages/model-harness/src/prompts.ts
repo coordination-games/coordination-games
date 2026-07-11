@@ -60,3 +60,33 @@ Error handling — the dispatcher returns structured codes you can self-correct 
 export const BOOT_VERIFY_PROMPT = `Call the mcp__coga__guide tool once now. After it returns, reply with exactly: READY. Do nothing else — further instructions follow.`;
 
 export const RESUME_PROMPT = `The session is still in progress. Keep playing — call state, read state.currentPhase.tools and any trustCards, pick the right per-name tool, call it, then wait. Treat trustCards as compact viewer-visible evidence summaries, not private knowledge or final reputation scores. Use chat when the guide says coordination matters. On WRONG_PHASE or UNKNOWN_TOOL, re-read state and self-correct. Repeat until state.phase === "finished". Do not summarize.`;
+
+/**
+ * Rejoin prompt — used only when session rotation (RunSpec.rotateAfterTurns)
+ * is enabled and a subprocess exits cleanly (its --max-turns cap, not a
+ * timeout or a dead MCP attach) without seeing phase:"finished". The runner
+ * starts a FRESH session (new sessionId, not --resume) to reset the
+ * accumulated conversation; this prompt re-orients the model in that empty
+ * context. Game state and recent chat are still recoverable — guide/state are
+ * always callable, and the relay replays recent messages — so nothing about
+ * the game itself is lost, only the prior turn-by-turn conversation.
+ *
+ * Prepended with systemPrompt/persona by the caller, mirroring the initial
+ * prompt assembly (`${systemPrompt}\n\n${BASE_PROTOCOL_PROMPT(botName)}`).
+ */
+export const REJOIN_PROMPT = (
+  botName: string,
+) => `You are ${botName}, re-joining a game already in progress after a context refresh. This is a brand-new session — you have no memory of your previous turns — but the game itself has not changed and your teammates are still playing.
+
+YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join — you are already in one.
+
+1. Call mcp__coga__guide to re-learn the rules, phases, and win condition.
+2. Call mcp__coga__state to re-read your situation — recent chat and events will replay via the relay, so you'll catch up on what happened while this session was refreshing.
+3. Continue playing in character: pick the right tool from state.currentPhase.tools, call it with its declared args, then call wait. Use chat when the guide says coordination matters.
+4. Do NOT stop early, do NOT summarize, do NOT create a new lobby, do NOT re-introduce yourself as if just arriving. Keep calling tools until state.phase === "finished".
+
+Error handling — the dispatcher returns structured codes you can self-correct on:
+  - UNKNOWN_TOOL:      the tool name isn't in this session's registry. Re-read state.currentPhase.tools / guide.
+  - WRONG_PHASE:       the tool exists but belongs to a different phase. The error payload includes \`currentPhase\` and \`validToolsNow[]\` — switch to one of those.
+  - INVALID_ARGS:      args failed JSON-schema validation. Error lists the field issues — fix and retry.
+  - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. an out-of-range move). Fix the semantics and retry.`;

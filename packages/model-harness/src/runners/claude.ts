@@ -52,7 +52,12 @@ function acquireBootLock(): Promise<() => void> {
 }
 
 import { cogaServeCommand } from '../coga-client.js';
-import { BASE_PROTOCOL_PROMPT, BOOT_VERIFY_PROMPT, RESUME_PROMPT } from '../prompts.js';
+import {
+  BASE_PROTOCOL_PROMPT,
+  BOOT_VERIFY_PROMPT,
+  REJOIN_PROMPT,
+  RESUME_PROMPT,
+} from '../prompts.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
 import { claudeCliModel } from '../types.js';
 
@@ -289,8 +294,24 @@ function parseStreamLine(line: string, bot: string, _model: string): ParsedLine 
 
 export class ClaudeAgentRunner implements AgentRunner {
   async runSession(opts: RunSessionOptions): Promise<SessionResult> {
-    const { botName, privateKey, server, systemPrompt, model, limits, onEvent, disablePlugins } =
-      opts;
+    const {
+      botName,
+      privateKey,
+      server,
+      systemPrompt,
+      model,
+      limits,
+      onEvent,
+      disablePlugins,
+      rotateAfterTurns,
+    } = opts;
+    // Session-rotation flag (off by default — RunSpec.rotateAfterTurns). When
+    // set, every subprocess is capped at this many turns instead of 50, and a
+    // healthy-but-unfinished exit (hit the turn cap, not a timeout/dead MCP
+    // attach) rotates to a FRESH session instead of --resume-ing the
+    // accumulated conversation. See maxTurnsArg / the resume loop below.
+    const rotationEnabled = typeof rotateAfterTurns === 'number' && rotateAfterTurns > 0;
+    const maxTurnsArg = rotationEnabled ? String(rotateAfterTurns) : '50';
     // The seat model may carry a backend-routing prefix (`anthropic/claude-haiku`)
     // or a friendly tier alias the `claude` CLI doesn't accept raw — normalize to
     // a CLI-valid `--model` value. The original seat model stays in the manifest.
@@ -298,7 +319,10 @@ export class ClaudeAgentRunner implements AgentRunner {
 
     // Mutable: regenerated when an MCP-attach retry needs a FRESH session
     // (the failed session id already exists server-side and its tool list is
-    // frozen without coga — resuming it can never recover, see runOnceGuarded).
+    // frozen without coga — resuming it can never recover, see runOnceGuarded)
+    // and, when rotationEnabled, on every turn-cap rotation (see the resume
+    // loop below) — both cases start a subprocess with `--session-id` instead
+    // of `--resume`.
     let sessionId = randomUUID();
     const deadline = Date.now() + limits.wallClockMs;
 
@@ -390,7 +414,7 @@ export class ClaudeAgentRunner implements AgentRunner {
           '--output-format',
           'stream-json',
           '--max-turns',
-          '50',
+          maxTurnsArg,
           // Tool scoping — two anti-patterns we must avoid, learned the hard way:
           //  • `--tools ""` ALSO strips the MCP tools (not just built-ins), so the
           //    model is left with nothing and hallucinates <function_calls> text
@@ -596,7 +620,16 @@ export class ClaudeAgentRunner implements AgentRunner {
     // and end the session. The resume respawns coga (now warm) and recovers.
     // With maxModelCalls < 50 the old formula gave maxSessions=1 — no retry —
     // which killed such seats outright (observed 2026-07-03, sonnet-5).
-    const maxSessions = Math.max(2, Math.ceil(limits.maxModelCalls / 50));
+    const baseMaxSessions = Math.max(2, Math.ceil(limits.maxModelCalls / 50));
+    // Rotation shortens each subprocess's turn budget, so it needs more of
+    // them to reach the same maxModelCalls — scale up, never down (+2 slack
+    // for the boot-verify session and one MCP-attach retry).
+    const maxSessions = rotationEnabled
+      ? Math.max(
+          baseMaxSessions,
+          Math.ceil(limits.maxModelCalls / (rotateAfterTurns as number)) + 2,
+        )
+      : baseMaxSessions;
 
     // Build the initial prompt: system prompt prepended to the protocol prompt
     // (the claude --print CLI has no separate --system flag for non-interactive
@@ -627,18 +660,38 @@ export class ClaudeAgentRunner implements AgentRunner {
 
       if (seenFinished) finished = true;
 
+      let rotationCount = 0;
       for (let i = 1; i < maxSessions && !finished && !timedOut && Date.now() < deadline; i++) {
         if (totalModelCalls >= limits.maxModelCalls) break;
 
-        onEvent({
-          t: Date.now(),
-          bot: botName,
-          kind: 'session',
-          event: 'start',
-          detail: `resume ${i}`,
-        });
-
-        const result = await runOnceGuarded(RESUME_PROMPT, true);
+        // Every iteration reached here follows a HEALTHY unfinished exit —
+        // runOnceGuarded already retried away any dead-MCP-attach session,
+        // and a timedOut result breaks the loop condition above — so with
+        // rotation on, always rotate (never --resume the accumulated
+        // conversation). Flag off: byte-identical to the old resume loop.
+        let result: { seenFinished: boolean; timedOut: boolean };
+        if (rotationEnabled) {
+          rotationCount++;
+          sessionId = randomUUID(); // fresh session — drop the old conversation
+          onEvent({
+            t: Date.now(),
+            bot: botName,
+            kind: 'session',
+            event: 'start',
+            detail: `rotation ${rotationCount}`,
+          });
+          const rejoinPrompt = `${systemPrompt}\n\n${REJOIN_PROMPT(botName)}`;
+          result = await runOnceGuarded(rejoinPrompt, false);
+        } else {
+          onEvent({
+            t: Date.now(),
+            bot: botName,
+            kind: 'session',
+            event: 'start',
+            detail: `resume ${i}`,
+          });
+          result = await runOnceGuarded(RESUME_PROMPT, true);
+        }
         timedOut = result.timedOut;
         totalModelCalls++;
 

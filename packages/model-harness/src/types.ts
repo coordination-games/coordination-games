@@ -158,6 +158,17 @@ export interface RunSpec {
    * Clamped to 4 — each run is seats-many claude subprocesses.
    */
   concurrency: number;
+  /**
+   * Globals-scoped (like `concurrency`). When set, the claude backend caps
+   * each subprocess at this many turns (`--max-turns`) and, on a healthy
+   * unfinished exit, rotates to a FRESH session (new sessionId, REJOIN prompt)
+   * instead of `--resume`-ing the accumulated conversation. Bounds per-call
+   * context growth for long games at the cost of re-reading state each
+   * rotation. Absent/0 = off (existing --resume-forever behavior, unchanged).
+   * Clamped 4..50 at parse time (spec.ts); only the claude backend reads it —
+   * openrouter ignores it (its context isn't a subprocess-local conversation).
+   */
+  rotateAfterTurns?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +307,12 @@ export interface RunSessionOptions {
    * separately, at lobby creation.
    */
   disablePlugins?: string[];
+  /**
+   * When set (claude backend only — see RunSpec.rotateAfterTurns), caps each
+   * subprocess at this many turns and rotates to a fresh session on a healthy
+   * unfinished exit instead of resuming. Absent/0 = off.
+   */
+  rotateAfterTurns?: number;
   /** Append-only transcript sink (§8). */
   onEvent: (e: TranscriptEvent) => void;
 }

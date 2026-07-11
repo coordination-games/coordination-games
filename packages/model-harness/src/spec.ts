@@ -110,6 +110,7 @@ const GLOBAL_KEYS = [
   'limits',
   'analysis',
   'concurrency',
+  'rotateAfterTurns',
 ] as const;
 const GAME_KEYS = [
   'game',
@@ -159,6 +160,13 @@ function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec 
   // runs may play at once. Clamped 1..4 — each run is N claude subprocesses.
   const rawConcurrency = typeof obj.concurrency === 'number' ? Math.floor(obj.concurrency) : 1;
   const concurrency = Math.max(1, Math.min(4, rawConcurrency));
+  // Globals-scoped (like concurrency): session-rotation experiment, off by
+  // default. 0/absent = off; otherwise clamped 4..50 turns per subprocess
+  // (see RunSpec.rotateAfterTurns for what "rotate" means).
+  const rawRotateAfterTurns =
+    typeof obj.rotateAfterTurns === 'number' ? Math.floor(obj.rotateAfterTurns) : 0;
+  const rotateAfterTurns =
+    rawRotateAfterTurns > 0 ? Math.max(4, Math.min(50, rawRotateAfterTurns)) : undefined;
 
   return {
     game,
@@ -172,6 +180,7 @@ function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec 
     concurrency,
     ...(analysis ? { analysis } : {}),
     ...(disablePlugins ? { disablePlugins } : {}),
+    ...(rotateAfterTurns ? { rotateAfterTurns } : {}),
   };
 }
 

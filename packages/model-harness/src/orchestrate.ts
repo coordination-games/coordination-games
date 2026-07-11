@@ -674,6 +674,8 @@ export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
         },
         // Client-side ablation knob (COGA_DISABLE_PLUGINS on the bot's coga serve).
         ...(spec.disablePlugins ? { disablePlugins: spec.disablePlugins } : {}),
+        // Session-rotation experiment (claude backend only; see types.ts).
+        ...(spec.rotateAfterTurns ? { rotateAfterTurns: spec.rotateAfterTurns } : {}),
         onEvent: (e) => writer.onEvent(e),
       });
 
