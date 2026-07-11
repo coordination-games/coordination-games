@@ -40,6 +40,7 @@ import type {
 import {
   buildActionMerkleTree,
   createTournamentCommitment,
+  deriveStopRound,
   getGame,
   parseBytes32Hex,
   parseTournamentCommitmentContext,
@@ -69,6 +70,10 @@ import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-pub
 import '@coordination-games/game-ctl';
 import '@coordination-games/game-oathbreaker';
 import '@coordination-games/game-tragedy-of-the-commons';
+import {
+  sealV2HiddenHorizon,
+  TRAGEDY_GAME_ID,
+} from '@coordination-games/game-tragedy-of-the-commons';
 // Phase 4.2 + 5.1: importing basic-chat (a) self-registers the chat relay
 // schema in the engine's relay-registry so `DOStorageRelayClient.publish`
 // accepts chat envelopes, and (b) gives us `CHAT_RELAY_TYPE` so this DO
@@ -764,6 +769,17 @@ export class GameRoomDO extends DurableObject<Env> {
     let initialState: unknown;
     try {
       initialState = plugin.createInitialState(frozenConfig);
+      if (tournamentCommitment !== null && gameType === TRAGEDY_GAME_ID) {
+        initialState = sealV2HiddenHorizon(
+          initialState,
+          deriveStopRound(
+            tournamentCommitment.horizonSecret,
+            gameId,
+            tournamentCommitment.playerEntropy,
+            tournamentCommitment.policy,
+          ),
+        );
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return Response.json({ error: `createInitialState failed: ${msg}` }, { status: 400 });

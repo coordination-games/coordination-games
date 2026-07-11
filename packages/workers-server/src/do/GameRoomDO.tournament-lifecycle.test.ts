@@ -150,6 +150,50 @@ const context = {
 };
 
 describe('GameRoomDO tournament creation lifecycle', () => {
+  it('Given registered Tragedy V2 tournament creation, when initial state is stored, then its derived endpoint stays private', async () => {
+    const store = storage();
+    const create = await handler('handleCreate');
+    const room = makeRoom(store);
+    const v2Config = {
+      schemaVersion: 'v2',
+      seed: context.gameSeed,
+      playerIds: ['alice', 'bob'],
+      maxRounds: 4,
+      turnTimerSeconds: 10,
+      hiddenHorizon: config.hiddenHorizon,
+    };
+
+    const response = await create.call(
+      room,
+      new Request('https://game.invalid/', {
+        method: 'POST',
+        body: JSON.stringify({
+          gameType: 'tragedy-of-the-commons',
+          gameId,
+          playerIds: ['alice', 'bob'],
+          config: v2Config,
+          tournamentCommitContext: { ...context, policy: { ...policy, baseEntryCost: '100' } },
+        }),
+      }),
+    );
+
+    if (!response.ok) throw new Error(await response.text());
+    expect(response.status).toBe(200);
+    const initialState = store.values.get('state');
+    if (!isRecord(initialState) || !isRecord(initialState.sealedHiddenHorizon)) {
+      throw new Error('Expected sealed Tragedy V2 state');
+    }
+    expect(typeof initialState.sealedHiddenHorizon.stopRound).toBe('number');
+    for (const publicValue of [
+      await response.json(),
+      store.values.get('config'),
+      store.values.get('meta'),
+      store.values.get('snapshot:0'),
+    ]) {
+      expect(JSON.stringify(publicValue)).not.toContain('stopRound');
+    }
+  });
+
   it('Given a mismatched public commitment, when creating, then it rejects before storage writes', async () => {
     const store = storage();
     const create = await handler('handleCreate');

@@ -21,6 +21,7 @@ import {
   validateAction,
   validateV2Action,
 } from './game.js';
+import { effectiveV2FinalRound } from './hidden-horizon.js';
 import { computeCarrySafePayouts } from './payouts.js';
 import {
   DEFAULT_TRAGEDY_CONFIG,
@@ -518,7 +519,8 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   },
 
   isOver(state: TragedyV2State): boolean {
-    return state.phase === 'finished';
+    const finalRound = effectiveV2FinalRound(state);
+    return state.phase === 'finished' && state.round === finalRound;
   },
 
   getCurrentPhaseKind(state: TragedyV2State): GamePhaseKind {
@@ -548,10 +550,16 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   getPlayerStatus(state: TragedyV2State, playerId: string): string {
     const player = state.players.find((item) => item.id === playerId);
     if (!player) return '\n## Your Status\n- Unknown player';
-    return `\n## Your Status\n- **Phase:** ${state.phase}\n- **Round:** ${state.round}/${state.config.maxRounds}\n- **VP:** ${player.vp}\n- **Influence:** ${player.influence}\n- **Structures:** ${player.ownedStructureIds.length}\n- **Roads:** ${player.ownedRoadIds.length}`;
+    const horizon = state.config.hiddenHorizon;
+    const publicHorizon =
+      horizon === undefined
+        ? ''
+        : `\n- **Hidden horizon:** rounds ${horizon.minRounds}-${horizon.maxRounds}; hazard ${horizon.hazardNumerator}/${horizon.hazardDenominator}; commitment ${horizon.commitment}`;
+    return `\n## Your Status\n- **Phase:** ${state.phase}\n- **Round:** ${state.round}/${state.config.maxRounds}\n- **VP:** ${player.vp}\n- **Influence:** ${player.influence}\n- **Structures:** ${player.ownedStructureIds.length}\n- **Roads:** ${player.ownedRoadIds.length}${publicHorizon}`;
   },
 
   getSummary(state: TragedyV2State): Record<string, unknown> {
+    const horizon = state.config.hiddenHorizon;
     return {
       round: state.round,
       maxRounds: state.config.maxRounds,
@@ -559,6 +567,18 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
       players: state.players.map((player) => player.id),
       flourishingEcosystems: state.tiles.filter((tile) => tile.status === 'flourishing').length,
       commonsHealthPercent: getV2Outcome(state).commonsHealthPercent,
+      ...(horizon === undefined
+        ? {}
+        : {
+            hiddenHorizon: {
+              commitment: horizon.commitment,
+              policyHash: horizon.policyHash,
+              minRounds: horizon.minRounds,
+              maxRounds: horizon.maxRounds,
+              hazardNumerator: horizon.hazardNumerator,
+              hazardDenominator: horizon.hazardDenominator,
+            },
+          }),
     };
   },
 
@@ -571,6 +591,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
       players: s.players.map((player) => player.id),
       flourishingEcosystems: s.tiles.filter((tile) => tile.status === 'flourishing').length,
       commonsHealthPercent: s.commonsHealthPercent,
+      ...(s.hiddenHorizon === undefined ? {} : { hiddenHorizon: { ...s.hiddenHorizon } }),
     };
   },
 

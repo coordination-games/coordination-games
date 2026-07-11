@@ -6,6 +6,7 @@ import {
   keccak256CanonicalJson,
   type RelayEnvelope,
 } from '@coordination-games/engine';
+import { effectiveV2FinalRound } from './hidden-horizon.js';
 import {
   type ExtractionLevel,
   type ResourceInventory,
@@ -2147,7 +2148,7 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
 }
 
 function advanceOrFinishV2(state: TragedyV2State): ActionResult<TragedyV2State, TragedyV2Action> {
-  if (state.round >= state.config.maxRounds) {
+  if (state.round >= effectiveV2FinalRound(state)) {
     const finished = { ...state, phase: 'finished' as const };
     return {
       state: finished,
@@ -2302,6 +2303,7 @@ function buildV2SpectatorPlayer(
 }
 
 export function buildV2SpectatorView(state: TragedyV2State): TragedyV2SpectatorView {
+  const hiddenHorizon = state.config.hiddenHorizon;
   return {
     round: state.round,
     maxRounds: state.config.maxRounds,
@@ -2317,12 +2319,25 @@ export function buildV2SpectatorView(state: TragedyV2State): TragedyV2SpectatorV
       action: { ...resolved.action },
     })),
     commonsHealthPercent: averageV2TileHealthPercent(state.tiles),
+    ...(hiddenHorizon === undefined
+      ? {}
+      : {
+          hiddenHorizon: {
+            commitment: hiddenHorizon.commitment,
+            policyHash: hiddenHorizon.policyHash,
+            minRounds: hiddenHorizon.minRounds,
+            maxRounds: hiddenHorizon.maxRounds,
+            hazardNumerator: hiddenHorizon.hazardNumerator,
+            hazardDenominator: hiddenHorizon.hazardDenominator,
+          },
+        }),
   };
 }
 
 export function buildV2PlayerView(state: TragedyV2State, playerId: string): unknown | null {
   const player = state.players.find((item) => item.id === playerId);
   if (!player) return null;
+  const hiddenHorizon = state.config.hiddenHorizon;
   return {
     round: state.round,
     maxRounds: state.config.maxRounds,
@@ -2352,6 +2367,18 @@ export function buildV2PlayerView(state: TragedyV2State, playerId: string): unkn
       handle: state.players[state.currentPlayerIndex]?.id ?? 'unknown',
     },
     commonsHealthPercent: averageV2TileHealthPercent(state.tiles),
+    ...(hiddenHorizon === undefined
+      ? {}
+      : {
+          hiddenHorizon: {
+            commitment: hiddenHorizon.commitment,
+            policyHash: hiddenHorizon.policyHash,
+            minRounds: hiddenHorizon.minRounds,
+            maxRounds: hiddenHorizon.maxRounds,
+            hazardNumerator: hiddenHorizon.hazardNumerator,
+            hazardDenominator: hiddenHorizon.hazardDenominator,
+          },
+        }),
   };
 }
 

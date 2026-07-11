@@ -11,6 +11,7 @@ export {
   getV2Outcome,
   validateV2Action,
 } from './game.js';
+export { effectiveV2FinalRound, sealV2HiddenHorizon } from './hidden-horizon.js';
 export {
   TRAGEDY_GAME_ID,
   TRAGEDY_SYSTEM_ACTION_TYPES,

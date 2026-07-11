@@ -6,6 +6,8 @@
  * integration stay at the platform/harness layer for later slices.
  */
 
+import type { HiddenHorizonPublicConfig } from '@coordination-games/engine';
+
 export type TragedyPhase = 'waiting' | 'playing' | 'finished';
 
 export type ResourceType = 'grain' | 'timber' | 'ore' | 'fish' | 'water' | 'energy';
@@ -319,6 +321,7 @@ export type TragedyV2Action =
 
 export interface TragedyV2Config extends TragedyConfig {
   schemaVersion: 'v2';
+  hiddenHorizon?: HiddenHorizonPublicConfig;
 }
 
 export const DEFAULT_V2_CONFIG = (overrides?: Partial<TragedyV2Config>): TragedyV2Config => ({
@@ -343,7 +346,8 @@ export interface TragedyV2State {
   submittedActions: Record<string, TragedyAction | null>;
   currentPlayerIndex: number;
   winner: string | null;
-  config: TragedyConfig;
+  config: TragedyV2Config;
+  sealedHiddenHorizon?: Readonly<{ stopRound: number }>;
 }
 
 // ── V2 Spectator / Player View ──
@@ -376,6 +380,7 @@ export interface TragedyV2SpectatorView {
   ecosystems: TragedyEcosystem[];
   lastResolvedActions: TragedyResolvedAction[];
   commonsHealthPercent: number;
+  hiddenHorizon?: HiddenHorizonPublicConfig;
 }
 
 // ── V2 Outcome ──
