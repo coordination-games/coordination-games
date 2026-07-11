@@ -82,6 +82,8 @@ export type SettlementSubmitPayload = {
   turnCount: number;
   /** Off-chain audit material; the chain adapter deliberately does not encode this. */
   horizonReveal?: HorizonReveal;
+  tournament?: true;
+  entryCost?: bigint;
   timestamp: number;
   /** Already-validated, zero-sum, floor-checked deltas. */
   deltas: ReadonlyArray<{ agentId: string; delta: bigint }>;

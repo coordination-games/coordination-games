@@ -14,6 +14,8 @@
 
     --color-mint: #02e2ac;
     --color-mint-deep: #008f73;
+    /* Positive/active TEXT on light surfaces — 6.22:1 on bone (mint-deep is only 3.89:1). */
+    --color-mint-text: #006b57;
     --color-mint-shadow: #002923;
 
     --color-hot: #ff5a1f;
@@ -277,4 +279,10 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-warm-black);
+}
+
+/* Visible keyboard focus for tournament interactive controls. */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--color-mint-text);
+  outline-offset: 2px;
 }

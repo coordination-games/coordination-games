@@ -18,6 +18,18 @@ import type {
   RegisterParams,
 } from './types.js';
 
+export type OnChainRelayEnv = Pick<
+  Env,
+  | 'DB'
+  | 'RPC_URL'
+  | 'REGISTRY_ADDRESS'
+  | 'ERC8004_ADDRESS'
+  | 'CREDITS_ADDRESS'
+  | 'GAME_ANCHOR_ADDRESS'
+  | 'USDC_ADDRESS'
+  | 'RELAYER_PRIVATE_KEY'
+>;
+
 // Minimal ABIs for read operations
 const erc8004Abi = [
   {
@@ -91,7 +103,7 @@ export class OnChainRelay implements ChainRelay {
   // biome-ignore lint/suspicious/noExplicitAny: viem 2.x PublicClient generics fight inline `as const` ABIs — every readContract/writeContract call through a typed client needs matching `TAbi`/`TFunctionName` parameters, which defeat the point of ad-hoc ABIs here; `any` keeps this file readable.
   private client: any;
 
-  constructor(private env: Env) {
+  constructor(private env: OnChainRelayEnv) {
     this.client = createPublicClient({
       chain: optimismSepolia,
       transport: http(env.RPC_URL),

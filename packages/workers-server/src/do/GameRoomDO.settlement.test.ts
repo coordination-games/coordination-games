@@ -9,7 +9,11 @@ import {
   type TournamentCommitmentRecord,
   verifyTournamentCommitment,
 } from '@coordination-games/engine';
+import { Miniflare } from 'miniflare';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StrictLocalRelay } from '../chain/strict-local-relay.js';
+import { ServerPluginRuntime } from '../plugins/runtime.js';
+import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlement/index.js';
 
 vi.mock('cloudflare:workers', () => ({
   DurableObject: class {},
@@ -447,5 +451,92 @@ describe('GameRoomDO.kickOffSettlement tournament commitment wiring', () => {
     await kickOffSettlement.call(harness);
 
     expect(submitted).toHaveLength(0);
+  });
+
+  it('Given strict local relay mode, when GameRoom kicks off tournament settlement through the plugin, then confirms and persists its receipt', async () => {
+    const miniflare = new Miniflare({
+      compatibilityDate: '2025-01-01',
+      d1Databases: ['DB'],
+      modules: true,
+      script: 'export default { fetch() { return new Response(); } };',
+    });
+    try {
+      const db = await miniflare.getD1Database('DB');
+      await db.exec(
+        'CREATE TABLE players (id TEXT PRIMARY KEY, wallet_address TEXT NOT NULL UNIQUE, handle TEXT NOT NULL UNIQUE, chain_agent_id INTEGER, elo INTEGER NOT NULL, games_played INTEGER NOT NULL, wins INTEGER NOT NULL, created_at TEXT NOT NULL)',
+      );
+      for (const [id, handle, chainAgentId] of [
+        ['player-a', 'alpha', 1],
+        ['player-b', 'beta', 2],
+        ['treasury-id', 'tournament-treasury', 3],
+      ] as const) {
+        await db
+          .prepare(
+            'INSERT INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES (?, ?, ?, ?, 0, 0, 0, ?)',
+          )
+          .bind(
+            id,
+            `0x${chainAgentId.toString().padStart(40, '0')}`,
+            handle,
+            chainAgentId,
+            '2026-07-11',
+          )
+          .run();
+      }
+      const values = new Map<string, unknown>();
+      const relay = new StrictLocalRelay(db, 'tournament-treasury');
+      const runtime = new ServerPluginRuntime(
+        {
+          storage: {
+            get: async <T>(key: string) => values.get(key) as T | undefined,
+            put: async <T>(key: string, value: T) => void values.set(key, value),
+            delete: async (key: string) => values.delete(key),
+            list: async <T>() => new Map<string, T>(),
+          },
+          relay: {
+            publish: async () => undefined,
+            visibleTo: async () => [],
+            since: async () => [],
+            getTip: async () => 0,
+          },
+          alarms: { scheduleAt: async () => undefined, cancel: async () => undefined },
+          d1: db,
+          chain: relay,
+        },
+        { gameId: 'game-room-settlement-test' },
+      );
+      await runtime.register(createSettlementPlugin());
+      const { harness } = buildHarness({
+        treasuryHandle: 'tournament-treasury',
+        treasuryRow: { id: 'treasury-id', chain_agent_id: 3 },
+        tournament: record,
+      });
+      Object.assign(harness, {
+        env: {
+          DB: db,
+          TREASURY_AGENT_HANDLE: 'tournament-treasury',
+          STRICT_LOCAL_SETTLEMENT: 'true',
+        },
+        getPluginRuntime: async () => runtime,
+      });
+      const kickOffSettlement = await getKickOffSettlement();
+
+      await kickOffSettlement.call(harness);
+      await runtime.handleAlarm(SETTLEMENT_PLUGIN_ID);
+      const result = await runtime.handleCall(SETTLEMENT_PLUGIN_ID, 'state', {}, { kind: 'admin' });
+
+      expect(result).toMatchObject({ state: { kind: 'confirmed', blockNumber: 1 } });
+      if (!isRecord(result) || !isRecord(result.state) || typeof result.state.txHash !== 'string') {
+        throw new Error('Expected confirmed settlement receipt');
+      }
+      expect(
+        await db
+          .prepare('SELECT tx_hash FROM strict_local_settlement_receipts WHERE tx_hash = ?')
+          .bind(result.state.txHash)
+          .first(),
+      ).not.toBeNull();
+    } finally {
+      await miniflare.dispose();
+    }
   });
 });

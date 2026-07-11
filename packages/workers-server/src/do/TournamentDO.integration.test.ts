@@ -172,6 +172,16 @@ describe('TournamentDO integration', () => {
     const afterGame0 = await (await f.make().fetch(new Request('https://do/state'))).json();
     expect(afterGame0.eliminatedPlayerIds).toEqual(['c']);
     expect(afterGame0.activePlayerIds).toEqual(['a', 'b']);
+    expect(afterGame0.policy).toEqual({ baseEntryCost: '10', carryBps: '2000', slashBps: '500' });
+    expect(afterGame0.treasuryCarry).toBe('6');
+    expect(afterGame0.currentEconomics).toMatchObject({ entryCost: '13', carry: '5', slash: '1' });
+    expect(afterGame0.lastSettlement).toMatchObject({
+      gameId: game0,
+      entryCost: '10',
+      carry: '6',
+      slash: '1',
+      treasuryDelta: '7',
+    });
     await f.make().fetch(new Request('https://do/tick', { method: 'POST' }));
     expect(f.games.size).toBe(2);
     expect(f.rows).toEqual(new Set([game0, game1]));

@@ -31,4 +31,5 @@ export interface Env {
    * fail settlement closed rather than silently falling back.
    */
   TREASURY_AGENT_HANDLE?: string;
+  STRICT_LOCAL_SETTLEMENT?: string;
 }

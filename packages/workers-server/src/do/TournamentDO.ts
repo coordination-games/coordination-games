@@ -55,6 +55,17 @@ const createSchema = z
   .strict();
 
 type PlayerEntry = { readonly id: string; readonly handle: string };
+type PublicEconomics = ReturnType<typeof serializeEconomics>;
+type SettlementAudit = {
+  readonly gameId: string;
+  readonly gameIndex: number;
+  readonly txHash: string;
+  readonly blockNumber: number;
+  readonly entryCost: string;
+  readonly carry: string;
+  readonly slash: string;
+  readonly treasuryDelta: string;
+};
 type RuntimeState = {
   readonly version: 1;
   readonly series: TournamentSeries;
@@ -68,6 +79,8 @@ type RuntimeState = {
   readonly phase: 'spawning' | 'creating_game' | 'awaiting_settlement';
   readonly status: 'running' | 'completed' | 'failed';
   readonly error: string | null;
+  readonly currentEconomics: PublicEconomics | null;
+  readonly lastSettlement: SettlementAudit | null;
 };
 
 function serializeEconomics(economics: TournamentEconomics): Record<string, string | number> {
@@ -100,6 +113,14 @@ function publicState(state: RuntimeState): object {
     currentGameId: state.currentGameId,
     currentGameIndex: state.currentGameIndex,
     gameIds: state.gameIds,
+    policy: {
+      baseEntryCost: state.series.policy.baseEntryCost.toString(),
+      carryBps: state.series.policy.carryBps.toString(),
+      slashBps: state.series.policy.slashBps.toString(),
+    },
+    treasuryCarry: state.series.treasuryCarry.toString(),
+    currentEconomics: state.currentEconomics,
+    lastSettlement: state.lastSettlement,
     status: state.status,
     ...(state.error === null ? {} : { error: state.error }),
   };
@@ -173,6 +194,8 @@ export class TournamentDO extends DurableObject<Env> {
         phase: 'spawning',
         status: 'running',
         error: null,
+        currentEconomics: null,
+        lastSettlement: null,
       });
       await this.spawn();
       const created = await this.load();
@@ -224,7 +247,11 @@ export class TournamentDO extends DurableObject<Env> {
     }
     if (!settlement.ok) return this.fail(`Settlement status failed: ${settlement.status}`);
     let body: {
-      readonly state?: { readonly kind?: string } | null;
+      readonly state?: {
+        readonly kind?: string;
+        readonly txHash?: string;
+        readonly blockNumber?: number;
+      } | null;
     };
     let resultBody: { readonly outcome: unknown };
     try {
@@ -276,6 +303,16 @@ export class TournamentDO extends DurableObject<Env> {
       currentGameId: null,
       currentGameIndex: settled.series.currentGameIndex,
       phase: 'spawning',
+      lastSettlement: {
+        gameId,
+        gameIndex: runtime.currentGameIndex ?? runtime.series.currentGameIndex,
+        txHash: body.state.txHash ?? '',
+        blockNumber: body.state.blockNumber ?? 0,
+        entryCost: economics.entryCost.toString(),
+        carry: economics.carry.toString(),
+        slash: economics.slash.toString(),
+        treasuryDelta: economics.treasuryDelta.toString(),
+      },
     };
     await this.save(updated);
     await this.reschedule();
@@ -345,6 +382,7 @@ export class TournamentDO extends DurableObject<Env> {
         currentGameIndex: index,
         gameIds: runtime.gameIds.includes(gameId) ? runtime.gameIds : [...runtime.gameIds, gameId],
         phase: 'creating_game' as const,
+        currentEconomics: serializeEconomics(economics),
       };
       await this.save(next);
       await this.reschedule();

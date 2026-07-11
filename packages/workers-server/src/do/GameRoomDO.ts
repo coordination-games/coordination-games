@@ -1669,6 +1669,7 @@ export class GameRoomDO extends DurableObject<Env> {
           configHash,
           turnCount,
           ...(horizonReveal === undefined ? {} : { horizonReveal }),
+          ...(tournament === null ? {} : { tournament: true as const, entryCost }),
           timestamp: Date.now(),
           deltas,
         },
