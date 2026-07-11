@@ -29,7 +29,7 @@ function storage(values: Stored) {
   };
 }
 
-async function fixture() {
+async function fixture(creditsByAgent: Readonly<Record<string, string>> = {}) {
   const { TournamentDO } = await import('./TournamentDO.js');
   const values: Stored = new Map();
   const store = storage(values);
@@ -89,7 +89,9 @@ async function fixture() {
     DB: {
       prepare: (sql: string) => ({
         bind: (...args: string[]) => ({
-          first: async () => ({ chain_agent_id: Number(args[0] === 'c' ? 3 : 2) }),
+          first: async () => ({
+            chain_agent_id: Number(args[0] === 'a' ? 1 : args[0] === 'b' ? 2 : 3),
+          }),
           run: async () => {
             if (sql.includes('INSERT OR IGNORE')) rows.add(args[0] ?? '');
           },
@@ -101,7 +103,7 @@ async function fixture() {
     Object.assign(Object.create(TournamentDO.prototype), {
       ctx: { id: { name: 't' }, storage: store },
       env,
-      getPlayerCredits: async (id: string) => (id === '3' ? '1' : '100'),
+      getPlayerCredits: async (id: string) => creditsByAgent[id] ?? (id === '3' ? '1' : '100'),
     });
   return { make, games, names, rows, store };
 }
@@ -117,8 +119,8 @@ const payload = {
   policy: {
     seriesLength: 2,
     baseEntryCost: '10',
-    carryBps: 0,
-    slashBps: 0,
+    carryBps: 2_000,
+    slashBps: 500,
     minRounds: 1,
     maxRounds: 2,
     hazardNumerator: 1,
@@ -146,6 +148,8 @@ describe('TournamentDO integration', () => {
     const firstGame = requireGame(f.games, game0);
     const createBody = JSON.parse(await requireRequest(firstGame, 0).text());
     expect(createBody.tournamentCommitContext.policy.baseEntryCost).toBe('10');
+    expect(createBody.tournamentCommitContext.economics.entryCost).toBe('10');
+    expect(createBody.config.tournamentEconomics.entryCost).toBe('10');
     expect(createBody.config.hiddenHorizon.maxRounds).toBe(2);
     await f.make().fetch(new Request('https://do/tick', { method: 'POST' }));
     expect(f.games.size).toBe(1);
@@ -163,6 +167,8 @@ describe('TournamentDO integration', () => {
     const secondGame = requireGame(f.games, game1);
     const game1Body = JSON.parse(await requireRequest(secondGame, 0).text());
     expect(game1Body.playerIds).toEqual(['a', 'b']);
+    expect(game1Body.tournamentCommitContext.economics.entryCost).toBe('13');
+    expect(game1Body.config.tournamentEconomics.entryCost).toBe('13');
     const afterGame0 = await (await f.make().fetch(new Request('https://do/state'))).json();
     expect(afterGame0.eliminatedPlayerIds).toEqual(['c']);
     expect(afterGame0.activePlayerIds).toEqual(['a', 'b']);
@@ -186,5 +192,28 @@ describe('TournamentDO integration', () => {
     await f.make().alarm();
     expect(f.games.size).toBe(2);
     expect(f.rows).toEqual(new Set([game0, game1]));
+  });
+
+  it('Given a balance between the current and frozen next entry costs, when game zero confirms, then it eliminates the player before next spawn', async () => {
+    // Given
+    const f = await fixture({ '1': '100', '2': '11', '3': '1' });
+    const game0 = deriveTournamentRoomName('t', 0);
+    const create = await f
+      .make()
+      .fetch(new Request('https://do/', { method: 'POST', body: JSON.stringify(payload) }));
+    if (!create.ok) throw new Error(await create.text());
+    const firstGame = requireGame(f.games, game0);
+    firstGame.result = 'finished';
+    firstGame.settlement = 'confirmed';
+
+    // When
+    await f.make().alarm();
+
+    // Then
+    const state = await (await f.make().fetch(new Request('https://do/state'))).json();
+    expect(state.activePlayerIds).toEqual(['a']);
+    expect(state.eliminatedPlayerIds).toEqual(['b', 'c']);
+    expect(state.status).toBe('completed');
+    expect(f.games.size).toBe(1);
   });
 });

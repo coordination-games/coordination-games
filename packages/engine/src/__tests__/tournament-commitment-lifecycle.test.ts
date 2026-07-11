@@ -35,6 +35,18 @@ const context = {
     hazardNumerator: 1,
     hazardDenominator: 4,
   },
+  economics: {
+    baseEntryCost: 12_500_000n,
+    entryCost: 12_500_000n,
+    playerCount: 3,
+    basePot: 37_500_000n,
+    incomingCarry: 0n,
+    releasedCarry: 0n,
+    carryRemainder: 0n,
+    carry: 9_375_000n,
+    slash: 1_875_000n,
+    treasuryDelta: 11_250_000n,
+  },
   horizonSecret: SECRET,
   playerEntropy: ENTROPY,
 };
@@ -50,6 +62,7 @@ const publicConfig = {
   stake: 99n,
   nested: { z: 2, a: 1 },
   rounds: [1, 2],
+  tournamentEconomics: { entryCost: '12500000' },
   hiddenHorizon: createHiddenHorizonPublicConfig(commitment, context.policy),
 };
 
@@ -184,5 +197,80 @@ describe('tournament commitment lifecycle', () => {
         t0ConfigHash: replacement,
       }),
     ).toEqual({ ok: false });
+  });
+
+  it('Given a sealed tournament entry cost, when economic context is tampered, then verification fails closed', () => {
+    // Given
+    const record = createTournamentCommitment({
+      context,
+      gameId: 'game\u001f42/β',
+      gameType: 'tragedy-of-the-commons/v2',
+      playerIds: ['alice\u001e', 'ボブ', 'carol\u001f|'],
+      gameConfig: {
+        ...publicConfig,
+        tournamentEconomics: { entryCost: '12500000' },
+      },
+    });
+
+    // When
+    const tampered = {
+      ...record,
+      t0GameConfig: {
+        ...publicConfig,
+        tournamentEconomics: { entryCost: '12500001' },
+      },
+    };
+
+    // Then
+    expect(verifyTournamentCommitment(tampered)).toEqual({ ok: false });
+  });
+
+  it.each([
+    { ...context.economics, baseEntryCost: 12_500_001n },
+    { ...context.economics, entryCost: 12_500_001n },
+    { ...context.economics, playerCount: 4 },
+    { ...context.economics, basePot: 37_500_001n },
+    { ...context.economics, incomingCarry: 1n },
+    { ...context.economics, releasedCarry: 1n },
+    { ...context.economics, carryRemainder: 1n },
+    { ...context.economics, carry: 9_375_001n },
+    { ...context.economics, slash: 1_875_001n },
+    { ...context.economics, treasuryDelta: 11_250_001n },
+  ])('Given a forged sealed economics field, when config mirrors its entry cost, then creation rejects', (economics) => {
+    // Given
+    const gameConfig = {
+      ...publicConfig,
+      tournamentEconomics: { entryCost: economics.entryCost.toString() },
+    };
+
+    // When / Then
+    expect(() =>
+      createTournamentCommitment({
+        context: { ...context, economics },
+        gameId: 'game\u001f42/β',
+        gameType: 'tragedy-of-the-commons/v2',
+        playerIds: ['alice\u001e', 'ボブ', 'carol\u001f|'],
+        gameConfig,
+      }),
+    ).toThrow('economics');
+  });
+
+  it.each([
+    { ...context.economics, baseEntryCost: 12_500_001n },
+    { ...context.economics, entryCost: 12_500_001n },
+    { ...context.economics, playerCount: 4 },
+    { ...context.economics, basePot: 37_500_001n },
+    { ...context.economics, incomingCarry: 1n },
+    { ...context.economics, releasedCarry: 1n },
+    { ...context.economics, carryRemainder: 1n },
+    { ...context.economics, carry: 9_375_001n },
+    { ...context.economics, slash: 1_875_001n },
+    { ...context.economics, treasuryDelta: 11_250_001n },
+  ])('Given a forged persisted economics field, when verifying, then it fails closed', (economics) => {
+    // Given / When
+    const record = createRecord();
+
+    // Then
+    expect(verifyTournamentCommitment({ ...record, economics })).toEqual({ ok: false });
   });
 });

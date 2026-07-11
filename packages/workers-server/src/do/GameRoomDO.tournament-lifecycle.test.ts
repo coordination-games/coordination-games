@@ -138,6 +138,7 @@ const config = {
   entryCost: 1,
   playerIds: ['alice', 'bob'],
   hiddenHorizon: createHiddenHorizonPublicConfig(commitment, policy),
+  tournamentEconomics: { entryCost: '100' },
 };
 const context = {
   tournamentRootSeed: rootSeed,
@@ -145,6 +146,18 @@ const context = {
   tournamentId: 'tournament-1',
   gameIndex: 0,
   policy,
+  economics: {
+    baseEntryCost: '100',
+    entryCost: '100',
+    playerCount: 2,
+    basePot: '200',
+    incomingCarry: '0',
+    releasedCarry: '0',
+    carryRemainder: '0',
+    carry: '0',
+    slash: '0',
+    treasuryDelta: '0',
+  },
   horizonSecret: secret,
   playerEntropy: entropy,
 };
@@ -180,6 +193,7 @@ describe('GameRoomDO tournament creation lifecycle', () => {
       playerIds: ['alice', 'bob'],
       maxRounds: 4,
       turnTimerSeconds: 10,
+      tournamentEconomics: { entryCost: '100' },
       hiddenHorizon: config.hiddenHorizon,
     };
 

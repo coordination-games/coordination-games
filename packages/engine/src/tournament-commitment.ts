@@ -6,6 +6,11 @@ import {
   verifyTournamentPublicHorizon,
 } from './tournament-config-binding.js';
 import {
+  parseTournamentEntryCost,
+  type TournamentEconomics,
+  validateTournamentEconomics,
+} from './tournament-economics.js';
+import {
   type Bytes32Hex,
   computeHorizonCommitment,
   computeTournamentConfigHash,
@@ -26,6 +31,7 @@ export type TournamentCommitmentContext = {
   readonly policy: TournamentPolicy;
   readonly horizonSecret: Bytes32Hex;
   readonly playerEntropy: Bytes32Hex;
+  readonly economics: TournamentEconomics;
 };
 
 export type TournamentCommitmentRecord = TournamentCommitmentContext & {
@@ -67,6 +73,9 @@ const bytes32Schema = z
 const unsignedBigIntSchema = z
   .union([z.bigint(), z.string().regex(/^(0|[1-9][0-9]*)$/)])
   .transform((value) => (typeof value === 'bigint' ? value : BigInt(value)));
+const signedBigIntSchema = z
+  .union([z.bigint(), z.string().regex(/^-?(0|[1-9][0-9]*)$/)])
+  .transform((value) => (typeof value === 'bigint' ? value : BigInt(value)));
 const policySchema = z
   .object({
     seriesLength: z.number().int(),
@@ -88,6 +97,20 @@ const contextSchema = z
     policy: policySchema,
     horizonSecret: bytes32Schema,
     playerEntropy: bytes32Schema,
+    economics: z
+      .object({
+        baseEntryCost: unsignedBigIntSchema,
+        entryCost: unsignedBigIntSchema,
+        playerCount: z.number().int().positive(),
+        basePot: unsignedBigIntSchema,
+        incomingCarry: unsignedBigIntSchema,
+        releasedCarry: unsignedBigIntSchema,
+        carryRemainder: unsignedBigIntSchema,
+        carry: unsignedBigIntSchema,
+        slash: unsignedBigIntSchema,
+        treasuryDelta: signedBigIntSchema,
+      })
+      .strict(),
   })
   .strict();
 
@@ -161,6 +184,18 @@ export function createTournamentCommitment(input: {
     );
   }
   const policyHash = computeTournamentPolicyHash(context.policy);
+  const economics = validateTournamentEconomics(
+    context.policy,
+    context.economics,
+    input.playerIds.length,
+  );
+  if (parseTournamentEntryCost(input.gameConfig) !== economics.entryCost) {
+    throw new TournamentCommitmentError(
+      'entryCost',
+      economics.entryCost,
+      'does not match tournament game config',
+    );
+  }
   const horizonInput: HorizonCommitmentInput = {
     secret: context.horizonSecret,
     gameId,
@@ -219,6 +254,12 @@ export function verifyTournamentCommitment(
     const encodedInput = encodeHorizonCommitmentInput(input);
     const encodedConfigInput = configInput(record);
     const policyHash = computeTournamentPolicyHash(record.policy);
+    const economics = validateTournamentEconomics(
+      record.policy,
+      record.economics,
+      record.playerIds.length,
+    );
+    if (parseTournamentEntryCost(record.t0GameConfig) !== economics.entryCost) return { ok: false };
     const t0ConfigHash = parseBytes32Hex(record.t0ConfigHash, 't0ConfigHash');
     const configHash = parseBytes32Hex(record.configHash, 'configHash');
     const expectedSeed = deriveTournamentGameSeed(

@@ -1,7 +1,6 @@
 // Coordination Games Framework
 // Core types and interfaces
 
-// Canonical encoding (deterministic outcomeBytes; sorted-key JSON, bigint sentinel)
 export {
   canonicalDecode,
   canonicalEncode,
@@ -82,6 +81,17 @@ export {
   type TournamentCommitmentVerification,
   verifyTournamentCommitment,
 } from './tournament-commitment.js';
+// Canonical encoding (deterministic outcomeBytes; sorted-key JSON, bigint sentinel)
+export {
+  applyTournamentPayouts,
+  createTournamentEconomics,
+  parseTournamentEntryCost,
+  type TournamentEconomics,
+  TournamentEconomicsError,
+  type TournamentEconomicsPolicy,
+  type TournamentPayoutSettlement,
+  validateTournamentEconomics,
+} from './tournament-economics.js';
 // Tournament commitment, hidden-horizon PRF, seed, and t0 config encoding
 export {
   type Bytes32Hex,

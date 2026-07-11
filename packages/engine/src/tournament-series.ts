@@ -1,3 +1,4 @@
+import { createTournamentEconomics } from './tournament-economics.js';
 import {
   type Bytes32Hex,
   computeTournamentPolicyHash,
@@ -26,6 +27,10 @@ export type CarryPlan = {
   readonly slashBps: number;
   readonly baseEntryCost: bigint;
   readonly playerCount: number;
+  readonly incomingCarry: bigint;
+  readonly releasedCarry: bigint;
+  readonly carryRemainder: bigint;
+  readonly carry: bigint;
 };
 
 export type TournamentGameConfig = {
@@ -37,6 +42,8 @@ export type TournamentGameConfig = {
   readonly gameSeed: Bytes32Hex;
   readonly policyHash: Bytes32Hex;
   readonly baseEntryCost: bigint;
+  readonly incomingCarry: bigint;
+  readonly entryCost: bigint;
   readonly incomingCarryPlan: CarryPlan | null;
 };
 
@@ -51,6 +58,7 @@ export type TournamentSeries = {
   readonly currentGameIndex: number;
   readonly settledGameIds: readonly string[];
   readonly standings: readonly TournamentStanding[];
+  readonly treasuryCarry: bigint;
 };
 
 export type SettledGameOutcome = {
@@ -134,6 +142,11 @@ function makeGameConfig(
   gameIndex: number,
   incomingCarryPlan: CarryPlan | null,
 ): TournamentGameConfig {
+  const economics = createTournamentEconomics({
+    policy: series.policy,
+    playerCount: series.activePlayerIds.length,
+    incomingCarry: series.treasuryCarry,
+  });
   return Object.freeze({
     tournamentId: series.tournamentId,
     gameIndex,
@@ -143,6 +156,8 @@ function makeGameConfig(
     gameSeed: deriveGameSeed(series.tournamentRootSeed, series.tournamentId, gameIndex),
     policyHash: series.policyHash,
     baseEntryCost: series.policy.baseEntryCost,
+    incomingCarry: economics.incomingCarry,
+    entryCost: economics.entryCost,
     incomingCarryPlan,
   });
 }
@@ -173,6 +188,7 @@ export function createSeries(
     currentGameIndex: 0,
     settledGameIds: Object.freeze([]),
     standings,
+    treasuryCarry: 0n,
   });
   return Object.freeze({ series, gameConfig: makeGameConfig(series, 0, null) });
 }
@@ -257,6 +273,11 @@ export function onGameSettled(
   );
   const nextGameIndex = series.currentGameIndex + 1;
   const toGameIndex = nextGameIndex < series.policy.seriesLength ? nextGameIndex : null;
+  const economics = createTournamentEconomics({
+    policy: series.policy,
+    playerCount: series.activePlayerIds.length,
+    incomingCarry: series.treasuryCarry,
+  });
   const carryPlan: CarryPlan = Object.freeze({
     fromGameIndex: series.currentGameIndex,
     toGameIndex,
@@ -264,6 +285,10 @@ export function onGameSettled(
     slashBps: series.policy.slashBps,
     baseEntryCost: series.policy.baseEntryCost,
     playerCount: series.activePlayerIds.length,
+    incomingCarry: economics.incomingCarry,
+    releasedCarry: economics.releasedCarry,
+    carryRemainder: economics.carryRemainder,
+    carry: economics.carry,
   });
   const updatedSeries: TournamentSeries = Object.freeze({
     ...series,
@@ -275,6 +300,7 @@ export function onGameSettled(
     currentGameIndex: nextGameIndex,
     settledGameIds: Object.freeze([...series.settledGameIds, outcome.gameId]),
     standings,
+    treasuryCarry: economics.carryRemainder + economics.carry,
   });
   const nextGameConfig =
     toGameIndex === null ? null : makeGameConfig(updatedSeries, toGameIndex, carryPlan);

@@ -63,6 +63,7 @@ describe('TournamentSeries', () => {
         { playerId: 'bravo', cumulativeDelta: 0n, gamesPlayed: 0 },
         { playerId: 'charlie', cumulativeDelta: 0n, gamesPlayed: 0 },
       ],
+      treasuryCarry: 0n,
     });
     expect(first.gameConfig).toEqual({
       tournamentId: CONFIG.tournamentId,
@@ -73,6 +74,8 @@ describe('TournamentSeries', () => {
       gameSeed: deriveTournamentGameSeed(ROOT_SEED, CONFIG.tournamentId, 0),
       policyHash: computeTournamentPolicyHash(POLICY),
       baseEntryCost: POLICY.baseEntryCost,
+      incomingCarry: 0n,
+      entryCost: POLICY.baseEntryCost,
       incomingCarryPlan: null,
     });
     expect(Object.isFrozen(first.series)).toBe(true);
@@ -119,6 +122,10 @@ describe('TournamentSeries', () => {
       slashBps: POLICY.slashBps,
       baseEntryCost: POLICY.baseEntryCost,
       playerCount: CONFIG.playerIds.length,
+      incomingCarry: 0n,
+      releasedCarry: 0n,
+      carryRemainder: 0n,
+      carry: 6_000_000n,
     });
     expect(first.nextGameConfig?.incomingCarryPlan).toEqual(first.carryPlan);
     expect(first.nextGameConfig?.tournamentRootSeed).toBe(ROOT_SEED);
@@ -135,7 +142,32 @@ describe('TournamentSeries', () => {
       slashBps: POLICY.slashBps,
       baseEntryCost: POLICY.baseEntryCost,
       playerCount: CONFIG.playerIds.length,
+      incomingCarry: 6_000_000n,
+      releasedCarry: 6_000_000n,
+      carryRemainder: 0n,
+      carry: 7_200_000n,
     });
+  });
+
+  it('Given a carry-producing game, when the next config is created, then it freezes the treasury-funded escalated entry cost', () => {
+    // Given
+    const initial = createSeries(CONFIG, ROOT_SEED);
+
+    // When
+    const settled = onGameSettled(
+      initial.series,
+      { gameId: 'game-0', gameIndex: 0 },
+      payoutMap([
+        ['alpha', 10n],
+        ['bravo', -5n],
+        ['charlie', -5n],
+      ]),
+    );
+
+    // Then
+    expect(initial.gameConfig.entryCost).toBe(POLICY.baseEntryCost);
+    expect(settled.nextGameConfig?.incomingCarry).toBe(6_000_000n);
+    expect(settled.nextGameConfig?.entryCost).toBe(12_000_000n);
   });
 
   it('removes eliminated players only after their settled game and carries survivors forward', () => {

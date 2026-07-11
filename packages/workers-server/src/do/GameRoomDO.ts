@@ -38,14 +38,17 @@ import type {
   TournamentCommitmentRecord,
 } from '@coordination-games/engine';
 import {
+  applyTournamentPayouts,
   buildActionMerkleTree,
   createTournamentCommitment,
   deriveStopRound,
   getGame,
   parseBytes32Hex,
   parseTournamentCommitmentContext,
+  parseTournamentEntryCost,
   revealTournamentHorizon,
   validateChatScope,
+  validateTournamentEconomics,
   verifyTournamentCommitment,
 } from '@coordination-games/engine';
 import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
@@ -1557,14 +1560,32 @@ export class GameRoomDO extends DurableObject<Env> {
       // via `credits(n)` so the type system prevents unit confusion —
       // `computePayouts`, the invariant checks below, and the int256 deltas
       // relayed to the contract all live in raw-unit space.
-      const entryCost = this._plugin.entryCost;
-      const payouts = this._plugin.computePayouts(outcome, playerIds, entryCost);
+      const tournament = this._tournamentCommitment ?? null;
+      const economics =
+        tournament === null
+          ? null
+          : validateTournamentEconomics(tournament.policy, tournament.economics, playerIds.length);
+      const entryCost =
+        tournament === null
+          ? this._plugin.entryCost
+          : parseTournamentEntryCost(tournament.t0GameConfig);
+      const basePayouts = this._plugin.computePayouts(outcome, playerIds, entryCost);
+      const tournamentSettlement =
+        economics === null ? null : applyTournamentPayouts(basePayouts, playerIds, economics);
+      const payouts = tournamentSettlement?.playerPayouts ?? basePayouts;
 
       // Build delta array in playerIds order; default to 0n for any missing entry
       const playingDeltas: SettlementDelta[] = playerIds.map((id) => ({
         agentId: id,
         delta: payouts.get(id) ?? 0n,
       }));
+
+      if (tournament !== null && this.env.TREASURY_AGENT_HANDLE === undefined) {
+        console.error(
+          `[settle ${gameId}] skip: tournament settlement requires a configured treasury`,
+        );
+        return;
+      }
 
       const participants = await assembleSettlementParticipants({
         playerIds,
@@ -1583,7 +1604,14 @@ export class GameRoomDO extends DurableObject<Env> {
         console.error(`[settle ${gameId}] skip: ${participants.reason}`);
         return;
       }
-      const { deltas } = participants;
+      const deltas =
+        tournamentSettlement === null
+          ? participants.deltas
+          : participants.deltas.map((delta, index) =>
+              index === participants.deltas.length - 1
+                ? { ...delta, delta: tournamentSettlement.treasuryDelta }
+                : delta,
+            );
       const settlementPlayerIds = participants.playerIds;
 
       const renderDeltas = () =>
@@ -1600,7 +1628,7 @@ export class GameRoomDO extends DurableObject<Env> {
       }
 
       // Invariant 2: no player loses more than their stake.
-      const floorViolation = deltas.find((d) => d.delta < -entryCost);
+      const floorViolation = playingDeltas.find((d) => d.delta < -entryCost);
       if (floorViolation) {
         console.error(
           `[settle ${gameId}] skip: delta ${floorViolation.delta.toString()} < -entryCost(${entryCost.toString()}) for ${floorViolation.agentId}`,

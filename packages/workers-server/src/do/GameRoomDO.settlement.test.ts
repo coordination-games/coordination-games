@@ -97,9 +97,11 @@ function buildHarness(input: {
   readonly harness: SettlementHarness;
   readonly submitted: SubmittedPayload[];
   readonly computeInputs: string[][];
+  readonly computeEntryCosts: bigint[];
 } {
   const submitted: SubmittedPayload[] = [];
   const computeInputs: string[][] = [];
+  const computeEntryCosts: bigint[] = [];
   const players = ['player-a', 'player-b'];
   const outcome =
     input.tournament === undefined
@@ -109,8 +111,9 @@ function buildHarness(input: {
     _plugin: {
       entryCost: 100n,
       getOutcome: () => outcome,
-      computePayouts: (_outcome, playerIds) => {
+      computePayouts: (_outcome, playerIds, entryCost) => {
         computeInputs.push([...playerIds]);
+        computeEntryCosts.push(entryCost);
         return new Map([
           ['player-a', 75n],
           ['player-b', -75n],
@@ -169,7 +172,7 @@ function buildHarness(input: {
       },
     }),
   };
-  return { harness, submitted, computeInputs };
+  return { harness, submitted, computeInputs, computeEntryCosts };
 }
 
 function isSubmittedPayload(value: unknown): value is SubmittedPayload {
@@ -279,6 +282,18 @@ describe('GameRoomDO.kickOffSettlement tournament commitment wiring', () => {
       tournamentId: 'tournament-settlement',
       gameIndex: 0,
       policy,
+      economics: {
+        baseEntryCost: 100n,
+        entryCost: 100n,
+        playerCount: 2,
+        basePot: 200n,
+        incomingCarry: 0n,
+        releasedCarry: 0n,
+        carryRemainder: 0n,
+        carry: 0n,
+        slash: 0n,
+        treasuryDelta: 0n,
+      },
       horizonSecret: secret,
       playerEntropy: entropy,
     },
@@ -288,11 +303,87 @@ describe('GameRoomDO.kickOffSettlement tournament commitment wiring', () => {
     gameConfig: {
       finished: true,
       hiddenHorizon: createHiddenHorizonPublicConfig(commitment, policy),
+      tournamentEconomics: { entryCost: '100' },
+    },
+  });
+
+  const escalatedRecord = createTournamentCommitment({
+    context: {
+      tournamentRootSeed: rootSeed,
+      gameSeed: deriveTournamentGameSeed(rootSeed, 'tournament-settlement', 0),
+      tournamentId: 'tournament-settlement',
+      gameIndex: 0,
+      policy,
+      economics: {
+        baseEntryCost: 100n,
+        entryCost: 103n,
+        playerCount: 2,
+        basePot: 206n,
+        incomingCarry: 6n,
+        releasedCarry: 6n,
+        carryRemainder: 0n,
+        carry: 0n,
+        slash: 0n,
+        treasuryDelta: -6n,
+      },
+      horizonSecret: secret,
+      playerEntropy: entropy,
+    },
+    gameId: 'game-room-settlement-test',
+    gameType: 'tragedy-of-the-commons',
+    playerIds: ['player-a', 'player-b'],
+    gameConfig: {
+      finished: true,
+      hiddenHorizon: createHiddenHorizonPublicConfig(commitment, policy),
+      tournamentEconomics: { entryCost: '103' },
+    },
+  });
+
+  const carryPolicy = { ...policy, carryBps: 2_000, slashBps: 500 };
+  const carryCommitment = computeHorizonCommitment({
+    secret,
+    gameId: 'game-room-settlement-test',
+    playerEntropy: entropy,
+    policyHash: computeTournamentPolicyHash(carryPolicy),
+  });
+  const carryRecord = createTournamentCommitment({
+    context: {
+      tournamentRootSeed: rootSeed,
+      gameSeed: deriveTournamentGameSeed(rootSeed, 'tournament-settlement', 0),
+      tournamentId: 'tournament-settlement',
+      gameIndex: 0,
+      policy: carryPolicy,
+      economics: {
+        baseEntryCost: 100n,
+        entryCost: 100n,
+        playerCount: 2,
+        basePot: 200n,
+        incomingCarry: 0n,
+        releasedCarry: 0n,
+        carryRemainder: 0n,
+        carry: 40n,
+        slash: 10n,
+        treasuryDelta: 50n,
+      },
+      horizonSecret: secret,
+      playerEntropy: entropy,
+    },
+    gameId: 'game-room-settlement-test',
+    gameType: 'tragedy-of-the-commons',
+    playerIds: ['player-a', 'player-b'],
+    gameConfig: {
+      finished: true,
+      hiddenHorizon: createHiddenHorizonPublicConfig(carryCommitment, carryPolicy),
+      tournamentEconomics: { entryCost: '100' },
     },
   });
 
   it('Given a verified tournament record, when settling, then it uses the frozen hash, separate reveal, and actual rounds', async () => {
-    const { harness, submitted } = buildHarness({ treasuryRow: null, tournament: record });
+    const { harness, submitted } = buildHarness({
+      treasuryHandle: 'tournament-treasury',
+      treasuryRow: { id: 'treasury-id', chain_agent_id: 303 },
+      tournament: record,
+    });
     const kickOffSettlement = await getKickOffSettlement();
 
     await kickOffSettlement.call(harness);
@@ -307,6 +398,42 @@ describe('GameRoomDO.kickOffSettlement tournament commitment wiring', () => {
         },
       }),
     ]);
+  });
+
+  it('Given a frozen escalated tournament cost, when settling, then computePayouts and its floor use that sealed value', async () => {
+    // Given
+    const { harness, submitted, computeEntryCosts } = buildHarness({
+      treasuryHandle: 'tournament-treasury',
+      treasuryRow: { id: 'treasury-id', chain_agent_id: 303 },
+      tournament: escalatedRecord,
+    });
+    const kickOffSettlement = await getKickOffSettlement();
+
+    // When
+    await kickOffSettlement.call(harness);
+
+    // Then
+    expect(computeEntryCosts).toEqual([103n]);
+    expect(submitted).toHaveLength(1);
+  });
+
+  it('Given carry and slash withholding, when a tournament game settles, then treasury receives both plus the exact allocation residual', async () => {
+    // Given
+    const { harness, submitted } = buildHarness({
+      treasuryHandle: 'tournament-treasury',
+      treasuryRow: { id: 'treasury-id', chain_agent_id: 303 },
+      tournament: carryRecord,
+    });
+    const kickOffSettlement = await getKickOffSettlement();
+
+    // When
+    await kickOffSettlement.call(harness);
+
+    // Then
+    const payload = submitted[0];
+    if (payload === undefined) throw new Error('Expected tournament settlement payload');
+    expect(payload.deltas).toContainEqual({ agentId: 'treasury-id', delta: 51n });
+    expect(payload.deltas.reduce((sum, delta) => sum + delta.delta, 0n)).toBe(0n);
   });
 
   it('Given a tampered exact commitment input, when settling, then it fails closed before submission', async () => {

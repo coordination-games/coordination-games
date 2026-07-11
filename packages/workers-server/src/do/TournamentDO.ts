@@ -1,16 +1,18 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  applyTournamentPayouts,
   type Bytes32Hex,
   computeHorizonCommitment,
   createHiddenHorizonPublicConfig,
   createSeries,
+  createTournamentEconomics,
   deriveTournamentGameSeed,
   deriveTournamentHorizonSecret,
   deriveTournamentRoomName,
   getGame,
   onGameSettled,
   parseBytes32Hex,
-  type TournamentPolicy,
+  type TournamentEconomics,
   type TournamentSeries,
 } from '@coordination-games/engine';
 import { z } from 'zod';
@@ -68,8 +70,19 @@ type RuntimeState = {
   readonly error: string | null;
 };
 
-function requiredEntryCost(policy: TournamentPolicy): bigint {
-  return policy.baseEntryCost;
+function serializeEconomics(economics: TournamentEconomics): Record<string, string | number> {
+  return {
+    baseEntryCost: economics.baseEntryCost.toString(),
+    entryCost: economics.entryCost.toString(),
+    playerCount: economics.playerCount,
+    basePot: economics.basePot.toString(),
+    incomingCarry: economics.incomingCarry.toString(),
+    releasedCarry: economics.releasedCarry.toString(),
+    carryRemainder: economics.carryRemainder.toString(),
+    carry: economics.carry.toString(),
+    slash: economics.slash.toString(),
+    treasuryDelta: economics.treasuryDelta.toString(),
+  };
 }
 
 function publicState(state: RuntimeState): object {
@@ -224,18 +237,38 @@ export class TournamentDO extends DurableObject<Env> {
     if (body.state?.kind !== 'confirmed') return this.reschedule();
     const plugin = getGame(runtime.series.gameType);
     if (!plugin?.computePayouts) return this.fail('Game plugin cannot compute payouts');
-    const payouts = plugin.computePayouts(
-      resultBody.outcome,
-      [...runtime.series.activePlayerIds],
-      requiredEntryCost(runtime.series.policy),
-    );
-    const eliminated = await this.insolvent(runtime);
+    const economics = createTournamentEconomics({
+      policy: runtime.series.policy,
+      playerCount: runtime.series.activePlayerIds.length,
+      incomingCarry: runtime.series.treasuryCarry,
+    });
+    const payouts = applyTournamentPayouts(
+      plugin.computePayouts(
+        resultBody.outcome,
+        [...runtime.series.activePlayerIds],
+        economics.entryCost,
+      ),
+      runtime.series.activePlayerIds,
+      economics,
+    ).playerPayouts;
+    const nextTreasuryCarry = economics.carryRemainder + economics.carry;
+    const eliminated = await this.insolvent(runtime, nextTreasuryCarry);
     const settled = onGameSettled(
       runtime.series,
       { gameId, gameIndex: runtime.currentGameIndex ?? runtime.series.currentGameIndex },
       payouts,
       eliminated,
     );
+    if (settled.nextGameConfig !== null && settled.series.activePlayerIds.length >= 2) {
+      const expectedNextEntryCost = createTournamentEconomics({
+        policy: runtime.series.policy,
+        playerCount: settled.series.activePlayerIds.length,
+        incomingCarry: nextTreasuryCarry,
+      }).entryCost;
+      if (settled.nextGameConfig.entryCost !== expectedNextEntryCost) {
+        return this.fail('Next game entry cost disagrees with survivor eligibility threshold');
+      }
+    }
     const updated: RuntimeState = {
       ...runtime,
       series: settled.series,
@@ -279,6 +312,11 @@ export class TournamentDO extends DurableObject<Env> {
     const players = runtime.playerEntries.filter((player) =>
       runtime.series.activePlayerIds.includes(player.id),
     );
+    const economics = createTournamentEconomics({
+      policy: runtime.series.policy,
+      playerCount: players.length,
+      incomingCarry: runtime.series.treasuryCarry,
+    });
     try {
       const gameSeed = deriveTournamentGameSeed(
         runtime.series.tournamentRootSeed,
@@ -298,6 +336,7 @@ export class TournamentDO extends DurableObject<Env> {
       const config = {
         ...setup.config,
         maxRounds: runtime.series.policy.maxRounds,
+        tournamentEconomics: serializeEconomics(economics),
         hiddenHorizon: createHiddenHorizonPublicConfig(commitment, runtime.series.policy),
       };
       const next = {
@@ -331,6 +370,7 @@ export class TournamentDO extends DurableObject<Env> {
                 ...runtime.series.policy,
                 baseEntryCost: runtime.series.policy.baseEntryCost.toString(),
               },
+              economics: serializeEconomics(economics),
               horizonSecret: secret,
               playerEntropy: runtime.playerEntropy,
             },
@@ -356,9 +396,11 @@ export class TournamentDO extends DurableObject<Env> {
     }
   }
 
-  private async insolvent(runtime: RuntimeState): Promise<readonly string[]> {
-    const cost = requiredEntryCost(runtime.series.policy);
-    const eliminated: string[] = [];
+  private async insolvent(
+    runtime: RuntimeState,
+    nextTreasuryCarry: bigint,
+  ): Promise<readonly string[]> {
+    const balances = new Map<string, bigint>();
     for (const playerId of runtime.series.activePlayerIds) {
       const row = await this.env.DB.prepare('SELECT chain_agent_id FROM players WHERE id = ?')
         .bind(playerId)
@@ -368,9 +410,24 @@ export class TournamentDO extends DurableObject<Env> {
       const credits = await this.getPlayerCredits(row.chain_agent_id.toString());
       if (!/^(0|[1-9][0-9]*)$/.test(credits))
         throw new Error(`Player ${playerId} returned invalid credits`);
-      if (BigInt(credits) < cost) eliminated.push(playerId);
+      balances.set(playerId, BigInt(credits));
     }
-    return eliminated;
+    let survivors = [...runtime.series.activePlayerIds];
+    while (survivors.length >= 2) {
+      const nextEntryCost = createTournamentEconomics({
+        policy: runtime.series.policy,
+        playerCount: survivors.length,
+        incomingCarry: nextTreasuryCarry,
+      }).entryCost;
+      const eligible = survivors.filter((playerId) => {
+        const balance = balances.get(playerId);
+        if (balance === undefined) throw new Error(`Player ${playerId} has no loaded balance`);
+        return balance >= nextEntryCost;
+      });
+      if (eligible.length === survivors.length) break;
+      survivors = eligible;
+    }
+    return runtime.series.activePlayerIds.filter((playerId) => !survivors.includes(playerId));
   }
   protected async getPlayerCredits(agentId: string): Promise<string> {
     return (await createRelay(this.env).getBalance(agentId)).credits;
