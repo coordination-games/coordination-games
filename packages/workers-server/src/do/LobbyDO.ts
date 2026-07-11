@@ -58,6 +58,28 @@ import { CHAT_RELAY_TYPE } from '@coordination-games/plugin-chat';
 // ---------------------------------------------------------------------------
 
 const TAG_SPECTATOR = 'spectator';
+const TRAGEDY_GAME_TYPE = 'tragedy-of-the-commons';
+
+type TournamentPolicy = {
+  readonly seriesLength: number;
+  readonly baseEntryCost: string;
+  readonly carryBps: number;
+  readonly slashBps: number;
+  readonly minRounds: number;
+  readonly maxRounds: number;
+  readonly hazardNumerator: number;
+  readonly hazardDenominator: number;
+};
+
+type TournamentMode = {
+  readonly mode: 'tragedy-series';
+  readonly policy: TournamentPolicy;
+};
+
+function randomBytes32Hex(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
 
 /**
  * Translate the legacy wire-format `scope` string ('all' | 'team' | <handle>)
@@ -93,6 +115,8 @@ interface LobbyMeta {
   phase: GamePhaseKind;
   deadlineMs: number | null;
   gameId: string | null;
+  tournamentId?: string;
+  tournament?: TournamentMode;
   error: string | null;
   noTimeout: boolean;
   createdAt: number;
@@ -245,10 +269,11 @@ export class LobbyDO extends DurableObject<Env> {
           teamSize?: number;
           maxRounds?: number;
           disabledPlugins?: string[];
+          tournament?: TournamentMode;
         };
     if (body instanceof Response) return body;
 
-    const { lobbyId, gameType, noTimeout, teamSize, maxRounds, disabledPlugins } = body;
+    const { lobbyId, gameType, noTimeout, teamSize, maxRounds, disabledPlugins, tournament } = body;
     if (!lobbyId || !gameType) {
       return Response.json({ error: 'lobbyId and gameType are required' }, { status: 400 });
     }
@@ -324,6 +349,7 @@ export class LobbyDO extends DurableObject<Env> {
       phase: 'lobby',
       deadlineMs,
       gameId: null,
+      ...(tournament ? { tournament } : {}),
       error: null,
       noTimeout: !!noTimeout,
       createdAt: now,
@@ -337,7 +363,7 @@ export class LobbyDO extends DurableObject<Env> {
     }
 
     console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize ?? '?'})`);
-    return Response.json({ ok: true, lobbyId, gameType });
+    return Response.json({ ok: true, lobbyId, gameType, ...(tournament ? { tournament } : {}) });
   }
 
   private async handleGetState(request: Request): Promise<Response> {
@@ -729,6 +755,11 @@ export class LobbyDO extends DurableObject<Env> {
     } catch {}
     await this.saveState();
 
+    if (this._meta.tournament) {
+      await this.doCreateTournament();
+      return;
+    }
+
     const plugin = getGame(this._meta.gameType);
     if (!plugin?.createConfig) {
       await this.failLobby(`Game plugin "${this._meta.gameType}" does not implement createConfig`);
@@ -837,6 +868,68 @@ export class LobbyDO extends DurableObject<Env> {
     }
   }
 
+  private async doCreateTournament(): Promise<void> {
+    if (!this._meta?.tournament) return;
+    if (this._meta.gameType !== TRAGEDY_GAME_TYPE) {
+      await this.failLobby('Tournament mode is supported only for tragedy-of-the-commons');
+      return;
+    }
+    if (!this.env.TOURNAMENT) {
+      await this.failLobby('Tournament service unavailable');
+      return;
+    }
+
+    const tournamentId = `lobby:${this._meta.lobbyId}`;
+    const tournamentStub = this.env.TOURNAMENT.get(this.env.TOURNAMENT.idFromName(tournamentId));
+    const playerEntries = this._agents.map((agent) => ({ id: agent.id, handle: agent.handle }));
+    const createResponse = await tournamentStub.fetch(
+      new Request('https://tournament/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tournamentId,
+          gameType: this._meta.gameType,
+          playerEntries,
+          policy: this._meta.tournament.policy,
+          tournamentRootSeed: randomBytes32Hex(),
+          playerEntropy: randomBytes32Hex(),
+          disabledPlugins: this._meta.accumulatedMetadata.disabledPlugins,
+        }),
+      }),
+    );
+
+    const response =
+      createResponse.status === 409
+        ? await tournamentStub.fetch(new Request('https://tournament/state'))
+        : createResponse;
+    if (!response.ok) {
+      await this.failLobby(`Tournament creation failed: ${response.status}`);
+      return;
+    }
+    const payload: unknown = await response.json();
+    const currentGameId =
+      typeof payload === 'object' && payload !== null && 'currentGameId' in payload
+        ? payload.currentGameId
+        : null;
+    if (typeof currentGameId !== 'string' || currentGameId.length === 0) {
+      await this.failLobby('Tournament creation did not provide a current game');
+      return;
+    }
+
+    this._meta.tournamentId = tournamentId;
+    this._meta.gameId = currentGameId;
+    this._meta.phase = 'in_progress';
+    await this.saveState();
+    await this.updateLobbyPhaseInD1();
+    await this.broadcastUpdate();
+    for (const ws of this.ctx.getWebSockets(TAG_SPECTATOR)) {
+      try {
+        ws.close(1000, 'Handoff to tournament game');
+      } catch {}
+    }
+    console.log(`[LobbyDO] Tournament ${tournamentId} created from lobby ${this._meta.lobbyId}`);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // State builder
   // ─────────────────────────────────────────────────────────────────────────
@@ -903,6 +996,7 @@ export class LobbyDO extends DurableObject<Env> {
       phase: this._meta.phase,
       deadlineMs: this._meta.deadlineMs,
       gameId: this._meta.gameId,
+      ...(this._meta.tournamentId ? { tournamentId: this._meta.tournamentId } : {}),
       error: this._meta.error,
       noTimeout: this._meta.noTimeout,
     };

@@ -1,5 +1,6 @@
 import { getGame, getRegisteredGames } from '@coordination-games/engine';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
+import { z } from 'zod';
 import {
   consumeWsTicket,
   createWsTicket,
@@ -29,6 +30,37 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
   'Access-Control-Max-Age': '86400',
 };
+
+const TRAGEDY_GAME_TYPE = 'tragedy-of-the-commons';
+const tournamentPolicyRequestSchema = z
+  .object({
+    seriesLength: z.number().int().min(1),
+    baseEntryCost: z.string().regex(/^(0|[1-9][0-9]*)$/),
+    carryBps: z.number().int().min(0).max(10_000),
+    slashBps: z.number().int().min(0).max(10_000),
+    minRounds: z.number().int().min(1).max(65_535),
+    maxRounds: z.number().int().min(1).max(65_535),
+    hazardNumerator: z.number().int().min(0),
+    hazardDenominator: z.number().int().min(1),
+  })
+  .strict()
+  .refine((policy) => policy.minRounds <= policy.maxRounds, {
+    message: 'minRounds must not exceed maxRounds',
+  })
+  .refine((policy) => policy.hazardNumerator <= policy.hazardDenominator, {
+    message: 'hazardNumerator must not exceed hazardDenominator',
+  });
+const tournamentRequestSchema = z
+  .object({
+    mode: z.literal('tragedy-series'),
+    policy: tournamentPolicyRequestSchema,
+  })
+  .strict();
+type TournamentRequest = z.infer<typeof tournamentRequestSchema>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function withCors(response: Response): Response {
   const headers = new Headers(response.headers);
@@ -617,14 +649,16 @@ async function handleListLobbies(env: Env): Promise<Response> {
 }
 
 async function handleCreateLobby(request: Request, env: Env): Promise<Response> {
-  const body = await parseJsonBody<{
-    gameType?: string;
-    noTimeout?: boolean;
-    teamSize?: number;
-    maxRounds?: number;
-    disabledPlugins?: string[];
-  }>(request);
-  if (body instanceof Response) return body;
+  const parsedBody = await parseJsonBody(request);
+  if (parsedBody instanceof Response) return parsedBody;
+  const body = isRecord(parsedBody) ? parsedBody : {};
+  let tournament: TournamentRequest | undefined;
+  if (body.tournament !== undefined) {
+    const parsedTournament = tournamentRequestSchema.safeParse(body.tournament);
+    if (!parsedTournament.success)
+      return Response.json({ error: 'Invalid tournament request' }, { status: 400 });
+    tournament = parsedTournament.data;
+  }
 
   // Default to the first registered game (matches the web shell's
   // `getDefaultPlugin()`). No literal — adding/removing games doesn't
@@ -634,21 +668,27 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   if (!defaultGameType) {
     return Response.json({ error: 'No games registered' }, { status: 500 });
   }
-  const gameType = body?.gameType ?? defaultGameType;
-  const noTimeout = !!body?.noTimeout;
+  const gameType = typeof body.gameType === 'string' ? body.gameType : defaultGameType;
+  if (tournament && gameType !== TRAGEDY_GAME_TYPE)
+    return Response.json(
+      { error: 'Tournament mode is supported only for tragedy-of-the-commons' },
+      { status: 400 },
+    );
+  const noTimeout = body.noTimeout === true;
   // Generic bounds [1, 20]. The CLI and MCP wrappers apply tighter per-game
   // clamps before this point; the canonical capacity is what the first
   // lobby phase computes from `teamSize` after the lobby is created.
-  const teamSize = Math.min(20, Math.max(1, Math.floor(body?.teamSize ?? 2)));
+  const requestedTeamSize = typeof body.teamSize === 'number' ? body.teamSize : 2;
+  const teamSize = Math.min(20, Math.max(1, Math.floor(requestedTeamSize)));
   // Optional game-length override forwarded to the plugin's createConfig as
   // maxRounds (via LobbyDO metadata). Omitted → the plugin keeps its default.
   const maxRounds =
-    typeof body?.maxRounds === 'number' && body.maxRounds >= 1
+    typeof body.maxRounds === 'number' && body.maxRounds >= 1
       ? Math.floor(body.maxRounds)
       : undefined;
   // Optional per-game plugin ablation set (research). Forwarded to LobbyDO
   // metadata → GameRoomDO so server-side projections (trust) can be gated.
-  const disabledPlugins = Array.isArray(body?.disabledPlugins)
+  const disabledPlugins = Array.isArray(body.disabledPlugins)
     ? body.disabledPlugins.filter((p): p is string => typeof p === 'string')
     : undefined;
 
@@ -695,6 +735,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
         noTimeout,
         ...(maxRounds ? { maxRounds } : {}),
         ...(disabledPlugins && disabledPlugins.length > 0 ? { disabledPlugins } : {}),
+        ...(tournament ? { tournament } : {}),
       }),
     }),
   );
@@ -715,7 +756,10 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   console.log(
     `[Worker] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize}, capacity=${capacity})`,
   );
-  return Response.json({ lobbyId, gameType, teamSize, capacity }, { status: 201 });
+  return Response.json(
+    { lobbyId, gameType, teamSize, capacity, ...(tournament ? { tournament } : {}) },
+    { status: 201 },
+  );
 }
 
 // ---------------------------------------------------------------------------
