@@ -84,4 +84,18 @@ export {
   type TournamentPolicy,
   verifyHorizonCommitment,
 } from './tournament-encoding.js';
+export {
+  type CarryPlan,
+  type CreateSeriesResult,
+  createSeries,
+  deriveGameSeed,
+  type GameSettlementResult,
+  onGameSettled,
+  type SettledGameOutcome,
+  type TournamentGameConfig,
+  type TournamentSeries,
+  type TournamentSeriesConfig,
+  TournamentSeriesError,
+  type TournamentStanding,
+} from './tournament-series.js';
 export * from './types.js';
