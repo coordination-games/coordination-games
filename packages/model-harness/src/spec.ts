@@ -103,7 +103,14 @@ export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
 // ---------------------------------------------------------------------------
 
 /** Campaign scope partition — the single source of truth for which field lives where. */
-const GLOBAL_KEYS = ['server', 'identities', 'output', 'limits', 'analysis'] as const;
+const GLOBAL_KEYS = [
+  'server',
+  'identities',
+  'output',
+  'limits',
+  'analysis',
+  'concurrency',
+] as const;
 const GAME_KEYS = [
   'game',
   'rounds',
@@ -148,6 +155,10 @@ function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec 
     Array.isArray(obj.disablePlugins) && obj.disablePlugins.every((p) => typeof p === 'string')
       ? (obj.disablePlugins as string[])
       : undefined;
+  // Campaign-wide (globals) but carried on every RunSpec via the merge: how many
+  // runs may play at once. Clamped 1..4 — each run is N claude subprocesses.
+  const rawConcurrency = typeof obj.concurrency === 'number' ? Math.floor(obj.concurrency) : 1;
+  const concurrency = Math.max(1, Math.min(4, rawConcurrency));
 
   return {
     game,
@@ -158,6 +169,7 @@ function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec 
     output,
     seats,
     limits,
+    concurrency,
     ...(analysis ? { analysis } : {}),
     ...(disablePlugins ? { disablePlugins } : {}),
   };

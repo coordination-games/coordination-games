@@ -34,6 +34,17 @@ export default function Layout() {
   const inGame = !!(lobbyMatch || gameMatch || inspectMatch || replayMatch);
   const fullBleedGameSurface = !!(gameMatch || inspectMatch || replayMatch);
 
+  // Embed mode (?embed=1): board only — no stripe, no header, no footer.
+  // Used when another surface (the Campaign Console's Watch page) iframes a
+  // game/replay as its centerpiece; chrome-inside-chrome forces scrolling.
+  if (new URLSearchParams(window.location.search).get('embed') === '1') {
+    return (
+      <div className="min-h-screen" style={{ background: 'var(--color-bone)' }}>
+        <Outlet />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--color-bone)' }}>
       {/* Protocol stripe */}

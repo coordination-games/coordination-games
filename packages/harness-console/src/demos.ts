@@ -37,13 +37,15 @@ function entry(label: string, repeats: number, seats: DemoSeat[]): DemoGameEntry
   return { game: TRAGEDY, rounds: 3, params: { teamSize: 4 }, label, repeats, seats };
 }
 
-function spec(games: DemoGameEntry[]): Record<string, unknown> {
+function spec(games: DemoGameEntry[], concurrency = 1): Record<string, unknown> {
   return {
     globals: {
       server: DEMO_GAME_SERVER,
       identities: 'ephemeral',
       limits: { maxModelCallsPerBot: 100, wallClockMsPerRun: 1_500_000 },
       analysis: { enabled: true, model: HAIKU },
+      // A demo audience should not wait for sequential games — overlap them.
+      concurrency,
     },
     games,
   };
@@ -82,14 +84,17 @@ export const DEMOS: Demo[] = [
       'The same two personas play three games on Claude Haiku and three on Claude Sonnet 5, so ' +
       'you can see how the model itself changes what agents do.',
     estMinutes: 8,
-    spec: spec([
-      entry('haiku-vs-sonnet5', 3, [
-        seat('peaceful-mediator', HAIKU, 1),
-        seat('win-focused-opportunist', HAIKU, 1),
-        seat('peaceful-mediator', SONNET5, 1),
-        seat('win-focused-opportunist', SONNET5, 1),
-      ]),
-    ]),
+    spec: spec(
+      [
+        entry('haiku-vs-sonnet5', 3, [
+          seat('peaceful-mediator', HAIKU, 1),
+          seat('win-focused-opportunist', HAIKU, 1),
+          seat('peaceful-mediator', SONNET5, 1),
+          seat('win-focused-opportunist', SONNET5, 1),
+        ]),
+      ],
+      3,
+    ),
   },
   {
     id: 'peacemaker',
@@ -99,9 +104,12 @@ export const DEMOS: Demo[] = [
       'A table of four opportunists against a table of four peacemakers, two runs each — see ' +
       'whether disposition alone can save, or doom, the commons.',
     estMinutes: 8,
-    spec: spec([
-      entry('med0', 2, [seat('win-focused-opportunist', HAIKU, 4)]),
-      entry('med4', 2, [seat('peaceful-mediator', HAIKU, 4)]),
-    ]),
+    spec: spec(
+      [
+        entry('med0', 2, [seat('win-focused-opportunist', HAIKU, 4)]),
+        entry('med4', 2, [seat('peaceful-mediator', HAIKU, 4)]),
+      ],
+      2,
+    ),
   },
 ];

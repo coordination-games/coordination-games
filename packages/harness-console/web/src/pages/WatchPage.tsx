@@ -160,7 +160,7 @@ function PlayingPanel({ gameId }: { gameId: string }) {
         <iframe
           key={gameId}
           className="watch-board-frame"
-          src={`${SPECTATOR_ORIGIN}/game/${gameId}`}
+          src={`${SPECTATOR_ORIGIN}/game/${gameId}?embed=1`}
           title="game board"
         />
       )}

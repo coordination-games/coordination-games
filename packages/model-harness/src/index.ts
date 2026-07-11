@@ -110,13 +110,22 @@ async function runCampaign(runs: CampaignRun[]): Promise<number> {
   const campaignId = `campaign-${Date.now()}`;
   const campaignDir = path.resolve(first.spec.output, campaignId);
   await fsp.mkdir(campaignDir, { recursive: true });
-  console.log(`\n[campaign] ${campaignId} — ${runs.length} runs → ${campaignDir}\n`);
+  const concurrency = Math.max(1, first.spec.concurrency ?? 1);
+  console.log(
+    `\n[campaign] ${campaignId} — ${runs.length} runs → ${campaignDir}` +
+      (concurrency > 1 ? ` (up to ${concurrency} at once)` : ''),
+  );
 
-  const summaries: CampaignRunSummary[] = [];
+  // Fixed-size worker pool over the run list. concurrency=1 reproduces the
+  // original strictly-sequential behavior; higher values overlap independent
+  // games (each is its own lobby) — seat BOOTS stay serialized process-wide by
+  // the runner's boot lock, so attach reliability is unaffected. Summaries are
+  // written by index so campaign.json keeps the spec's ordering.
+  const summaries: CampaignRunSummary[] = new Array(runs.length);
 
-  for (let i = 0; i < runs.length; i++) {
+  async function executeRun(i: number): Promise<void> {
     const cr = runs[i];
-    if (!cr) continue;
+    if (!cr) return;
     const label = cr.spec.label ?? cr.baseLabel;
     const tag = `[${i + 1}/${runs.length}] ${label}`;
     console.log(`\n========== ${tag} ==========`);
@@ -134,7 +143,7 @@ async function runCampaign(runs: CampaignRun[]): Promise<number> {
         console.error(`  [campaign] analysis failed for ${label}: ${errMsg(err)}`);
       }
       const outcome = (manifest as { outcome?: unknown } | null)?.outcome ?? null;
-      summaries.push({
+      summaries[i] = {
         label,
         game: spec.game,
         status: 'ok',
@@ -143,22 +152,34 @@ async function runCampaign(runs: CampaignRun[]): Promise<number> {
         gameId,
         analysis,
         outcome,
-      });
+      };
       console.log(`  [campaign] ${tag} ✓`);
     } catch (err) {
       console.error(`  [campaign] ${tag} ✗ FAILED: ${errMsg(err)}`);
-      summaries.push({ label, game: spec.game, status: 'error', error: errMsg(err) });
+      summaries[i] = { label, game: spec.game, status: 'error', error: errMsg(err) };
     }
   }
+
+  let nextRun = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, runs.length) }, async () => {
+      while (nextRun < runs.length) {
+        const i = nextRun;
+        nextRun += 1;
+        await executeRun(i);
+      }
+    }),
+  );
 
   const indexPath = path.join(campaignDir, 'campaign.json');
   await fsp.writeFile(
     indexPath,
-    JSON.stringify({ campaignId, total: runs.length, runs: summaries }, null, 2),
+    JSON.stringify({ campaignId, total: runs.length, runs: summaries.filter(Boolean) }, null, 2),
   );
 
-  printCampaignSummary(summaries, indexPath);
-  return summaries.some((s) => s.status === 'error') ? 1 : 0;
+  const written = summaries.filter(Boolean);
+  printCampaignSummary(written, indexPath);
+  return written.some((s) => s.status === 'error') ? 1 : 0;
 }
 
 function printCampaignSummary(summaries: CampaignRunSummary[], indexPath: string): void {

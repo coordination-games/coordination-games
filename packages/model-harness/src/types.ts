@@ -150,6 +150,14 @@ export interface RunSpec {
    * single-spec leaves it unset, so its run dir stays `run-<ts>`.
    */
   label?: string;
+  /**
+   * How many of the campaign's runs may play simultaneously (globals-scoped,
+   * carried on every merged RunSpec; default 1 = the original sequential
+   * behavior). Runs are independent games; concurrency mainly serves
+   * multi-game demos where 3 sequential ~7-min games make a ~20-min wait.
+   * Clamped to 4 — each run is seats-many claude subprocesses.
+   */
+  concurrency: number;
 }
 
 // ---------------------------------------------------------------------------
