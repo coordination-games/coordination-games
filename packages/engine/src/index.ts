@@ -63,4 +63,25 @@ export {
   validateRelay,
   validateRelayBody,
 } from './relay-registry.js';
+// Tournament commitment, hidden-horizon PRF, seed, and t0 config encoding
+export {
+  type Bytes32Hex,
+  computeHiddenHorizonPrfDigest,
+  computeHorizonCommitment,
+  computeTournamentConfigHash,
+  computeTournamentPolicyHash,
+  deriveTournamentGameSeed,
+  encodeHiddenHorizonPrfInput,
+  encodeHorizonCommitmentInput,
+  encodeTournamentConfig,
+  encodeTournamentGameSeedInput,
+  encodeTournamentPolicy,
+  type HorizonCommitmentInput,
+  parseBytes32Hex,
+  TOURNAMENT_ENCODING_DOMAINS,
+  type TournamentConfigHashInput,
+  TournamentEncodingError,
+  type TournamentPolicy,
+  verifyHorizonCommitment,
+} from './tournament-encoding.js';
 export * from './types.js';
