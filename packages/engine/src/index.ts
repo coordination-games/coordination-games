@@ -12,6 +12,14 @@ export {
 } from './canonical-encoding.js';
 // Chat scope validation
 export { type ChatScopeKind, classifyScope, validateChatScope } from './chat-scope.js';
+export {
+  createHiddenHorizonPublicConfig,
+  deriveStopRound,
+  HiddenHorizonError,
+  type HiddenHorizonPolicy,
+  type HiddenHorizonPublicConfig,
+  serializeHiddenHorizonPublicConfig,
+} from './hidden-horizon.js';
 // Runtime invariants / non-null helpers
 export { invariant, mustFind, mustGet } from './invariant.js';
 // Merkle tree construction and verification
