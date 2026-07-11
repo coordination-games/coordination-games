@@ -45,6 +45,9 @@ new_classes = ["GameRoomDO", "LobbyDO"]
 # CREDITS_ADDRESS     — CoordinationCredits contract
 # GAME_ANCHOR_ADDRESS — GameAnchor settlement contract
 # USDC_ADDRESS        — MockUSDC (testnet) or USDC contract
+# TREASURY_AGENT_HANDLE — Optional registered non-playing D1 player. It is
+#                          appended only to settlement with a zero delta;
+#                          missing/unregistered rows fail settlement closed.
 
 [vars]
 ENVIRONMENT = "production"

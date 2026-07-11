@@ -48,6 +48,7 @@ import { ServerPluginRuntime } from '../plugins/runtime.js';
 import { createSettlementPlugin, SETTLEMENT_PLUGIN_ID } from '../plugins/settlement/index.js';
 import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectator-payload.js';
 import { resolveGameId } from './resolve-gameid.js';
+import { assembleSettlementParticipants, type SettlementDelta } from './settlement-participants.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
 import { buildVisibleTrustArtifacts } from './trust-cards.js';
 import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-publisher.js';
@@ -1401,10 +1402,30 @@ export class GameRoomDO extends DurableObject<Env> {
       const payouts = this._plugin.computePayouts(outcome, playerIds, entryCost);
 
       // Build delta array in playerIds order; default to 0n for any missing entry
-      const deltas: { agentId: string; delta: bigint }[] = playerIds.map((id) => ({
+      const playingDeltas: SettlementDelta[] = playerIds.map((id) => ({
         agentId: id,
         delta: payouts.get(id) ?? 0n,
       }));
+
+      const participants = await assembleSettlementParticipants({
+        playerIds,
+        deltas: playingDeltas,
+        treasuryHandle: this.env.TREASURY_AGENT_HANDLE,
+        findByHandle: async (handle) => {
+          const row = await this.env.DB.prepare(
+            'SELECT id, chain_agent_id FROM players WHERE handle = ?',
+          )
+            .bind(handle)
+            .first<{ id: string; chain_agent_id: number | null }>();
+          return row === null ? null : { id: row.id, chainAgentId: row.chain_agent_id };
+        },
+      });
+      if (participants.kind === 'invalid') {
+        console.error(`[settle ${gameId}] skip: ${participants.reason}`);
+        return;
+      }
+      const { deltas } = participants;
+      const settlementPlayerIds = participants.playerIds;
 
       const renderDeltas = () =>
         deltas.map((d) => ({ agentId: d.agentId, delta: d.delta.toString() }));
@@ -1433,15 +1454,15 @@ export class GameRoomDO extends DurableObject<Env> {
       // MockRelay doesn't use chain_agent_id — skip this check when RPC_URL is unset.
       if (this.env.RPC_URL) {
         const rows = await this.env.DB.prepare(
-          `SELECT id, chain_agent_id FROM players WHERE id IN (${playerIds.map(() => '?').join(',')})`,
+          `SELECT id, chain_agent_id FROM players WHERE id IN (${settlementPlayerIds.map(() => '?').join(',')})`,
         )
-          .bind(...playerIds)
+          .bind(...settlementPlayerIds)
           .all<{ id: string; chain_agent_id: number | null }>();
         const chainMap = new Map((rows.results ?? []).map((r) => [r.id, r.chain_agent_id]));
-        const unregistered = playerIds.filter((id) => !chainMap.get(id));
+        const unregistered = settlementPlayerIds.filter((id) => !chainMap.get(id));
         if (unregistered.length > 0) {
           console.warn(
-            `[settle ${gameId}] skip: ${unregistered.length}/${playerIds.length} players lack chain_agent_id`,
+            `[settle ${gameId}] skip: ${unregistered.length}/${settlementPlayerIds.length} players lack chain_agent_id`,
             unregistered,
           );
           return;
@@ -1458,7 +1479,7 @@ export class GameRoomDO extends DurableObject<Env> {
         {
           gameId,
           gameType,
-          playerIds,
+          playerIds: settlementPlayerIds,
           outcome,
           movesRoot,
           configHash,

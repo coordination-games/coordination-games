@@ -24,4 +24,10 @@ export interface Env {
   LIGHTHOUSE_API_KEY?: string;
   TRUST_IPFS_PUBLISH_ENABLED?: string;
   TRUST_IPFS_VERIFY_GATEWAY?: string;
+  /**
+   * Optional registered, non-playing D1 player handle appended only to the
+   * final on-chain settlement with a zero delta. Missing/unregistered rows
+   * fail settlement closed rather than silently falling back.
+   */
+  TREASURY_AGENT_HANDLE?: string;
 }

@@ -1,3 +1,4 @@
+import { getAddress, isAddress, keccak256, toBytes } from 'viem';
 import { resolvePlayer } from '../db/player.js';
 import type {
   ReceiptResult,
@@ -34,23 +35,43 @@ import type {
  */
 export const MOCK_CREDIT_BALANCE = '1000000000000000000';
 
+/** Stable local relay ID; it is never an ERC-8004 token ID. */
+export function deriveMockChainAgentId(address: string): number {
+  const normalizedPrefix = (
+    address.startsWith('0X') ? `0x${address.slice(2)}` : address
+  ).toLowerCase();
+  if (!isAddress(normalizedPrefix)) throw new Error(`Invalid EVM address: ${address}`);
+  const canonicalAddress = getAddress(normalizedPrefix).toLowerCase();
+  const hex = keccak256(toBytes(canonicalAddress)).slice(2, 15);
+  const localRelayId = Number.parseInt(hex, 16) + 1;
+  if (!Number.isSafeInteger(localRelayId) || localRelayId <= 0) {
+    throw new Error('Unable to derive a safe local relay ID');
+  }
+  return localRelayId;
+}
+
 export class MockRelay implements ChainRelay {
   constructor(private db: D1Database) {}
 
   async getAgentByAddress(address: string): Promise<AgentInfo | null> {
     const row = await this.db
       .prepare(
-        'SELECT id, wallet_address, handle FROM players WHERE wallet_address = ? COLLATE NOCASE',
+        'SELECT id, wallet_address, handle, chain_agent_id FROM players WHERE wallet_address = ? COLLATE NOCASE',
       )
       .bind(address)
-      .first<{ id: string; wallet_address: string; handle: string }>();
+      .first<{
+        id: string;
+        wallet_address: string;
+        handle: string;
+        chain_agent_id: number | null;
+      }>();
     if (!row) return null;
     return {
       address: row.wallet_address,
-      agentId: row.id,
+      agentId: row.chain_agent_id === null ? row.id : String(row.chain_agent_id),
       name: row.handle,
       credits: MOCK_CREDIT_BALANCE,
-      registered: true,
+      registered: row.chain_agent_id !== null,
     };
   }
 
@@ -65,7 +86,11 @@ export class MockRelay implements ChainRelay {
   async register(
     params: RegisterParams,
   ): Promise<{ agentId: string; name: string; credits: string }> {
-    const { player } = await resolvePlayer(params.address, this, this.db, { handle: params.name });
+    const chainAgentId = deriveMockChainAgentId(params.address);
+    const { player } = await resolvePlayer(params.address, this, this.db, {
+      handle: params.name,
+      chainAgentId,
+    });
     return { agentId: player.id, name: player.handle, credits: MOCK_CREDIT_BALANCE };
   }
 
