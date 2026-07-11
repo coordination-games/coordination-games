@@ -1,3 +1,14 @@
+import {
+  computeHorizonCommitment,
+  computeTournamentPolicyHash,
+  createHiddenHorizonPublicConfig,
+  createTournamentCommitment,
+  deriveTournamentGameSeed,
+  parseBytes32Hex,
+  revealTournamentHorizon,
+  type TournamentCommitmentRecord,
+  verifyTournamentCommitment,
+} from '@coordination-games/engine';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({
@@ -8,7 +19,14 @@ type SettlementDelta = { readonly agentId: string; readonly delta: bigint };
 type SubmittedPayload = {
   readonly playerIds: string[];
   readonly deltas: readonly SettlementDelta[];
+  readonly configHash?: string;
+  readonly turnCount?: number;
+  readonly horizonReveal?: {
+    readonly secret: string;
+    readonly playerEntropy: string;
+  };
 };
+type TournamentRecord = TournamentCommitmentRecord;
 type TreasuryRow = { readonly id: string; readonly chain_agent_id: number | null };
 type PreparedLookup = {
   bind: (...values: string[]) => { first: () => Promise<TreasuryRow | null> };
@@ -33,6 +51,15 @@ type SettlementHarness = {
   };
   readonly _state: unknown;
   readonly _actionLog: readonly unknown[];
+  readonly _configHash?: string;
+  readonly _tournamentCommitment?: TournamentRecord;
+  buildSettlementArtifact: () => {
+    readonly outcome: unknown;
+    readonly movesRoot: `0x${string}`;
+    readonly configHash: string;
+    readonly turnCount: number;
+    readonly horizonReveal?: { readonly secret: string; readonly playerEntropy: string };
+  };
   readonly env: {
     readonly TREASURY_AGENT_HANDLE?: string;
     readonly DB: { prepare: (sql: string) => PreparedLookup };
@@ -65,6 +92,7 @@ async function getKickOffSettlement(): Promise<KickOffSettlement> {
 function buildHarness(input: {
   readonly treasuryHandle?: string;
   readonly treasuryRow: TreasuryRow | null;
+  readonly tournament?: TournamentRecord;
 }): {
   readonly harness: SettlementHarness;
   readonly submitted: SubmittedPayload[];
@@ -73,10 +101,14 @@ function buildHarness(input: {
   const submitted: SubmittedPayload[] = [];
   const computeInputs: string[][] = [];
   const players = ['player-a', 'player-b'];
+  const outcome =
+    input.tournament === undefined
+      ? { winner: 'player-a' }
+      : { roundsPlayed: 4, winner: 'player-a' };
   const harness: SettlementHarness = {
     _plugin: {
       entryCost: 100n,
-      getOutcome: () => ({ winner: 'player-a' }),
+      getOutcome: () => outcome,
       computePayouts: (_outcome, playerIds) => {
         computeInputs.push([...playerIds]);
         return new Map([
@@ -95,6 +127,29 @@ function buildHarness(input: {
     },
     _state: { finished: true },
     _actionLog: [],
+    ...(input.tournament === undefined
+      ? {}
+      : { _configHash: input.tournament.t0ConfigHash, _tournamentCommitment: input.tournament }),
+    buildSettlementArtifact: () => {
+      if (input.tournament === undefined) {
+        return {
+          outcome,
+          movesRoot: `0x${'00'.repeat(32)}`,
+          configHash: parseBytes32Hex(`0x${'66'.repeat(32)}`),
+          turnCount: 0,
+        };
+      }
+      if (!verifyTournamentCommitment(input.tournament).ok) {
+        throw new Error('Tournament commitment verification failed');
+      }
+      return {
+        outcome,
+        movesRoot: `0x${'00'.repeat(32)}`,
+        configHash: input.tournament.t0ConfigHash,
+        turnCount: 4,
+        horizonReveal: revealTournamentHorizon(input.tournament),
+      };
+    },
     env: {
       ...(input.treasuryHandle === undefined
         ? {}
@@ -193,5 +248,77 @@ describe('GameRoomDO.kickOffSettlement treasury wiring', () => {
 
     expect(submitted).toHaveLength(0);
     expect(error).toHaveBeenCalledWith(`[settle game-room-settlement-test] skip: ${reason}`);
+  });
+});
+
+describe('GameRoomDO.kickOffSettlement tournament commitment wiring', () => {
+  const rootSeed = parseBytes32Hex(`0x${'20'.repeat(32)}`);
+  const secret = parseBytes32Hex(`0x${'22'.repeat(32)}`);
+  const entropy = parseBytes32Hex(`0x${'33'.repeat(32)}`);
+  const policy = {
+    seriesLength: 1,
+    baseEntryCost: 100n,
+    carryBps: 0,
+    slashBps: 0,
+    minRounds: 1,
+    maxRounds: 4,
+    hazardNumerator: 1,
+    hazardDenominator: 2,
+  };
+  const policyHash = computeTournamentPolicyHash(policy);
+  const commitment = computeHorizonCommitment({
+    secret,
+    gameId: 'game-room-settlement-test',
+    playerEntropy: entropy,
+    policyHash,
+  });
+  const record = createTournamentCommitment({
+    context: {
+      tournamentRootSeed: rootSeed,
+      gameSeed: deriveTournamentGameSeed(rootSeed, 'tournament-settlement', 0),
+      tournamentId: 'tournament-settlement',
+      gameIndex: 0,
+      policy,
+      horizonSecret: secret,
+      playerEntropy: entropy,
+    },
+    gameId: 'game-room-settlement-test',
+    gameType: 'tragedy-of-the-commons',
+    playerIds: ['player-a', 'player-b'],
+    gameConfig: {
+      finished: true,
+      hiddenHorizon: createHiddenHorizonPublicConfig(commitment, policy),
+    },
+  });
+
+  it('Given a verified tournament record, when settling, then it uses the frozen hash, separate reveal, and actual rounds', async () => {
+    const { harness, submitted } = buildHarness({ treasuryRow: null, tournament: record });
+    const kickOffSettlement = await getKickOffSettlement();
+
+    await kickOffSettlement.call(harness);
+
+    expect(submitted).toEqual([
+      expect.objectContaining({
+        configHash: record.t0ConfigHash,
+        turnCount: 4,
+        horizonReveal: {
+          secret: record.horizonSecret,
+          playerEntropy: record.playerEntropy,
+        },
+      }),
+    ]);
+  });
+
+  it('Given a tampered exact commitment input, when settling, then it fails closed before submission', async () => {
+    const tampered: TournamentRecord = {
+      ...record,
+      commitmentInput: Uint8Array.of(9, 2, 3),
+    };
+    const { harness, submitted } = buildHarness({ treasuryRow: null, tournament: tampered });
+    const kickOffSettlement = await getKickOffSettlement();
+
+    await kickOffSettlement.call(harness);
+
+    expect(submitted).toHaveLength(0);
   });
 });

@@ -29,12 +29,24 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type {
+  Bytes32Hex,
   CoordinationGame,
+  HorizonReveal,
   MerkleLeafData,
   RelayEnvelope,
   RelayScope,
+  TournamentCommitmentRecord,
 } from '@coordination-games/engine';
-import { buildActionMerkleTree, getGame, validateChatScope } from '@coordination-games/engine';
+import {
+  buildActionMerkleTree,
+  createTournamentCommitment,
+  getGame,
+  parseBytes32Hex,
+  parseTournamentCommitmentContext,
+  revealTournamentHorizon,
+  validateChatScope,
+  verifyTournamentCommitment,
+} from '@coordination-games/engine';
 import { type AlarmEntry, StorageAlarmMux } from '../chain/alarm-multiplexer.js';
 import { SETTLEMENT_ALARM_KIND } from '../chain/SettlementStateMachine.js';
 import type { Env } from '../env.js';
@@ -152,6 +164,31 @@ interface ActionEntry {
   action: unknown;
 }
 
+const TOURNAMENT_COMMITMENT_STORAGE_KEY = 'tournamentCommitment';
+const CONFIG_HASH_STORAGE_KEY = 'configHash';
+
+function hasRoundsPlayed(value: unknown): value is { readonly roundsPlayed: unknown } {
+  return typeof value === 'object' && value !== null && 'roundsPlayed' in value;
+}
+
+async function computeLegacyConfigHash(meta: GameMeta): Promise<Bytes32Hex> {
+  const config = {
+    gameType: meta.gameType,
+    playerIds: meta.playerIds,
+    handleMap: meta.handleMap,
+    teamMap: meta.teamMap,
+    createdAt: meta.createdAt,
+  };
+  const configJson = JSON.stringify(config, Object.keys(config).sort());
+  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(configJson));
+  return parseBytes32Hex(
+    `0x${Array.from(new Uint8Array(hashBuffer))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')}`,
+    'configHash',
+  );
+}
+
 interface DeadlineEntry {
   action: unknown;
   deadlineMs: number;
@@ -188,6 +225,9 @@ export class GameRoomDO extends DurableObject<Env> {
   private _meta: GameMeta | null = null;
   private _plugin: CoordinationGame<unknown, unknown, unknown, unknown> | null = null;
   private _state: unknown = null;
+  private _config: unknown = null;
+  private _configHash: Bytes32Hex | null = null;
+  private _tournamentCommitment: TournamentCommitmentRecord | null = null;
   private _actionLog: ActionEntry[] = [];
   private _progress: ProgressState = { counter: 0 };
   /**
@@ -665,6 +705,7 @@ export class GameRoomDO extends DurableObject<Env> {
       teamMap,
       gameId: bodyGameId,
       disabledPlugins: rawDisabledPlugins,
+      tournamentCommitContext: rawTournamentCommitContext,
     } = body ?? ({} as Record<string, unknown>);
     if (!rawGameType || !config || !Array.isArray(playerIds)) {
       return Response.json(
@@ -676,14 +717,6 @@ export class GameRoomDO extends DurableObject<Env> {
 
     const plugin = getGame(gameType);
     if (!plugin) return Response.json({ error: `Unknown game type: ${gameType}` }, { status: 400 });
-
-    let initialState: unknown;
-    try {
-      initialState = plugin.createInitialState(config);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: `createInitialState failed: ${msg}` }, { status: 400 });
-    }
 
     // Authoritative: ctx.id.name IS the gameId. Body field is optional and
     // must match if present — otherwise an attacker could pre-claim a future
@@ -710,6 +743,31 @@ export class GameRoomDO extends DurableObject<Env> {
         ? rawDisabledPlugins.filter((p): p is string => typeof p === 'string')
         : [],
     };
+    let tournamentCommitment: TournamentCommitmentRecord | null = null;
+    try {
+      if (rawTournamentCommitContext !== undefined) {
+        tournamentCommitment = createTournamentCommitment({
+          context: parseTournamentCommitmentContext(rawTournamentCommitContext),
+          gameId,
+          gameType,
+          playerIds: playerIds as string[],
+          gameConfig: config,
+        });
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'invalid tournament commitment context';
+      return Response.json({ error: message }, { status: 400 });
+    }
+    const configHash = tournamentCommitment?.t0ConfigHash ?? (await computeLegacyConfigHash(meta));
+    const frozenConfig = tournamentCommitment?.t0GameConfig ?? config;
+    let initialState: unknown;
+    try {
+      initialState = plugin.createInitialState(frozenConfig);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: `createInitialState failed: ${msg}` }, { status: 400 });
+    }
     const progress: ProgressState = { counter: 0 };
 
     // Build initial spectator snapshot (turn 0)
@@ -722,19 +780,24 @@ export class GameRoomDO extends DurableObject<Env> {
       this.ctx.storage.put('state', initialState),
       this.ctx.storage.put('actionLog', []),
       this.ctx.storage.put('progress', progress),
-      this.ctx.storage.put('config', config),
+      this.ctx.storage.put('config', frozenConfig),
+      this.ctx.storage.put(CONFIG_HASH_STORAGE_KEY, configHash),
       this.ctx.storage.put('snapshotCount', 1),
       this.ctx.storage.put('snapshot:0', initialSnapshot),
       this.ctx.storage.put('stateVersion', this._stateVersion),
     ]);
+    if (tournamentCommitment !== null) {
+      await this.ctx.storage.put(TOURNAMENT_COMMITMENT_STORAGE_KEY, tournamentCommitment);
+    }
 
     this._meta = meta;
     this._plugin = plugin;
     this._state = initialState;
     this._actionLog = [];
     this._progress = progress;
-    // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
-    this._config = config;
+    this._config = frozenConfig;
+    this._configHash = configHash;
+    this._tournamentCommitment = tournamentCommitment;
     this._spectatorSnapshots = [initialSnapshot];
     this._loaded = true;
 
@@ -742,7 +805,20 @@ export class GameRoomDO extends DurableObject<Env> {
     this.writeSummaryToD1();
 
     console.log(`[GameRoomDO] Created ${gameType} game, ${playerIds.length} players`);
-    return Response.json({ ok: true, gameType, playerCount: playerIds.length });
+    return Response.json({
+      ok: true,
+      gameType,
+      playerCount: playerIds.length,
+      ...(tournamentCommitment === null
+        ? {}
+        : {
+            tournament: {
+              commitment: tournamentCommitment.commitment,
+              configHash: tournamentCommitment.t0ConfigHash,
+              policyHash: tournamentCommitment.policyHash,
+            },
+          }),
+    });
   }
 
   private async handleAction(request: Request): Promise<Response> {
@@ -843,38 +919,22 @@ export class GameRoomDO extends DurableObject<Env> {
       return Response.json({ error: 'Game not finished yet' }, { status: 409 });
     }
 
-    const leaves: MerkleLeafData[] = this._actionLog.map((e, i) => ({
-      actionIndex: i,
-      playerId: e.playerId,
-      actionData: JSON.stringify(e.action),
-    }));
-    const tree = buildActionMerkleTree(leaves);
-
-    const config = {
-      gameType: this._meta.gameType,
-      playerIds: this._meta.playerIds,
-      handleMap: this._meta.handleMap,
-      teamMap: this._meta.teamMap,
-      createdAt: this._meta.createdAt,
-    };
-    const configJson = JSON.stringify(config, Object.keys(config).sort());
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(configJson));
-    const configHash =
-      '0x' +
-      Array.from(new Uint8Array(hashBuffer))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-
-    return Response.json({
-      gameType: this._meta.gameType,
-      playerIds: this._meta.playerIds,
-      outcome: this._plugin.getOutcome(this._state),
-      movesRoot: tree.root,
-      turnCount: this._actionLog.length,
-      timestamp: Date.now(),
-      configHash,
-    });
+    try {
+      const artifact = this.buildSettlementArtifact();
+      return Response.json({
+        gameType: this._meta.gameType,
+        playerIds: this._meta.playerIds,
+        outcome: artifact.outcome,
+        movesRoot: artifact.movesRoot,
+        turnCount: artifact.turnCount,
+        timestamp: Date.now(),
+        configHash: artifact.configHash,
+        ...(artifact.horizonReveal === undefined ? {} : { horizonReveal: artifact.horizonReveal }),
+      });
+    } catch (error) {
+      console.error('[GameRoomDO] result artifact rejected:', error);
+      return Response.json({ error: 'Tournament commitment verification failed' }, { status: 409 });
+    }
   }
 
   private async handleBundle(): Promise<Response> {
@@ -885,13 +945,17 @@ export class GameRoomDO extends DurableObject<Env> {
       return Response.json({ error: 'Game not finished yet' }, { status: 409 });
     }
 
-    const config = {
-      gameType: this._meta.gameType,
-      playerIds: this._meta.playerIds,
-      handleMap: this._meta.handleMap,
-      teamMap: this._meta.teamMap,
-      createdAt: this._meta.createdAt,
-    };
+    const tournament = this._tournamentCommitment;
+    const config =
+      tournament === null
+        ? {
+            gameType: this._meta.gameType,
+            playerIds: this._meta.playerIds,
+            handleMap: this._meta.handleMap,
+            teamMap: this._meta.teamMap,
+            createdAt: this._meta.createdAt,
+          }
+        : tournament.t0GameConfig;
 
     const turns = this._actionLog.map((entry, i) => ({
       turnNumber: i,
@@ -906,7 +970,29 @@ export class GameRoomDO extends DurableObject<Env> {
       result: null,
     }));
 
-    return Response.json({ config, turns });
+    try {
+      const artifact = this.buildSettlementArtifact();
+      return Response.json({
+        config,
+        turns,
+        ...(artifact.horizonReveal === undefined || tournament === null
+          ? {}
+          : {
+              configHash: artifact.configHash,
+              horizonReveal: artifact.horizonReveal,
+              tournament: {
+                tournamentId: tournament.tournamentId,
+                gameIndex: tournament.gameIndex,
+                gameSeed: tournament.gameSeed,
+                policyHash: tournament.policyHash,
+                commitment: tournament.commitment,
+              },
+            }),
+      });
+    } catch (error) {
+      console.error('[GameRoomDO] bundle artifact rejected:', error);
+      return Response.json({ error: 'Tournament commitment verification failed' }, { status: 409 });
+    }
   }
 
   private async handleSpectator(request: Request): Promise<Response> {
@@ -1351,6 +1437,55 @@ export class GameRoomDO extends DurableObject<Env> {
     }
   }
 
+  private buildSettlementArtifact(): {
+    readonly outcome: unknown;
+    readonly movesRoot: `0x${string}`;
+    readonly configHash: Bytes32Hex;
+    readonly turnCount: number;
+    readonly horizonReveal?: HorizonReveal;
+  } {
+    if (!this._plugin || !this._meta || this._config === null || this._configHash === null) {
+      throw new Error('Game settlement artifact is unavailable');
+    }
+    const outcome = this._plugin.getOutcome(this._state);
+    const tournament = this._tournamentCommitment;
+    if (tournament !== null) {
+      if (
+        !verifyTournamentCommitment(tournament).ok ||
+        tournament.t0ConfigHash !== this._configHash
+      ) {
+        throw new Error('Tournament commitment verification failed');
+      }
+    }
+    const turnCount =
+      tournament === null ? this._actionLog.length : this.tournamentRoundsPlayed(outcome);
+    if (!Number.isSafeInteger(turnCount) || turnCount < 0 || turnCount > 0xffff) {
+      throw new Error('Settlement turnCount must be a uint16');
+    }
+    const leaves: MerkleLeafData[] = this._actionLog.map((entry, index) => ({
+      actionIndex: index,
+      playerId: entry.playerId,
+      actionData: JSON.stringify(entry.action),
+    }));
+    return {
+      outcome,
+      movesRoot: buildActionMerkleTree(leaves).root as `0x${string}`,
+      configHash: this._configHash,
+      turnCount,
+      ...(tournament === null ? {} : { horizonReveal: revealTournamentHorizon(tournament) }),
+    };
+  }
+
+  private tournamentRoundsPlayed(outcome: unknown): number {
+    if (!hasRoundsPlayed(outcome) || typeof outcome.roundsPlayed !== 'number') {
+      throw new Error('Tournament outcome must provide a safe integer roundsPlayed');
+    }
+    if (!Number.isSafeInteger(outcome.roundsPlayed)) {
+      throw new Error('Tournament outcome must provide a safe integer roundsPlayed');
+    }
+    return outcome.roundsPlayed;
+  }
+
   /**
    * Anchor the finished game on-chain with credit deltas from the plugin.
    *
@@ -1370,29 +1505,11 @@ export class GameRoomDO extends DurableObject<Env> {
   private async kickOffSettlement(): Promise<void> {
     if (!this._plugin || !this._meta) return;
     const gameId = this._meta.gameId;
-    const { playerIds, gameType, handleMap, teamMap, createdAt } = this._meta;
+    const { playerIds, gameType } = this._meta;
 
     try {
-      // Build merkle + configHash
-      const leaves: MerkleLeafData[] = this._actionLog.map((e, i) => ({
-        actionIndex: i,
-        playerId: e.playerId,
-        actionData: JSON.stringify(e.action),
-      }));
-      const tree = buildActionMerkleTree(leaves);
-
-      const config = { gameType, playerIds, handleMap, teamMap, createdAt };
-      const configJson = JSON.stringify(config, Object.keys(config).sort());
-      const hashBuffer = await crypto.subtle.digest(
-        'SHA-256',
-        new TextEncoder().encode(configJson),
-      );
-      const configHash = ('0x' +
-        Array.from(new Uint8Array(hashBuffer))
-          .map((b) => b.toString(16).padStart(2, '0'))
-          .join('')) as `0x${string}`;
-
-      const outcome = this._plugin.getOutcome(this._state);
+      const artifact = this.buildSettlementArtifact();
+      const { configHash, horizonReveal, movesRoot, outcome, turnCount } = artifact;
       // `plugin.entryCost` is already a `bigint` in raw credit units (6-dec,
       // matching `CoordinationCredits` storage). Plugin authors declare it
       // via `credits(n)` so the type system prevents unit confusion —
@@ -1469,9 +1586,6 @@ export class GameRoomDO extends DurableObject<Env> {
         }
       }
 
-      // merkle.ts returns 0x-prefixed hex (keccak256), already a viem-ready bytes32.
-      const movesRoot = tree.root as `0x${string}`;
-
       const runtime = await this.getPluginRuntime();
       await runtime.handleCall(
         SETTLEMENT_PLUGIN_ID,
@@ -1483,7 +1597,8 @@ export class GameRoomDO extends DurableObject<Env> {
           outcome,
           movesRoot,
           configHash,
-          turnCount: this._actionLog.length,
+          turnCount,
+          ...(horizonReveal === undefined ? {} : { horizonReveal }),
           timestamp: Date.now(),
           deltas,
         },
@@ -1826,6 +1941,8 @@ export class GameRoomDO extends DurableObject<Env> {
         snapshotCount,
         lastSpectatorIdx,
         stateVersion,
+        configHash,
+        tournamentCommitment,
       ] = await Promise.all([
         this.ctx.storage.get<GameMeta>('meta'),
         this.ctx.storage.get<unknown>('state'),
@@ -1835,6 +1952,8 @@ export class GameRoomDO extends DurableObject<Env> {
         this.ctx.storage.get<number>('snapshotCount'),
         this.ctx.storage.get<number | null>('lastSpectatorIdx'),
         this.ctx.storage.get<number>('stateVersion'),
+        this.ctx.storage.get<Bytes32Hex>(CONFIG_HASH_STORAGE_KEY),
+        this.ctx.storage.get<TournamentCommitmentRecord>(TOURNAMENT_COMMITMENT_STORAGE_KEY),
       ]);
 
       // Drop legacy keys from older games. Awaiting these keeps Miniflare/DO
@@ -1883,8 +2002,16 @@ export class GameRoomDO extends DurableObject<Env> {
       this._actionLog = actionLog ?? [];
       this._progress = progress ?? { counter: 0 };
       this._stateVersion = stateVersion ?? 0;
-      // @ts-expect-error TS2339: Property '_config' does not exist on type 'GameRoomDO'. — TODO(2.3-followup)
       this._config = config ?? null;
+      this._tournamentCommitment = tournamentCommitment ?? null;
+      this._configHash =
+        configHash ??
+        (this._tournamentCommitment === null
+          ? await computeLegacyConfigHash(meta)
+          : this._tournamentCommitment.t0ConfigHash);
+      if (configHash === undefined) {
+        await this.ctx.storage.put(CONFIG_HASH_STORAGE_KEY, this._configHash);
+      }
       this._spectatorSnapshots = loadedSnapshots;
       // Phase 7.3: restore last broadcast index so a post-hibernation
       // tick doesn't duplicate-broadcast the same snapshot to

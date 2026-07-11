@@ -71,6 +71,17 @@ export {
   validateRelay,
   validateRelayBody,
 } from './relay-registry.js';
+export {
+  createTournamentCommitment,
+  type HorizonReveal,
+  parseTournamentCommitmentContext,
+  revealTournamentHorizon,
+  type TournamentCommitmentContext,
+  TournamentCommitmentError,
+  type TournamentCommitmentRecord,
+  type TournamentCommitmentVerification,
+  verifyTournamentCommitment,
+} from './tournament-commitment.js';
 // Tournament commitment, hidden-horizon PRF, seed, and t0 config encoding
 export {
   type Bytes32Hex,

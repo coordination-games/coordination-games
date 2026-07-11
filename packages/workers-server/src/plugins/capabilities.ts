@@ -15,7 +15,7 @@
  */
 
 import type { D1Database, DurableObjectStorage } from '@cloudflare/workers-types';
-import type { RelayEnvelope } from '@coordination-games/engine';
+import type { HorizonReveal, RelayEnvelope } from '@coordination-games/engine';
 
 export type SpectatorViewer =
   | { kind: 'spectator' }
@@ -78,8 +78,10 @@ export type SettlementSubmitPayload = {
   /** Outcome shape is per-game; chain adapter encodes it as bytes via canonicalEncode. */
   outcome: unknown;
   movesRoot: `0x${string}`;
-  configHash: `0x${string}`;
+  configHash: string;
   turnCount: number;
+  /** Off-chain audit material; the chain adapter deliberately does not encode this. */
+  horizonReveal?: HorizonReveal;
   timestamp: number;
   /** Already-validated, zero-sum, floor-checked deltas. */
   deltas: ReadonlyArray<{ agentId: string; delta: bigint }>;
