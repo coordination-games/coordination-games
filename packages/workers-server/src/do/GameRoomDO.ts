@@ -457,6 +457,7 @@ export class GameRoomDO extends DurableObject<Env> {
     if (method === 'POST' && path === '/tool') return this.handleTool(request);
     if (method === 'GET' && path === '/state') return this.handleState(request);
     if (method === 'GET' && path === '/result') return this.handleResult();
+    if (method === 'GET' && path === '/settlement-status') return this.handleSettlementStatus();
     if (method === 'GET' && path === '/spectator') return this.handleSpectator(request);
     if (method === 'GET' && path === '/replay') return this.handleReplay();
     if (method === 'GET' && path === '/bundle') return this.handleBundle();
@@ -951,6 +952,31 @@ export class GameRoomDO extends DurableObject<Env> {
       console.error('[GameRoomDO] result artifact rejected:', error);
       return Response.json({ error: 'Tournament commitment verification failed' }, { status: 409 });
     }
+  }
+
+  private async handleSettlementStatus(): Promise<Response> {
+    await this.ensureLoaded();
+    const runtime = await this.getPluginRuntime();
+    const result = await runtime.handleCall(
+      SETTLEMENT_PLUGIN_ID,
+      'state',
+      {},
+      { kind: 'spectator' },
+    );
+    const state =
+      typeof result === 'object' && result !== null && 'state' in result ? result.state : null;
+    if (typeof state !== 'object' || state === null || !('kind' in state)) {
+      return Response.json({ state: null });
+    }
+    const publicState = {
+      kind: state.kind,
+      ...('txHash' in state && typeof state.txHash === 'string' ? { txHash: state.txHash } : {}),
+      ...('blockNumber' in state && typeof state.blockNumber === 'number'
+        ? { blockNumber: state.blockNumber }
+        : {}),
+      ...('error' in state && typeof state.error === 'string' ? { error: state.error } : {}),
+    };
+    return Response.json({ state: publicState });
   }
 
   private async handleBundle(): Promise<Response> {

@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   GAME_ROOM: DurableObjectNamespace;
   LOBBY: DurableObjectNamespace;
+  TOURNAMENT?: DurableObjectNamespace;
   ENVIRONMENT: string;
   // Optional — set via `wrangler secret put` to enable on-chain ERC-8004 verification.
   // RPC_URLS (comma-separated list of RPC endpoints) takes precedence over RPC_URL

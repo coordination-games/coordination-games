@@ -29,9 +29,17 @@ class_name = "GameRoomDO"
 name = "LOBBY"
 class_name = "LobbyDO"
 
+[[durable_objects.bindings]]
+name = "TOURNAMENT"
+class_name = "TournamentDO"
+
 [[migrations]]
 tag = "v1"
 new_classes = ["GameRoomDO", "LobbyDO"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["TournamentDO"]
 
 # On-chain mode secrets (set via `wrangler secret put`):
 # RPC_URLS            — Comma-separated list of OP Sepolia RPC endpoints (preferred).

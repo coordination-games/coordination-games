@@ -52,6 +52,7 @@ describe('TournamentSeries', () => {
       tournamentId: CONFIG.tournamentId,
       gameType: CONFIG.gameType,
       playerIds: CONFIG.playerIds,
+      activePlayerIds: CONFIG.playerIds,
       policy: POLICY,
       policyHash: computeTournamentPolicyHash(POLICY),
       tournamentRootSeed: ROOT_SEED,
@@ -135,6 +136,33 @@ describe('TournamentSeries', () => {
       baseEntryCost: POLICY.baseEntryCost,
       playerCount: CONFIG.playerIds.length,
     });
+  });
+
+  it('removes eliminated players only after their settled game and carries survivors forward', () => {
+    // Given
+    const initial = createSeries(CONFIG, ROOT_SEED);
+
+    // When
+    const settled = onGameSettled(
+      initial.series,
+      { gameId: 'game-0', gameIndex: 0 },
+      payoutMap([
+        ['alpha', 5n],
+        ['bravo', 0n],
+        ['charlie', -5n],
+      ]),
+      ['charlie'],
+    );
+
+    // Then
+    expect(settled.series.activePlayerIds).toEqual(['alpha', 'bravo']);
+    expect(settled.series.standings).toEqual([
+      { playerId: 'alpha', cumulativeDelta: 5n, gamesPlayed: 1 },
+      { playerId: 'bravo', cumulativeDelta: 0n, gamesPlayed: 1 },
+      { playerId: 'charlie', cumulativeDelta: -5n, gamesPlayed: 1 },
+    ]);
+    expect(settled.carryPlan.playerCount).toBe(3);
+    expect(settled.nextGameConfig?.playerIds).toEqual(['alpha', 'bravo']);
   });
 
   it('is deeply replayable and independent of payout-map insertion order', () => {

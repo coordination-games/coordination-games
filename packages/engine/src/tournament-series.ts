@@ -44,6 +44,7 @@ export type TournamentSeries = {
   readonly tournamentId: string;
   readonly gameType: string;
   readonly playerIds: readonly string[];
+  readonly activePlayerIds: readonly string[];
   readonly policy: TournamentPolicy;
   readonly policyHash: Bytes32Hex;
   readonly tournamentRootSeed: Bytes32Hex;
@@ -137,7 +138,7 @@ function makeGameConfig(
     tournamentId: series.tournamentId,
     gameIndex,
     gameType: series.gameType,
-    playerIds: Object.freeze([...series.playerIds]),
+    playerIds: Object.freeze([...series.activePlayerIds]),
     tournamentRootSeed: series.tournamentRootSeed,
     gameSeed: deriveGameSeed(series.tournamentRootSeed, series.tournamentId, gameIndex),
     policyHash: series.policyHash,
@@ -165,6 +166,7 @@ export function createSeries(
     tournamentId: config.tournamentId,
     gameType: config.gameType,
     playerIds,
+    activePlayerIds: playerIds,
     policy,
     policyHash,
     tournamentRootSeed: normalizedRootSeed,
@@ -176,16 +178,16 @@ export function createSeries(
 }
 
 function validatePayouts(series: TournamentSeries, payouts: ReadonlyMap<string, unknown>): void {
-  if (payouts.size !== series.playerIds.length) {
+  if (payouts.size !== series.activePlayerIds.length) {
     throw new TournamentSeriesError('payouts', payouts, 'expected exactly one payout per player');
   }
-  for (const playerId of series.playerIds) {
+  for (const playerId of series.activePlayerIds) {
     if (!payouts.has(playerId)) {
       throw new TournamentSeriesError('payouts', payouts, `missing player ${playerId}`);
     }
   }
   for (const [playerId, delta] of payouts) {
-    if (!series.playerIds.includes(playerId)) {
+    if (!series.activePlayerIds.includes(playerId)) {
       throw new TournamentSeriesError('payouts', payouts, `unknown player ${playerId}`);
     }
     if (typeof delta !== 'bigint') {
@@ -198,6 +200,7 @@ export function onGameSettled(
   series: TournamentSeries,
   outcome: SettledGameOutcome,
   payouts: ReadonlyMap<string, unknown>,
+  eliminatedPlayerIds: readonly string[] = [],
 ): GameSettlementResult {
   if (series.currentGameIndex >= series.policy.seriesLength) {
     throw new TournamentSeriesError('series', series, 'series is complete');
@@ -214,10 +217,28 @@ export function onGameSettled(
     throw new TournamentSeriesError('gameId', outcome.gameId, 'game already settled');
   }
   validatePayouts(series, payouts);
+  const eliminated = new Set(eliminatedPlayerIds);
+  if (eliminated.size !== eliminatedPlayerIds.length) {
+    throw new TournamentSeriesError(
+      'eliminatedPlayerIds',
+      eliminatedPlayerIds,
+      'expected unique player IDs',
+    );
+  }
+  for (const playerId of eliminated) {
+    if (!series.activePlayerIds.includes(playerId)) {
+      throw new TournamentSeriesError(
+        'eliminatedPlayerIds',
+        eliminatedPlayerIds,
+        `expected active player ${playerId}`,
+      );
+    }
+  }
 
   const standings = Object.freeze(
     series.standings
       .map((standing) => {
+        if (!series.activePlayerIds.includes(standing.playerId)) return standing;
         const delta = payouts.get(standing.playerId);
         if (typeof delta !== 'bigint') {
           throw new TournamentSeriesError(
@@ -242,11 +263,14 @@ export function onGameSettled(
     carryBps: series.policy.carryBps,
     slashBps: series.policy.slashBps,
     baseEntryCost: series.policy.baseEntryCost,
-    playerCount: series.playerIds.length,
+    playerCount: series.activePlayerIds.length,
   });
   const updatedSeries: TournamentSeries = Object.freeze({
     ...series,
     playerIds: Object.freeze([...series.playerIds]),
+    activePlayerIds: Object.freeze(
+      series.activePlayerIds.filter((playerId) => !eliminated.has(playerId)),
+    ),
     policy: copyPolicy(series.policy),
     currentGameIndex: nextGameIndex,
     settledGameIds: Object.freeze([...series.settledGameIds, outcome.gameId]),

@@ -6,6 +6,8 @@ import {
   computeTournamentConfigHash,
   computeTournamentPolicyHash,
   deriveTournamentGameSeed,
+  deriveTournamentHorizonSecret,
+  deriveTournamentRoomName,
   encodeHiddenHorizonPrfInput,
   encodeHorizonCommitmentInput,
   encodeTournamentConfig,
@@ -93,6 +95,8 @@ describe('tournament encoding cross-check vectors', () => {
       horizonCommitment: 'coordination.games/horizon-commitment/v1',
       hiddenHorizonPrf: 'coordination.games/hidden-horizon-prf/v1',
       gameSeed: 'coordination.games/tournament-game-seed/v1',
+      roomName: 'coordination.games/tournament-room-name/v1',
+      horizonSecret: 'coordination.games/tournament-horizon-secret/v1',
       config: 'coordination.games/tournament-config/v1',
     });
   });
@@ -114,6 +118,20 @@ describe('tournament encoding cross-check vectors', () => {
       GAME_SEED_INPUT_ENCODED,
     );
     expect(deriveTournamentGameSeed(ROOT_SEED, CONFIG_INPUT.tournamentId, 7)).toBe(GAME_SEED);
+  });
+
+  it('pins domain-separated room and secret derivations', () => {
+    // Given
+    const root = parseBytes32Hex(`0x${'12'.repeat(32)}`);
+
+    // When
+    const room = deriveTournamentRoomName('tournament-vector', 3);
+    const secret = deriveTournamentHorizonSecret(root, 'tournament-vector', 3);
+
+    // Then
+    expect(room).toBe('0x50a8727681d953394665d2014b421639d66951646b0d40a0a9edb38713acc67e');
+    expect(secret).toBe('0xf45bdd4f5b5bd82f60b5869f25f3903e9f0ea6af8adaef13b60079948edce42e');
+    expect(secret).not.toBe(deriveTournamentGameSeed(root, 'tournament-vector', 3));
   });
 
   it('matches independently generated t0 config bytes and digest', () => {

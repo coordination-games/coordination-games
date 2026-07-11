@@ -150,6 +150,26 @@ const context = {
 };
 
 describe('GameRoomDO tournament creation lifecycle', () => {
+  it('returns settlement metadata without payload or horizon material', async () => {
+    // Given
+    const getSettlementStatus = await handler('handleSettlementStatus');
+    const room = Object.assign(makeRoom(storage()), {
+      ensureLoaded: async () => undefined,
+      getPluginRuntime: async () => ({
+        handleCall: async () => ({
+          state: { kind: 'confirmed', txHash: '0xreceipt', blockNumber: 12, payload: 'private' },
+        }),
+      }),
+    });
+
+    // When
+    const response = await getSettlementStatus.call(room);
+
+    // Then
+    expect(await response.json()).toEqual({
+      state: { kind: 'confirmed', txHash: '0xreceipt', blockNumber: 12 },
+    });
+  });
   it('Given registered Tragedy V2 tournament creation, when initial state is stored, then its derived endpoint stays private', async () => {
     const store = storage();
     const create = await handler('handleCreate');

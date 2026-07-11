@@ -90,6 +90,8 @@ export {
   computeTournamentConfigHash,
   computeTournamentPolicyHash,
   deriveTournamentGameSeed,
+  deriveTournamentHorizonSecret,
+  deriveTournamentRoomName,
   encodeHiddenHorizonPrfInput,
   encodeHorizonCommitmentInput,
   encodeTournamentConfig,

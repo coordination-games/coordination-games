@@ -18,6 +18,8 @@ export const TOURNAMENT_ENCODING_DOMAINS = {
   horizonCommitment: 'coordination.games/horizon-commitment/v1',
   hiddenHorizonPrf: 'coordination.games/hidden-horizon-prf/v1',
   gameSeed: 'coordination.games/tournament-game-seed/v1',
+  roomName: 'coordination.games/tournament-room-name/v1',
+  horizonSecret: 'coordination.games/tournament-horizon-secret/v1',
   config: 'coordination.games/tournament-config/v1',
 } as const;
 const BYTES32_HEX_SCHEMA = z
@@ -220,6 +222,29 @@ export function deriveTournamentGameSeed(
   gameIndex: number,
 ): Bytes32Hex {
   return hashEncoded(encodeTournamentGameSeedInput(rootSeed, tournamentId, gameIndex));
+}
+
+export function deriveTournamentRoomName(tournamentId: string, gameIndex: number): Bytes32Hex {
+  return hashEncoded(
+    encodeRecord(TOURNAMENT_ENCODING_DOMAINS.roomName, [
+      ['tournamentId', TEXT_ENCODER.encode(tournamentId)],
+      ['gameIndex', unsignedNumber('gameIndex', gameIndex, { min: 0 })],
+    ]),
+  );
+}
+
+export function deriveTournamentHorizonSecret(
+  rootSeed: Bytes32Hex,
+  tournamentId: string,
+  gameIndex: number,
+): Bytes32Hex {
+  return hashEncoded(
+    encodeRecord(TOURNAMENT_ENCODING_DOMAINS.horizonSecret, [
+      ['tournamentRootSeed', bytes32('tournamentRootSeed', rootSeed)],
+      ['tournamentId', TEXT_ENCODER.encode(tournamentId)],
+      ['gameIndex', unsignedNumber('gameIndex', gameIndex, { min: 0 })],
+    ]),
+  );
 }
 
 /** Config order: root seed, game seed, tournament/game IDs, index/type,

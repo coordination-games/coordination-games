@@ -10,6 +10,7 @@ import {
 import { createRelay } from './chain/index.js';
 import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
+import { TournamentDO } from './do/TournamentDO.js';
 import type { Env } from './env.js';
 import {
   handlePluginCall,
@@ -20,7 +21,7 @@ import {
 import { dispatchToolCall, handleAdminSessionTools } from './tool-dispatcher.js';
 
 // Re-export DO classes — required for Durable Object bindings to work
-export { GameRoomDO, LobbyDO };
+export { GameRoomDO, LobbyDO, TournamentDO };
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -428,6 +429,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return handleCreateGame(request, env);
   }
 
+  const tournamentMatch = pathname.match(/^\/api\/tournaments\/([^/]+)(\/.*)?$/);
+  if (tournamentMatch && env.TOURNAMENT) {
+    const tournamentId = tournamentMatch[1];
+    if (!tournamentId) return Response.json({ error: 'Tournament id missing' }, { status: 400 });
+    const sub = tournamentMatch[2] ?? '/';
+    if (
+      (method === 'GET' && sub === '/state') ||
+      (method === 'POST' && (sub === '/' || sub === '/tick'))
+    ) {
+      return forwardToTournamentDO(env, tournamentId, sub, request);
+    }
+  }
+
   // /api/games/:id[/subpath] — forward to GameRoomDO
   // Only allow unauthenticated access to spectator-safe paths
   const gameMatch = pathname.match(/^\/api\/games\/([^/]+)(\/.*)?$/);
@@ -436,7 +450,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const sub = gameMatch[2] ?? '/spectator';
 
     // Spectator-safe paths (no auth required)
-    const spectatorPaths = ['/spectator', '/replay', '/bundle'];
+    const spectatorPaths = ['/spectator', '/replay', '/bundle', '/settlement-status'];
     if (spectatorPaths.includes(sub)) {
       // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
       return forwardToGameDO(env, gameId, sub, request);
@@ -1202,6 +1216,22 @@ function getGameDO(env: Env, gameId: string): DurableObjectStub {
 
 function getLobbyDO(env: Env, lobbyId: string): DurableObjectStub {
   return env.LOBBY.get(env.LOBBY.idFromName(lobbyId));
+}
+
+function forwardToTournamentDO(
+  env: Env,
+  tournamentId: string,
+  subPath: string,
+  request: Request,
+): Promise<Response> {
+  if (!env.TOURNAMENT)
+    return Promise.resolve(
+      Response.json({ error: 'Tournament service unavailable' }, { status: 503 }),
+    );
+  const stub = env.TOURNAMENT.get(env.TOURNAMENT.idFromName(tournamentId));
+  const url = new URL(request.url);
+  url.pathname = subPath;
+  return stub.fetch(new Request(url.toString(), request));
 }
 
 /**
