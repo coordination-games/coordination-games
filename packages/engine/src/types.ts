@@ -206,6 +206,11 @@ export interface ActionResult<TState, TAction> {
   relayMessages?: RelayEnvelope[];
 }
 
+export interface LadderPlacement {
+  readonly playerId: string;
+  readonly rank: number;
+}
+
 /**
  * v2 game plugin interface — action-based.
  * Game owns turns, phases, resolution, visibility.
@@ -297,6 +302,9 @@ export interface CoordinationGame<TConfig, TState, TAction, TOutcome> {
    * returning. See `wiki/architecture/contracts.md` for the full policy.
    */
   getOutcome(state: TState): TOutcome;
+
+  /** Deterministic final ladder placements derived only from the canonical outcome. */
+  getLadderPlacements?(outcome: TOutcome, playerIds: readonly string[]): readonly LadderPlacement[];
 
   /**
    * Entry cost per player, in RAW credit units (6-decimal `bigint` matching

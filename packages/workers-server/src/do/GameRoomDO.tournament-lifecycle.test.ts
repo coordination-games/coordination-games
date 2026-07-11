@@ -355,7 +355,16 @@ describe('GameRoomDO tournament creation lifecycle', () => {
       turnCount: 0,
     });
     expect(bundlePayload).toMatchObject({
+      gameId,
+      gameType: 'oathbreaker',
+      finished: true,
+      playerIds: ['alice', 'bob'],
       config,
+      actionLog: [{ playerId: 'alice', action: { tampered: true } }],
+      result: {
+        configHash: createPayload.tournament.configHash,
+        turnCount: 0,
+      },
       tournament: { commitment, policyHash },
       horizonReveal: { secret, playerEntropy: entropy },
     });

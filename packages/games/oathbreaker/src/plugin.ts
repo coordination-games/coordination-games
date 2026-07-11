@@ -20,6 +20,7 @@ import {
   type SpectatorView,
   validateAction,
 } from './game.js';
+import { getOathLadderPlacements } from './ladder.js';
 import {
   type CreditAmount,
   DEFAULT_OATH_CONFIG,
@@ -402,6 +403,8 @@ export const OathbreakerPlugin = {
       finalSupply: rankings.reduce((s, r) => s + r.finalBalance, 0),
     };
   },
+
+  getLadderPlacements: getOathLadderPlacements,
 
   computePayouts(
     outcome: OathOutcome,

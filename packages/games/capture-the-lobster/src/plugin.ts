@@ -38,6 +38,7 @@ import {
   validateMoveForPlayer,
 } from './game.js';
 import type { Direction, Hex } from './hex.js';
+import { getCtlLadderPlacements } from './ladder.js';
 import { generateMap, getMapRadiusForTeamSize, type MapConfig, type TileType } from './map.js';
 import type { UnitClass } from './movement.js';
 import { ClassSelectionPhase } from './phases/class-selection.js';
@@ -697,6 +698,8 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
       playerStats,
     };
   },
+
+  getLadderPlacements: getCtlLadderPlacements,
 
   guide: CTL_GUIDE,
 

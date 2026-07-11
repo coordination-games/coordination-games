@@ -1018,7 +1018,18 @@ export class GameRoomDO extends DurableObject<Env> {
     try {
       const artifact = this.buildSettlementArtifact();
       return Response.json({
+        gameId: this._meta.gameId,
+        gameType: this._meta.gameType,
+        finished: true,
+        playerIds: this._meta.playerIds,
         config,
+        actionLog: this._actionLog,
+        result: {
+          outcome: artifact.outcome,
+          movesRoot: artifact.movesRoot,
+          configHash: artifact.configHash,
+          turnCount: artifact.turnCount,
+        },
         turns,
         ...(artifact.horizonReveal === undefined || tournament === null
           ? {}

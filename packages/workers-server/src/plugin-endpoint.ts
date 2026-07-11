@@ -17,10 +17,14 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from './env.js';
+
+export { handleAdminLadderReplay } from './admin-ladder-replay.js';
+
 import type { Capabilities, SpectatorViewer } from './plugins/capabilities.js';
 import {
   createEloServerPlugin,
   EloAuthRequiredError,
+  EloInvalidArgsError,
   EloUnknownCallError,
 } from './plugins/elo/index.js';
 import {
@@ -193,6 +197,9 @@ export async function handlePluginCall(
       throw new PluginEndpointBadRequestError(err.message);
     }
     if (err instanceof EloUnknownCallError) {
+      throw new PluginEndpointBadRequestError(err.message);
+    }
+    if (err instanceof EloInvalidArgsError) {
       throw new PluginEndpointBadRequestError(err.message);
     }
     if (err instanceof EloAuthRequiredError) {

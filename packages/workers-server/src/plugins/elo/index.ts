@@ -19,6 +19,23 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { SpectatorViewer } from '../capabilities.js';
 import type { ServerPlugin } from '../runtime.js';
+import { getGameLeaderboard, getGamePlayerStats } from './ladder-read-service.js';
+
+export {
+  type GameLadderMatchRow,
+  type GameLeaderboardRow,
+  type GamePlayerStats,
+  getGameLeaderboard,
+  getGamePlayerStats,
+} from './ladder-read-service.js';
+export {
+  LadderPersistenceError,
+  LadderReplayConflictError,
+  type RecordReplayLadderInput,
+  type ReplayLadderPlayerReceipt,
+  type ReplayLadderReceipt,
+  recordReplayLadderMatch,
+} from './ladder-service.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -73,6 +90,13 @@ export class EloAuthRequiredError extends Error {
   constructor(name: string) {
     super(`elo.${name} requires an authenticated player`);
     this.name = 'EloAuthRequiredError';
+  }
+}
+
+export class EloInvalidArgsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EloInvalidArgsError';
   }
 }
 
@@ -180,15 +204,35 @@ export function createEloServerPlugin(): ServerPlugin<'d1'> {
         return result.results.map(rowToLeaderboard);
       }
 
+      if (name === 'game-leaderboard') {
+        const a = (args ?? {}) as { gameType?: unknown; limit?: unknown; offset?: unknown };
+        if (typeof a.gameType !== 'string' || a.gameType.length === 0) {
+          throw new EloInvalidArgsError('elo.game-leaderboard requires gameType');
+        }
+        return getGameLeaderboard(
+          db,
+          a.gameType,
+          clampLimit(a.limit, DEFAULT_LEADERBOARD_LIMIT, MAX_LEADERBOARD_LIMIT),
+          clampOffset(a.offset),
+        );
+      }
+
       if (name === 'my-stats') {
         const playerId = playerIdFromViewer(viewer);
         if (!playerId) throw new EloAuthRequiredError(name);
-        const a = (args ?? {}) as { matchLimit?: unknown };
+        const a = (args ?? {}) as { gameType?: unknown; matchLimit?: unknown };
         const matchLimit = clampLimit(
           a.matchLimit,
           DEFAULT_RECENT_MATCH_LIMIT,
           MAX_RECENT_MATCH_LIMIT,
         );
+
+        if (a.gameType !== undefined) {
+          if (typeof a.gameType !== 'string' || a.gameType.length === 0) {
+            throw new EloInvalidArgsError('elo.my-stats gameType must be a non-empty string');
+          }
+          return getGamePlayerStats(db, a.gameType, playerId, matchLimit);
+        }
 
         const player = await db
           .prepare('SELECT id, handle, elo, games_played, wins FROM players WHERE id = ?')

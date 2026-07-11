@@ -21,6 +21,15 @@ export {
 } from './hidden-horizon.js';
 // Runtime invariants / non-null helpers
 export { invariant, mustFind, mustGet } from './invariant.js';
+export {
+  computeMultiplayerElo,
+  DEFAULT_LADDER_K_FACTOR,
+  DEFAULT_LADDER_RATING,
+  type LadderParticipantRating,
+  LadderPolicyError,
+  type LadderRatingUpdate,
+  type MultiplayerEloInput,
+} from './ladder.js';
 // Merkle tree construction and verification
 export {
   buildActionMerkleTree,

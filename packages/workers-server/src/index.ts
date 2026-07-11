@@ -14,6 +14,7 @@ import { LobbyDO } from './do/LobbyDO.js';
 import { TournamentDO } from './do/TournamentDO.js';
 import type { Env } from './env.js';
 import {
+  handleAdminLadderReplay,
   handlePluginCall,
   PluginEndpointBadRequestError,
   PluginEndpointNotFoundError,
@@ -588,6 +589,15 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (adminToolsMatch && method === 'GET') {
     // @ts-expect-error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'st — TODO(2.3-followup)
     return handleAdminSessionTools(decodeURIComponent(adminToolsMatch[1]), request, env);
+  }
+
+  const adminLadderReplayMatch = pathname.match(/^\/api\/admin\/ladder\/replay\/([^/]+)$/);
+  if (adminLadderReplayMatch && method === 'POST') {
+    const gameId = adminLadderReplayMatch[1];
+    if (gameId === undefined) {
+      return Response.json({ error: 'Game id missing' }, { status: 400 });
+    }
+    return handleAdminLadderReplay(request, env, decodeURIComponent(gameId));
   }
 
   const adminKillMatch = pathname.match(/^\/api\/admin\/session\/([^/]+)\/kill$/);

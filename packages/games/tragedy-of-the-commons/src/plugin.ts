@@ -22,6 +22,7 @@ import {
   validateV2Action,
 } from './game.js';
 import { effectiveV2FinalRound } from './hidden-horizon.js';
+import { getTragedyLadderPlacements } from './ladder.js';
 import { computeCarrySafePayouts } from './payouts.js';
 import {
   DEFAULT_TRAGEDY_CONFIG,
@@ -197,6 +198,7 @@ export const TragedyOfTheCommonsPlugin: CoordinationGame<
   },
 
   getOutcome,
+  getLadderPlacements: getTragedyLadderPlacements,
 
   computePayouts(
     outcome: TragedyOutcome,
@@ -538,6 +540,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   },
 
   getOutcome: getV2Outcome,
+  getLadderPlacements: getTragedyLadderPlacements,
 
   computePayouts(
     outcome: TragedyV2Outcome,
