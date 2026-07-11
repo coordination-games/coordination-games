@@ -254,7 +254,9 @@ function ReceiptCard({ receipt }: { receipt: Settlement | null }) {
           <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
             <ReceiptField label="Block" value={String(receipt.blockNumber)} />
             <ReceiptField label="Game index" value={String(receipt.gameIndex)} />
-            <ReceiptField label="Game" value={receipt.gameId} mono />
+            <ReceiptField label="Game">
+              <CopyHash hash={receipt.gameId} label="game id" />
+            </ReceiptField>
             <ReceiptField label="Entry cost" value={groupInt(receipt.entryCost)} />
             <ReceiptField label="Carry" value={groupInt(receipt.carry)} signed />
             <ReceiptField label="Slash" value={groupInt(receipt.slash)} signed />
@@ -270,15 +272,15 @@ function ReceiptField({
   label,
   value,
   signed = false,
-  mono = false,
+  children,
 }: {
   label: string;
-  value: string;
+  value?: string;
   signed?: boolean;
-  mono?: boolean;
+  children?: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt
         className="font-mono text-[10px] tracking-[0.18em] uppercase"
         style={{ color: 'var(--color-graphite)' }}
@@ -286,16 +288,14 @@ function ReceiptField({
         {label}
       </dt>
       <dd className="mt-1 text-sm">
-        {signed ? (
-          <Amount value={value} signed />
-        ) : (
-          <span
-            className={mono ? 'font-mono text-xs tabular-nums' : 'font-mono tabular-nums'}
-            style={{ color: 'var(--color-warm-black)' }}
-          >
-            {value}
-          </span>
-        )}
+        {children ??
+          (signed ? (
+            <Amount value={value ?? ''} signed />
+          ) : (
+            <span className="font-mono tabular-nums" style={{ color: 'var(--color-warm-black)' }}>
+              {value}
+            </span>
+          ))}
       </dd>
     </div>
   );

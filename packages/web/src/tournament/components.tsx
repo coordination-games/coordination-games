@@ -136,8 +136,8 @@ export function EconRow({
   );
 }
 
-/** Shortened tx hash with a copy button that copies the full value. */
-export function CopyHash({ hash }: { hash: string }) {
+/** Shortened hash (tx or game id) with a copy button that copies the full value. */
+export function CopyHash({ hash, label = 'transaction hash' }: { hash: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -148,7 +148,7 @@ export function CopyHash({ hash }: { hash: string }) {
         border: '1px solid rgba(28,26,23,0.12)',
         color: 'var(--color-warm-black)',
       }}
-      aria-label={`Copy full transaction hash ${hash}`}
+      aria-label={`Copy full ${label} ${hash}`}
       onClick={() => {
         navigator.clipboard?.writeText(hash);
         setCopied(true);

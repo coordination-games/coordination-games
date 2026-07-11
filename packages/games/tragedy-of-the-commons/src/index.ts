@@ -18,6 +18,12 @@ export {
   TragedyOfTheCommonsPlugin,
   TragedyOfTheCommonsV2Plugin,
 } from './plugin.js';
+export { type LocalTournamentResult, runLocalTournament } from './tournament-demo.js';
+export {
+  parseTournamentDemoPolicy,
+  type TournamentDemoPolicy,
+  TournamentDemoPolicyError,
+} from './tournament-demo-policy.js';
 export type {
   EcosystemKind,
   ExtractionLevel,

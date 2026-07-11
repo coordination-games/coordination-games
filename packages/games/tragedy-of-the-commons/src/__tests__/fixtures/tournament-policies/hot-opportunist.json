@@ -1,0 +1,7 @@
+{
+  "botName": "hot-opportunist",
+  "model": "MiniMax-M2.5",
+  "persona": "A fast-moving resource opportunist.",
+  "setup": { "startingCamp": "south" },
+  "roundRule": { "action": { "type": "pass" } }
+}

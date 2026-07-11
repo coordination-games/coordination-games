@@ -1,0 +1,7 @@
+{
+  "botName": "mint-mediator",
+  "model": "MiniMax-M2.5",
+  "persona": "A consensus-first commons steward.",
+  "setup": { "startingCamp": "northWest" },
+  "roundRule": { "action": { "type": "pass" } }
+}

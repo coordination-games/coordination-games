@@ -116,6 +116,28 @@ describe('TournamentPage states', () => {
     expect(copyBtn).toBeTruthy();
   });
 
+  it('renders a full 66-char settlement game id as a copyable shortened hash', async () => {
+    // The actual Task 12 spectator artifact carries a full 66-char game id;
+    // rendering it raw overflowed the receipt grid. It must display shortened
+    // while the full value stays copyable/accessible.
+    const fullGameId = '0x84abfbe2b8c26fd062b0c347e009be32fac5b91e3fb0990e842041f96d1de9f7';
+    const payload = { ...completedPayload() };
+    payload.lastSettlement = { ...payload.lastSettlement, gameId: fullGameId };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Completed')).toBeTruthy());
+    // Shortened form is what the user sees.
+    expect(screen.getByText('0x84abfb…1de9f7')).toBeTruthy();
+    // Full id remains accessible and copyable via the game-id copy button.
+    const copyGameId = screen.getByLabelText(`Copy full game id ${fullGameId}`);
+    expect(copyGameId).toBeTruthy();
+    // The raw full id is never rendered as visible text (that was the overflow).
+    expect(screen.queryByText(fullGameId)).toBeNull();
+  });
+
   it('shows the error state when the first fetch fails with no prior data', async () => {
     vi.stubGlobal(
       'fetch',

@@ -16,6 +16,7 @@
     "dev": "npm run dev --workspace=packages/workers-server",
     "dev:web": "npm run dev --workspace=packages/web",
     "harness:model": "tsx packages/model-harness/src/index.ts",
+    "demo:tournament": "npm run build -w packages/engine -w packages/games/tragedy-of-the-commons && tsx scripts/run-tournament-demo.ts",
     "build:contracts": "npm run build --workspace=packages/contracts",
     "build:cli": "npm run build --workspace=packages/cli",
     "lint": "biome lint .",

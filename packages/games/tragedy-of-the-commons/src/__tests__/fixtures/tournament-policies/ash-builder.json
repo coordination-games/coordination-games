@@ -1,0 +1,7 @@
+{
+  "botName": "ash-builder",
+  "model": "MiniMax-M2.5",
+  "persona": "A patient infrastructure builder.",
+  "setup": { "startingCamp": "north" },
+  "roundRule": { "action": { "type": "pass" } }
+}

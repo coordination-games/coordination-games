@@ -1,3 +1,7 @@
+import {
+  parseTournamentDemoPolicy,
+  runLocalTournament,
+} from '@coordination-games/game-tragedy-of-the-commons';
 import { describe, expect, it } from 'vitest';
 import { parseTournamentState, TournamentParseError } from '../parse';
 
@@ -43,6 +47,30 @@ function validPayload(): Record<string, unknown> {
 }
 
 describe('parseTournamentState', () => {
+  it('accepts the local Tragedy tournament public artifact', () => {
+    const policies = ['mint-mediator', 'ash-builder', 'hot-opportunist'].map((botName, index) =>
+      parseTournamentDemoPolicy(
+        {
+          botName,
+          model: 'MiniMax-M2.5',
+          persona: botName,
+          setup: { startingCamp: ['northWest', 'north', 'south'][index] },
+          roundRule: { action: { type: 'pass' } },
+        },
+        `${botName}.json`,
+      ),
+    );
+    const result = runLocalTournament({
+      tournamentId: 'web-parser',
+      seed: `0x${'17'.repeat(32)}`,
+      playerEntropy: `0x${'29'.repeat(32)}`,
+      policies,
+    });
+    const state = parseTournamentState(result.publicSpectator);
+    expect(state).toMatchObject({ status: 'completed', currentGameId: null, currentGameIndex: 1 });
+    expect(state.gameIds).toHaveLength(2);
+    expect(state.lastSettlement?.txHash).toMatch(/^local-receipt:/);
+  });
   it('parses a valid completed two-game payload', () => {
     // Given a well-formed public state / When parsed / Then all fields survive typed.
     const state = parseTournamentState(validPayload());
