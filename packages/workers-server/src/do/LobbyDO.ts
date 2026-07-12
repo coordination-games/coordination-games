@@ -32,7 +32,12 @@ import type {
   PhaseResult,
   RelayScope,
 } from '@coordination-games/engine';
-import { getGame, validateChatScope } from '@coordination-games/engine';
+import {
+  getGame,
+  LobbySizeError,
+  resolveLobbySize,
+  validateChatScope,
+} from '@coordination-games/engine';
 import type { ChainRelay } from '../chain/types.js';
 import type { Env } from '../env.js';
 import type { SpectatorViewer } from '../plugins/capabilities.js';
@@ -301,15 +306,22 @@ export class LobbyDO extends DurableObject<Env> {
       );
     }
 
+    let normalizedTeamSize: number;
+    try {
+      normalizedTeamSize = resolveLobbySize(teamSize, firstPhase.sizePolicy);
+    } catch (err) {
+      if (err instanceof LobbySizeError) {
+        return Response.json({ error: err.message }, { status: 400 });
+      }
+      throw err;
+    }
+
     // Seed the metadata bag with the wire-time `teamSize`. Phases read it
     // out of their `init(_, config)` and freeze the value into their own
     // state — phase instances are module-level singletons, so per-lobby
     // sizing has to flow through state, never through `this`. See
     // `docs/plans/sizing-bugs.md` B1.
-    const accumulatedMetadata: Record<string, unknown> = {};
-    if (typeof teamSize === 'number' && teamSize >= 1) {
-      accumulatedMetadata.teamSize = Math.floor(teamSize);
-    }
+    const accumulatedMetadata: Record<string, unknown> = { teamSize: normalizedTeamSize };
     // Wire-time round cap. The plugin's `createConfig(_, _, metadata)` reads
     // `metadata.maxRounds` (see e.g. tragedy-of-the-commons), so a lobby can set
     // game length here instead of always taking the plugin's default. Games that
@@ -363,7 +375,7 @@ export class LobbyDO extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(deadlineMs);
     }
 
-    console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId} (teamSize=${teamSize ?? '?'})`);
+    console.log(`[LobbyDO] Created ${gameType} lobby ${lobbyId} (teamSize=${normalizedTeamSize})`);
     return Response.json({ ok: true, lobbyId, gameType, ...(tournament ? { tournament } : {}) });
   }
 

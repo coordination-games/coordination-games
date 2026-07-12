@@ -15,9 +15,11 @@
 import {
   type AgentInfo,
   type LobbyPhase,
+  type LobbySizePolicy,
   mustFind,
   type PhaseActionResult,
   type PhaseResult,
+  resolveLobbySize,
   type ToolDefinition,
 } from '@coordination-games/engine';
 
@@ -45,8 +47,9 @@ export interface TeamFormationState {
 // ---------------------------------------------------------------------------
 
 interface TeamFormationConfig {
-  teamSize: number;
-  numTeams: number;
+  readonly teamSize: number;
+  readonly numTeams: number;
+  readonly sizePolicy?: LobbySizePolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +109,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   readonly tools = TOOLS;
   readonly acceptsJoins = true;
   readonly timeout = 600; // 10 minutes
+  readonly sizePolicy?: LobbySizePolicy;
 
   private readonly defaultTeamSize: number;
   private readonly defaultNumTeams: number;
@@ -113,6 +117,7 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   constructor(config: TeamFormationConfig) {
     this.defaultTeamSize = config.teamSize;
     this.defaultNumTeams = config.numTeams;
+    if (config.sizePolicy !== undefined) this.sizePolicy = config.sizePolicy;
   }
 
   // -------------------------------------------------------------------------
@@ -120,12 +125,8 @@ export class TeamFormationPhase implements LobbyPhase<TeamFormationState> {
   // -------------------------------------------------------------------------
 
   init(players: AgentInfo[], config: Record<string, unknown>): TeamFormationState {
-    const rawTeamSize = config?.teamSize;
     const rawNumTeams = config?.numTeams;
-    const teamSize =
-      typeof rawTeamSize === 'number' && rawTeamSize >= 1
-        ? Math.floor(rawTeamSize)
-        : this.defaultTeamSize;
+    const teamSize = resolveLobbySize(config.teamSize, this.sizePolicy, this.defaultTeamSize);
     const numTeams =
       typeof rawNumTeams === 'number' && rawNumTeams >= 1
         ? Math.floor(rawNumTeams)

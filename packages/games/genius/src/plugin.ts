@@ -5,8 +5,13 @@ import type {
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { credits, OpenQueuePhase, registerGame } from '@coordination-games/engine';
-import { normalizeGeniusConfig } from './config.js';
+import {
+  credits,
+  defineLobbySizePolicy,
+  OpenQueuePhase,
+  registerGame,
+} from '@coordination-games/engine';
+import { MAX_GENIUS_PLAYERS, MIN_GENIUS_PLAYERS, normalizeGeniusConfig } from './config.js';
 import { applyAction, createInitialState, validateAction } from './game.js';
 import { GENIUS_GUIDE } from './guide.js';
 import { computeGeniusPayouts, getGeniusLadderPlacements } from './ranking.js';
@@ -21,6 +26,12 @@ import {
 
 export const GENIUS_GAME_ID = 'genius' as const;
 export const GENIUS_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([]);
+const GENIUS_LOBBY_SIZE_POLICY = defineLobbySizePolicy({
+  min: MIN_GENIUS_PLAYERS,
+  max: MAX_GENIUS_PLAYERS,
+  default: 3,
+  unit: 'player-count',
+});
 
 const PRESS_COLOR_TOOL: ToolDefinition = {
   name: 'press_color',
@@ -49,7 +60,9 @@ export const GeniusPlugin: CoordinationGame<
   progressUnit: 'round',
   chatScopes: ['all', 'dm'],
   guide: GENIUS_GUIDE,
-  lobby: { phases: [new OpenQueuePhase(3)] },
+  lobby: {
+    phases: [new OpenQueuePhase(GENIUS_LOBBY_SIZE_POLICY.default, GENIUS_LOBBY_SIZE_POLICY)],
+  },
   gameTools: [PRESS_COLOR_TOOL],
   requiredPlugins: ['basic-chat'],
 

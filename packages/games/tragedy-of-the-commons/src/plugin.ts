@@ -5,7 +5,12 @@ import type {
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { credits, OpenQueuePhase, registerGame } from '@coordination-games/engine';
+import {
+  credits,
+  defineLobbySizePolicy,
+  OpenQueuePhase,
+  registerGame,
+} from '@coordination-games/engine';
 import {
   applyAction,
   applyV2Action,
@@ -63,6 +68,12 @@ This is an intentionally reduced v0 upstream port. Richer trust, commitments, an
 `;
 
 export const TRAGEDY_GAME_ID = 'tragedy-of-the-commons' as const;
+const TRAGEDY_LOBBY_SIZE_POLICY = defineLobbySizePolicy({
+  min: 4,
+  max: 6,
+  default: 4,
+  unit: 'player-count',
+});
 
 export const TRAGEDY_SYSTEM_ACTION_TYPES: readonly string[] = Object.freeze([
   'game_start',
@@ -154,7 +165,7 @@ export const TragedyOfTheCommonsPlugin: CoordinationGame<
   guide: TRAGEDY_GUIDE,
 
   lobby: {
-    phases: [new OpenQueuePhase(4)],
+    phases: [new OpenQueuePhase(TRAGEDY_LOBBY_SIZE_POLICY.default, TRAGEDY_LOBBY_SIZE_POLICY)],
   },
 
   gameTools: GAME_TOOLS,
@@ -477,7 +488,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   guide: TRAGEDY_GUIDE_V2,
 
   lobby: {
-    phases: [new OpenQueuePhase(4)],
+    phases: [new OpenQueuePhase(TRAGEDY_LOBBY_SIZE_POLICY.default, TRAGEDY_LOBBY_SIZE_POLICY)],
   },
 
   gameTools: GAME_TOOLS_V2,

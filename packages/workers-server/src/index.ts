@@ -1,4 +1,9 @@
-import { getGame, getRegisteredGames } from '@coordination-games/engine';
+import {
+  getGame,
+  getRegisteredGames,
+  LobbySizeError,
+  resolveLobbySize,
+} from '@coordination-games/engine';
 import { BasicChatPlugin } from '@coordination-games/plugin-chat';
 import { z } from 'zod';
 import {
@@ -684,12 +689,29 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
       { error: 'Tournament mode is supported only for tragedy-of-the-commons' },
       { status: 400 },
     );
+  const plugin = getGame(gameType);
+  if (!plugin) {
+    return Response.json({ error: `Unknown game type: ${gameType}` }, { status: 400 });
+  }
+  const firstPhase = plugin.lobby?.phases[0];
+  if (!firstPhase) {
+    return Response.json(
+      { error: `Game "${gameType}" has no lobby phases configured` },
+      { status: 400 },
+    );
+  }
+
+  let teamSize: number;
+  try {
+    teamSize = resolveLobbySize(body.teamSize, firstPhase.sizePolicy);
+  } catch (err) {
+    if (err instanceof LobbySizeError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
   const noTimeout = body.noTimeout === true;
-  // Generic bounds [1, 20]. The CLI and MCP wrappers apply tighter per-game
-  // clamps before this point; the canonical capacity is what the first
-  // lobby phase computes from `teamSize` after the lobby is created.
-  const requestedTeamSize = typeof body.teamSize === 'number' ? body.teamSize : 2;
-  const teamSize = Math.min(20, Math.max(1, Math.floor(requestedTeamSize)));
+  // The phase policy is authoritative even when callers bypass CLI/web wrappers.
   // Optional game-length override forwarded to the plugin's createConfig as
   // maxRounds (via LobbyDO metadata). Omitted → the plugin keeps its default.
   const maxRounds =
@@ -706,16 +728,17 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   // the value clients (CLI list, web cards, fill-bots) render — they no
   // longer reinvent per-game capacity math. Phases without a `capacity()`
   // method fall back to `teamSize` so the row still has a sane integer.
-  const plugin = getGame(gameType);
-  const firstPhase = plugin?.lobby?.phases?.[0];
   let capacity = teamSize;
-  if (firstPhase?.capacity) {
+  if (firstPhase.capacity) {
     try {
       const probeState = firstPhase.init([], { teamSize });
       const reported = firstPhase.capacity(probeState);
       if (typeof reported === 'number' && reported > 0) capacity = reported;
     } catch (err) {
-      console.warn(`[Worker] Capacity probe failed for game ${gameType}: ${errorMessage(err)}`);
+      return Response.json(
+        { error: `Capacity probe failed for game ${gameType}: ${errorMessage(err)}` },
+        { status: 500 },
+      );
     }
   }
 

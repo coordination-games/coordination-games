@@ -1,12 +1,68 @@
 import type { AgentInfo } from '@coordination-games/engine';
+import { LobbySizeError } from '@coordination-games/engine';
 import { describe, expect, it } from 'vitest';
 import { TeamFormationPhase } from '../phases/team-formation.js';
+import {
+  CTL_DEFAULT_TEAM_SIZE,
+  CTL_LOBBY_SIZE_POLICY,
+  CTL_MAX_TEAM_SIZE,
+  CTL_MIN_TEAM_SIZE,
+} from '../plugin.js';
 
 function makePlayers(...names: string[]): AgentInfo[] {
   return names.map((n, _i) => ({ id: n.toLowerCase(), handle: n }));
 }
 
 describe('TeamFormationPhase', () => {
+  it.each([
+    CTL_MIN_TEAM_SIZE,
+    CTL_MAX_TEAM_SIZE,
+  ])('initializes exact governed team-size bound %d with canonical capacity', (teamSize) => {
+    // Given
+    const phase = new TeamFormationPhase({
+      teamSize: CTL_DEFAULT_TEAM_SIZE,
+      numTeams: 2,
+      sizePolicy: CTL_LOBBY_SIZE_POLICY,
+    });
+
+    // When
+    const state = phase.init([], { teamSize });
+
+    // Then
+    expect(state.teamSize).toBe(teamSize);
+    expect(phase.capacity(state)).toBe(teamSize * 2);
+  });
+
+  it.each([
+    CTL_MIN_TEAM_SIZE - 1,
+    CTL_MAX_TEAM_SIZE + 1,
+  ])('fails closed for unsupported governed team size %d', (teamSize) => {
+    // Given
+    const phase = new TeamFormationPhase({
+      teamSize: CTL_DEFAULT_TEAM_SIZE,
+      numTeams: 2,
+      sizePolicy: CTL_LOBBY_SIZE_POLICY,
+    });
+
+    // When / Then
+    expect(() => phase.init([], { teamSize })).toThrowError(LobbySizeError);
+  });
+
+  it('uses the frozen CTL default when governed wire size is omitted', () => {
+    // Given
+    const phase = new TeamFormationPhase({
+      teamSize: CTL_DEFAULT_TEAM_SIZE,
+      numTeams: 2,
+      sizePolicy: CTL_LOBBY_SIZE_POLICY,
+    });
+
+    // When
+    const state = phase.init([], {});
+
+    // Then
+    expect(state.teamSize).toBe(CTL_DEFAULT_TEAM_SIZE);
+  });
+
   it('has correct id and name', () => {
     const phase = new TeamFormationPhase({ teamSize: 2, numTeams: 2 });
     expect(phase.id).toBe('team-formation');
@@ -266,8 +322,10 @@ describe('TeamFormationPhase', () => {
     );
 
     expect(result.completed).toBeDefined();
-    expect(result.completed?.metadata.teams).toBeDefined();
-    expect(result.completed?.metadata.teams).toHaveLength(1);
-    expect(result.completed?.metadata.teams[0].members).toHaveLength(2);
+    const teams = result.completed?.metadata.teams;
+    expect(Array.isArray(teams)).toBe(true);
+    if (!Array.isArray(teams)) throw new Error('expected team metadata');
+    expect(teams).toHaveLength(1);
+    expect(teams[0]?.members).toHaveLength(2);
   });
 });

@@ -30,6 +30,12 @@ export {
   type LadderRatingUpdate,
   type MultiplayerEloInput,
 } from './ladder.js';
+export {
+  defineLobbySizePolicy,
+  LobbySizeError,
+  LobbySizePolicyError,
+  resolveLobbySize,
+} from './lobby-size-policy.js';
 // Merkle tree construction and verification
 export {
   buildActionMerkleTree,

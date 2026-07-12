@@ -1,4 +1,11 @@
-import type { AgentInfo, LobbyPhase, PhaseActionResult, PhaseResult } from '../types.js';
+import { resolveLobbySize } from '../lobby-size-policy.js';
+import type {
+  AgentInfo,
+  LobbyPhase,
+  LobbySizePolicy,
+  PhaseActionResult,
+  PhaseResult,
+} from '../types.js';
 
 export interface OpenQueueState {
   playerIds: string[];
@@ -20,13 +27,17 @@ export class OpenQueuePhase implements LobbyPhase<OpenQueueState> {
   readonly name = 'Open Queue';
   readonly acceptsJoins = true;
   readonly timeout = null;
+  readonly sizePolicy?: LobbySizePolicy;
 
-  constructor(private readonly defaultTarget: number = 4) {}
+  private readonly defaultTarget: number;
+
+  constructor(defaultTarget = 4, sizePolicy?: LobbySizePolicy) {
+    this.defaultTarget = defaultTarget;
+    if (sizePolicy !== undefined) this.sizePolicy = sizePolicy;
+  }
 
   init(players: AgentInfo[], config: Record<string, unknown>): OpenQueueState {
-    const raw = config?.teamSize;
-    const fromConfig = typeof raw === 'number' && raw >= 2 ? Math.floor(raw) : null;
-    const target = fromConfig ?? this.defaultTarget;
+    const target = resolveLobbySize(config.teamSize, this.sizePolicy, this.defaultTarget);
     return { playerIds: players.map((p) => p.id), target };
   }
 

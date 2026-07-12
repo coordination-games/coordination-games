@@ -648,10 +648,22 @@ export interface ToolDefinition {
 // LobbyPhase — pre-game pipeline stages (request-driven)
 // ---------------------------------------------------------------------------
 
+export type LobbySizeUnit = 'team-size' | 'player-count';
+
+export interface LobbySizePolicy {
+  readonly min: number;
+  readonly max: number;
+  readonly default: number;
+  readonly unit: LobbySizeUnit;
+}
+
 /** A single phase in the lobby pipeline (request-driven). */
 export interface LobbyPhase<TPhaseState = unknown> {
   readonly id: string;
   readonly name: string;
+
+  /** Accepted values for the create-lobby wire field consumed by this phase. */
+  readonly sizePolicy?: LobbySizePolicy;
 
   /** Tools available during this phase (beyond always-on plugin tools). */
   readonly tools?: ToolDefinition[];

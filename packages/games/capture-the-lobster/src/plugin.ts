@@ -16,7 +16,7 @@ import type {
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { credits, registerGame } from '@coordination-games/engine';
+import { credits, defineLobbySizePolicy, registerGame } from '@coordination-games/engine';
 // Phase 5.1: spectator filter dispatches by relay type via the constant the
 // chat plugin exports — no magic strings, no consumer knowledge of the wire
 // format. If basic-chat is removed from the platform, this import breaks at
@@ -532,6 +532,15 @@ const GAME_TOOLS: ToolDefinition[] = [
  * renamed.
  */
 export const CTL_GAME_ID = 'capture-the-lobster' as const;
+export const CTL_MIN_TEAM_SIZE = 2;
+export const CTL_MAX_TEAM_SIZE = 6;
+export const CTL_DEFAULT_TEAM_SIZE = 2;
+export const CTL_LOBBY_SIZE_POLICY = defineLobbySizePolicy({
+  min: CTL_MIN_TEAM_SIZE,
+  max: CTL_MAX_TEAM_SIZE,
+  default: CTL_DEFAULT_TEAM_SIZE,
+  unit: 'team-size',
+});
 
 export const CaptureTheLobsterPlugin: CoordinationGame<
   CtlConfig,
@@ -783,7 +792,11 @@ export const CaptureTheLobsterPlugin: CoordinationGame<
 
   lobby: {
     phases: [
-      new TeamFormationPhase({ teamSize: 2, numTeams: 2 }),
+      new TeamFormationPhase({
+        teamSize: CTL_DEFAULT_TEAM_SIZE,
+        numTeams: 2,
+        sizePolicy: CTL_LOBBY_SIZE_POLICY,
+      }),
       new ClassSelectionPhase({ validClasses: ['rogue', 'knight', 'mage'] }),
     ],
   } as GameLobbyConfig,

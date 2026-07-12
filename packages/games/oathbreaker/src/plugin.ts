@@ -11,7 +11,13 @@ import type {
   SpectatorContext,
   ToolDefinition,
 } from '@coordination-games/engine';
-import { CREDIT_SCALE, credits, OpenQueuePhase, registerGame } from '@coordination-games/engine';
+import {
+  CREDIT_SCALE,
+  credits,
+  defineLobbySizePolicy,
+  OpenQueuePhase,
+  registerGame,
+} from '@coordination-games/engine';
 import {
   applyAction,
   createInitialState,
@@ -238,6 +244,12 @@ const GAME_TOOLS: ToolDefinition[] = [
  * ever renamed.
  */
 export const OATH_GAME_ID = 'oathbreaker' as const;
+const OATH_LOBBY_SIZE_POLICY = defineLobbySizePolicy({
+  min: 4,
+  max: 20,
+  default: 4,
+  unit: 'player-count',
+});
 
 export const OathbreakerPlugin = {
   gameType: OATH_GAME_ID,
@@ -329,7 +341,7 @@ export const OathbreakerPlugin = {
   },
 
   lobby: {
-    phases: [new OpenQueuePhase(4)],
+    phases: [new OpenQueuePhase(OATH_LOBBY_SIZE_POLICY.default, OATH_LOBBY_SIZE_POLICY)],
   },
 
   gameTools: GAME_TOOLS,
