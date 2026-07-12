@@ -22,7 +22,9 @@
     "build:cli": "npm run build --workspace=packages/cli",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check": "biome check ."
+    "check": "biome check .",
+    "guard:repo": "tsx scripts/repository-guard.ts --full",
+    "test:repo-guard": "vitest run scripts/__tests__/repository-guard.test.ts"
   },
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",

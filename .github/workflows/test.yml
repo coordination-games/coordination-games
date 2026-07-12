@@ -33,6 +33,9 @@ jobs:
         # See `test` job below for reasoning on these flags.
         run: npm install --include=dev --legacy-peer-deps
 
+      - name: Repository boundary guard
+        run: npm run guard:repo
+
       - name: Biome check (lint + format)
         run: npm run check
 
@@ -74,6 +77,14 @@ jobs:
       - name: Typecheck — web
         run: npx tsc --noEmit
         working-directory: packages/web
+
+      # model-harness is independent of the engine/plugins/games build
+      # artifacts — it only depends on @modelcontextprotocol/sdk, ethers, and
+      # yaml — so it is typechecked in its own step rather than after the
+      # build chain above.
+      - name: Typecheck — model-harness
+        run: npx tsc --noEmit
+        working-directory: packages/model-harness
 
       - name: Typecheck — games/capture-the-lobster
         run: npx tsc --noEmit
@@ -139,12 +150,22 @@ jobs:
       # workspace added here without a test script is a deliberate placeholder
       # (e.g. packages/games/oathbreaker has no tests yet), and contracts is
       # not silently skipped because it isn't in the list at all.
+      #
+      # Repository guard focused tests gate policy regressions independently
+      # of the full-tree `guard:repo` invocation in the lint job. The full-tree
+      # run scans the live working tree; this step runs the deterministic
+      # Vitest suite against scripts/__tests__/repository-guard.test.ts so any
+      # policy drift in the guard logic itself fails CI even when the tree is
+      # clean.
+      - name: Repository guard tests
+        run: npm run test:repo-guard
       - name: Run workspace tests
         run: |
           npm test --if-present \
                    -w packages/engine \
                    -w packages/workers-server \
                    -w packages/cli \
+                   -w packages/model-harness \
                    -w packages/games/capture-the-lobster \
                    -w packages/games/oathbreaker \
                    -w packages/games/tragedy-of-the-commons \
