@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Unified Model Harness — game-agnostic agent runner driving Coordination Games via coga serve --stdio, across Claude (local creds) and OpenRouter backends, with analyzable transcripts.",
+  "description": "Unified Model Harness \u2014 game-agnostic agent runner driving Coordination Games via coga serve --stdio, across Claude (local creds) and OpenRouter backends, with analyzable transcripts.",
   "bin": {
     "coga-harness": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "harness": "tsx src/index.ts"
+    "harness": "tsx src/index.ts",
+    "gui": "tsx src/gui/main.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
