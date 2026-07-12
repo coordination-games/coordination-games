@@ -1,5 +1,6 @@
 import { getGame, LadderPolicyError } from '@coordination-games/engine';
 import '@coordination-games/game-ctl';
+import '@coordination-games/game-genius';
 import '@coordination-games/game-oathbreaker';
 import '@coordination-games/game-tragedy-of-the-commons';
 import {

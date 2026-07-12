@@ -71,6 +71,7 @@ import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-pub
 
 // Side-effect imports: each calls registerGame() on module load
 import '@coordination-games/game-ctl';
+import '@coordination-games/game-genius';
 import '@coordination-games/game-oathbreaker';
 import '@coordination-games/game-tragedy-of-the-commons';
 import {

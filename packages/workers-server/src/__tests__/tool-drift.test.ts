@@ -35,6 +35,11 @@ import {
   CTL_SYSTEM_ACTION_TYPES,
 } from '@coordination-games/game-ctl';
 import {
+  GENIUS_GAME_ID,
+  GENIUS_SYSTEM_ACTION_TYPES,
+  GeniusPlugin,
+} from '@coordination-games/game-genius';
+import {
   OATH_GAME_ID,
   OATHBREAKER_SYSTEM_ACTION_TYPES,
   OathbreakerPlugin,
@@ -66,12 +71,18 @@ const ajv = new AjvCtor({ allErrors: true, strict: false });
 /** Opaque CoordinationGame — the drift harness walks plugin internals by name. */
 type AnyGame = CoordinationGame<unknown, unknown, unknown, unknown>;
 
-const GAMES: AnyGame[] = [CaptureTheLobsterPlugin, OathbreakerPlugin, TragedyOfTheCommonsV2Plugin];
+const GAMES: AnyGame[] = [
+  CaptureTheLobsterPlugin,
+  GeniusPlugin,
+  OathbreakerPlugin,
+  TragedyOfTheCommonsV2Plugin,
+];
 
 const PLUGINS: ToolPlugin[] = [BasicChatPlugin];
 
 const SYSTEM_ACTIONS: Record<string, readonly string[]> = {
   [CTL_GAME_ID]: CTL_SYSTEM_ACTION_TYPES,
+  [GENIUS_GAME_ID]: GENIUS_SYSTEM_ACTION_TYPES,
   [OATH_GAME_ID]: OATHBREAKER_SYSTEM_ACTION_TYPES,
   [TRAGEDY_GAME_ID]: TRAGEDY_SYSTEM_ACTION_TYPES,
 };
@@ -175,6 +186,21 @@ function buildOathWaitingState(): unknown {
   );
   if (!setup) throw new Error('drift fixture: OathbreakerPlugin.createConfig is missing');
   return OathbreakerPlugin.createInitialState(setup.config);
+}
+
+function buildGeniusPlayingState(): { state: unknown; playerId: string } {
+  const setup = GeniusPlugin.createConfig?.(
+    [
+      { id: 'gp1', handle: 'alice' },
+      { id: 'gp2', handle: 'bob' },
+    ],
+    'drift-test-seed',
+  );
+  if (!setup) throw new Error('drift fixture: GeniusPlugin.createConfig is missing');
+  const state = GeniusPlugin.createInitialState(setup.config);
+  const playerId = state.currentPlayerId;
+  if (playerId === null) throw new Error('drift fixture: Genius state has no current player');
+  return { state, playerId };
 }
 
 const TRAGEDY_PLAYERS: { id: string; handle: string }[] = [
@@ -423,6 +449,15 @@ const DRIFT_FIXTURES: Record<string, Fixture> = {
     },
   },
 
+  'genius.game:press_color': {
+    kind: 'game',
+    fixture: {
+      validSample: { color: 'red' },
+      buildState: () => buildGeniusPlayingState(),
+      game: GeniusPlugin,
+    },
+  },
+
   // -----------------------------------------------------------------
   // Tragedy of the Commons game tools
   // -----------------------------------------------------------------
@@ -587,10 +622,10 @@ describe('Tool drift — fixture coverage', () => {
     expect(dead, `Dead DRIFT_FIXTURES entries (no matching tool): ${dead.join(', ')}`).toEqual([]);
   });
 
-  it('discovered surface matches the expected 16-tool count', () => {
+  it('discovered surface matches the expected 17-tool count', () => {
     // If this breaks, either a tool was added (update the constant + fixtures)
     // or the existing surface shrank. Either change the constant intentionally.
-    expect(DISCOVERED).toHaveLength(16);
+    expect(DISCOVERED).toHaveLength(17);
   });
 });
 

@@ -1,6 +1,7 @@
 import type { LadderPlacement } from '@coordination-games/engine';
 import { getGame } from '@coordination-games/engine';
 import { CaptureTheLobsterPlugin, type CtlOutcome } from '@coordination-games/game-ctl';
+import { GENIUS_GAME_ID, type GeniusOutcome, GeniusPlugin } from '@coordination-games/game-genius';
 import { OathbreakerPlugin, type OathOutcome } from '@coordination-games/game-oathbreaker';
 import {
   TRAGEDY_GAME_ID,
@@ -141,5 +142,29 @@ describe('registered game ladder placement adapters', () => {
     // Then
     expect(plugin).toBe(TragedyOfTheCommonsV2Plugin);
     expect(adapter).toBeTypeOf('function');
+  });
+
+  it('Given a Genius outcome with tied leaders, when placements are derived, then ties and registry identity are preserved', () => {
+    // Given
+    const outcome: GeniusOutcome = {
+      winnerIds: ['alpha', 'beta'],
+      roundsPlayed: 4,
+      rankings: [
+        { playerId: 'alpha', score: 4, active: true, eliminatedRound: null },
+        { playerId: 'beta', score: 4, active: true, eliminatedRound: null },
+        { playerId: 'gamma', score: 1, active: false, eliminatedRound: 2 },
+      ],
+    };
+
+    // When
+    const result = placements(GeniusPlugin, outcome, ['alpha', 'beta', 'gamma']);
+
+    // Then
+    expect(result).toEqual([
+      { playerId: 'alpha', rank: 1 },
+      { playerId: 'beta', rank: 1 },
+      { playerId: 'gamma', rank: 3 },
+    ]);
+    expect(getGame(GENIUS_GAME_ID)).toBe(GeniusPlugin);
   });
 });

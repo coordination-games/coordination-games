@@ -4,7 +4,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "build:deps": "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat -w packages/plugins/reasoning -w packages/plugins/trust-projector-tragedy && npm run build -w packages/games/capture-the-lobster -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons",
+    "build:deps": "cd ../.. && npm run build -w packages/engine && npm run build -w packages/plugins/basic-chat -w packages/plugins/reasoning -w packages/plugins/trust-projector-tragedy && npm run build -w packages/games/capture-the-lobster -w packages/games/genius -w packages/games/oathbreaker -w packages/games/tragedy-of-the-commons",
     "dev": "npm run build:deps && wrangler dev",
     "deploy": "npm run build:deps && wrangler deploy",
     "test": "vitest run",
@@ -14,6 +14,7 @@
     "@cloudflare/workers-types": "^4.20250407.0",
     "@coordination-games/engine": "*",
     "@coordination-games/game-ctl": "*",
+    "@coordination-games/game-genius": "*",
     "@coordination-games/game-oathbreaker": "*",
     "@coordination-games/game-tragedy-of-the-commons": "*",
     "@coordination-games/plugin-chat": "*",
