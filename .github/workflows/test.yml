@@ -55,6 +55,7 @@ jobs:
           npm run build -w packages/plugins/reasoning
           npm run build -w packages/plugins/trust-projector-tragedy
           npm run build -w packages/games/capture-the-lobster
+          npm run build -w packages/games/genius
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/games/tragedy-of-the-commons
 
@@ -98,6 +99,10 @@ jobs:
         run: npx tsc --noEmit
         working-directory: packages/games/tragedy-of-the-commons
 
+      - name: Typecheck — games/genius
+        run: npx tsc --noEmit
+        working-directory: packages/games/genius
+
       - name: Typecheck — plugins/basic-chat
         run: npx tsc --noEmit
         working-directory: packages/plugins/basic-chat
@@ -139,6 +144,7 @@ jobs:
           npm run build -w packages/plugins/reasoning
           npm run build -w packages/plugins/trust-projector-tragedy
           npm run build -w packages/games/capture-the-lobster
+          npm run build -w packages/games/genius
           npm run build -w packages/games/oathbreaker
           npm run build -w packages/games/tragedy-of-the-commons
 
@@ -167,6 +173,7 @@ jobs:
                    -w packages/cli \
                    -w packages/model-harness \
                    -w packages/games/capture-the-lobster \
+                   -w packages/games/genius \
                    -w packages/games/oathbreaker \
                    -w packages/games/tragedy-of-the-commons \
                    -w packages/plugins/basic-chat \
