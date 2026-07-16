@@ -1,37 +1,52 @@
-# Research program — from console to proof
+# The research program — benchmarking agentic coordination
 
-What the Campaign Console is *for*. The pilot's deliverable is a defensible claim about agent cooperation, backed by auditable data ("proof, not trust" — the ask from comms/partnership side). The console is the instrument; this is the experiment ladder it runs.
+*Rewritten 2026-07-16 (v2). Supersedes the v1 experiment ladder; v1's rungs are absorbed below.*
 
-## The ladder — each rung is a publishable claim
+## The reframe: we don't benchmark models. We benchmark configurations.
 
-**1. Model comparison — "which models cooperate?"** *(first study running 2026-07-03)*
-Mixed tables, personas balanced across models, N repeats. Metrics per model: judge trustworthiness, betrayals, pledges kept, consequential turns, wins, commons survival. Haiku vs Sonnet-5 first (subscription-only); an OpenRouter key adds GPT/Gemini/DeepSeek/MiniMax rows → the public **Cooperation Benchmark** leaderboard. This is the nerd-snipe: model rankings get attention, and ours ranks something nobody else measures.
+Every benchmark that matters today — MMLU, SWE-bench, ARC — answers one question: *how capable is this model?* Nobody credibly measures the question that decides whether the agentic economy works: **how well does an agentic system cooperate, and what makes it cooperate better?**
 
-**2. Social composition — "does a mediator save the commons?"**
-Same game, vary the persona mix (4 opportunists / 3+1 / 2+2 / 4 mediators) × repeats. Output: a dose-response curve of cooperative presence vs commons survival. The most legible chart we can make — one picture that explains the whole project to a stranger.
+That second question is not about models. An "agent" in the real world is a *configuration*:
 
-**3. Trust-infrastructure ablation — THE thesis experiment.**
-`disablePlugins` exists for exactly this (harness PR #51). Same seats, trust projector on vs off: do visible reputation signals change betrayal rates and outcomes? The project's core claim — *cooperation infrastructure measurably changes agent behavior* — gets its first controlled evidence here. If the effect is real, this is the headline result of the pilot report.
+| Axis | What varies | Examples here today |
+|---|---|---|
+| **Model** | the brain | haiku, sonnet-5 (any Claude; OpenRouter later) |
+| **Disposition** | the instructions | persona bundles (mediator, opportunist, custom) |
+| **Capabilities** | the tools it's given | chat (ablatable NOW via `disablePlugins`), trust visibility (trust-projector), memory (session rotation scaffolding) |
+| **Infrastructure** | the world it acts in | reputation persistence, attestations (ATProto), identity (ERC-8004), incentive structure (game design) |
 
-**4. Track record across games — where the decentralized stack plugs in.**
-Persistent identity (ERC-8004) + attestations (ATProto lexicons) let agents carry reputation between games. Experiment: iterated play with persistent identities vs anonymous one-shots. This is where the infra tracks (ATProto implementation, EVM↔DID handshake) stop being parallel workstreams and become the *treatment variable* of the research.
+The platform's unique claim: **it can hold three axes fixed and vary the fourth, with judged, evidence-linked outcomes.** A model benchmark tells you sonnet > haiku at reasoning. Only this tells you *"giving agents a communication channel is worth more commons-health than upgrading their model"* — the kind of finding that changes what agent builders ship. That is the product: **the coordination value of a capability.**
 
-## Metrics discipline
+## Findings so far (all n≤5 — directional, honestly labeled)
 
-- **Cooperation Index** (to be formalized after ~20 runs of data): composite of trustworthiness (judge), betrayal rate (inverse), pledge-keeping, coordination events, commons sustainability (game outcome). Publish components alongside the composite — no black-box scores.
-- Report **social welfare** (did the commons survive? total settlement value) alongside winners. Tragedy's whole point is that the winner-metric and the welfare-metric diverge.
-- **Every claim links to evidence.** The judge's `relayRefs` point at actual messages; the console renders them inline. "Proof" = anyone can click from a chart to the betrayal itself. That auditability *is* the product differentiation.
-- `consequentialTurns` for cross-backend activity, never `modelCalls`.
+1. **Claude agents carry a strong cooperative prior.** Zero betrayals, broken pledges, or deceptions across every game run to date — including tables of four win-focused opportunists with no mediator (commons at 92–97%). Persona pressure alone does not break cooperation.
+2. **Ceiling effect → instrument feedback.** Because the floor is ~93% commons health, 3-round Tragedy cannot discriminate between conditions. The instrument needs sharper dilemmas (scarcer commons, longer horizons, steeper payoff asymmetries) before *positive* infrastructure effects are measurable. This is a finding about benchmark design, and it feeds the game-design track.
+3. **Models have coordination temperaments.** Sonnet-5 initiates (architected the cooperation pact in 3/3 mixed games, judge trust 5/5, ~4× the talk-turns); haiku executes (~1.6× the consequential actions). Behavioral signatures, not capability scores.
+4. **Latency is coordination overhead, not thinking.** ~120 output tokens per bot per game; time goes to turn-taking, context-hauling (~90–100K/call by endgame via tool payloads *within* turns), and wake churn. (Also disqualified turn-count-triggered session rotation; v2 needs a context-size trigger.)
 
-## Pipeline of legibility (build order)
+## The ladder, v2 — capability ablations are now the spine
 
-1. **Now:** console runs studies locally, team views over tailnet. ✅
-2. **Research artifact export:** a console view that renders selected campaigns into a self-contained HTML report (aggregate table + charts + judge quotes with evidence). Paste onto games.coop `/research`. Directly feeds the pitch doc / one-pager asks.
-3. **Central ingest:** tiny worker endpoint (D1/R2) receiving run dirs on opt-out upload from any harness user; public leaderboard reads it. "Anyone who runs a campaign contributes data" — the distributed research engine.
-4. **ATProto publication:** manifests/attestations published to agent repos — the same results, decentralized and independently verifiable. Season 1 ("bring your own agent") builds on this.
+Each rung holds everything fixed except one axis. Statuses: ✅ done · 🟡 running · ⬜ next.
 
-## Practical notes
+1. ✅ **Model axis** — haiku vs sonnet-5, personas balanced (temperaments finding).
+2. ✅ **Disposition axis** — mediator dose 0→4 (ceiling-effect finding).
+3. 🟡 **Capability axis: communication** — chat vs no-chat (`disablePlugins: ['basic-chat']`), the classic cheap-talk experiment with AI agents. If communication moves commons-health for AI agents the way it famously does for humans (Ostrom), that's the first *tool-value* measurement and a highly tellable result either way.
+4. ⬜ **Capability axis: trust visibility** — trust-projector on vs off. THE thesis experiment; blocked on rung 5 giving the instrument dynamic range.
+5. ⬜ **Instrument v2** — a Tragedy configuration that can actually collapse: scarcer commons, more rounds, steeper extraction payoffs. Success criterion: the no-chat/all-opportunist floor drops well below the with-chat ceiling.
+6. ⬜ **Infrastructure axis** — reputation persistence across games (ERC-8004 identity + ATProto attestations): iterated play vs anonymous one-shots. Where the decentralized stack becomes the treatment variable.
+7. ⬜ **Harness axis** — the same model in different harness designs (context policies, memory strategies, wake policies). "Which agent architecture cooperates best" — nobody measures this anywhere.
 
-- Claude seats run on a Claude subscription: the machine's `~/.claude` login or a saved `claude setup-token` (Settings). No API billing. OpenRouter seats need a key.
-- A 4-seat, 2-3 round Tragedy run ≈ 15-20 min wall incl. judge; sequential. Overnight sweeps are the way to get n≥10 per condition — spec `repeats` handles it.
-- Judge = haiku for iteration speed; rerun `analyze` with sonnet-5 on runs that make it into a report.
+## Metrics discipline (unchanged, restated)
+
+Primary: **commons health / social welfare** (game-native). Secondary: judge incidents (betrayals/pledges/deceptions), coordination pacts, trustworthiness (1–5), `consequentialTurns` (never `modelCalls` across backends). Every claim links to relay evidence. Composite "Cooperation Index" only after the instrument has dynamic range — publishing a composite over ceiling-effect data would be noise laundering.
+
+## The storytelling layer
+
+The research is only as useful as it is legible. Three artifacts, one pipeline:
+1. **Findings page per campaign** (✅ shipped) — verdict, chart, HTML export.
+2. **The story site** (⬜ building) — one page that tells the whole arc: why coordination is the bottleneck, what the instrument is, what it has found (real data, honest n), what it becomes. Serves from the console; seeds games.coop/research; doubles as the one-pager Sophia/funders asked for.
+3. **Season announcements** — when the instrument has dynamic range and the capability rungs have real results, the public leaderboard + bring-your-own-agent season (the participatory phase from the original Gitcoin plan).
+
+## Positioning sentence
+
+> **Coordination Games is a benchmark for agentic systems, not models: it measures how much cooperation a capability buys — a communication channel, a trust signal, a persistent reputation — with judged, evidence-linked games as the instrument.**
