@@ -8,7 +8,11 @@
   "scripts": {
     "build": "tsc --skipLibCheck",
     "test": "vitest run",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json"
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "sample:binding": "tsx src/sample.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.16.0"
   },
   "devDependencies": {
     "vitest": "^2.0.0"

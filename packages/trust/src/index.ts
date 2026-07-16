@@ -101,3 +101,24 @@ export interface TrustProjectionResult {
   readonly outcomes: PromiseOutcomeCounts;
   readonly reliability: ReliabilityRepresentation;
 }
+
+export {
+  createMemoryNonceConsumer,
+  createWalletBindingRecord,
+  verifyWalletBindingRecord,
+} from './wallet-binding.js';
+export { buildWalletBindingMessage } from './wallet-binding-message.js';
+export { parseWalletBindingRecord } from './wallet-binding-parse.js';
+export type {
+  NonceConsumer,
+  WalletBindingCreationResult,
+  WalletBindingExpectation,
+  WalletBindingMessageResult,
+  WalletBindingRejected,
+  WalletBindingRejectionReason,
+  WalletBindingSigner,
+  WalletBindingSigningRequest,
+  WalletBindingStatement,
+  WalletBindingVerificationResult,
+} from './wallet-binding-types.js';
+export { WALLET_BINDING_PURPOSE } from './wallet-binding-types.js';

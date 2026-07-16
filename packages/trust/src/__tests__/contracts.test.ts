@@ -6,12 +6,26 @@ import type {
   TrustProjectionResult,
   WalletBindingRecord,
 } from '../index.js';
-import { TRUST_EVENT_SCHEMA_VERSION, TRUST_INTERFACE_VERSION } from '../index.js';
+import {
+  TRUST_ALGORITHM_VERSION,
+  TRUST_EVENT_SCHEMA_VERSION,
+  TRUST_INTERFACE_VERSION,
+  TRUST_PROJECTION_VERSION,
+  TRUST_SCHEMA_VERSION,
+  WALLET_BINDING_RECORD_VERSION,
+} from '../index.js';
 
 describe('trust interface contract', () => {
   it('exports stable runtime interface versions', () => {
     expect(TRUST_INTERFACE_VERSION).toBe('trust-interface/v1');
     expect(TRUST_EVENT_SCHEMA_VERSION).toBe('promise-outcome/v1');
+  });
+
+  it('preserves the scaffold binding exports before verification behavior is added', () => {
+    expect(WALLET_BINDING_RECORD_VERSION).toBe('wallet-binding/v1');
+    expect(TRUST_SCHEMA_VERSION).toBe('trust-schema/v1');
+    expect(TRUST_ALGORITHM_VERSION).toBe('reliability/v1');
+    expect(TRUST_PROJECTION_VERSION).toBe('trust-projection/v1');
   });
 
   it('accepts the PLC binding and deterministic outcome contracts', () => {
