@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePrefersReducedMotion } from '../lib/board-motion';
+import {
+  damageTier,
+  derivePollutionFlows,
+  drawDamageHatch,
+  drawPollutionFlow,
+} from '../lib/board-vfx';
 import { addAlpha, lightenHex, RESOURCE_PALETTE, TERRAIN } from '../lib/colors';
 import { drawHexPath, hexToPixel } from '../lib/hex-math';
 import {
@@ -10,7 +17,9 @@ import {
   setTragedyAssetRedrawCallback,
 } from '../lib/terrain-images';
 import { clearPatternCache, getCachedPattern } from '../lib/terrain-textures';
+import { drawTerrainMotif } from '../lib/tile-motifs';
 import { useGameStore } from '../store';
+import { BoardAccessibilityLayer } from './BoardAccessibilityLayer';
 
 interface BoardLayout {
   centerX: number;
@@ -343,6 +352,7 @@ export function GameBoard() {
   const shellRef = useRef<HTMLButtonElement | null>(null);
   const drawRef = useRef<(() => void) | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
 
   const hexGrid = useGameStore((state) => state.gameState.hexGrid);
   const agents = useGameStore((state) => state.gameState.agents);
@@ -437,6 +447,7 @@ export function GameBoard() {
     }
 
     const now = performance.now();
+    const motionNow = reducedMotion ? 0 : now;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
 
@@ -565,14 +576,18 @@ export function GameBoard() {
         ctx.restore();
       }
 
+      drawTerrainMotif(ctx, hex.terrain, position.x, position.y, inner);
+
       const ecosystemHealth = Math.max(0, Math.min(1, hex.ecosystemHealth ?? 1));
-      if (ecosystemHealth < 0.92 || hex.ecosystemStatus === 'collapsed') {
+      const tier = damageTier(hex);
+      if (tier !== 'healthy') {
         ctx.save();
         drawHexPath(ctx, position.x, position.y, inner);
         ctx.clip();
         ctx.globalCompositeOperation = 'source-over';
         ctx.fillStyle = addAlpha('#2f2b24', Math.min(0.22, (1 - ecosystemHealth) * 0.34));
         ctx.fill();
+        drawDamageHatch(ctx, position.x, position.y, inner, tier);
         ctx.restore();
       }
 
@@ -631,23 +646,24 @@ export function GameBoard() {
         ctx.restore();
       }
 
-      const vfxFrame = Math.floor(now / 360 + hex.q * 2 + hex.r * 3);
+      const damaged = tier === 'damaged' || tier === 'collapsed';
       const vfxKind =
-        hex.terrain === 'oil-field' && hex.ecosystemStatus === 'strained'
+        hex.terrain === 'oil-field' && damaged
           ? 'oilSpill'
-          : hex.terrain === 'rivers' && hex.ecosystemStatus === 'strained'
+          : (hex.terrain === 'rivers' || hex.terrain === 'wetland') && damaged
             ? 'downstreamPollution'
-            : hex.terrain === 'wetland' && hex.ecosystemStatus === 'strained'
-              ? 'wetlandAbsorption'
-              : hex.ecosystemStatus === 'strained'
-                ? 'healthDrain'
+            : tier === 'collapsed'
+              ? 'collapse'
+              : tier === 'damaged'
+                ? 'redDamage'
                 : null;
+      const vfxFrame = reducedMotion ? 5 : Math.floor(motionNow / 360 + hex.q * 2 + hex.r * 3);
       const vfxImage = vfxKind ? getVfxFrame(vfxKind, vfxFrame) : null;
       if (vfxImage) {
         ctx.save();
         drawHexPath(ctx, position.x, position.y, inner);
         ctx.clip();
-        ctx.globalAlpha = 0.12;
+        ctx.globalAlpha = tier === 'collapsed' ? 0.32 : 0.22;
         drawCoverImage(
           ctx,
           vfxImage,
@@ -713,6 +729,11 @@ export function GameBoard() {
       ctx.restore();
     }
 
+    const pollutionPhase = reducedMotion ? 0 : now / 12;
+    derivePollutionFlows(sortedHexes).forEach((flow) => {
+      drawPollutionFlow(ctx, flow, centerX, centerY, size, pollutionPhase);
+    });
+
     roadSegments.forEach((road, roadIndex) => {
       const from = intersectionPixel(road.from.hexes, centerX, centerY, size);
       const to = intersectionPixel(road.to.hexes, centerX, centerY, size);
@@ -725,7 +746,7 @@ export function GameBoard() {
       if (!point) return;
       drawSettlementMarker(ctx, marker, point.x, point.y, size, markerIndex % 2);
     });
-  }, [hoveredKey, intersectionMarkers, roadSegments, selectedHex, sortedHexes]);
+  }, [hoveredKey, intersectionMarkers, reducedMotion, roadSegments, selectedHex, sortedHexes]);
 
   useEffect(() => {
     const shell = shellRef.current;
@@ -762,6 +783,11 @@ export function GameBoard() {
   }, [drawBoard]);
 
   useEffect(() => {
+    if (reducedMotion) {
+      const draw = drawRef.current;
+      if (draw) draw();
+      return;
+    }
     let frame = 0;
     const animate = () => {
       const draw = drawRef.current;
@@ -772,7 +798,7 @@ export function GameBoard() {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [reducedMotion]);
 
   const updateHover = (clientX: number, clientY: number) => {
     const shell = shellRef.current;
@@ -826,6 +852,7 @@ export function GameBoard() {
         type="button"
         ref={shellRef}
         className="flex-1 min-h-0 block border-0 bg-transparent p-0 text-left"
+        aria-label="Living commons board. A tile-by-tile text description follows below."
         onMouseMove={(event) => updateHover(event.clientX, event.clientY)}
         onMouseLeave={() => {
           setHoveredKey(null);
@@ -959,6 +986,8 @@ export function GameBoard() {
           </span>
         ))}
       </div>
+
+      <BoardAccessibilityLayer />
     </div>
   );
 }
