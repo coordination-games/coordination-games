@@ -1,30 +1,24 @@
-import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { canonicalizeJson } from '@coordination-games/engine';
-import {
-  parseTournamentDemoPolicy,
-  runLocalTournament,
-} from '@coordination-games/game-tragedy-of-the-commons';
+import { runLocalTournament } from '@coordination-games/game-tragedy-of-the-commons';
 import {
   deriveTragedyPromiseOutcomes,
   projectTragedyPromiseTrust,
+  type VerifiedTragedyPromiseEvidenceReference,
+  verifyTragedyPromiseEvidence,
 } from '@coordination-games/plugin-trust-projector-tragedy';
 import {
   createInMemoryEasGateway,
   createInMemoryPromiseOutcomeAnchorStore,
   createPromiseOutcomeAnchor,
 } from '@coordination-games/trust';
-
-const DEMO_DIDS = {
-  'mint-mediator': 'did:plc:abcdefghijklmnopqrstuvwx',
-  'ash-builder': 'did:plc:zyxwvutsrqponmlkjihgfedc',
-  'hot-opportunist': 'did:plc:bcdefghijklmnopqrstuvwxy',
-} as const;
-const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567' as const;
-const SETTLEMENT_DID = 'did:plc:abcdefghijklmnopqrstuvwx' as const;
-const ANCHORED_AT = '2026-07-16T12:00:00.000Z' as const;
+import { buildTragedyPromiseEvidence } from './lib/tragedy-trust-evidence.js';
+import {
+  createTragedyTrustDemoFixture,
+  TRAGEDY_TRUST_DEMO_ANCHORED_AT,
+  TRAGEDY_TRUST_DEMO_DIDS,
+} from './lib/tragedy-trust-fixture.js';
 
 export class TragedyTrustDemoError extends Error {
   readonly name = 'TragedyTrustDemoError';
@@ -40,188 +34,45 @@ function outputPath(args: readonly string[]): string | null {
   throw new TragedyTrustDemoError('Usage: npm run demo:trust -- [--output <json-file>]');
 }
 
-function base32(bytes: Uint8Array): string {
-  let bits = 0;
-  let value = 0;
-  let result = '';
-  for (const byte of bytes) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      result += BASE32[(value >>> (bits - 5)) & 31] ?? '';
-      bits -= 5;
+function verifyEvidenceRecords(
+  records: readonly ReturnType<typeof buildTragedyPromiseEvidence>[],
+): readonly VerifiedTragedyPromiseEvidenceReference[] {
+  return records.map((record) => {
+    const verification = verifyTragedyPromiseEvidence(record.artifact);
+    if (verification.kind !== 'verified') {
+      throw new TragedyTrustDemoError(`evidence rejected: ${verification.reason}`);
     }
-  }
-  if (bits > 0) result += BASE32[(value << (5 - bits)) & 31] ?? '';
-  return result;
-}
-
-function cidForCanonicalArtifact(artifact: unknown): string {
-  const digest = createHash('sha256').update(canonicalizeJson(artifact)).digest();
-  return `b${base32(Uint8Array.from([1, 0x55, 0x12, 32, ...digest]))}`;
-}
-
-function policies() {
-  return [
-    parseTournamentDemoPolicy(
-      {
-        botName: 'mint-mediator',
-        model: 'MiniMax-M2.5',
-        persona: 'A consensus-first commons steward.',
-        setup: { startingCamp: 'northWest' },
-        roundRule: { action: { type: 'pass' } },
-      },
-      'trust-demo-mint-mediator.json',
-    ),
-    parseTournamentDemoPolicy(
-      {
-        botName: 'ash-builder',
-        model: 'MiniMax-M2.5',
-        persona: 'A disciplined public-works builder.',
-        setup: { startingCamp: 'north' },
-        roundRule: { action: { type: 'pass' } },
-      },
-      'trust-demo-ash-builder.json',
-    ),
-    parseTournamentDemoPolicy(
-      {
-        botName: 'hot-opportunist',
-        model: 'MiniMax-M2.5',
-        persona: 'A short-horizon resource opportunist.',
-        setup: { startingCamp: 'south' },
-        roundRule: { action: { type: 'pass' } },
-      },
-      'trust-demo-hot-opportunist.json',
-    ),
-  ] as const;
-}
-
-function firstPublicAction(tournament: ReturnType<typeof runLocalTournament>, gameId: string) {
-  const event = tournament.transcript.find(
-    (candidate) =>
-      candidate.kind === 'bot_decision' &&
-      candidate.gameId === gameId &&
-      candidate.playerId === 'mint-mediator' &&
-      typeof candidate.action === 'object' &&
-      candidate.action !== null &&
-      'type' in candidate.action &&
-      candidate.action.type === 'pass',
-  );
-  if (
-    event === undefined ||
-    typeof event.round !== 'number' ||
-    typeof event.action !== 'object' ||
-    event.action === null ||
-    !('type' in event.action) ||
-    typeof event.action.type !== 'string'
-  )
-    throw new TragedyTrustDemoError(`missing public action for ${gameId}`);
-  return {
-    version: 'tragedy-public-action/v1' as const,
-    gameId,
-    playerId: 'mint-mediator',
-    sequence: event.round,
-    actionType: event.action.type,
-  };
-}
-
-function settlementEvidence(
-  tournament: ReturnType<typeof runLocalTournament>,
-  gameId: string,
-  sequence: number,
-  proof: unknown,
-) {
-  const game = tournament.games.find((candidate) => candidate.gameId === gameId);
-  if (game === undefined) throw new TragedyTrustDemoError(`missing settled game ${gameId}`);
-  const artifact = {
-    settlementSequence: sequence,
-    proof,
-    game: {
-      gameId: game.gameId,
-      gameSeed: game.gameSeed,
-      actualRounds: game.actualRounds,
-      horizon: game.horizon,
-      entryCost: game.entryCost.toString(),
-      payouts: {
-        playerTotal: game.payouts.playerTotal.toString(),
-        treasuryDelta: game.payouts.treasuryDelta.toString(),
-        everyPlayerAboveEntryFloor: game.payouts.everyPlayerAboveEntryFloor,
-      },
-    },
-    transcript: tournament.transcript.filter(
-      (event) => event.gameId === gameId && ['outcome', 'settlement'].includes(String(event.kind)),
-    ),
-  };
-  return {
-    artifact,
-    uri: `at://${SETTLEMENT_DID}/app.coordination-games.tragedy-settlement/${gameId}-${sequence}`,
-    cid: cidForCanonicalArtifact(artifact),
-  };
+    return {
+      verified: verification.verified,
+      evidence: { uri: record.uri, cid: record.cid },
+    };
+  });
 }
 
 export async function buildTragedyTrustDemoArtifact() {
-  const tournament = runLocalTournament({
-    tournamentId: 'task-15-trust-demo',
-    seed: `0x${'17'.repeat(32)}`,
-    playerEntropy: `0x${'29'.repeat(32)}`,
-    policies: policies(),
+  const fixture = createTragedyTrustDemoFixture();
+  const tournament = runLocalTournament(fixture.tournamentInput);
+  const evidenceRecords = fixture.commitments.map((commitment) =>
+    buildTragedyPromiseEvidence(tournament, commitment),
+  );
+  const verifiedEvidence = verifyEvidenceRecords(evidenceRecords);
+  const derived = deriveTragedyPromiseOutcomes({
+    didByPlayerId: TRAGEDY_TRUST_DEMO_DIDS,
+    evidence: verifiedEvidence,
+    observedAt: TRAGEDY_TRUST_DEMO_ANCHORED_AT,
   });
-  const keptGame = tournament.games[0];
-  const brokenGame = tournament.games[1];
-  if (keptGame === undefined || brokenGame === undefined)
-    throw new TragedyTrustDemoError('fixture did not settle two games');
-  const keptPromise = {
-    version: 'tragedy-public-promise/v1' as const,
-    promiseId: 'pass-game-one',
-    promisorPlayerId: 'mint-mediator',
-    gameId: keptGame.gameId,
-    sequence: firstPublicAction(tournament, keptGame.gameId).sequence,
-    expectedActionType: 'pass',
-  };
-  const brokenPromise = {
-    version: 'tragedy-public-promise/v1' as const,
-    promiseId: 'road-game-two',
-    promisorPlayerId: 'mint-mediator',
-    gameId: brokenGame.gameId,
-    sequence: firstPublicAction(tournament, brokenGame.gameId).sequence,
-    expectedActionType: 'build_road',
-  };
-  const observations = [
-    firstPublicAction(tournament, keptGame.gameId),
-    firstPublicAction(tournament, brokenGame.gameId),
-  ];
-  const keptEvidence = settlementEvidence(tournament, keptGame.gameId, keptPromise.sequence, {
-    promise: keptPromise,
-    observation: observations[0],
-    derivationVersion: 'tragedy-action-match/v1',
-    derivedOutcome: 'kept',
-  });
-  const brokenEvidence = settlementEvidence(tournament, brokenGame.gameId, brokenPromise.sequence, {
-    promise: brokenPromise,
-    observation: observations[1],
-    derivationVersion: 'tragedy-action-match/v1',
-    derivedOutcome: 'broken',
-  });
-  const mapped = deriveTragedyPromiseOutcomes({
-    didByPlayerId: DEMO_DIDS,
-    promises: [keptPromise, brokenPromise],
-    observations,
-    evidenceByPromiseId: {
-      'pass-game-one': { uri: keptEvidence.uri, cid: keptEvidence.cid },
-      'road-game-two': { uri: brokenEvidence.uri, cid: brokenEvidence.cid },
-    },
-    observedAt: ANCHORED_AT,
-  });
-  if (mapped.kind === 'rejected')
-    throw new TragedyTrustDemoError(`event derivation rejected: ${mapped.reason}`);
-  const projections = [...new Set(mapped.events.map((event) => event.subjectDid))].map(
+  if (derived.kind === 'rejected') {
+    throw new TragedyTrustDemoError(`event derivation rejected: ${derived.reason}`);
+  }
+  const projections = [...new Set(derived.events.map((event) => event.subjectDid))].map(
     (subjectDid) => {
       const projected = projectTragedyPromiseTrust({
         subjectDid,
-        events: mapped.events.filter((event) => event.subjectDid === subjectDid),
+        events: derived.events.filter((event) => event.subjectDid === subjectDid),
       });
-      if (projected.kind === 'rejected')
+      if (projected.kind === 'rejected') {
         throw new TragedyTrustDemoError(`projection rejected: ${projected.reason}`);
+      }
       return projected;
     },
   );
@@ -233,29 +84,33 @@ export async function buildTragedyTrustDemoArtifact() {
   });
   const anchor = createPromiseOutcomeAnchor(gateway, createInMemoryPromiseOutcomeAnchorStore());
   const attestations = await Promise.all(
-    mapped.events.map(async (event) => {
-      const anchored = await anchor.anchor(event, ANCHORED_AT);
-      if (anchored.kind !== 'anchored')
+    derived.events.map(async (event) => {
+      const anchored = await anchor.anchor(event, TRAGEDY_TRUST_DEMO_ANCHORED_AT);
+      if (anchored.kind !== 'anchored') {
         throw new TragedyTrustDemoError(`anchor rejected: ${anchored.reason}`);
+      }
       const query = await anchor.query(anchored.record.attestationUid);
-      if (query.kind !== 'verified')
+      if (query.kind !== 'verified') {
         throw new TragedyTrustDemoError(`query rejected: ${query.kind}`);
+      }
       return { record: anchored.record, query };
     }),
   );
   return {
-    demoVersion: 'tragedy-portable-trust-demo/v1',
+    demoVersion: 'tragedy-portable-trust-demo/v2',
+    ordering: fixture.ordering,
     tournament: {
-      games: tournament.games.map((entry) => ({
-        gameId: entry.gameId,
-        actualRounds: entry.actualRounds,
+      games: tournament.games.map((game) => ({
+        gameId: game.gameId,
+        actualRounds: game.actualRounds,
       })),
     },
-    settlementEvidence: [keptEvidence, brokenEvidence],
-    events: mapped.events,
+    promiseEvidence: evidenceRecords,
+    verifiedEvidence: verifiedEvidence.map((entry) => entry.verified),
+    events: derived.events,
     projections,
     attestations,
-  };
+  } as const;
 }
 
 export function serializeTragedyTrustDemoArtifact(artifact: unknown): string {

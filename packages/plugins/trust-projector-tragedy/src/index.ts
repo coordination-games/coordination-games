@@ -108,10 +108,40 @@ export {
   type TragedySettledPromiseResolution,
 } from './portable-trust.js';
 export {
+  hashTragedyActionSource,
+  hashTragedyTranscriptProof,
+  TRAGEDY_ACTION_SOURCE_VERSION,
+  TRAGEDY_PROMISE_EVIDENCE_VERSION,
+  TRAGEDY_PROMISE_TRANSCRIPT_VERSION,
+  type TragedyActionResultSource,
+  type TragedyBotDecisionSource,
+  type TragedyPromiseEvidence,
+  type TragedyPromiseEvidenceVerification,
+  type TragedyPromiseTranscriptProof,
+  type TragedySettlementSource,
+  type VerifiedTragedyPromiseEvidence,
+  verifyTragedyPromiseEvidence,
+} from './promise-evidence.js';
+export {
   deriveTragedyPromiseOutcomes,
+  type TragedyDerivedPromiseOutcome,
+  type VerifiedTragedyPromiseEvidenceReference,
+} from './promise-outcome-events.js';
+export {
+  commitTragedyPublicPromises,
+  isTragedyPromiseActionType,
+  parseTragedyPublicActionObservation,
+  parseTragedyPublicPromise,
+  resolveTragedyPublicPromise,
+  TRAGEDY_PROMISE_ACTION_TYPES,
+  TRAGEDY_PROMISE_COMMITMENT_VERSION,
   TRAGEDY_PROMISE_DERIVATION_VERSION,
   TRAGEDY_PUBLIC_ACTION_VERSION,
   TRAGEDY_PUBLIC_PROMISE_VERSION,
+  type TragedyPromiseActionType,
+  type TragedyPromiseCommitment,
+  type TragedyPromiseCommitmentResult,
+  type TragedyPromiseResolution,
   type TragedyPublicActionObservation,
   type TragedyPublicPromise,
 } from './promise-resolution.js';
