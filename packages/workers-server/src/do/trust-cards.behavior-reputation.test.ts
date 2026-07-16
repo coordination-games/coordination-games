@@ -35,9 +35,9 @@ describe('behavior reputation publication artifacts', () => {
       snapshotIndex: 3,
       observedAt: '2026-07-16T12:00:02.000Z',
     });
-    expect(first).toBeDefined();
-    if (first === undefined) throw new Error('expected a first reveal input');
-    expect(first.revealArtifact.digest).not.toMatch(/^0x0+$/);
+    expect(first).toMatchObject({
+      revealArtifact: expect.objectContaining({ digest: expect.not.stringMatching(/^0x0+$/) }),
+    });
     expect(repeated).toBeUndefined();
     expect(later).toBeDefined();
   });
