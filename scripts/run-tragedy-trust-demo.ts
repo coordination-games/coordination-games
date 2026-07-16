@@ -8,7 +8,7 @@ import {
   runLocalTournament,
 } from '@coordination-games/game-tragedy-of-the-commons';
 import {
-  mapSettledTragedyPromiseOutcomes,
+  deriveTragedyPromiseOutcomes,
   projectTragedyPromiseTrust,
 } from '@coordination-games/plugin-trust-projector-tragedy';
 import {
@@ -96,15 +96,46 @@ function policies() {
   ] as const;
 }
 
+function firstPublicAction(tournament: ReturnType<typeof runLocalTournament>, gameId: string) {
+  const event = tournament.transcript.find(
+    (candidate) =>
+      candidate.kind === 'bot_decision' &&
+      candidate.gameId === gameId &&
+      candidate.playerId === 'mint-mediator' &&
+      typeof candidate.action === 'object' &&
+      candidate.action !== null &&
+      'type' in candidate.action &&
+      candidate.action.type === 'pass',
+  );
+  if (
+    event === undefined ||
+    typeof event.round !== 'number' ||
+    typeof event.action !== 'object' ||
+    event.action === null ||
+    !('type' in event.action) ||
+    typeof event.action.type !== 'string'
+  )
+    throw new TragedyTrustDemoError(`missing public action for ${gameId}`);
+  return {
+    version: 'tragedy-public-action/v1' as const,
+    gameId,
+    playerId: 'mint-mediator',
+    sequence: event.round,
+    actionType: event.action.type,
+  };
+}
+
 function settlementEvidence(
   tournament: ReturnType<typeof runLocalTournament>,
   gameId: string,
   sequence: number,
+  proof: unknown,
 ) {
   const game = tournament.games.find((candidate) => candidate.gameId === gameId);
   if (game === undefined) throw new TragedyTrustDemoError(`missing settled game ${gameId}`);
   const artifact = {
     settlementSequence: sequence,
+    proof,
     game: {
       gameId: game.gameId,
       gameSeed: game.gameSeed,
@@ -135,40 +166,54 @@ export async function buildTragedyTrustDemoArtifact() {
     playerEntropy: `0x${'29'.repeat(32)}`,
     policies: policies(),
   });
-  const game = tournament.games[0];
-  if (game === undefined) throw new TragedyTrustDemoError('fixture did not settle a game');
-  const keptEvidence = settlementEvidence(tournament, game.gameId, 1);
-  const brokenEvidence = settlementEvidence(tournament, game.gameId, 2);
-  const mapped = mapSettledTragedyPromiseOutcomes({
-    gameType: 'tragedy-of-the-commons',
+  const keptGame = tournament.games[0];
+  const brokenGame = tournament.games[1];
+  if (keptGame === undefined || brokenGame === undefined)
+    throw new TragedyTrustDemoError('fixture did not settle two games');
+  const keptPromise = {
+    version: 'tragedy-public-promise/v1' as const,
+    promiseId: 'pass-game-one',
+    promisorPlayerId: 'mint-mediator',
+    gameId: keptGame.gameId,
+    sequence: firstPublicAction(tournament, keptGame.gameId).sequence,
+    expectedActionType: 'pass',
+  };
+  const brokenPromise = {
+    version: 'tragedy-public-promise/v1' as const,
+    promiseId: 'road-game-two',
+    promisorPlayerId: 'mint-mediator',
+    gameId: brokenGame.gameId,
+    sequence: firstPublicAction(tournament, brokenGame.gameId).sequence,
+    expectedActionType: 'build_road',
+  };
+  const observations = [
+    firstPublicAction(tournament, keptGame.gameId),
+    firstPublicAction(tournament, brokenGame.gameId),
+  ];
+  const keptEvidence = settlementEvidence(tournament, keptGame.gameId, keptPromise.sequence, {
+    promise: keptPromise,
+    observation: observations[0],
+    derivationVersion: 'tragedy-action-match/v1',
+    derivedOutcome: 'kept',
+  });
+  const brokenEvidence = settlementEvidence(tournament, brokenGame.gameId, brokenPromise.sequence, {
+    promise: brokenPromise,
+    observation: observations[1],
+    derivationVersion: 'tragedy-action-match/v1',
+    derivedOutcome: 'broken',
+  });
+  const mapped = deriveTragedyPromiseOutcomes({
     didByPlayerId: DEMO_DIDS,
-    resolutions: [
-      {
-        resolutionVersion: 'tragedy-promise-resolution/v1',
-        visibility: 'public',
-        gameId: game.gameId,
-        sequence: 1,
-        actorPlayerId: 'mint-mediator',
-        subjectPlayerId: 'mint-mediator',
-        outcome: 'kept',
-        observedAt: ANCHORED_AT,
-        evidence: { uri: keptEvidence.uri, cid: keptEvidence.cid },
-      },
-      {
-        resolutionVersion: 'tragedy-promise-resolution/v1',
-        visibility: 'public',
-        gameId: game.gameId,
-        sequence: 2,
-        actorPlayerId: 'mint-mediator',
-        subjectPlayerId: 'mint-mediator',
-        outcome: 'broken',
-        observedAt: ANCHORED_AT,
-        evidence: { uri: brokenEvidence.uri, cid: brokenEvidence.cid },
-      },
-    ],
+    promises: [keptPromise, brokenPromise],
+    observations,
+    evidenceByPromiseId: {
+      'pass-game-one': { uri: keptEvidence.uri, cid: keptEvidence.cid },
+      'road-game-two': { uri: brokenEvidence.uri, cid: brokenEvidence.cid },
+    },
+    observedAt: ANCHORED_AT,
   });
   if (mapped.kind === 'rejected')
-    throw new TragedyTrustDemoError(`event mapping rejected: ${mapped.reason}`);
+    throw new TragedyTrustDemoError(`event derivation rejected: ${mapped.reason}`);
   const projections = [...new Set(mapped.events.map((event) => event.subjectDid))].map(
     (subjectDid) => {
       const projected = projectTragedyPromiseTrust({

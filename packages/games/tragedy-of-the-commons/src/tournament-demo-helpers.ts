@@ -37,6 +37,7 @@ function applyPolicyAction(
     policy: policy.botName,
     policySha256: policy.sha256,
     sourcePath: policy.sourcePath,
+    round: state.round,
     action,
   });
   if (!TragedyOfTheCommonsV2Plugin.validateAction(state, playerId, action)) {

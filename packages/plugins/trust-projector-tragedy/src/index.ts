@@ -107,6 +107,14 @@ export {
   type TragedyPromiseTrustProjection,
   type TragedySettledPromiseResolution,
 } from './portable-trust.js';
+export {
+  deriveTragedyPromiseOutcomes,
+  TRAGEDY_PROMISE_DERIVATION_VERSION,
+  TRAGEDY_PUBLIC_ACTION_VERSION,
+  TRAGEDY_PUBLIC_PROMISE_VERSION,
+  type TragedyPublicActionObservation,
+  type TragedyPublicPromise,
+} from './promise-resolution.js';
 export { isAttestation, projectTragedyTrust } from './reducer.js';
 export {
   ATTESTATION_RELAY_TYPE,
