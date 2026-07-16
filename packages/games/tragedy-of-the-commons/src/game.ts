@@ -7,6 +7,7 @@ import {
   type RelayEnvelope,
 } from '@coordination-games/engine';
 import { effectiveV2FinalRound } from './hidden-horizon.js';
+import { buildV2RoundReveal, cloneV2RoundReveal } from './simultaneous-reveal.js';
 import {
   type ExtractionLevel,
   type ResourceInventory,
@@ -1477,6 +1478,11 @@ function v2LastResolvedAction(playerId: string, action: TragedyV2Action): Traged
   return { playerId, action: action as unknown as TragedyAction };
 }
 
+function v2AllPlayersSubmitted(state: TragedyV2State): boolean {
+  const submitted = v2SubmittedActions(state);
+  return state.players.every((player) => submitted[player.id] !== null);
+}
+
 function v2TerrainResource(terrain: TragedyTerrain): ResourceType {
   if (terrain === 'forest') return 'timber';
   if (terrain === 'mountains') return 'ore';
@@ -1851,10 +1857,7 @@ export function createV2InitialState(config: TragedyV2Config): TragedyV2State {
     ecosystems,
     activeTrades: [],
     lastResolvedActions: [],
-    submittedActions: makeV2SubmittedActions(config.playerIds) as unknown as Record<
-      string,
-      TragedyAction | null
-    >,
+    submittedActions: makeV2SubmittedActions(config.playerIds),
     currentPlayerIndex: 0,
     winner: null,
     config,
@@ -1883,9 +1886,7 @@ function startV2Round(state: TragedyV2State): TragedyV2State {
     round: state.round + 1,
     phase: 'playing',
     activeTrades: [],
-    submittedActions: makeV2SubmittedActions(
-      state.players.map((player) => player.id),
-    ) as unknown as Record<string, TragedyAction | null>,
+    submittedActions: makeV2SubmittedActions(state.players.map((player) => player.id)),
     currentPlayerIndex: 0,
   };
   return applyV2Production(started);
@@ -1902,13 +1903,17 @@ export function validateV2Action(
   if (action.type === 'setup_timeout') return playerId === null && state.phase === 'waiting';
   if (action.type === 'round_timeout') return playerId === null && state.phase === 'playing';
   if (playerId === null) return false;
-  if (state.players[state.currentPlayerIndex]?.id !== playerId) return false;
   const player = state.players.find((item) => item.id === playerId);
   if (!player) return false;
   if (action.type === 'place_starting_camp') {
-    return state.phase === 'waiting' && validateV2StartingCamp(state, player, action);
+    return (
+      state.phase === 'waiting' &&
+      state.players[state.currentPlayerIndex]?.id === playerId &&
+      validateV2StartingCamp(state, player, action)
+    );
   }
   if (state.phase !== 'playing') return false;
+  if (v2SubmittedActions(state)[playerId] !== null) return false;
 
   if (action.type === 'build_road') return validateV2BuildRoad(state, player, action);
   if (action.type === 'build_structure') return validateV2BuildStructure(state, player, action);
@@ -2018,6 +2023,7 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
   const lastResolvedActions = submittedByPlayer.map((item) =>
     v2LastResolvedAction(item.playerId, item.action),
   );
+  const lastRoundReveal = buildV2RoundReveal(state.round, submittedByPlayer);
   const activeTrades = resolveV2Trades(players, submittedByPlayer);
   const pressureByTile = new Map<string, number>();
 
@@ -2143,6 +2149,7 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
     structures,
     activeTrades,
     lastResolvedActions,
+    lastRoundReveal,
     winner: rankings[0]?.id ?? null,
   };
 }
@@ -2180,14 +2187,14 @@ function advanceOrFinishV2(state: TragedyV2State): ActionResult<TragedyV2State, 
 }
 
 function advanceV2Turn(state: TragedyV2State): ActionResult<TragedyV2State, TragedyV2Action> {
-  const nextIndex = (state.currentPlayerIndex + 1) % state.players.length;
-  if (nextIndex === 0) return advanceOrFinishV2(resolveV2Round(state));
+  if (v2AllPlayersSubmitted(state)) return advanceOrFinishV2(resolveV2Round(state));
+  const nextIndex = state.players.findIndex(
+    (player) => v2SubmittedActions(state)[player.id] === null,
+  );
   const nextState: TragedyV2State = { ...state, currentPlayerIndex: nextIndex };
-  const nextPlayer = nextState.players[nextIndex];
   return {
     state: nextState,
     deadline: v2RoundTimeoutDeadline(state.config.turnTimerSeconds),
-    relayMessages: nextPlayer ? v2TurnRelays(nextState, nextPlayer) : [],
   };
 }
 
@@ -2248,26 +2255,26 @@ export function applyV2Action(
     );
   }
   if (action.type === 'round_timeout') {
-    const currentPlayer = state.players[state.currentPlayerIndex];
-    if (!currentPlayer) return { state };
     const nextState: TragedyV2State = {
       ...state,
-      submittedActions: {
-        ...v2SubmittedActions(state),
-        [currentPlayer.id]: { type: 'pass' },
-      } as unknown as Record<string, TragedyAction | null>,
+      submittedActions: Object.fromEntries(
+        state.players.map((player) => [
+          player.id,
+          v2SubmittedActions(state)[player.id] ?? { type: 'pass' },
+        ]),
+      ),
     };
     return withRelayMessages(advanceV2Turn(nextState), [
       systemMessageRelay({
-        body: `Round timer expired for ${currentPlayer.id}; the system recorded a pass.`,
+        body: 'Round timer expired; unresolved choices were recorded as passes.',
         round: state.round,
         scope: { kind: 'all' },
       }),
-      createV2ActionAttestationRelay({
-        state,
-        player: currentPlayer,
-        action: { type: 'round_timeout' },
-        note: 'Round timer expired; system recorded a pass for the current player.',
+      ...state.players.flatMap((player) => {
+        const submitted = v2SubmittedActions(nextState)[player.id];
+        return submitted
+          ? [createV2ActionAttestationRelay({ state, player, action: submitted })]
+          : [];
       }),
     ]);
   }
@@ -2279,10 +2286,23 @@ export function applyV2Action(
     submittedActions: {
       ...v2SubmittedActions(state),
       [playerId]: action,
-    } as unknown as Record<string, TragedyAction | null>,
+    },
   };
-  return withRelayMessages(advanceV2Turn(nextState), [
-    createV2ActionAttestationRelay({ state, player, action }),
+  const result = advanceV2Turn(nextState);
+  if (!v2AllPlayersSubmitted(nextState)) return result;
+  return withRelayMessages(result, [
+    ...state.players.flatMap((submittedPlayer) => {
+      const submittedAction = v2SubmittedActions(nextState)[submittedPlayer.id];
+      return submittedAction
+        ? [
+            createV2ActionAttestationRelay({
+              state,
+              player: submittedPlayer,
+              action: submittedAction,
+            }),
+          ]
+        : [];
+    }),
   ]);
 }
 
@@ -2318,6 +2338,9 @@ export function buildV2SpectatorView(state: TragedyV2State): TragedyV2SpectatorV
       playerId: resolved.playerId,
       action: { ...resolved.action },
     })),
+    ...(state.lastRoundReveal === undefined
+      ? {}
+      : { lastRoundReveal: cloneV2RoundReveal(state.lastRoundReveal) }),
     commonsHealthPercent: averageV2TileHealthPercent(state.tiles),
     ...(hiddenHorizon === undefined
       ? {}
@@ -2360,6 +2383,9 @@ export function buildV2PlayerView(state: TragedyV2State, playerId: string): unkn
       playerId: resolved.playerId,
       action: { ...resolved.action },
     })),
+    ...(state.lastRoundReveal === undefined
+      ? {}
+      : { lastRoundReveal: cloneV2RoundReveal(state.lastRoundReveal) }),
     submitted: v2SubmittedActions(state)[playerId] !== null,
     isYourTurn: state.players[state.currentPlayerIndex]?.id === playerId,
     currentPlayer: {

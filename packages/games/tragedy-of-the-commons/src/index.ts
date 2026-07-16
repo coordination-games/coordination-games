@@ -18,6 +18,7 @@ export {
   TragedyOfTheCommonsPlugin,
   TragedyOfTheCommonsV2Plugin,
 } from './plugin.js';
+export type { TragedyV2RevealedAction, TragedyV2RoundReveal } from './simultaneous-reveal.js';
 export { type LocalTournamentResult, runLocalTournament } from './tournament-demo.js';
 export {
   parseTournamentDemoPolicy,

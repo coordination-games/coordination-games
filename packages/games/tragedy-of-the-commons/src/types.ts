@@ -7,6 +7,7 @@
  */
 
 import type { HiddenHorizonPublicConfig } from '@coordination-games/engine';
+import type { TragedyV2RoundReveal } from './simultaneous-reveal.js';
 
 export type TragedyPhase = 'waiting' | 'playing' | 'finished';
 
@@ -343,7 +344,8 @@ export interface TragedyV2State {
   ecosystems: TragedyEcosystem[];
   activeTrades: TragedyTradeOffer[];
   lastResolvedActions: TragedyResolvedAction[];
-  submittedActions: Record<string, TragedyAction | null>;
+  lastRoundReveal?: TragedyV2RoundReveal;
+  submittedActions: Record<string, TragedyV2Action | null>;
   currentPlayerIndex: number;
   winner: string | null;
   config: TragedyV2Config;
@@ -379,6 +381,7 @@ export interface TragedyV2SpectatorView {
   players: TragedyV2SpectatorPlayer[];
   ecosystems: TragedyEcosystem[];
   lastResolvedActions: TragedyResolvedAction[];
+  lastRoundReveal?: TragedyV2RoundReveal;
   commonsHealthPercent: number;
   hiddenHorizon?: HiddenHorizonPublicConfig;
 }

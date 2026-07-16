@@ -503,7 +503,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
         : [];
     }
     if (state.phase !== 'playing') return [];
-    return ROUND_TOOLS_V2;
+    return playerId !== null && state.submittedActions[playerId] === null ? ROUND_TOOLS_V2 : [];
   },
 
   requiredPlugins: ['basic-chat'],
