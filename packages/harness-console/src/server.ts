@@ -37,6 +37,7 @@ import { consoleMeta, saveCustomPersona } from './meta.js';
 import { assertSafeId, HttpError, OUTPUT_DIR } from './paths.js';
 import { assertClaudeCli, runPreflight } from './preflight.js';
 import { deleteSecret, isSecretName, secretStatus, setSecret } from './secrets.js';
+import { buildStoryHtml } from './story.js';
 
 const PORT = Number.parseInt(process.env.CONSOLE_PORT ?? '4310', 10);
 const HOST = process.env.CONSOLE_HOST ?? '127.0.0.1';
@@ -277,6 +278,20 @@ async function route(req: IncomingMessage, res: ServerResponse, url: URL): Promi
   }
   if (pathname === '/api/server/stop' && method === 'POST') {
     return sendJson(res, 200, stopGameServer());
+  }
+
+  if (pathname === '/story' && method === 'GET') {
+    const html = await buildStoryHtml();
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return void res.end(html);
+  }
+  if (pathname === '/story.html' && method === 'GET') {
+    const html = await buildStoryHtml();
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-disposition': 'attachment; filename="coordination-games-story.html"',
+    });
+    return void res.end(html);
   }
 
   if (pathname.startsWith('/api/')) throw new HttpError(404, `no route: ${method} ${pathname}`);

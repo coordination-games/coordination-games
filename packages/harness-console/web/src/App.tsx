@@ -94,6 +94,13 @@ export function App() {
               <span style={{ opacity: 0.5 }}>{item.num}</span> {item.label}
             </NavLink>
           ))}
+          <a
+            href="/story"
+            className="px-3 py-2 rounded font-mono text-xs"
+            style={{ color: 'var(--ink-dim)' }}
+          >
+            <span style={{ opacity: 0.5 }}>04</span> story
+          </a>
         </nav>
       </header>
       <PreflightBanner />
