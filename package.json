@@ -18,6 +18,7 @@
     "harness:model": "tsx packages/model-harness/src/index.ts",
     "demo:tournament": "npm run build -w packages/engine -w packages/games/tragedy-of-the-commons && tsx scripts/run-tournament-demo.ts",
     "demo:genius": "npm run build -w packages/engine -w packages/games/genius && tsx scripts/run-genius-fixture.ts",
+    "demo:trust": "npm run build -w packages/engine -w packages/trust -w packages/plugins/trust-projector-tragedy -w packages/games/tragedy-of-the-commons && tsx scripts/run-tragedy-trust-demo.ts",
     "build:contracts": "npm run build --workspace=packages/contracts",
     "build:cli": "npm run build --workspace=packages/cli",
     "lint": "biome lint .",

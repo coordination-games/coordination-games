@@ -99,6 +99,14 @@ export const TrustProjectorTragedyPlugin: ToolPlugin = {
 
 registerPluginRelayTypes(TrustProjectorTragedyPlugin);
 
+export {
+  mapSettledTragedyPromiseOutcomes,
+  projectTragedyPromiseTrust,
+  type TragedyPromiseOutcomeInput,
+  type TragedyPromiseOutcomeMapping,
+  type TragedyPromiseTrustProjection,
+  type TragedySettledPromiseResolution,
+} from './portable-trust.js';
 export { isAttestation, projectTragedyTrust } from './reducer.js';
 export {
   ATTESTATION_RELAY_TYPE,

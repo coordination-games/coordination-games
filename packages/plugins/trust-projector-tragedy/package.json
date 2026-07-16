@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@coordination-games/engine": "*",
+    "@coordination-games/trust": "*",
     "zod": "^4.3.6"
   },
   "devDependencies": {
