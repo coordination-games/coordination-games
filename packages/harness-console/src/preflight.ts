@@ -102,13 +102,42 @@ async function checkCliDist(): Promise<PreflightCheck> {
 
 async function checkGameServer(): Promise<PreflightCheck> {
   const status = await gameServerStatus(DEMO_GAME_SERVER);
+  if (!status.reachable) {
+    return makeCheck(
+      'game-server',
+      'Game server',
+      'warn',
+      false,
+      `The game server is not reachable at ${DEMO_GAME_SERVER}. Start it from Settings, or just ` +
+        'launch a demo — it auto-starts on demand.',
+    );
+  }
+  // Reachable ≠ healthy: a degraded wrangler dev has served /api/games fine
+  // while 404ing the auth route, which kills every bot at the door (observed
+  // 2026-07-16 — six runs of instant "No POST handler for
+  // /api/player/auth/challenge"). Probe the route bots actually need first.
+  let authOk = false;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`${DEMO_GAME_SERVER}/api/player/auth/challenge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address: '0x1111111111111111111111111111111111111111' }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    authOk = res.ok;
+  } catch {
+    authOk = false;
+  }
   return makeCheck(
     'game-server',
     'Game server',
     'warn',
-    status.reachable,
-    `The game server is not reachable at ${DEMO_GAME_SERVER}. Start it from Settings, or just ` +
-      'launch a demo — it auto-starts on demand.',
+    authOk,
+    `The game server responds but its auth route is failing — bots cannot join games. ` +
+      'Restart it: Settings → stop managed server, then start local server.',
   );
 }
 
