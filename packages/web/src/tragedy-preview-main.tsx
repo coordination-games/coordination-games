@@ -57,19 +57,37 @@ const intersections = {
 
 const intersectionList = Object.entries(intersections).map(([id, value]) => ({ id, ...value }));
 
-function tileStatus(id: string): 'flourishing' | 'stable' | 'strained' {
+type TileStatus = 'flourishing' | 'stable' | 'strained' | 'collapsed';
+
+const scenario =
+  new URLSearchParams(window.location.search).get('scenario') === 'stressed'
+    ? 'stressed'
+    : 'nominal';
+
+// Tiles pushed to collapse in the stressed scenario. Two adjacent river tiles
+// so a real downstream-pollution flow is derived between them.
+const COLLAPSED_IN_STRESSED = new Set(['middle-river', 'lower-river']);
+const STRAINED_IN_STRESSED = new Set(['east-oil', 'south-oil', 'central-river', 'east-wetland']);
+
+function tileStatus(id: string): TileStatus {
+  if (scenario === 'stressed') {
+    if (COLLAPSED_IN_STRESSED.has(id)) return 'collapsed';
+    if (STRAINED_IN_STRESSED.has(id)) return 'strained';
+    return id.includes('wetland') ? 'flourishing' : 'stable';
+  }
   if (id === 'east-oil' || id === 'south-oil' || id === 'middle-river' || id === 'lower-river') {
     return 'strained';
   }
   return id.includes('wetland') ? 'flourishing' : 'stable';
 }
 
-function tileHealth(status: 'flourishing' | 'stable' | 'strained'): number {
+function tileHealth(status: TileStatus): number {
+  if (status === 'collapsed') return 2;
   return status === 'strained' ? 8 : status === 'flourishing' ? 18 : 14;
 }
 
-const tiles = tileSpecs.map(([id, q, r, terrain, , , primaryResource, ecosystemIds]) => {
-  const status = tileStatus(id);
+const tiles = tileSpecs.map(([id, q, r, terrain, ecosystemId, , primaryResource, ecosystemIds]) => {
+  const status = tileStatus(ecosystemId);
   return {
     id,
     q,
@@ -241,7 +259,10 @@ const nativeSpectatorSnapshot = {
         playerId: 'gamma',
         action: { type: 'extract_tile', tileId: '2,-2', resource: 'energy', level: 'medium' },
       },
-      { playerId: 'delta', action: { type: 'pass' } },
+      {
+        playerId: 'delta',
+        action: scenario === 'stressed' ? { type: 'convert_timber_to_energy' } : { type: 'pass' },
+      },
     ],
     activeTrades: [],
     winner: null,
