@@ -42,8 +42,10 @@ function isDigest(value: unknown): value is `0x${string}` {
 }
 
 function isInstant(value: string): boolean {
+  const timestamp = Date.parse(value);
   return (
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+    Number.isFinite(timestamp) &&
     new Date(value).toISOString() === value
   );
 }
@@ -52,7 +54,9 @@ function parseArtifact(value: unknown, source: unknown): PublicTragedyArtifact |
   if (!isRecord(value) || !text(value.id) || !text(value.digest) || !text(value.observedAt))
     return null;
   if (!isDigest(value.digest) || !isInstant(value.observedAt)) return null;
-  return { id: value.id, digest: keccak256CanonicalJson(source), observedAt: value.observedAt };
+  const digest = keccak256CanonicalJson(source);
+  if (value.digest !== digest) return null;
+  return { id: value.id, digest, observedAt: value.observedAt };
 }
 
 function parseSnapshot(value: unknown): Snapshot | null {

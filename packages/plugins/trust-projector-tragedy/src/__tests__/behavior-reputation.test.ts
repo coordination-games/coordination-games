@@ -1,3 +1,4 @@
+import { keccak256CanonicalJson } from '@coordination-games/engine';
 import { describe, expect, it } from 'vitest';
 import { deriveTragedyBehaviorReputation } from '../behavior-reputation.js';
 
@@ -56,11 +57,34 @@ function derive(input: {
   readonly current?: unknown;
   readonly previous?: unknown;
 }) {
+  const revealed = input.reveal;
+  const canonicalReveal =
+    typeof revealed === 'object' &&
+    revealed !== null &&
+    'round' in revealed &&
+    'actions' in revealed &&
+    Array.isArray(revealed.actions)
+      ? {
+          round: revealed.round,
+          actions: [...revealed.actions].sort((left, right) =>
+            JSON.stringify(left).localeCompare(JSON.stringify(right)),
+          ),
+        }
+      : revealed;
   return deriveTragedyBehaviorReputation({
     gameId: 'game-1',
-    revealArtifact: artifacts.reveal,
-    postRevealArtifact: artifacts.after,
-    previousSnapshotArtifact: artifacts.before,
+    revealArtifact: {
+      ...artifacts.reveal,
+      digest: keccak256CanonicalJson(canonicalReveal ?? null),
+    },
+    postRevealArtifact: {
+      ...artifacts.after,
+      digest: keccak256CanonicalJson(input.current ?? null),
+    },
+    previousSnapshotArtifact: {
+      ...artifacts.before,
+      digest: keccak256CanonicalJson(input.previous ?? null),
+    },
     reveal: input.reveal,
     postRevealSnapshot: input.current,
     previousPublicSnapshot: input.previous,

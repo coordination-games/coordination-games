@@ -1,4 +1,4 @@
-import type { TrustCardV1 } from '@coordination-games/engine';
+import { keccak256CanonicalJson, type TrustCardV1 } from '@coordination-games/engine';
 import {
   projectTrustCards,
   type TragedyBehaviorReputationInput,
@@ -25,24 +25,46 @@ export function buildBehaviorReputationInput(input: {
   readonly snapshotIndex: number;
   readonly observedAt: string;
 }): TragedyBehaviorReputationInput | undefined {
-  if (!isRecord(input.postRevealSnapshot) || !('lastRoundReveal' in input.postRevealSnapshot))
+  if (!isRecord(input.postRevealSnapshot) || !isRecord(input.previousPublicSnapshot))
     return undefined;
-  const digest = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
+  const reveal = input.postRevealSnapshot.lastRoundReveal;
+  if (!isRecord(reveal) || !Array.isArray(reveal.actions)) return undefined;
+  const priorReveal = input.previousPublicSnapshot.lastRoundReveal;
+  const canonicalReveal = {
+    round: reveal.round,
+    actions: [...reveal.actions].sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right)),
+    ),
+  };
+  const canonicalPrior =
+    isRecord(priorReveal) && Array.isArray(priorReveal.actions)
+      ? {
+          round: priorReveal.round,
+          actions: [...priorReveal.actions].sort((left, right) =>
+            JSON.stringify(left).localeCompare(JSON.stringify(right)),
+          ),
+        }
+      : null;
+  if (
+    canonicalPrior !== null &&
+    keccak256CanonicalJson(canonicalPrior) === keccak256CanonicalJson(canonicalReveal)
+  )
+    return undefined;
   return {
     gameId: input.gameId,
     revealArtifact: {
       id: `${input.gameId}:reveal:${input.snapshotIndex}`,
-      digest,
+      digest: keccak256CanonicalJson(canonicalReveal),
       observedAt: input.observedAt,
     },
     postRevealArtifact: {
       id: `${input.gameId}:snapshot:${input.snapshotIndex}`,
-      digest,
+      digest: keccak256CanonicalJson(input.postRevealSnapshot),
       observedAt: input.observedAt,
     },
     previousSnapshotArtifact: {
       id: `${input.gameId}:snapshot:${input.snapshotIndex - 1}`,
-      digest,
+      digest: keccak256CanonicalJson(input.previousPublicSnapshot),
       observedAt: input.observedAt,
     },
     reveal: input.postRevealSnapshot.lastRoundReveal,
