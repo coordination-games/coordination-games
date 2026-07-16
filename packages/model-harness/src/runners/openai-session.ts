@@ -14,6 +14,7 @@ import {
   mapTools,
   parseArguments,
   type ToolClient,
+  toolCallsWithIds,
 } from './openai-tools.js';
 import {
   RuntimeTimeoutError,
@@ -112,7 +113,7 @@ export async function runOpenAiSession(input: {
         event: 'heartbeat',
         detail: 'provider response received',
       });
-      const toolCalls = assistant.toolCalls;
+      const toolCalls = toolCallsWithIds(assistant.toolCalls, modelCalls);
       options.onEvent({
         t: Date.now(),
         bot: options.botName,
@@ -153,6 +154,13 @@ export async function runOpenAiSession(input: {
         });
         if (corrections > MAX_CORRECTIONS)
           throw new ToolCorrectionExhaustedError(corrections, invalid);
+        for (const call of toolCalls) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id ?? 'unreachable-tool-call-id',
+            content: JSON.stringify({ error: 'tool call requires correction' }),
+          });
+        }
         messages.push({
           role: 'system',
           content: `Correct your tool call: ${invalid}. Use only advertised tool names and JSON object arguments.`,

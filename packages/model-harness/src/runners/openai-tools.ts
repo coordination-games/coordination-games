@@ -48,6 +48,15 @@ export function parseArguments(value: string): Record<string, unknown> | undefin
   }
 }
 
+export function toolCallsWithIds(
+  calls: readonly OpenAiToolCall[],
+  modelCalls: number,
+): OpenAiToolCall[] {
+  return calls.map((call, index) =>
+    call.id ? call : { ...call, id: `tool-call-${modelCalls}-${index + 1}` },
+  );
+}
+
 export async function callTool(
   client: ToolClient,
   name: string,

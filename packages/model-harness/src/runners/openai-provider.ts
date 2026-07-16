@@ -1,3 +1,5 @@
+import { RuntimeTimeoutError } from './runtime-reliability.js';
+
 export type OpenAiTool = {
   readonly type: 'function';
   readonly function: {
@@ -66,6 +68,7 @@ export function validateProviderConfig(input: {
 }
 
 export function isRetryableProviderError(error: unknown): boolean {
+  if (error instanceof RuntimeTimeoutError) return true;
   if (error instanceof ProviderHttpError) {
     return (
       error.status === 408 ||

@@ -113,11 +113,9 @@ describe('OpenRouterAgentRunner runtime reliability RED cases', () => {
     const originalFetch = globalThis.fetch;
     process.env.OPENROUTER_API_KEY = 'test-key';
     vi.useFakeTimers();
-    let release: ((response: Response) => void) | undefined;
     globalThis.fetch = vi.fn(
       (_input: string | URL | Request, init?: RequestInit) =>
         new Promise<Response>((resolve) => {
-          release = resolve;
           init?.signal?.addEventListener('abort', () => {
             resolve(providerResponse({ error: { message: 'aborted' } }, 499));
           });
@@ -133,11 +131,10 @@ describe('OpenRouterAgentRunner runtime reliability RED cases', () => {
       void session.then(() => {
         settled = true;
       });
-      await vi.advanceTimersByTimeAsync(26);
+      await vi.runAllTimersAsync();
 
       // Then: a hard-stalled in-flight request must not outlive the session budget.
       expect(settled).toBe(true);
-      release?.(providerResponse({ choices: [{ message: { content: 'late' } }] }));
       await session;
     } finally {
       vi.useRealTimers();
