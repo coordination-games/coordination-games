@@ -1,5 +1,6 @@
 import { keccak256CanonicalJson, type TrustCardV1 } from '@coordination-games/engine';
 import {
+  canonicalizeTragedyReveal,
   projectTrustCards,
   type TragedyBehaviorReputationInput,
   type TrustProjectionArtifacts,
@@ -27,24 +28,10 @@ export function buildBehaviorReputationInput(input: {
 }): TragedyBehaviorReputationInput | undefined {
   if (!isRecord(input.postRevealSnapshot) || !isRecord(input.previousPublicSnapshot))
     return undefined;
-  const reveal = input.postRevealSnapshot.lastRoundReveal;
-  if (!isRecord(reveal) || !Array.isArray(reveal.actions)) return undefined;
+  const canonicalReveal = canonicalizeTragedyReveal(input.postRevealSnapshot.lastRoundReveal);
+  if (canonicalReveal === null) return undefined;
   const priorReveal = input.previousPublicSnapshot.lastRoundReveal;
-  const canonicalReveal = {
-    round: reveal.round,
-    actions: [...reveal.actions].sort((left, right) =>
-      JSON.stringify(left).localeCompare(JSON.stringify(right)),
-    ),
-  };
-  const canonicalPrior =
-    isRecord(priorReveal) && Array.isArray(priorReveal.actions)
-      ? {
-          round: priorReveal.round,
-          actions: [...priorReveal.actions].sort((left, right) =>
-            JSON.stringify(left).localeCompare(JSON.stringify(right)),
-          ),
-        }
-      : null;
+  const canonicalPrior = canonicalizeTragedyReveal(priorReveal);
   if (
     canonicalPrior !== null &&
     keccak256CanonicalJson(canonicalPrior) === keccak256CanonicalJson(canonicalReveal)

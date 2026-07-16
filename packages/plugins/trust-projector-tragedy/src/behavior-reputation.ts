@@ -113,6 +113,20 @@ function parseReveal(value: unknown): Reveal | null {
   return { round: value.round, actions };
 }
 
+export function canonicalizeTragedyReveal(
+  value: unknown,
+): Readonly<Record<string, unknown>> | null {
+  const reveal = parseReveal(value);
+  return reveal
+    ? {
+        round: reveal.round,
+        actions: [...reveal.actions].sort((left, right) =>
+          left.playerId.localeCompare(right.playerId),
+        ),
+      }
+    : null;
+}
+
 function empty(): TragedyBehaviorReputation {
   return { version: TRAGEDY_BEHAVIOR_REPUTATION_VERSION, events: [] };
 }
@@ -182,10 +196,8 @@ export function deriveTragedyBehaviorReputation(
   const previous = parseSnapshot(input.previousPublicSnapshot);
   const current = parseSnapshot(input.postRevealSnapshot);
   if (!reveal || !previous || !current) return empty();
-  const canonicalReveal = {
-    round: reveal.round,
-    actions: [...reveal.actions].sort((left, right) => left.playerId.localeCompare(right.playerId)),
-  };
+  const canonicalReveal = canonicalizeTragedyReveal(reveal);
+  if (canonicalReveal === null) return empty();
   const revealArtifact = parseArtifact(input.revealArtifact, canonicalReveal);
   const postRevealArtifact = parseArtifact(input.postRevealArtifact, input.postRevealSnapshot);
   const previousArtifact = parseArtifact(

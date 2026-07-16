@@ -100,6 +100,7 @@ export const TrustProjectorTragedyPlugin: ToolPlugin = {
 registerPluginRelayTypes(TrustProjectorTragedyPlugin);
 
 export {
+  canonicalizeTragedyReveal,
   deriveTragedyBehaviorReputation,
   TRAGEDY_BEHAVIOR_REPUTATION_POLICY,
 } from './behavior-reputation.js';
