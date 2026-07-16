@@ -240,7 +240,16 @@ export interface SessionEvent {
   t: number;
   bot: string;
   kind: 'session';
-  event: 'start' | 'finished' | 'cap' | 'error';
+  event:
+    | 'start'
+    | 'finished'
+    | 'cap'
+    | 'error'
+    | 'retry'
+    | 'correction'
+    | 'timeout'
+    | 'heartbeat'
+    | 'cancelled';
   detail?: string;
 }
 
@@ -288,6 +297,8 @@ export interface RunSessionOptions {
    * separately, at lobby creation.
    */
   disablePlugins?: string[];
+  /** Cancels an in-flight provider call and propagates to its transport request. */
+  signal?: AbortSignal;
   /** Append-only transcript sink (§8). */
   onEvent: (e: TranscriptEvent) => void;
 }
