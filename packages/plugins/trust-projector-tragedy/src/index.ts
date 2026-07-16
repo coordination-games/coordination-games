@@ -100,6 +100,21 @@ export const TrustProjectorTragedyPlugin: ToolPlugin = {
 registerPluginRelayTypes(TrustProjectorTragedyPlugin);
 
 export {
+  deriveTragedyBehaviorReputation,
+  mapTragedyBehaviorReputationToTrustEvents,
+  TRAGEDY_BEHAVIOR_REPUTATION_POLICY,
+} from './behavior-reputation.js';
+export {
+  type PublicTragedyArtifact,
+  TRAGEDY_BEHAVIOR_REPUTATION_VERSION,
+  type TragedyBehaviorEvent,
+  type TragedyBehaviorOutcome,
+  type TragedyBehaviorReputation,
+  type TragedyBehaviorReputationInput,
+  type TragedyBehaviorTrustMapping,
+  type TragedyBehaviorTrustMappingInput,
+} from './behavior-reputation-types.js';
+export {
   mapSettledTragedyPromiseOutcomes,
   projectTragedyPromiseTrust,
   type TragedyPromiseOutcomeInput,

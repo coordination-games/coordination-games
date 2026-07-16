@@ -7,6 +7,8 @@ import type {
   TrustSignalV1,
 } from '@coordination-games/engine';
 import { keccak256CanonicalJson } from '@coordination-games/engine';
+import { deriveTragedyBehaviorReputation } from './behavior-reputation.js';
+import type { TragedyBehaviorEvent } from './behavior-reputation-types.js';
 import {
   ATTESTATION_RELAY_TYPE,
   TRAGEDY_GAME_ID,
@@ -83,7 +85,11 @@ export function projectTragedyTrust(input: TrustProjectionInput): TrustProjectio
     ...relayAttestations(input.relayMessages ?? []),
   ].filter(isAttestation);
   const players = visibleArray(input.state.players).filter(isRecord);
-  if (players.length === 0) return { cards: [], envelopes: [] };
+  const behaviorReputation = input.behaviorReputation
+    ? deriveTragedyBehaviorReputation(input.behaviorReputation)
+    : undefined;
+  if (players.length === 0)
+    return { cards: [], envelopes: [], ...(behaviorReputation ? { behaviorReputation } : {}) };
 
   const round = finiteNumber(input.state.round, meta.progressCounter ?? 0);
   const phase = text(input.state.phase, meta.finished ? 'finished' : 'playing');
@@ -97,9 +103,13 @@ export function projectTragedyTrust(input: TrustProjectionInput): TrustProjectio
     const evidenceRefs = evidenceRefsFor(snapshot.playerId, attestations, round);
     const envelope = createEvidenceEnvelope(snapshot, meta, round, phase, observedAt, evidenceRefs);
     envelopes.push(envelope);
-    cards.push(createTrustCard(snapshot, observedAt, evidenceRefs));
+    cards.push(
+      createTrustCard(snapshot, observedAt, evidenceRefs, behaviorReputation?.events ?? []),
+    );
   }
-  return { cards, envelopes };
+  if (behaviorReputation)
+    envelopes.push(...behaviorReputation.events.map(createBehaviorEvidenceEnvelope));
+  return { cards, envelopes, ...(behaviorReputation ? { behaviorReputation } : {}) };
 }
 
 function normalizeMeta(
@@ -272,6 +282,7 @@ function createTrustCard(
   snapshot: VisibleTragedyPlayerSnapshot,
   observedAt: string,
   evidenceRefs: TrustEvidenceRefV1[],
+  behaviorEvents: readonly TragedyBehaviorEvent[],
 ): TrustCardV1 {
   const updatedAt = Date.parse(observedAt);
   return {
@@ -280,7 +291,10 @@ function createTrustCard(
     subjectId: snapshot.playerId,
     headline: 'Viewer-visible trust context',
     summary: visibleTragedySummary(snapshot),
-    signals: createVisibleTragedySignals(snapshot, evidenceRefs),
+    signals: [
+      ...createVisibleTragedySignals(snapshot, evidenceRefs),
+      ...createBehaviorSignals(snapshot.playerId, behaviorEvents),
+    ],
     caveats: [
       'Derived only from viewer-visible Tragedy of the Commons state and public attestation relays.',
       'Does not include private DMs, hidden intent, or cross-game history yet.',
@@ -288,6 +302,83 @@ function createTrustCard(
     evidenceRefs,
     ...(Number.isFinite(updatedAt) ? { updatedAt } : { updatedAt: Date.now() }),
   };
+}
+
+function createBehaviorEvidenceEnvelope(event: TragedyBehaviorEvent): TrustEvidenceEnvelopeV1 {
+  const evidenceRefs: TrustEvidenceRefV1[] = [
+    {
+      kind: 'tragedy.public-reveal/v1',
+      id: event.evidence.reveal.id,
+      visibility: 'public',
+      round: event.round,
+      summary: event.evidence.reveal.digest,
+    },
+    {
+      kind: 'tragedy.public-snapshot/v1',
+      id: event.evidence.postRevealSnapshot.id,
+      visibility: 'public',
+      round: event.round,
+      summary: event.evidence.postRevealSnapshot.digest,
+    },
+  ];
+  return {
+    schemaVersion: 'trust-evidence/v1',
+    id: event.id,
+    eventType: event.behavior,
+    category: 'behavior',
+    subject: event.subjectPlayerId,
+    issuer: `tragedy-of-the-commons:${event.gameId}`,
+    issuedAt: event.evidence.postRevealSnapshot.observedAt,
+    payload: {
+      version: event.version,
+      gameId: event.gameId,
+      round: event.round,
+      outcome: event.outcome,
+      behavior: event.behavior,
+      revealDigest: event.evidence.reveal.digest,
+      postRevealDigest: event.evidence.postRevealSnapshot.digest,
+    },
+    privacy: {
+      publishable: true,
+      redaction: 'none-needed',
+      containsPrivateChat: false,
+      containsHiddenState: false,
+    },
+    evidenceRefs,
+  };
+}
+
+function createBehaviorSignals(
+  playerId: string,
+  events: readonly TragedyBehaviorEvent[],
+): TrustSignalV1[] {
+  return events
+    .filter((event) => event.subjectPlayerId === playerId)
+    .map((event) => ({
+      label: 'Post-reveal behavior evidence',
+      stance: event.outcome,
+      summary:
+        event.outcome === 'positive'
+          ? 'A newly visible solar structure confirms renewable infrastructure.'
+          : 'A sole revealed extraction coincides with a public decline on its tile.',
+      confidence: 1,
+      evidenceRefs: [
+        {
+          kind: 'tragedy.public-reveal/v1',
+          id: event.evidence.reveal.id,
+          visibility: 'public',
+          round: event.round,
+          summary: event.evidence.reveal.digest,
+        },
+        {
+          kind: 'tragedy.public-snapshot/v1',
+          id: event.evidence.postRevealSnapshot.id,
+          visibility: 'public',
+          round: event.round,
+          summary: event.evidence.postRevealSnapshot.digest,
+        },
+      ],
+    }));
 }
 
 function visibleTragedySummary(snapshot: VisibleTragedyPlayerSnapshot): string {

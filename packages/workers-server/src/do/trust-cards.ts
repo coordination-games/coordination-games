@@ -1,6 +1,7 @@
 import type { TrustCardV1 } from '@coordination-games/engine';
 import {
   projectTrustCards,
+  type TragedyBehaviorReputationInput,
   type TrustProjectionArtifacts,
 } from '@coordination-games/plugin-trust-projector-tragedy';
 
@@ -27,6 +28,7 @@ export function buildVisibleTrustArtifacts(
   meta: TrustCardGameMeta,
   progressCounter: number | null,
   relayMessages: readonly unknown[] = [],
+  behaviorReputation?: TragedyBehaviorReputationInput,
 ): VisibleTrustArtifacts {
   return projectTrustCards({
     state,
@@ -38,5 +40,6 @@ export function buildVisibleTrustArtifacts(
       progressCounter,
     },
     relayMessages,
+    ...(behaviorReputation ? { behaviorReputation } : {}),
   });
 }

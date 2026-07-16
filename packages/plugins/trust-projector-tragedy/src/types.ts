@@ -3,6 +3,10 @@ import type {
   TrustCardV1,
   TrustEvidenceEnvelopeV1,
 } from '@coordination-games/engine';
+import type {
+  TragedyBehaviorReputation,
+  TragedyBehaviorReputationInput,
+} from './behavior-reputation-types.js';
 
 export const TRUST_PROJECTOR_TRAGEDY_PLUGIN_ID = 'trust-projector-tragedy' as const;
 export const ATTESTATION_RELAY_TYPE = 'attestation' as const;
@@ -23,11 +27,13 @@ export interface TrustProjectionInput {
   readonly meta?: TrustProjectorMeta;
   readonly attestations?: readonly TragedyAttestation[];
   readonly relayMessages?: readonly unknown[];
+  readonly behaviorReputation?: TragedyBehaviorReputationInput;
 }
 
 export interface TrustProjectionArtifacts {
   readonly cards: TrustCardV1[];
   readonly envelopes: TrustEvidenceEnvelopeV1[];
+  readonly behaviorReputation?: TragedyBehaviorReputation;
 }
 
 export interface VisibleTragedyPlayerSnapshot {
