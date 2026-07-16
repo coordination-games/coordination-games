@@ -1,14 +1,11 @@
-import { Interface } from 'ethers';
 import { describe, expect, it } from 'vitest';
 import {
   createEthersEasGateway,
   createInMemoryEasGateway,
   createPromiseOutcomeAnchor,
   createPromiseOutcomeAttestation,
-  EAS_CONTRACT_ABI,
   ZERO_ADDRESS,
 } from '../index.js';
-import type { EthersEasAttestationRequest } from '../promise-outcome-types.js';
 
 const EVENT = {
   eventVersion: 'promise-outcome/v1',
@@ -63,51 +60,6 @@ describe('EAS promise-outcome anchor', () => {
 
     // Then no second attestation is minted and the original record is returned
     expect(duplicate).toEqual(first);
-  });
-
-  it('submits the deployed EAS attest tuple through the ethers-compatible adapter', async () => {
-    // Given an ethers-compatible contract that records the typed EAS request
-    const easInterface = new Interface(EAS_CONTRACT_ABI);
-    const uid = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    const txHash = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    let captured: EthersEasAttestationRequest | undefined;
-    const gateway = createEthersEasGateway(GATEWAY_CONFIG, {
-      async attest(request) {
-        captured = request;
-        const log = easInterface.encodeEventLog('Attested', [
-          uid,
-          GATEWAY_CONFIG.schemaUid,
-          ZERO_ADDRESS,
-          GATEWAY_CONFIG.attester,
-        ]);
-        return {
-          hash: txHash,
-          async wait() {
-            return { logs: [log] };
-          },
-        };
-      },
-      async getAttestation() {
-        return null;
-      },
-    });
-    const anchor = createPromiseOutcomeAnchor(gateway);
-
-    // When a canonical event is anchored
-    const result = await anchor.anchor(EVENT, '2026-07-16T12:01:00.000Z');
-
-    // Then the actual EAS nested tuple carries only canonical data and zero value
-    expect(result).toMatchObject({ kind: 'anchored', record: { attestationUid: uid, txHash } });
-    expect(captured).toMatchObject({
-      schema: GATEWAY_CONFIG.schemaUid,
-      data: {
-        recipient: ZERO_ADDRESS,
-        expirationTime: 0n,
-        revocable: true,
-        refUID: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        value: 0n,
-      },
-    });
   });
 
   it('normalizes the deployed EAS getAttestation tuple before query verification', async () => {

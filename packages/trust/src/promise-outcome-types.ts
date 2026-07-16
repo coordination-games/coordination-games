@@ -92,6 +92,12 @@ export type PromiseOutcomeAnchorRecord = {
   readonly anchoredAt: string;
 };
 
+export interface PromiseOutcomeAnchorStore {
+  getByEventDigest(eventDigest: Bytes32): Promise<PromiseOutcomeAnchorRecord | null>;
+  getByAttestationUid(attestationUid: Bytes32): Promise<PromiseOutcomeAnchorRecord | null>;
+  save(record: PromiseOutcomeAnchorRecord): Promise<void>;
+}
+
 export type PromiseOutcomeAnchorResult =
   | { readonly kind: 'anchored'; readonly record: PromiseOutcomeAnchorRecord }
   | PromiseOutcomeRejected

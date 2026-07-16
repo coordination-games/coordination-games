@@ -7,6 +7,7 @@ import {
   type EasGatewayConfig,
   type PromiseOutcomeAnchorRecord,
   type PromiseOutcomeAnchorResult,
+  type PromiseOutcomeAnchorStore,
   type PromiseOutcomeQueryResult,
   ZERO_ADDRESS,
   ZERO_BYTES32,
@@ -65,9 +66,33 @@ export type PromiseOutcomeAnchor = {
   query(uid: string): Promise<PromiseOutcomeQueryResult>;
 };
 
-export function createPromiseOutcomeAnchor(gateway: EasGateway): PromiseOutcomeAnchor {
+export function createInMemoryPromiseOutcomeAnchorStore(): PromiseOutcomeAnchorStore {
   const recordsByDigest = new Map<Bytes32, PromiseOutcomeAnchorRecord>();
   const recordsByUid = new Map<Bytes32, PromiseOutcomeAnchorRecord>();
+  return {
+    async getByEventDigest(eventDigest: Bytes32): Promise<PromiseOutcomeAnchorRecord | null> {
+      return recordsByDigest.get(eventDigest) ?? null;
+    },
+    async getByAttestationUid(attestationUid: Bytes32): Promise<PromiseOutcomeAnchorRecord | null> {
+      return recordsByUid.get(attestationUid) ?? null;
+    },
+    async save(record: PromiseOutcomeAnchorRecord): Promise<void> {
+      recordsByDigest.set(record.eventDigest, record);
+      recordsByUid.set(record.attestationUid, record);
+    },
+  };
+}
+
+function isoFromUnixSeconds(time: bigint): string | null {
+  const maximumDateSeconds = 8_640_000_000_000n;
+  if (time > maximumDateSeconds) return null;
+  return new Date(Number(time) * 1000).toISOString();
+}
+
+export function createPromiseOutcomeAnchor(
+  gateway: EasGateway,
+  store: PromiseOutcomeAnchorStore = createInMemoryPromiseOutcomeAnchorStore(),
+): PromiseOutcomeAnchor {
   return {
     async anchor(input: unknown, anchoredAt: string): Promise<PromiseOutcomeAnchorResult> {
       const created = createPromiseOutcomeAttestation(input);
@@ -75,8 +100,8 @@ export function createPromiseOutcomeAnchor(gateway: EasGateway): PromiseOutcomeA
       if (!isInstant(anchoredAt) || !isGatewayConfig(gateway.config)) {
         return { kind: 'rejected', reason: 'invalid-anchor' };
       }
-      const cached = recordsByDigest.get(created.attestation.eventDigest);
-      if (cached !== undefined) return { kind: 'anchored', record: cached };
+      const cached = await store.getByEventDigest(created.attestation.eventDigest);
+      if (cached !== null) return { kind: 'anchored', record: cached };
       const submitted = await gateway.attest({
         schema: gateway.config.schemaUid,
         recipient: ZERO_ADDRESS,
@@ -96,8 +121,7 @@ export function createPromiseOutcomeAnchor(gateway: EasGateway): PromiseOutcomeA
         created.attestation.eventDigest,
         anchoredAt,
       );
-      recordsByDigest.set(record.eventDigest, record);
-      recordsByUid.set(record.attestationUid, record);
+      await store.save(record);
       return { kind: 'anchored', record };
     },
     async query(uid: string): Promise<PromiseOutcomeQueryResult> {
@@ -141,10 +165,12 @@ export function createPromiseOutcomeAnchor(gateway: EasGateway): PromiseOutcomeA
       if (recomputed.attestation.eventDigest !== decoded.decoded.eventDigest) {
         return { kind: 'rejected', reason: 'digest-mismatch' };
       }
-      const cached = recordsByUid.get(uid);
-      if (cached !== undefined && cached.eventDigest !== recomputed.attestation.eventDigest) {
+      const cached = await store.getByAttestationUid(uid);
+      if (cached !== null && cached.eventDigest !== recomputed.attestation.eventDigest) {
         return { kind: 'rejected', reason: 'digest-mismatch' };
       }
+      const anchoredAt = isoFromUnixSeconds(attestation.time);
+      if (anchoredAt === null) return { kind: 'rejected', reason: 'invalid-attestation' };
       const record =
         cached ??
         anchorRecord(
@@ -153,7 +179,7 @@ export function createPromiseOutcomeAnchor(gateway: EasGateway): PromiseOutcomeA
           ZERO_BYTES32,
           recomputed.attestation.eventIdentity,
           recomputed.attestation.eventDigest,
-          new Date(Number(attestation.time) * 1000).toISOString(),
+          anchoredAt,
         );
       return { kind: 'verified', record };
     },

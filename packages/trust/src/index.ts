@@ -114,7 +114,10 @@ export {
   getPromiseOutcomeSchemaUid,
 } from './promise-outcome.js';
 export type { PromiseOutcomeAnchor } from './promise-outcome-anchor.js';
-export { createPromiseOutcomeAnchor } from './promise-outcome-anchor.js';
+export {
+  createInMemoryPromiseOutcomeAnchorStore,
+  createPromiseOutcomeAnchor,
+} from './promise-outcome-anchor.js';
 export type {
   Bytes32,
   DecodedPromiseOutcome,
@@ -130,6 +133,7 @@ export type {
   EthersEasTransaction,
   PromiseOutcomeAnchorRecord,
   PromiseOutcomeAnchorResult,
+  PromiseOutcomeAnchorStore,
   PromiseOutcomeAttestation,
   PromiseOutcomeCode,
   PromiseOutcomeCreationResult,

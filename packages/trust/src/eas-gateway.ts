@@ -13,8 +13,8 @@ import type {
 
 export const EAS_CONTRACT_ABI = [
   'function attest((bytes32 schema,(address recipient,uint64 expirationTime,bool revocable,bytes32 refUID,bytes data,uint256 value) data) request) payable returns (bytes32)',
-  'function getAttestation(bytes32 uid) view returns (bytes32 uid,bytes32 schema,uint64 time,uint64 expirationTime,uint64 revocationTime,bytes32 refUID,address recipient,address attester,bool revocable,bytes data)',
-  'event Attested(bytes32 indexed uid,bytes32 indexed schemaUID,address indexed recipient,address attester)',
+  'function getAttestation(bytes32 uid) view returns ((bytes32 uid,bytes32 schema,uint64 time,uint64 expirationTime,uint64 revocationTime,bytes32 refUID,address recipient,address attester,bool revocable,bytes data) attestation)',
+  'event Attested(address indexed recipient,address indexed attester,bytes32 uid,bytes32 indexed schemaUID)',
 ] as const;
 
 const EAS_INTERFACE = new Interface(EAS_CONTRACT_ABI);
@@ -35,28 +35,55 @@ function submitRejected(): EasGatewaySubmission {
   return { kind: 'rejected', reason: 'gateway-rejected' };
 }
 
-function getAttestationUid(receipt: EthersEasReceipt | null): Bytes32 | null {
+function getAttestationUid(
+  receipt: EthersEasReceipt | null,
+  request: EasAttestationRequest,
+  config: EasGatewayConfig,
+): Bytes32 | null {
   if (receipt === null) return null;
   for (const log of receipt.logs) {
-    const parsed = EAS_INTERFACE.parseLog({ topics: log.topics, data: log.data });
-    if (parsed?.name === 'Attested' && isBytes32(parsed.args[0])) return parsed.args[0];
+    try {
+      const parsed = EAS_INTERFACE.parseLog({ topics: log.topics, data: log.data });
+      if (parsed?.name !== 'Attested') continue;
+      const uid = parsed.args.uid;
+      const recipient = parsed.args.recipient;
+      const attester = parsed.args.attester;
+      const schemaUid = parsed.args.schemaUID;
+      if (
+        isBytes32(uid) &&
+        isAddressValue(recipient) &&
+        isAddressValue(attester) &&
+        isBytes32(schemaUid) &&
+        recipient === request.recipient &&
+        attester === config.attester &&
+        schemaUid === request.schema &&
+        request.schema === config.schemaUid
+      ) {
+        return uid;
+      }
+    } catch (error) {
+      if (error instanceof Error) continue;
+      throw error;
+    }
   }
   return null;
 }
 
 function normalizeEthersAttestation(value: unknown): unknown {
-  if (!Array.isArray(value) || value.length !== 10) return value;
+  if (!Array.isArray(value)) return value;
+  const tuple = value.length === 1 && Array.isArray(value[0]) ? value[0] : value;
+  if (tuple.length !== 10) return value;
   return {
-    uid: value[0],
-    schema: value[1],
-    time: value[2],
-    expirationTime: value[3],
-    revocationTime: value[4],
-    refUid: value[5],
-    recipient: value[6],
-    attester: value[7],
-    revocable: value[8],
-    data: value[9],
+    uid: tuple[0],
+    schema: tuple[1],
+    time: tuple[2],
+    expirationTime: tuple[3],
+    revocationTime: tuple[4],
+    refUid: tuple[5],
+    recipient: tuple[6],
+    attester: tuple[7],
+    revocable: tuple[8],
+    data: tuple[9],
   };
 }
 
@@ -79,7 +106,7 @@ export function createEthersEasGateway(
             value: request.value,
           },
         });
-        const uid = getAttestationUid(await transaction.wait());
+        const uid = getAttestationUid(await transaction.wait(), request, config);
         return uid === null || !isBytes32(transaction.hash)
           ? submitRejected()
           : { kind: 'submitted', attestationUid: uid, txHash: transaction.hash };
