@@ -36,7 +36,8 @@ describe('behavior reputation publication artifacts', () => {
       observedAt: '2026-07-16T12:00:02.000Z',
     });
     expect(first).toBeDefined();
-    expect(first?.revealArtifact.digest).not.toMatch(/^0x0+$/);
+    if (first === undefined) throw new Error('expected a first reveal input');
+    expect(first.revealArtifact.digest).not.toMatch(/^0x0+$/);
     expect(repeated).toBeUndefined();
     expect(later).toBeDefined();
   });

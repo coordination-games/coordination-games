@@ -56,6 +56,7 @@ function derive(input: {
   readonly reveal?: unknown;
   readonly current?: unknown;
   readonly previous?: unknown;
+  readonly tamperRevealDigest?: boolean;
 }) {
   const revealed = input.reveal;
   const canonicalReveal =
@@ -75,7 +76,9 @@ function derive(input: {
     gameId: 'game-1',
     revealArtifact: {
       ...artifacts.reveal,
-      digest: keccak256CanonicalJson(canonicalReveal ?? null),
+      digest: input.tamperRevealDigest
+        ? '0x0000000000000000000000000000000000000000000000000000000000000000'
+        : keccak256CanonicalJson(canonicalReveal ?? null),
     },
     postRevealArtifact: {
       ...artifacts.after,
@@ -168,5 +171,15 @@ describe('Tragedy behavior reputation', () => {
     });
 
     expect(malformed.events).toEqual([]);
+  });
+
+  it('Given a valid-looking but tampered artifact digest, when evidence is derived, then it remains neutral', () => {
+    const result = derive({
+      reveal,
+      previous: publicSnapshots.previous,
+      current: publicSnapshots.current,
+      tamperRevealDigest: true,
+    });
+    expect(result.events).toEqual([]);
   });
 });
