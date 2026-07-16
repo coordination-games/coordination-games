@@ -28,6 +28,10 @@ describe('trust interface contract', () => {
     expect(TRUST_PROJECTION_VERSION).toBe('trust-projection/v1');
   });
 
+  it('preserves the Task 13 wallet-binding public API before attestation work', () => {
+    expect(WALLET_BINDING_RECORD_VERSION).toBe('wallet-binding/v1');
+  });
+
   it('accepts the PLC binding and deterministic outcome contracts', () => {
     const did: DidPlc = 'did:plc:alice';
     const address: EvmAddress = '0xabc123';

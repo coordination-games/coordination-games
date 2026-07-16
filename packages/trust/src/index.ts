@@ -103,6 +103,46 @@ export interface TrustProjectionResult {
 }
 
 export {
+  createEthersEasGateway,
+  createInMemoryEasGateway,
+  EAS_CONTRACT_ABI,
+  type InMemoryEasGateway,
+} from './eas-gateway.js';
+export {
+  createPromiseOutcomeAttestation,
+  decodePromiseOutcomeEasData,
+  getPromiseOutcomeSchemaUid,
+} from './promise-outcome.js';
+export type { PromiseOutcomeAnchor } from './promise-outcome-anchor.js';
+export { createPromiseOutcomeAnchor } from './promise-outcome-anchor.js';
+export type {
+  Bytes32,
+  DecodedPromiseOutcome,
+  DecodedPromiseOutcomeResult,
+  EasAttestation,
+  EasAttestationRequest,
+  EasGateway,
+  EasGatewayConfig,
+  EasGatewaySubmission,
+  EthersEasContract,
+  EthersEasGateway,
+  EthersEasReceipt,
+  EthersEasTransaction,
+  PromiseOutcomeAnchorRecord,
+  PromiseOutcomeAnchorResult,
+  PromiseOutcomeAttestation,
+  PromiseOutcomeCode,
+  PromiseOutcomeCreationResult,
+  PromiseOutcomeEventInput,
+  PromiseOutcomeQueryResult,
+} from './promise-outcome-types.js';
+export {
+  PROMISE_OUTCOME_ATTESTATION_VERSION,
+  PROMISE_OUTCOME_EAS_SCHEMA,
+  ZERO_ADDRESS,
+  ZERO_BYTES32,
+} from './promise-outcome-types.js';
+export {
   createMemoryNonceConsumer,
   createWalletBindingRecord,
   verifyWalletBindingRecord,

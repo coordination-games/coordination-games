@@ -9,7 +9,8 @@
     "build": "tsc --skipLibCheck",
     "test": "vitest run",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
-    "sample:binding": "tsx src/sample.ts"
+    "sample:binding": "tsx src/sample.ts",
+    "sample:attestation": "tsx src/attestation-sample.ts"
   },
   "dependencies": {
     "ethers": "^6.16.0"
