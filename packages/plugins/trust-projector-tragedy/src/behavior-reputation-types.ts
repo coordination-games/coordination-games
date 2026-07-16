@@ -1,5 +1,3 @@
-import type { AtprotoStrongRef, DidPlc, PromiseOutcomeEvent } from '@coordination-games/trust';
-
 export const TRAGEDY_BEHAVIOR_REPUTATION_VERSION = 'tragedy-behavior-reputation/v1' as const;
 
 export type PublicTragedyArtifact = Readonly<{
@@ -38,23 +36,4 @@ export type TragedyBehaviorReputationInput = Readonly<{
   readonly reveal: unknown;
   readonly postRevealSnapshot: unknown;
   readonly previousPublicSnapshot: unknown;
-}>;
-
-export type TragedyBehaviorTrustMapping =
-  | Readonly<{ readonly kind: 'mapped'; readonly events: readonly PromiseOutcomeEvent[] }>
-  | Readonly<{
-      readonly kind: 'rejected';
-      readonly reason: 'invalid-event' | 'invalid-input' | 'missing-did-mapping';
-    }>;
-
-export type TragedyBehaviorTrustMappingInput = Readonly<{
-  readonly derived: TragedyBehaviorReputation;
-  readonly didByPlayerId: Readonly<Record<string, unknown>>;
-  readonly evidence: unknown;
-  readonly observedAt: string;
-}>;
-
-export type ValidatedBehaviorTrustInput = Readonly<{
-  readonly evidence: AtprotoStrongRef;
-  readonly didByPlayerId: Readonly<Record<string, DidPlc>>;
 }>;

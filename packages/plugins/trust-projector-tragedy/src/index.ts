@@ -101,7 +101,6 @@ registerPluginRelayTypes(TrustProjectorTragedyPlugin);
 
 export {
   deriveTragedyBehaviorReputation,
-  mapTragedyBehaviorReputationToTrustEvents,
   TRAGEDY_BEHAVIOR_REPUTATION_POLICY,
 } from './behavior-reputation.js';
 export {
@@ -111,8 +110,6 @@ export {
   type TragedyBehaviorOutcome,
   type TragedyBehaviorReputation,
   type TragedyBehaviorReputationInput,
-  type TragedyBehaviorTrustMapping,
-  type TragedyBehaviorTrustMappingInput,
 } from './behavior-reputation-types.js';
 export {
   mapSettledTragedyPromiseOutcomes,

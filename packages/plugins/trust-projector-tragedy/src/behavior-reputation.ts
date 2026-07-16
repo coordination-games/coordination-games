@@ -1,13 +1,10 @@
-import type { AtprotoStrongRef, DidPlc, PromiseOutcomeEvent } from '@coordination-games/trust';
-import { createPromiseOutcomeAttestation } from '@coordination-games/trust';
+import { keccak256CanonicalJson } from '@coordination-games/engine';
 import {
   type PublicTragedyArtifact,
   TRAGEDY_BEHAVIOR_REPUTATION_VERSION,
   type TragedyBehaviorEvent,
   type TragedyBehaviorReputation,
   type TragedyBehaviorReputationInput,
-  type TragedyBehaviorTrustMapping,
-  type TragedyBehaviorTrustMappingInput,
 } from './behavior-reputation-types.js';
 
 type RecordValue = Readonly<Record<string, unknown>>;
@@ -44,11 +41,18 @@ function isDigest(value: unknown): value is `0x${string}` {
   return typeof value === 'string' && /^0x[0-9a-f]{64}$/.test(value);
 }
 
-function parseArtifact(value: unknown): PublicTragedyArtifact | null {
+function isInstant(value: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+    new Date(value).toISOString() === value
+  );
+}
+
+function parseArtifact(value: unknown, source: unknown): PublicTragedyArtifact | null {
   if (!isRecord(value) || !text(value.id) || !text(value.digest) || !text(value.observedAt))
     return null;
-  if (!isDigest(value.digest) || Number.isNaN(Date.parse(value.observedAt))) return null;
-  return { id: value.id, digest: value.digest, observedAt: value.observedAt };
+  if (!isDigest(value.digest) || !isInstant(value.observedAt)) return null;
+  return { id: value.id, digest: keccak256CanonicalJson(source), observedAt: value.observedAt };
 }
 
 function parseSnapshot(value: unknown): Snapshot | null {
@@ -119,7 +123,12 @@ function solarEffect(action: RevealedAction, previous: Snapshot, current: Snapsh
       structure.ownerId === action.playerId &&
       structure.intersectionId === action.action.intersectionId &&
       structure.type === action.action.structureType &&
-      !previous.structures.some((prior) => prior.id === structure.id),
+      !previous.structures.some(
+        (prior) =>
+          prior.ownerId === structure.ownerId &&
+          prior.intersectionId === structure.intersectionId &&
+          prior.type === structure.type,
+      ),
   );
 }
 
@@ -168,18 +177,18 @@ export function deriveTragedyBehaviorReputation(
   const reveal = parseReveal(input.reveal);
   const previous = parseSnapshot(input.previousPublicSnapshot);
   const current = parseSnapshot(input.postRevealSnapshot);
-  const revealArtifact = parseArtifact(input.revealArtifact);
-  const postRevealArtifact = parseArtifact(input.postRevealArtifact);
-  const previousArtifact = parseArtifact(input.previousSnapshotArtifact);
-  if (
-    !reveal ||
-    !previous ||
-    !current ||
-    !revealArtifact ||
-    !postRevealArtifact ||
-    !previousArtifact
-  )
-    return empty();
+  if (!reveal || !previous || !current) return empty();
+  const canonicalReveal = {
+    round: reveal.round,
+    actions: [...reveal.actions].sort((left, right) => left.playerId.localeCompare(right.playerId)),
+  };
+  const revealArtifact = parseArtifact(input.revealArtifact, canonicalReveal);
+  const postRevealArtifact = parseArtifact(input.postRevealArtifact, input.postRevealSnapshot);
+  const previousArtifact = parseArtifact(
+    input.previousSnapshotArtifact,
+    input.previousPublicSnapshot,
+  );
+  if (!revealArtifact || !postRevealArtifact || !previousArtifact) return empty();
   const evidence = {
     reveal: revealArtifact,
     postRevealSnapshot: postRevealArtifact,
@@ -198,39 +207,4 @@ export function deriveTragedyBehaviorReputation(
     version: TRAGEDY_BEHAVIOR_REPUTATION_VERSION,
     events: events.sort((left, right) => left.id.localeCompare(right.id)),
   };
-}
-
-function isDid(value: unknown): value is DidPlc {
-  return typeof value === 'string' && /^did:plc:.+$/.test(value);
-}
-
-function isEvidence(value: unknown): value is AtprotoStrongRef {
-  return isRecord(value) && text(value.uri) && text(value.cid);
-}
-
-export function mapTragedyBehaviorReputationToTrustEvents(
-  input: TragedyBehaviorTrustMappingInput,
-): TragedyBehaviorTrustMapping {
-  if (!isEvidence(input.evidence) || Number.isNaN(Date.parse(input.observedAt)))
-    return { kind: 'rejected', reason: 'invalid-input' };
-  const events: PromiseOutcomeEvent[] = [];
-  for (const behavior of input.derived.events) {
-    const did = input.didByPlayerId[behavior.subjectPlayerId];
-    if (!isDid(did)) return { kind: 'rejected', reason: 'missing-did-mapping' };
-    const created = createPromiseOutcomeAttestation({
-      eventVersion: 'promise-outcome/v1',
-      schemaVersion: 'trust-schema/v1',
-      algorithmVersion: 'reliability/v1',
-      actorDid: did,
-      subjectDid: did,
-      outcome: behavior.outcome === 'positive' ? 'kept' : 'broken',
-      gameId: `${behavior.gameId}:behavior:${behavior.subjectPlayerId}`,
-      sequence: behavior.round,
-      evidence: input.evidence,
-      observedAt: input.observedAt,
-    });
-    if (created.kind !== 'created') return { kind: 'rejected', reason: 'invalid-event' };
-    events.push(created.attestation.event);
-  }
-  return { kind: 'mapped', events };
 }

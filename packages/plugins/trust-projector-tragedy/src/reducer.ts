@@ -320,6 +320,13 @@ function createBehaviorEvidenceEnvelope(event: TragedyBehaviorEvent): TrustEvide
       round: event.round,
       summary: event.evidence.postRevealSnapshot.digest,
     },
+    {
+      kind: 'tragedy.public-snapshot/v1',
+      id: event.evidence.previousPublicSnapshot.id,
+      visibility: 'public',
+      round: event.round,
+      summary: event.evidence.previousPublicSnapshot.digest,
+    },
   ];
   return {
     schemaVersion: 'trust-evidence/v1',
@@ -337,6 +344,7 @@ function createBehaviorEvidenceEnvelope(event: TragedyBehaviorEvent): TrustEvide
       behavior: event.behavior,
       revealDigest: event.evidence.reveal.digest,
       postRevealDigest: event.evidence.postRevealSnapshot.digest,
+      previousPublicDigest: event.evidence.previousPublicSnapshot.digest,
     },
     privacy: {
       publishable: true,

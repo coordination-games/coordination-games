@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  deriveTragedyBehaviorReputation,
-  mapTragedyBehaviorReputationToTrustEvents,
-} from '../behavior-reputation.js';
-
-const DID_BY_PLAYER = {
-  alpha: 'did:plc:abcdefghijklmnopqrstuvwx',
-  beta: 'did:plc:zyxwvutsrqponmlkjihgfedc',
-} as const;
+import { deriveTragedyBehaviorReputation } from '../behavior-reputation.js';
 
 const artifacts = {
   before: {
@@ -24,10 +16,6 @@ const artifacts = {
     id: 'snapshot:round-1:after',
     digest: '0x3333333333333333333333333333333333333333333333333333333333333333',
     observedAt: '2026-07-16T12:00:02.000Z',
-  },
-  attestation: {
-    uri: 'at://did:plc:abcdefghijklmnopqrstuvwx/app.coordination-games.tragedy-reveal/game-1-1',
-    cid: 'bafybeigdyrzt6ic3b7q4tf6h3y2x4cn27lu5ps5h7izngyztby6cd3k6dpa',
   },
 } as const;
 
@@ -97,8 +85,10 @@ describe('Tragedy behavior reputation', () => {
       expect.objectContaining({ subjectPlayerId: 'alpha', outcome: 'positive' }),
       expect.objectContaining({ subjectPlayerId: 'beta', outcome: 'negative' }),
     ]);
-    expect(canonical.events[0]?.evidence.reveal.digest).toBe(artifacts.reveal.digest);
-    expect(canonical.events[0]?.evidence.postRevealSnapshot.digest).toBe(artifacts.after.digest);
+    expect(canonical.events[0]?.evidence.reveal.digest).not.toBe(artifacts.reveal.digest);
+    expect(canonical.events[0]?.evidence.postRevealSnapshot.digest).not.toBe(
+      artifacts.after.digest,
+    );
   });
 
   it('Given pending actions without a Task 17 reveal, when reputation is derived, then it remains neutral', () => {
@@ -139,49 +129,20 @@ describe('Tragedy behavior reputation', () => {
     expect(result.events).toEqual([]);
   });
 
-  it('Given public behavior evidence and DID bindings, when it crosses the W1 seam, then canonical attestations bind the public artifact', () => {
-    const derived = derive({
-      reveal,
-      previous: publicSnapshots.previous,
-      current: publicSnapshots.current,
-    });
-    const mapped = mapTragedyBehaviorReputationToTrustEvents({
-      derived,
-      didByPlayerId: DID_BY_PLAYER,
-      evidence: artifacts.attestation,
-      observedAt: '2026-07-16T12:00:00.000Z',
-    });
-
-    expect(mapped.kind).toBe('mapped');
-    if (mapped.kind !== 'mapped') return;
-    expect(mapped.events.map((event) => event.outcome)).toEqual(['kept', 'broken']);
-    expect(mapped.events[0]).toMatchObject({
-      eventVersion: 'promise-outcome/v1',
-      outcome: 'kept',
-      evidence: artifacts.attestation,
-    });
-  });
-
-  it('Given unmapped or malformed attestation inputs, when behavior crosses the W1 seam, then no canonical attestation is created', () => {
-    const derived = derive({
-      reveal,
-      previous: publicSnapshots.previous,
-      current: publicSnapshots.current,
-    });
-    const unmapped = mapTragedyBehaviorReputationToTrustEvents({
-      derived,
-      didByPlayerId: { alpha: DID_BY_PLAYER.alpha },
-      evidence: artifacts.attestation,
-      observedAt: '2026-07-16T12:00:00.000Z',
-    });
-    const malformed = mapTragedyBehaviorReputationToTrustEvents({
-      derived,
-      didByPlayerId: DID_BY_PLAYER,
-      evidence: { uri: 'not-an-at-uri', cid: 'not-a-cid' },
-      observedAt: 'invalid-time',
+  it('Given a non-canonical timestamp or a reused semantic solar structure, when evidence is derived, then it remains neutral', () => {
+    const malformed = deriveTragedyBehaviorReputation({
+      gameId: 'game-1',
+      revealArtifact: { ...artifacts.reveal, observedAt: '2026-07-16T12:00:01Z' },
+      postRevealArtifact: artifacts.after,
+      previousSnapshotArtifact: artifacts.before,
+      reveal: { round: 1, actions: [reveal.actions[0]] },
+      previousPublicSnapshot: publicSnapshots.current,
+      postRevealSnapshot: {
+        ...publicSnapshots.current,
+        structures: [{ ...publicSnapshots.current.structures[0], id: 'caller-changed-id' }],
+      },
     });
 
-    expect(unmapped).toEqual({ kind: 'rejected', reason: 'missing-did-mapping' });
-    expect(malformed).toEqual({ kind: 'rejected', reason: 'invalid-input' });
+    expect(malformed.events).toEqual([]);
   });
 });

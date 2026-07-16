@@ -14,6 +14,43 @@ export interface TrustCardGameMeta {
 
 export type VisibleTrustArtifacts = TrustProjectionArtifacts;
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function buildBehaviorReputationInput(input: {
+  readonly gameId: string;
+  readonly previousPublicSnapshot: unknown;
+  readonly postRevealSnapshot: unknown;
+  readonly snapshotIndex: number;
+  readonly observedAt: string;
+}): TragedyBehaviorReputationInput | undefined {
+  if (!isRecord(input.postRevealSnapshot) || !('lastRoundReveal' in input.postRevealSnapshot))
+    return undefined;
+  const digest = '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
+  return {
+    gameId: input.gameId,
+    revealArtifact: {
+      id: `${input.gameId}:reveal:${input.snapshotIndex}`,
+      digest,
+      observedAt: input.observedAt,
+    },
+    postRevealArtifact: {
+      id: `${input.gameId}:snapshot:${input.snapshotIndex}`,
+      digest,
+      observedAt: input.observedAt,
+    },
+    previousSnapshotArtifact: {
+      id: `${input.gameId}:snapshot:${input.snapshotIndex - 1}`,
+      digest,
+      observedAt: input.observedAt,
+    },
+    reveal: input.postRevealSnapshot.lastRoundReveal,
+    postRevealSnapshot: input.postRevealSnapshot,
+    previousPublicSnapshot: input.previousPublicSnapshot,
+  };
+}
+
 export function buildVisibleTrustCards(
   state: unknown,
   meta: TrustCardGameMeta,

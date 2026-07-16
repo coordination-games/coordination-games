@@ -66,7 +66,7 @@ import { buildSpectatorPayload, type SpectatorPayload } from '../plugins/spectat
 import { resolveGameId } from './resolve-gameid.js';
 import { assembleSettlementParticipants, type SettlementDelta } from './settlement-participants.js';
 import { computePublicSnapshotIndex } from './spectator-delay.js';
-import { buildVisibleTrustArtifacts } from './trust-cards.js';
+import { buildBehaviorReputationInput, buildVisibleTrustArtifacts } from './trust-cards.js';
 import { publishTrustEvidenceBundle, type TrustPublishRecord } from './trust-publisher.js';
 
 // Side-effect imports: each calls registerGame() on module load
@@ -1400,7 +1400,9 @@ export class GameRoomDO extends DurableObject<Env> {
       const snapshotCtx = { handles: this._meta.handleMap, relayMessages: snapshotRelay };
       const snapshot = this._plugin.buildSpectatorView(this._state, prevState, snapshotCtx);
       this._spectatorSnapshots.push(snapshot);
-      this.ctx.waitUntil(this.publishTrustEvidenceSnapshot(snapshot));
+      this.ctx.waitUntil(
+        this.publishTrustEvidenceSnapshot(snapshot, this._spectatorSnapshots.at(-2)),
+      );
 
       // Update cached summary in D1
       this.writeSummaryToD1();
@@ -1458,14 +1460,25 @@ export class GameRoomDO extends DurableObject<Env> {
     return { success: true, progressCounter: this._progress.counter };
   }
 
-  private async publishTrustEvidenceSnapshot(snapshot: unknown): Promise<void> {
+  private async publishTrustEvidenceSnapshot(
+    snapshot: unknown,
+    previousPublicSnapshot: unknown,
+  ): Promise<void> {
     if (!this._meta) return;
     const relayMessages = await this.getRelayClient().visibleTo({ kind: 'admin' });
+    const behaviorReputation = buildBehaviorReputationInput({
+      gameId: this._meta.gameId,
+      previousPublicSnapshot,
+      postRevealSnapshot: snapshot,
+      snapshotIndex: this._spectatorSnapshots.length - 1,
+      observedAt: new Date().toISOString(),
+    });
     const artifacts = buildVisibleTrustArtifacts(
       snapshot,
       this._meta,
       this._progress.counter,
       relayMessages,
+      behaviorReputation,
     );
     if (artifacts.envelopes.length === 0) return;
     try {
