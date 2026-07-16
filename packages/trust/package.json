@@ -8,12 +8,10 @@
   "scripts": {
     "build": "tsc --skipLibCheck",
     "test": "vitest run",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
-    "sample:binding": "tsx src/sample.ts",
-    "sample:attestation": "tsx src/attestation-sample.ts"
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@agentic-trust/trust": "git+https://github.com/DjimoSerodio/agentic-trust.git#28171fc158d760c724995abb18b0afe406e9d424",
+    "@agentic-trust/trust": "https://codeload.github.com/DjimoSerodio/agentic-trust/tar.gz/28171fc158d760c724995abb18b0afe406e9d424",
     "ethers": "^6.16.0"
   },
   "devDependencies": {
