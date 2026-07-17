@@ -44,7 +44,8 @@ Error handling — the dispatcher returns structured codes you can self-correct 
   - UNKNOWN_TOOL:      the tool name isn't in this session's registry. Re-read state.currentPhase.tools / guide.
   - WRONG_PHASE:       the tool exists but belongs to a different phase. The error payload includes \`currentPhase\` and \`validToolsNow[]\` — switch to one of those.
   - INVALID_ARGS:      args failed JSON-schema validation. Error lists the field issues — fix and retry.
-  - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. an out-of-range move). Fix the semantics and retry.`;
+  - VALIDATION_FAILED: args were shape-correct but semantically rejected (e.g. an out-of-range move). Fix the semantics and retry.
+TOOL VISIBILITY NOTE: your visible tool list may be incomplete at session start — MCP tool registration lags the session's tool snapshot (a known race). The coga tools EXIST even when unlisted. Call them by their full names (mcp__coga__guide, mcp__coga__state, …) anyway; the calls resolve. Never conclude the tools are missing without calling one first.`;
 
 /**
  * Resume prompt — replayed when a backend session ends before phase:"finished".
@@ -57,7 +58,7 @@ Error handling — the dispatcher returns structured codes you can self-correct 
  * Costs one near-empty model call; gameplay follows in the same session via
  * --resume, inheriting the verified tool list.
  */
-export const BOOT_VERIFY_PROMPT = `Call the mcp__coga__guide tool once now. After it returns, reply with exactly: READY. Do nothing else — further instructions follow.`;
+export const BOOT_VERIFY_PROMPT = `Call the mcp__coga__guide tool once now. IMPORTANT: the tool may not appear in your visible tool list — tool registration lags session start; the tool EXISTS and the call WILL resolve, so call it regardless. After it returns, reply with exactly: READY. Do nothing else — further instructions follow.`;
 
 export const RESUME_PROMPT = `The session is still in progress. Keep playing — call state, read state.currentPhase.tools and any trustCards, pick the right per-name tool, call it, then wait. Treat trustCards as compact viewer-visible evidence summaries, not private knowledge or final reputation scores. Use chat when the guide says coordination matters. On WRONG_PHASE or UNKNOWN_TOOL, re-read state and self-correct. Repeat until state.phase === "finished". Do not summarize.`;
 
@@ -77,6 +78,8 @@ export const RESUME_PROMPT = `The session is still in progress. Keep playing —
 export const REJOIN_PROMPT = (
   botName: string,
 ) => `You are ${botName}, re-joining a game already in progress after a context refresh. This is a brand-new session — you have no memory of your previous turns — but the game itself has not changed and your teammates are still playing.
+
+TOOL VISIBILITY NOTE: your visible tool list may be incomplete at session start — MCP tool registration lags the session's tool snapshot. The coga tools EXIST even when unlisted; call them by their full names anyway and the calls resolve.
 
 YOU ARE ALREADY JOINED TO AN ACTIVE LOBBY. DO NOT call create_lobby or join — you are already in one.
 
