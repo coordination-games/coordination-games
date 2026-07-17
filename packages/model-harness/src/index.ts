@@ -18,13 +18,15 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { analyzeRun } from './analyze.js';
+import { renderDryRunPlan } from './dry-run-plan.js';
 import {
   ImportBotConfigArgumentError,
   parseImportBotConfigArgs,
 } from './import-bot-config-cli-args.js';
 import { importBotConfig } from './legacy-bot-config-importer.js';
 import { runBatch } from './orchestrate.js';
-import { expandSeatPlan, loadCampaign } from './spec.js';
+import { loadCampaign } from './spec.js';
+import { isTournamentRun } from './tournament-types.js';
 import type { CampaignRun, RunSpec } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -134,6 +136,11 @@ interface CampaignRunSummary {
  * sweeps). A campaign.json index + a console summary are written at the end.
  */
 async function runCampaign(runs: CampaignRun[]): Promise<number> {
+  if (runs.some((run) => isTournamentRun(run.spec))) {
+    throw new Error(
+      'Tournament execution is not implemented; use --dry-run to inspect the series plan',
+    );
+  }
   const first = runs[0];
   if (!first) throw new Error('campaign resolved to zero runs');
 
@@ -215,46 +222,7 @@ function errMsg(err: unknown): string {
 
 /** Print the resolved run plan for a dry run (the expanded grid + total count). */
 function printPlan(runs: CampaignRun[]): void {
-  console.log('\n=== Run plan (dry run) ===\n');
-  const first = runs[0]?.spec;
-  if (first) {
-    console.log(`server:     ${first.server}`);
-    console.log(`identities: ${first.identities}`);
-    console.log(`output:     ${first.output}`);
-    console.log(`analysis:   ${first.analysis ? `enabled (${first.analysis.model})` : '(none)'}`);
-  }
-
-  // Group by base label (an entry = one or more repeats sharing a base label).
-  const byLabel = new Map<string, CampaignRun[]>();
-  for (const r of runs) {
-    const arr = byLabel.get(r.baseLabel);
-    if (arr) arr.push(r);
-    else byLabel.set(r.baseLabel, [r]);
-  }
-
-  console.log(`\nentries:    ${byLabel.size}  |  total runs: ${runs.length}\n`);
-  for (const [label, group] of byLabel) {
-    const s = group[0]?.spec;
-    if (!s) continue;
-    const seatPlan = expandSeatPlan(s);
-    const mix = seatPlan.reduce<Record<string, number>>((acc, p) => {
-      acc[p.backend] = (acc[p.backend] ?? 0) + 1;
-      return acc;
-    }, {});
-    const mixStr = Object.entries(mix)
-      .map(([b, n]) => `${n} ${b}`)
-      .join(', ');
-    const teamSize = (s.params as { teamSize?: unknown }).teamSize ?? '?';
-    console.log(
-      `  ${label.padEnd(26)} game=${s.game.padEnd(26)} rounds=${String(s.rounds).padEnd(3)} teamSize=${String(teamSize).padEnd(3)} ×${group.length}  [${mixStr}]`,
-    );
-  }
-  console.log('');
-  if (runs.length > 12) {
-    console.log(
-      `  ⚠ ${runs.length} runs will execute sequentially — that's a lot. Ctrl-C to abort.\n`,
-    );
-  }
+  console.log(renderDryRunPlan(runs));
 }
 
 // ---------------------------------------------------------------------------

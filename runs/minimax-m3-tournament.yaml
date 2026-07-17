@@ -1,0 +1,30 @@
+globals:
+  server: http://localhost:8787
+  identities: ephemeral
+  output: ./runs/out
+  limits: { maxModelCallsPerBot: 120, wallClockMsPerRun: 900000 }
+
+models:
+  minimax-m3:
+    provider: minimax
+    model: MiniMax-M3
+
+games:
+  - label: minimax-m3-tragedy-series
+    game: tragedy-of-the-commons
+    repeats: 2
+    params: { teamSize: 4 }
+    tournament:
+      mode: tragedy-series
+      policy:
+        seriesLength: 3
+        baseEntryCost: "100"
+        carryBps: 1500
+        slashBps: 500
+        minRounds: 2
+        maxRounds: 8
+        hazardNumerator: 1
+        hazardDenominator: 4
+    seats:
+      - { persona: ./personas/peaceful-mediator, profile: minimax-m3, count: 2 }
+      - { persona: ./personas/win-focused-opportunist, profile: minimax-m3, count: 2 }

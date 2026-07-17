@@ -18,6 +18,8 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { type NamedModelProfiles, parseModelProfiles } from './model-profiles.js';
 import { parseSeats } from './spec-seats.js';
+import { parseTournamentRunSpec } from './tournament-spec.js';
+import type { CampaignSpec } from './tournament-types.js';
 import {
   type Backend,
   backendForModel,
@@ -85,7 +87,11 @@ export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
     // Strict partition: globals (campaign-wide) + entry (per-game). No key is in
     // both, so this is a partition merge, not an override.
     const merged: Record<string, unknown> = { ...globals, ...g };
-    const spec = parseRunSpecObject(merged, abs, profiles, `games[${idx}]`);
+    const location = `games[${idx}]`;
+    const spec =
+      g.tournament === undefined
+        ? parseRunSpecObject(merged, abs, profiles, location)
+        : parseTournamentRunSpec(merged, abs, profiles, location, parseTournamentDefaults(merged));
 
     // Label: explicit `label:` else the game slug; de-dupe (same game twice).
     let baseLabel = typeof g.label === 'string' && g.label.trim() ? g.label.trim() : spec.game;
@@ -118,6 +124,7 @@ const GAME_KEYS = [
   'repeats',
   'label',
   'disablePlugins',
+  'tournament',
 ] as const;
 
 async function readYamlObject(
@@ -168,6 +175,35 @@ function parseRunSpecObject(
     identities,
     output,
     seats,
+    limits,
+    ...(analysis ? { analysis } : {}),
+    ...(disablePlugins ? { disablePlugins } : {}),
+  };
+}
+
+function parseTournamentDefaults(
+  obj: Record<string, unknown>,
+): Omit<RunSpec, 'game' | 'rounds' | 'seats'> {
+  const server: string =
+    typeof obj.server === 'string' && obj.server.trim() ? obj.server.trim() : DEFAULT_SERVER;
+  const identities: RunSpec['identities'] = obj.identities === 'pool' ? 'pool' : 'ephemeral';
+  const output: string =
+    typeof obj.output === 'string' && obj.output.trim() ? obj.output.trim() : './runs/out';
+  const params: Record<string, unknown> =
+    typeof obj.params === 'object' && obj.params !== null && !Array.isArray(obj.params)
+      ? (obj.params as Record<string, unknown>)
+      : {};
+  const limits = parseRunLimits(obj.limits);
+  const analysis = parseAnalysis(obj.analysis);
+  const disablePlugins =
+    Array.isArray(obj.disablePlugins) && obj.disablePlugins.every((p) => typeof p === 'string')
+      ? (obj.disablePlugins as string[])
+      : undefined;
+  return {
+    server,
+    identities,
+    output,
+    params,
     limits,
     ...(analysis ? { analysis } : {}),
     ...(disablePlugins ? { disablePlugins } : {}),
@@ -233,7 +269,7 @@ export interface SeatPlan {
  * @param spec - A parsed RunSpec (from loadSpec).
  * @returns Ordered list of seat plans (one per bot slot in the lobby).
  */
-export function expandSeatPlan(spec: RunSpec): SeatPlan[] {
+export function expandSeatPlan(spec: CampaignSpec): SeatPlan[] {
   const plans: SeatPlan[] = [];
   let globalIndex = 1;
 

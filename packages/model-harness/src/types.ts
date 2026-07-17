@@ -94,6 +94,7 @@ export interface LoadedPersona {
 // ---------------------------------------------------------------------------
 
 import type { ResolvedModelProfile } from './model-profiles.js';
+import type { CampaignSpec } from './tournament-types.js';
 
 /** One seat group in the spec; expands to `count` resolved seats. */
 export interface SeatSpec {
@@ -165,8 +166,7 @@ export interface RunSpec {
 
 /** One fully-resolved run within a campaign (globals merged, repeats flattened). */
 export interface CampaignRun {
-  /** The resolved RunSpec, ready for runBatch (with `label` set). */
-  spec: RunSpec;
+  spec: CampaignSpec;
   /** The entry's base label (explicit `label:` or the game slug, de-duped). */
   baseLabel: string;
   /** 1-based index within this entry's repeats. */
