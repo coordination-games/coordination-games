@@ -444,6 +444,72 @@ function computeOathbreakerFinding(runs: StoryRun[]): OathbreakerFinding | null 
   };
 }
 
+// --- Finding 6: OATHBREAKER chat vs silent — the contrast to finding 4 --------
+
+interface OathCommsGroup {
+  n: number;
+  betrayals: number;
+  brokenPledges: number;
+  deceptions: number;
+  incidents: number;
+  coordination: number;
+  oathsKept: number;
+  oathsBroken: number;
+}
+
+interface OathCommsFinding {
+  ready: boolean;
+  chat: OathCommsGroup | null;
+  silent: OathCommsGroup | null;
+}
+
+function oathCommsGroup(runs: StoryRun[], baseLabel: string): OathCommsGroup | null {
+  const matching = runs.filter(
+    (r) =>
+      r.baseLabel === baseLabel && r.manifest && gameOf(r.manifest) === 'oathbreaker' && r.analysis,
+  );
+  if (matching.length === 0) return null;
+  let betrayals = 0;
+  let brokenPledges = 0;
+  let deceptions = 0;
+  let coordination = 0;
+  let oathsKept = 0;
+  let oathsBroken = 0;
+  for (const r of matching) {
+    betrayals += r.analysis?.betrayals?.length ?? 0;
+    brokenPledges += r.analysis?.brokenPledges?.length ?? 0;
+    deceptions += r.analysis?.deceptions?.length ?? 0;
+    coordination += r.analysis?.coordination?.length ?? 0;
+    const rankings = oathRankingsOf(r.manifest);
+    if (rankings) {
+      for (const rk of rankings) {
+        oathsKept += rk.oathsKept;
+        oathsBroken += rk.oathsBroken;
+      }
+    }
+  }
+  return {
+    n: matching.length,
+    betrayals,
+    brokenPledges,
+    deceptions,
+    incidents: betrayals + brokenPledges + deceptions,
+    coordination,
+    oathsKept,
+    oathsBroken,
+  };
+}
+
+/** Labels 'ob-chat'/'ob-silent' are a convention of the console's own demo
+ * specs and ad-hoc campaigns (see demos.ts, oathEntry()) — not a game-level
+ * concept, same posture as commsGroup() above for Tragedy's 'with-chat'/
+ * 'no-chat'. */
+function computeOathComms(runs: StoryRun[]): OathCommsFinding {
+  const chat = oathCommsGroup(runs, 'ob-chat');
+  const silent = oathCommsGroup(runs, 'ob-silent');
+  return { ready: chat !== null && silent !== null, chat, silent };
+}
+
 /** Roadmap status for the OATHBREAKER rung: 'done' once a judged run exists,
  * 'running' once any campaign has so much as attempted one (including
  * errored smoke tests — evidence the work is underway), else 'next'. Reads
@@ -754,6 +820,58 @@ function renderOathbreakerFinding(finding: OathbreakerFinding | null): string {
     ${excerpt ? `<p class="footnote">Judge: “${escapeHtml(excerpt)}”</p>` : ''}`;
 }
 
+/** Empty string when the ablation hasn't produced both arms yet — mirrors
+ * renderComms()'s "still running" stub but only shows it once OATHBREAKER
+ * itself has judged data (renderOathbreakerFinding gates the whole section). */
+function renderOathComms(oc: OathCommsFinding): string {
+  if (!oc.ready || !oc.chat || !oc.silent) {
+    return `
+      <p>
+        <span class="pill pill-running">running right now</span>
+        Finding 4 asked whether talking saves the commons and got a clean no. OATHBREAKER is the
+        sharper test: betrayal is explicitly profitable there. We're running the same chat-vs-silent
+        split on it now — check back for the contrast.
+      </p>`;
+  }
+  const { chat, silent } = oc;
+  const chatTotal = chat.oathsKept + chat.oathsBroken;
+  const silentTotal = silent.oathsKept + silent.oathsBroken;
+  const chatKeepRate = chatTotal > 0 ? round1((chat.oathsKept / chatTotal) * 100) : null;
+  const silentKeepRate = silentTotal > 0 ? round1((silent.oathsKept / silentTotal) * 100) : null;
+  return `
+    <p>
+      Finding 4 found that a chat channel didn't move Tragedy's commons health at all — tacit
+      coordination through visible state was enough. OATHBREAKER is the test where that stops being
+      true: betrayal is explicitly profitable, so the pressure to defect is real. Split the same
+      three-vs-three design by whether the table could talk:
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>condition</th><th>n</th><th>betrayals</th><th>broken pledges</th><th>deceptions</th><th>coordination pacts</th>${chatKeepRate !== null || silentKeepRate !== null ? '<th>oaths kept</th>' : ''}</tr></thead>
+        <tbody>
+          <tr>
+            <td>with chat</td><td>${chat.n}</td><td>${chat.betrayals}</td><td>${chat.brokenPledges}</td><td>${chat.deceptions}</td><td>${chat.coordination}</td>
+            ${chatKeepRate !== null ? `<td>${chatKeepRate}% (${chat.oathsKept}/${chatTotal})</td>` : chatKeepRate !== null || silentKeepRate !== null ? '<td>—</td>' : ''}
+          </tr>
+          <tr>
+            <td>silent</td><td>${silent.n}</td><td>${silent.betrayals}</td><td>${silent.brokenPledges}</td><td>${silent.deceptions}</td><td>${silent.coordination}</td>
+            ${silentKeepRate !== null ? `<td>${silentKeepRate}% (${silent.oathsKept}/${silentTotal})</td>` : chatKeepRate !== null || silentKeepRate !== null ? '<td>—</td>' : ''}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The silent tables saw <strong>${silent.incidents}</strong> flagged incident${silent.incidents === 1 ? '' : 's'}
+      against <strong>${chat.incidents}</strong> with chat open (${silent.betrayals} vs ${chat.betrayals} betrayals),
+      while chat tables formed more coordination pacts (${chat.coordination} vs ${silent.coordination}).
+      Small n (3 games/arm) — directional, not proof — but it's the shape the human commons literature
+      predicts and Tragedy didn't show: <strong>when defection pays, a talk channel is what keeps the
+      table honest.</strong> The instrument seems to need real stakes before communication earns its keep.
+    </p>
+    <p class="footnote">n=3/arm, 4 seats/game, 0/24 seat mortality. Same harness, same personas
+    (2 peaceful-mediator + 2 win-focused-opportunist), only <code>disablePlugins: ['basic-chat']</code> differs.</p>`;
+}
+
 function renderRoadmap(rungs: RoadmapRung[]): string {
   const items = rungs
     .map(
@@ -782,6 +900,7 @@ export async function buildStoryHtml(): Promise<string> {
   const ceiling = computeCeiling(runs);
   const comms = computeComms(runs);
   const oathbreakerFinding = computeOathbreakerFinding(runs);
+  const oathComms = computeOathComms(runs);
   const oathbreakerStatus = await computeOathbreakerStatus(runs);
   const roadmap = buildRoadmap(comms.ready, oathbreakerStatus);
 
@@ -987,7 +1106,9 @@ export async function buildStoryHtml(): Promise<string> {
       ${
         oathbreakerFinding
           ? `<h3>5. When betrayal pays: first OATHBREAKER games</h3>
-      ${renderOathbreakerFinding(oathbreakerFinding)}`
+      ${renderOathbreakerFinding(oathbreakerFinding)}
+      <h3>6. The contrast: communication matters when it's not free</h3>
+      ${renderOathComms(oathComms)}`
           : ''
       }
     </section>
