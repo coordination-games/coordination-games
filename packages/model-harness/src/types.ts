@@ -93,6 +93,8 @@ export interface LoadedPersona {
 // Run-spec (§6) — the parsed YAML/JSON that drives a whole batch.
 // ---------------------------------------------------------------------------
 
+import type { ResolvedModelProfile } from './model-profiles.js';
+
 /** One seat group in the spec; expands to `count` resolved seats. */
 export interface SeatSpec {
   /** Path (relative to the spec or absolute) to a persona bundle directory. */
@@ -101,6 +103,8 @@ export interface SeatSpec {
   model: string;
   /** How many seats this entry expands to. Personas cycle if count > 1. */
   count: number;
+  profile?: string;
+  modelConfig?: ResolvedModelProfile;
 }
 
 export interface RunLimits {

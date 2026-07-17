@@ -18,6 +18,11 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { analyzeRun } from './analyze.js';
+import {
+  ImportBotConfigArgumentError,
+  parseImportBotConfigArgs,
+} from './import-bot-config-cli-args.js';
+import { importBotConfig } from './legacy-bot-config-importer.js';
 import { runBatch } from './orchestrate.js';
 import { expandSeatPlan, loadCampaign } from './spec.js';
 import type { CampaignRun, RunSpec } from './types.js';
@@ -56,6 +61,10 @@ Usage:
   coga-harness run <spec.yaml>            Run a full batch (and analysis if enabled).
   coga-harness run --dry-run <spec.yaml>  Print the resolved seat plan and exit.
   coga-harness analyze <runDir>           Run the judge analysis over a run dir.
+  coga-harness import-bot-config <legacy.json> [--default-provider <provider>]
+                                           [--default-model <model>] [--default-base-url <url>]
+                                           [--default-api-key-env <env>] [--output <yaml>]
+                                           Convert legacy bot config to canonical model profiles.
 
 Notes:
   - Persona refs in a spec may be absolute paths, package-relative paths
@@ -78,6 +87,28 @@ async function cmdRun(specPath: string, dryRun: boolean): Promise<number> {
     return 0;
   }
   return runCampaign(runs);
+}
+
+async function cmdImportBotConfig(argv: readonly string[]): Promise<number> {
+  let args: ReturnType<typeof parseImportBotConfigArgs>;
+  try {
+    args = parseImportBotConfigArgs(argv, process.cwd());
+  } catch (err) {
+    if (err instanceof ImportBotConfigArgumentError) {
+      console.error(`error: ${err.message}`);
+      return 1;
+    }
+    throw err;
+  }
+  const result = await importBotConfig(args.inputPath, args.outputPath, args.defaults);
+  console.log(`[import-bot-config] wrote ${args.outputPath}`);
+  console.log(`[import-bot-config] profiles: ${result.profileNames.join(', ')}`);
+  for (const [profileName, fields] of Object.entries(result.omittedPersonaFields)) {
+    console.log(
+      `[import-bot-config] omitted persona fields for ${profileName}: ${fields.join(', ')}`,
+    );
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +324,10 @@ async function main(): Promise<number> {
       const modelFlag =
         modelIdx !== -1 && process.argv[modelIdx + 1] ? process.argv[modelIdx + 1] : undefined;
       return cmdAnalyze(runDir, flags, modelFlag);
+    }
+
+    case 'import-bot-config': {
+      return cmdImportBotConfig(process.argv.slice(3));
     }
 
     default:

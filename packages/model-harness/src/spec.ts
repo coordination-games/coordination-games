@@ -16,13 +16,14 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { type NamedModelProfiles, parseModelProfiles } from './model-profiles.js';
+import { parseSeats } from './spec-seats.js';
 import {
   type Backend,
   backendForModel,
   type CampaignRun,
   type RunLimits,
   type RunSpec,
-  type SeatSpec,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,8 @@ const DEFAULT_SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
   const { obj, abs } = await readYamlObject(filePath);
 
+  assertKeysAllowed(obj, ROOT_KEYS, 'root', abs);
+
   if (!('games' in obj)) {
     throw new Error(
       `spec at ${abs}: missing "games". A spec is { globals?, games: [...] } — ` +
@@ -62,6 +65,8 @@ export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
   }
 
   const globals = parseGlobals(obj.globals, abs);
+  const profiles =
+    obj.models === undefined ? undefined : parseModelProfiles({ models: obj.models });
   const rawGames = obj.games;
   if (!Array.isArray(rawGames) || rawGames.length === 0) {
     throw new Error(`spec at ${abs}: "games" must be a non-empty array`);
@@ -80,7 +85,7 @@ export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
     // Strict partition: globals (campaign-wide) + entry (per-game). No key is in
     // both, so this is a partition merge, not an override.
     const merged: Record<string, unknown> = { ...globals, ...g };
-    const spec = parseRunSpecObject(merged, abs);
+    const spec = parseRunSpecObject(merged, abs, profiles, `games[${idx}]`);
 
     // Label: explicit `label:` else the game slug; de-dupe (same game twice).
     let baseLabel = typeof g.label === 'string' && g.label.trim() ? g.label.trim() : spec.game;
@@ -104,6 +109,7 @@ export async function loadCampaign(filePath: string): Promise<CampaignRun[]> {
 
 /** Campaign scope partition — the single source of truth for which field lives where. */
 const GLOBAL_KEYS = ['server', 'identities', 'output', 'limits', 'analysis'] as const;
+const ROOT_KEYS = ['globals', 'games', 'models'] as const;
 const GAME_KEYS = [
   'game',
   'rounds',
@@ -120,7 +126,7 @@ async function readYamlObject(
   const abs = path.resolve(filePath);
   const raw = await fs.readFile(abs, 'utf8');
   // yaml.parse handles both YAML and JSON (JSON is valid YAML).
-  const data: unknown = parseYaml(raw);
+  const data: unknown = parseYaml(raw, { uniqueKeys: true });
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     throw new Error(`spec at ${abs}: expected a YAML/JSON object at root`);
   }
@@ -128,10 +134,15 @@ async function readYamlObject(
 }
 
 /** Parse a plain object into a validated, defaulted RunSpec. */
-function parseRunSpecObject(obj: Record<string, unknown>, abs: string): RunSpec {
+function parseRunSpecObject(
+  obj: Record<string, unknown>,
+  abs: string,
+  profiles: NamedModelProfiles | undefined,
+  seatLocation: string,
+): RunSpec {
   const game = requireString(obj, 'game', abs);
   const rounds = requirePositiveInt(obj, 'rounds', abs);
-  const seats = requireSeats(obj, abs);
+  const seats = parseSeats(obj.seats, abs, profiles, seatLocation);
 
   const server: string =
     typeof obj.server === 'string' && obj.server.trim() ? obj.server.trim() : DEFAULT_SERVER;
@@ -261,37 +272,6 @@ function requirePositiveInt(obj: Record<string, unknown>, key: string, filePath:
     );
   }
   return val;
-}
-
-function requireSeats(obj: Record<string, unknown>, filePath: string): SeatSpec[] {
-  const raw = obj.seats;
-  if (!Array.isArray(raw) || raw.length === 0) {
-    throw new Error(`run-spec at ${filePath}: "seats" must be a non-empty array`);
-  }
-  return raw.map((entry: unknown, idx: number) => {
-    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-      throw new Error(`run-spec at ${filePath}: seats[${idx}] must be an object`);
-    }
-    const s = entry as Record<string, unknown>;
-
-    if (typeof s.persona !== 'string' || !(s.persona as string).trim()) {
-      throw new Error(`run-spec at ${filePath}: seats[${idx}].persona is required`);
-    }
-    if (typeof s.model !== 'string' || !(s.model as string).trim()) {
-      throw new Error(`run-spec at ${filePath}: seats[${idx}].model is required`);
-    }
-
-    const count =
-      typeof s.count === 'number' && Number.isInteger(s.count) && (s.count as number) > 0
-        ? (s.count as number)
-        : 1;
-
-    return {
-      persona: (s.persona as string).trim(),
-      model: (s.model as string).trim(),
-      count,
-    } satisfies SeatSpec;
-  });
 }
 
 function parseRunLimits(raw: unknown): RunLimits {

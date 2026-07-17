@@ -112,11 +112,13 @@ describe('Lucian campaign specification compatibility', () => {
     });
   });
 
-  it('Given an unknown root key, when loading a campaign, then it preserves the current permissive root behavior', async () => {
+  it('Given an unknown root key, when loading a campaign, then it reports the located root error', async () => {
     await withTemporaryCampaign(
       'legacyRootMetadata: retained\ngames:\n  - game: test\n    rounds: 1\n    seats: [{ persona: p, model: haiku }]\n',
       async (filePath) => {
-        await expect(loadCampaign(filePath)).resolves.toHaveLength(1);
+        await expect(loadCampaign(filePath)).rejects.toThrow(
+          /"legacyRootMetadata" is not allowed in root/,
+        );
       },
     );
   });
