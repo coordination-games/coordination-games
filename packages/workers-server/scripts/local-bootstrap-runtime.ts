@@ -1,0 +1,225 @@
+import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { writeRuntimeConfig } from './local-bootstrap-config.js';
+import {
+  BootstrapInputError,
+  buildWranglerCommands,
+  type LocalBootstrapOptions,
+  persistenceIsInside,
+} from './local-bootstrap-options.js';
+
+const strippedEnvironmentKeys = [
+  'RPC_URL',
+  'RPC_URLS',
+  'RELAYER_PRIVATE_KEY',
+  'REGISTRY_ADDRESS',
+  'ERC8004_ADDRESS',
+  'CREDITS_ADDRESS',
+  'GAME_ANCHOR_ADDRESS',
+  'USDC_ADDRESS',
+] as const;
+
+export type LocalBootstrap = {
+  readonly port: number;
+  readonly processId: number;
+  readonly migrationOutput: string;
+  readonly stop: () => Promise<void>;
+};
+
+function environment(): NodeJS.ProcessEnv {
+  const values = { ...process.env };
+  for (const key of strippedEnvironmentKeys) delete values[key];
+  return values;
+}
+
+function command(
+  executable: string,
+  argumentsList: readonly string[],
+  cwd: string,
+): Promise<string> {
+  return new Promise((resolveResult, reject) => {
+    const child = spawn(executable, argumentsList, {
+      cwd,
+      env: environment(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+    });
+    child.once('error', reject);
+    child.once('exit', (code) =>
+      code === 0
+        ? resolveResult(output)
+        : reject(new Error(`Wrangler exited with code ${code ?? 'unknown'}: ${output}`)),
+    );
+  });
+}
+
+type ProcessKiller = (processId: number, signal: NodeJS.Signals | 0) => boolean;
+
+export function isErrnoExceptionWithCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code;
+}
+
+export function stopProcessGroup(
+  processId: number,
+  kill: ProcessKiller = process.kill,
+): Promise<void> {
+  const groupId = -processId;
+  try {
+    kill(groupId, 'SIGTERM');
+  } catch (error) {
+    if (isErrnoExceptionWithCode(error, 'ESRCH')) return Promise.resolve();
+    return Promise.reject(error);
+  }
+  return new Promise((resolveStop, rejectStop) => {
+    let graceTimer: NodeJS.Timeout | undefined;
+    let forcedVerificationTimer: NodeJS.Timeout | undefined;
+    let interval: NodeJS.Timeout | undefined;
+    let finished = false;
+    const finish = (error?: unknown): void => {
+      if (finished) return;
+      finished = true;
+      if (graceTimer) clearTimeout(graceTimer);
+      if (forcedVerificationTimer) clearTimeout(forcedVerificationTimer);
+      if (interval) clearInterval(interval);
+      if (error) rejectStop(error);
+      else resolveStop();
+    };
+    const probe = (): void => {
+      try {
+        kill(groupId, 0);
+      } catch (error) {
+        if (isErrnoExceptionWithCode(error, 'ESRCH')) {
+          finish();
+          return;
+        }
+        finish(error);
+      }
+    };
+    interval = setInterval(probe, 50);
+    graceTimer = setTimeout(() => {
+      try {
+        kill(groupId, 'SIGKILL');
+      } catch (error) {
+        if (isErrnoExceptionWithCode(error, 'ESRCH')) {
+          finish();
+          return;
+        }
+        finish(error);
+        return;
+      }
+      forcedVerificationTimer = setTimeout(() => {
+        finish(new Error(`Process group ${groupId} remained alive after SIGKILL`));
+      }, 1_000);
+      probe();
+    }, 2_000);
+    probe();
+  });
+}
+
+async function runtime(options: LocalBootstrapOptions, repositoryRoot: string, configPath: string) {
+  await mkdir(options.persistTo, { recursive: true });
+  const persistenceDirectory = await realpath(options.persistTo);
+  if (persistenceIsInside(await realpath(repositoryRoot), persistenceDirectory))
+    throw new BootstrapInputError('--persist-to resolves inside the repository');
+  const runtimeDirectory = await mkdtemp(resolve(tmpdir(), 'coga-wrangler-local-'));
+  const runtimeConfigPath = await writeRuntimeConfig(runtimeDirectory, configPath);
+  return {
+    persistenceDirectory,
+    runtimeDirectory,
+    runtimeConfigPath,
+    wrangler: resolve(repositoryRoot, 'node_modules', '.bin', 'wrangler'),
+  };
+}
+
+async function start(
+  options: LocalBootstrapOptions,
+  repositoryRoot: string,
+  configPath: string,
+  migrate: boolean,
+): Promise<LocalBootstrap> {
+  const context = await runtime(options, repositoryRoot, configPath);
+  try {
+    const commands = buildWranglerCommands(
+      { ...options, persistTo: context.persistenceDirectory },
+      context.runtimeConfigPath,
+    );
+    const migrationOutput = migrate
+      ? await command(context.wrangler, commands.migrate, context.runtimeDirectory)
+      : '';
+    const child = spawn(context.wrangler, commands.dev, {
+      cwd: context.runtimeDirectory,
+      detached: true,
+      env: environment(),
+      stdio: 'inherit',
+    });
+    const processId = child.pid;
+    if (!processId) throw new Error('Wrangler did not provide a process id');
+    return {
+      port: options.port,
+      processId,
+      migrationOutput,
+      stop: async () => {
+        try {
+          await stopProcessGroup(processId);
+        } finally {
+          await rm(context.runtimeDirectory, { recursive: true, force: true });
+        }
+      },
+    };
+  } catch (error) {
+    await rm(context.runtimeDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export function startLocalBootstrap(
+  options: LocalBootstrapOptions,
+  repositoryRoot: string,
+  configPath: string,
+): Promise<LocalBootstrap> {
+  return start(options, repositoryRoot, configPath, true);
+}
+export function startUnmigratedLocalWorker(
+  options: LocalBootstrapOptions,
+  repositoryRoot: string,
+  configPath: string,
+): Promise<LocalBootstrap> {
+  return start(options, repositoryRoot, configPath, false);
+}
+export async function hasAuthNoncesTable(
+  options: LocalBootstrapOptions,
+  repositoryRoot: string,
+  configPath: string,
+): Promise<boolean> {
+  const context = await runtime(options, repositoryRoot, configPath);
+  try {
+    const output = await command(
+      context.wrangler,
+      [
+        'd1',
+        'execute',
+        'DB',
+        '--local',
+        '--persist-to',
+        context.persistenceDirectory,
+        '--config',
+        context.runtimeConfigPath,
+        '--command',
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_nonces'",
+        '--json',
+      ],
+      context.runtimeDirectory,
+    );
+    return output.includes('auth_nonces');
+  } finally {
+    await rm(context.runtimeDirectory, { recursive: true, force: true });
+  }
+}
