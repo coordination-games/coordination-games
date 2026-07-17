@@ -244,11 +244,12 @@ export class LobbyDO extends DurableObject<Env> {
           noTimeout?: boolean;
           teamSize?: number;
           maxRounds?: number;
+          pressure?: number;
           disabledPlugins?: string[];
         };
     if (body instanceof Response) return body;
 
-    const { lobbyId, gameType, noTimeout, teamSize, maxRounds, disabledPlugins } = body;
+    const { lobbyId, gameType, noTimeout, teamSize, maxRounds, pressure, disabledPlugins } = body;
     if (!lobbyId || !gameType) {
       return Response.json({ error: 'lobbyId and gameType are required' }, { status: 400 });
     }
@@ -290,6 +291,14 @@ export class LobbyDO extends DurableObject<Env> {
     // ignore the key are unaffected.
     if (typeof maxRounds === 'number' && maxRounds >= 1) {
       accumulatedMetadata.maxRounds = Math.floor(maxRounds);
+    }
+    // Instrument-v2 difficulty dial (0-3, research). The plugin's
+    // `createConfig(_, _, metadata)` reads `metadata.pressure` the same way
+    // it reads maxRounds (see tragedy-of-the-commons); omitted → default 0
+    // (today's behavior, byte-identical). Games that ignore the key are
+    // unaffected.
+    if (typeof pressure === 'number' && pressure >= 0) {
+      accumulatedMetadata.pressure = pressure;
     }
     // Plugin ablation set (research). Carried as metadata and handed to the
     // GameRoomDO at creation so its server-side projections (trust) can be gated

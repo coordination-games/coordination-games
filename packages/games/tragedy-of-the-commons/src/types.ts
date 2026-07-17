@@ -319,6 +319,13 @@ export type TragedyV2Action =
 
 export interface TragedyV2Config extends TragedyConfig {
   schemaVersion: 'v2';
+  /**
+   * Instrument-v2 difficulty dial, 0..3. Absent/0 = today's constants,
+   * byte-identical. See the "Pressure dial" comment table in game.ts for
+   * the exact mapping from this scalar to starting tile health, extraction
+   * yield, and extraction decay.
+   */
+  pressure?: number;
 }
 
 export const DEFAULT_V2_CONFIG = (overrides?: Partial<TragedyV2Config>): TragedyV2Config => ({
@@ -343,7 +350,7 @@ export interface TragedyV2State {
   submittedActions: Record<string, TragedyAction | null>;
   currentPlayerIndex: number;
   winner: string | null;
-  config: TragedyConfig;
+  config: TragedyV2Config;
 }
 
 // ── V2 Spectator / Player View ──
