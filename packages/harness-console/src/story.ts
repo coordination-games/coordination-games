@@ -11,7 +11,7 @@
 
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
-import { type RunManifest, readJson } from './artifacts.js';
+import { listCampaigns, type RunManifest, readJson } from './artifacts.js';
 import { buildHealthChartSvg, type FindingsCondition } from './findings.js';
 import { OUTPUT_DIR } from './paths.js';
 
@@ -348,6 +348,114 @@ function computeComms(runs: StoryRun[]): CommsFinding {
   return { ready: withChat !== null && noChat !== null, withChat, noChat };
 }
 
+// --- Finding 5: OATHBREAKER promise-keeping (may not exist yet) ---------------
+
+/** OATHBREAKER's `getOutcome()` (packages/games/oathbreaker/src/plugin.ts)
+ * writes rankings shaped like this into manifest.outcome.outcome — read
+ * structurally, not by importing the game package, since the console stays
+ * game-agnostic (same posture as healthPercentOf above). */
+interface OathRankingLike {
+  oathsKept: number;
+  oathsBroken: number;
+}
+
+function oathRankingsOf(manifest: RunManifest | null): OathRankingLike[] | null {
+  if (!manifest) return null;
+  const outer = manifest.outcome?.outcome as { rankings?: unknown } | undefined;
+  const rankings = outer?.rankings;
+  if (!Array.isArray(rankings)) return null;
+  const out: OathRankingLike[] = [];
+  for (const r of rankings) {
+    const row = r as Partial<OathRankingLike> | null;
+    if (row && typeof row.oathsKept === 'number' && typeof row.oathsBroken === 'number') {
+      out.push({ oathsKept: row.oathsKept, oathsBroken: row.oathsBroken });
+    }
+  }
+  return out;
+}
+
+interface OathbreakerFinding {
+  n: number;
+  oathsKept: number;
+  oathsBroken: number;
+  betrayals: number;
+  brokenPledges: number;
+  deceptions: number;
+  incidents: number;
+  judgeExcerpt: string | null;
+}
+
+/** A run counts as "judged OATHBREAKER data" only when both a manifest
+ * naming the game and an analysis.json are present — matches the bar the
+ * roadmap rung uses for 'done'. */
+function judgedOathbreakerRuns(runs: StoryRun[]): StoryRun[] {
+  return runs.filter((r) => r.manifest && gameOf(r.manifest) === 'oathbreaker' && r.analysis);
+}
+
+function computeOathbreakerFinding(runs: StoryRun[]): OathbreakerFinding | null {
+  const judged = judgedOathbreakerRuns(runs);
+  if (judged.length === 0) return null;
+
+  let oathsKept = 0;
+  let oathsBroken = 0;
+  let betrayals = 0;
+  let brokenPledges = 0;
+  let deceptions = 0;
+  let judgeExcerpt: string | null = null;
+  let sawRankings = false;
+
+  for (const run of judged) {
+    const rankings = oathRankingsOf(run.manifest);
+    if (rankings) {
+      sawRankings = true;
+      for (const r of rankings) {
+        oathsKept += r.oathsKept;
+        oathsBroken += r.oathsBroken;
+      }
+    }
+    if (run.analysis) {
+      betrayals += run.analysis.betrayals?.length ?? 0;
+      brokenPledges += run.analysis.brokenPledges?.length ?? 0;
+      deceptions += run.analysis.deceptions?.length ?? 0;
+      if (
+        !judgeExcerpt &&
+        typeof run.analysis.summary === 'string' &&
+        run.analysis.summary.trim()
+      ) {
+        judgeExcerpt = run.analysis.summary.trim();
+      }
+    }
+  }
+
+  // Nothing usable came out of any of the judged runs — the shapes didn't
+  // match what we expected. Say nothing rather than render zeros as if
+  // they were a real finding.
+  if (!sawRankings && betrayals + brokenPledges + deceptions === 0 && !judgeExcerpt) return null;
+
+  return {
+    n: judged.length,
+    oathsKept,
+    oathsBroken,
+    betrayals,
+    brokenPledges,
+    deceptions,
+    incidents: betrayals + brokenPledges + deceptions,
+    judgeExcerpt,
+  };
+}
+
+/** Roadmap status for the OATHBREAKER rung: 'done' once a judged run exists,
+ * 'running' once any campaign has so much as attempted one (including
+ * errored smoke tests — evidence the work is underway), else 'next'. Reads
+ * campaign.json via listCampaigns() because a run can be declared with a
+ * game before it ever produces a manifest.json (e.g. a lobby-join error). */
+async function computeOathbreakerStatus(runs: StoryRun[]): Promise<RoadmapRung['status']> {
+  if (judgedOathbreakerRuns(runs).length > 0) return 'done';
+  const campaigns = await listCampaigns();
+  const attempted = campaigns.some((c) => c.runs.some((run) => run.game === 'oathbreaker'));
+  return attempted ? 'running' : 'next';
+}
+
 // --- diagram: agents -> game -> judge -> findings (Act 2) ----------------------
 
 const INSTRUMENT_DIAGRAM_SVG = `
@@ -415,7 +523,11 @@ interface RoadmapRung {
   detail: string;
 }
 
-const ROADMAP: RoadmapRung[] = [
+/** Rung order + narrative text. Statuses below are placeholders for the two
+ * rungs computed at render time (communication, OATHBREAKER) — see
+ * buildRoadmap(). Everything else is still hand-maintained: it only moves
+ * when a human ships the next campaign and edits this file, same as before. */
+const ROADMAP_STATIC: RoadmapRung[] = [
   {
     status: 'done',
     title: 'Model axis',
@@ -456,6 +568,29 @@ const ROADMAP: RoadmapRung[] = [
       'the same model in different harness designs — which agent architecture cooperates best.',
   },
 ];
+
+/** Merges the static rungs with the two data-derived ones: communication
+ * (done once computeComms() has a real comparison, i.e. both arms have
+ * health data) and a new OATHBREAKER rung appended at the end — it isn't
+ * one of the four fixed axes, it's a new instrument (new game). */
+function buildRoadmap(
+  commsReady: boolean,
+  oathbreakerStatus: RoadmapRung['status'],
+): RoadmapRung[] {
+  const rungs = ROADMAP_STATIC.map((r) =>
+    r.title === 'Capability axis: communication'
+      ? { ...r, status: commsReady ? ('done' as const) : ('running' as const) }
+      : r,
+  );
+  rungs.push({
+    status: oathbreakerStatus,
+    title: 'New games: promise-keeping (OATHBREAKER)',
+    detail:
+      'agents swear a shared oath each round, then independently choose to honor or break it — ' +
+      'do promises hold when payoff and principle pull apart?',
+  });
+  return rungs;
+}
 
 const STATUS_LABEL: Record<RoadmapRung['status'], string> = {
   done: 'done',
@@ -592,9 +727,37 @@ function renderComms(comms: CommsFinding): string {
     ${chart ? `<div class="chart-wrap">${chart}</div>` : ''}`;
 }
 
-function renderRoadmap(): string {
-  const items = ROADMAP.map(
-    (r) => `
+/** Empty string (not a placeholder paragraph) when there's nothing judged
+ * yet — buildStoryHtml() only prints the heading above this if it's
+ * non-empty, so the section disappears entirely rather than showing a
+ * "coming soon" stub for a game that hasn't produced real data. */
+function renderOathbreakerFinding(finding: OathbreakerFinding | null): string {
+  if (!finding) return '';
+  const totalOaths = finding.oathsKept + finding.oathsBroken;
+  const keepRate = totalOaths > 0 ? round1((finding.oathsKept / totalOaths) * 100) : null;
+  const excerpt =
+    finding.judgeExcerpt !== null
+      ? finding.judgeExcerpt.length > 320
+        ? `${finding.judgeExcerpt.slice(0, 320).trim()}…`
+        : finding.judgeExcerpt
+      : null;
+  return `
+    <p>
+      OATHBREAKER pairs agents off round after round: they negotiate a shared pledge, then each
+      independently chooses to honor it or cash in by breaking it. Across ${finding.n} judged game${finding.n === 1 ? '' : 's'} so far${
+        keepRate !== null
+          ? `, oaths were kept ${keepRate}% of the time (${finding.oathsKept} kept vs. ${finding.oathsBroken} broken)`
+          : ''
+      }. The judge flagged ${finding.incidents} incident${finding.incidents === 1 ? '' : 's'}
+      (${finding.betrayals} betrayal${finding.betrayals === 1 ? '' : 's'}, ${finding.brokenPledges} broken pledge${finding.brokenPledges === 1 ? '' : 's'}, ${finding.deceptions} deception${finding.deceptions === 1 ? '' : 's'}).
+    </p>
+    ${excerpt ? `<p class="footnote">Judge: “${escapeHtml(excerpt)}”</p>` : ''}`;
+}
+
+function renderRoadmap(rungs: RoadmapRung[]): string {
+  const items = rungs
+    .map(
+      (r) => `
       <li class="rung rung-${r.status}">
         <span class="rung-dot" aria-hidden="true"></span>
         <div>
@@ -602,7 +765,8 @@ function renderRoadmap(): string {
           <p class="rung-detail">${escapeHtml(r.detail)}</p>
         </div>
       </li>`,
-  ).join('');
+    )
+    .join('');
   return `<ol class="roadmap">${items}</ol>`;
 }
 
@@ -617,6 +781,9 @@ export async function buildStoryHtml(): Promise<string> {
   const temperament = computeTemperament(runs);
   const ceiling = computeCeiling(runs);
   const comms = computeComms(runs);
+  const oathbreakerFinding = computeOathbreakerFinding(runs);
+  const oathbreakerStatus = await computeOathbreakerStatus(runs);
+  const roadmap = buildRoadmap(comms.ready, oathbreakerStatus);
 
   const priorCeilingChart = buildHealthChartSvg(
     [
@@ -816,6 +983,13 @@ export async function buildStoryHtml(): Promise<string> {
 
       <h3>4. Does talking save the commons?</h3>
       ${renderComms(comms)}
+
+      ${
+        oathbreakerFinding
+          ? `<h3>5. When betrayal pays: first OATHBREAKER games</h3>
+      ${renderOathbreakerFinding(oathbreakerFinding)}`
+          : ''
+      }
     </section>
 
     <section class="roadmap">
@@ -826,7 +1000,7 @@ export async function buildStoryHtml(): Promise<string> {
         infrastructure. That discipline is the whole method — it's what turns "agents cooperated" into
         "this specific capability bought this much cooperation."
       </p>
-      ${renderRoadmap()}
+      ${renderRoadmap(roadmap)}
     </section>
 
     <section class="invitation">
