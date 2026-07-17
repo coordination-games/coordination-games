@@ -1,0 +1,260 @@
+{
+  "campaign-example": {
+    "runCount": 3,
+    "runs": [
+      {
+        "spec": {
+          "game": "tragedy-of-the-commons",
+          "rounds": 3,
+          "params": { "teamSize": 4 },
+          "server": "http://localhost:8787",
+          "identities": "ephemeral",
+          "output": "./runs/out",
+          "seats": [
+            { "persona": "./personas/peaceful-mediator", "model": "haiku", "count": 2 },
+            { "persona": "./personas/win-focused-opportunist", "model": "haiku", "count": 2 }
+          ],
+          "limits": { "maxModelCallsPerBot": 120, "wallClockMsPerRun": 900000 },
+          "analysis": { "enabled": true, "model": "haiku" },
+          "label": "mediators-vs-opportunists-r1"
+        },
+        "baseLabel": "mediators-vs-opportunists",
+        "repeatIndex": 1,
+        "repeatTotal": 2
+      },
+      {
+        "spec": {
+          "game": "tragedy-of-the-commons",
+          "rounds": 3,
+          "params": { "teamSize": 4 },
+          "server": "http://localhost:8787",
+          "identities": "ephemeral",
+          "output": "./runs/out",
+          "seats": [
+            { "persona": "./personas/peaceful-mediator", "model": "haiku", "count": 2 },
+            { "persona": "./personas/win-focused-opportunist", "model": "haiku", "count": 2 }
+          ],
+          "limits": { "maxModelCallsPerBot": 120, "wallClockMsPerRun": 900000 },
+          "analysis": { "enabled": true, "model": "haiku" },
+          "label": "mediators-vs-opportunists-r2"
+        },
+        "baseLabel": "mediators-vs-opportunists",
+        "repeatIndex": 2,
+        "repeatTotal": 2
+      },
+      {
+        "spec": {
+          "game": "tragedy-of-the-commons",
+          "rounds": 3,
+          "params": { "teamSize": 4 },
+          "server": "http://localhost:8787",
+          "identities": "ephemeral",
+          "output": "./runs/out",
+          "seats": [
+            { "persona": "./personas/win-focused-opportunist", "model": "haiku", "count": 4 }
+          ],
+          "limits": { "maxModelCallsPerBot": 120, "wallClockMsPerRun": 900000 },
+          "analysis": { "enabled": true, "model": "haiku" },
+          "label": "all-opportunists"
+        },
+        "baseLabel": "all-opportunists",
+        "repeatIndex": 1,
+        "repeatTotal": 1
+      }
+    ],
+    "seatPlans": [
+      [
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 1
+        },
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 2
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 3
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 4
+        }
+      ],
+      [
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 1
+        },
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 2
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 3
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 4
+        }
+      ],
+      [
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 1
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 2
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 3
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 4
+        }
+      ]
+    ]
+  },
+  "claude-totc": {
+    "runCount": 1,
+    "runs": [
+      {
+        "spec": {
+          "game": "tragedy-of-the-commons",
+          "rounds": 8,
+          "params": { "teamSize": 4 },
+          "server": "http://localhost:8787",
+          "identities": "ephemeral",
+          "output": "./runs/out",
+          "seats": [
+            { "persona": "./personas/peaceful-mediator", "model": "haiku", "count": 2 },
+            { "persona": "./personas/win-focused-opportunist", "model": "haiku", "count": 2 }
+          ],
+          "limits": { "maxModelCallsPerBot": 200, "wallClockMsPerRun": 900000 },
+          "analysis": { "enabled": true, "model": "haiku" },
+          "label": "tragedy-of-the-commons"
+        },
+        "baseLabel": "tragedy-of-the-commons",
+        "repeatIndex": 1,
+        "repeatTotal": 1
+      }
+    ],
+    "seatPlans": [
+      [
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 1
+        },
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 2
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 3
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "haiku",
+          "backend": "claude",
+          "seatIndex": 4
+        }
+      ]
+    ]
+  },
+  "treachery-study": {
+    "runCount": 1,
+    "runs": [
+      {
+        "spec": {
+          "game": "tragedy-of-the-commons",
+          "rounds": 4,
+          "params": { "teamSize": 4 },
+          "server": "http://localhost:8787",
+          "identities": "ephemeral",
+          "output": "./runs/out",
+          "seats": [
+            {
+              "persona": "./personas/peaceful-mediator",
+              "model": "anthropic/claude-haiku",
+              "count": 2
+            },
+            {
+              "persona": "./personas/win-focused-opportunist",
+              "model": "openrouter/minimax/minimax-m2",
+              "count": 2
+            }
+          ],
+          "limits": { "maxModelCallsPerBot": 200, "wallClockMsPerRun": 1200000 },
+          "analysis": { "enabled": true, "model": "anthropic/claude-haiku" },
+          "label": "tragedy-of-the-commons"
+        },
+        "baseLabel": "tragedy-of-the-commons",
+        "repeatIndex": 1,
+        "repeatTotal": 1
+      }
+    ],
+    "seatPlans": [
+      [
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "anthropic/claude-haiku",
+          "backend": "claude",
+          "seatIndex": 1
+        },
+        {
+          "persona": "./personas/peaceful-mediator",
+          "model": "anthropic/claude-haiku",
+          "backend": "claude",
+          "seatIndex": 2
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "openrouter/minimax/minimax-m2",
+          "backend": "openrouter",
+          "seatIndex": 3
+        },
+        {
+          "persona": "./personas/win-focused-opportunist",
+          "model": "openrouter/minimax/minimax-m2",
+          "backend": "openrouter",
+          "seatIndex": 4
+        }
+      ]
+    ]
+  }
+}
