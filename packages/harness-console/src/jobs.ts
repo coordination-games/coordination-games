@@ -6,9 +6,23 @@
  * logic — it shells out to the exact CLI a human would run. Job records are
  * in-memory (they describe live processes); run HISTORY comes from disk via
  * artifacts.ts, so a console restart loses nothing durable.
+ *
+ * PROCESS MODEL: children are spawned `detached: true` and immediately
+ * `unref()`'d (see spawnHarness) — they get their own process group, so a
+ * console shutdown's SIGTERM-to-group (deploys, crashes, `launchctl unload`)
+ * does not take them down with it. This has cost three in-flight studies
+ * over the project's life (2026-07-16), each one killed by a console
+ * restart despite disk already being the source of truth. Consequence: if
+ * the console dies mid-run, the run CONTINUES and lands its artifacts on
+ * disk normally; the in-memory JobRecord for it is gone, so the restarted
+ * console's UI can no longer show it on the job page — it reappears in the
+ * campaigns list once artifacts exist, which is an acceptable degradation
+ * (disk is truth; the job page is a live-process convenience view, not the
+ * only way to find a run). logOrphanedHarnessProcesses() below gives an
+ * operator a one-line heads-up at boot when this has happened.
  */
 
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import type { ServerResponse } from 'node:http';
 import path from 'node:path';
@@ -188,10 +202,13 @@ async function spawnHarness(kind: JobKind, args: string[]): Promise<JobRecord> {
       console.warn('[console] packages/cli/dist missing — run `npm run build:cli`; using tsx');
     }
   }
+  // detached: true — own process group, so it survives the console's own
+  // process group being SIGTERM'd (see the PROCESS MODEL note above).
   const child = spawn(TSX_BIN, [HARNESS_ENTRY, ...args], {
     cwd: REPO_ROOT,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
   });
   const job: JobRecord = {
     pub: { id: nextJobId(kind), kind, status: 'running', startedAt: Date.now(), gameIds: [] },
@@ -201,7 +218,36 @@ async function spawnHarness(kind: JobKind, args: string[]): Promise<JobRecord> {
   };
   jobs.set(job.pub.id, job);
   wireChild(job);
+  // unref AFTER wiring stdout/stderr/exit handlers above — the pipes keep
+  // streaming to this process for as long as it lives; unref only stops the
+  // child from holding the event loop open on the console's own exit, which
+  // is what lets a killed console's process actually terminate instead of
+  // hanging on children it no longer needs to wait for.
+  child.unref();
   return job;
+}
+
+/**
+ * Best-effort startup scan for harness child processes that are still
+ * running — evidence that a previous console instance died (or was
+ * restarted) while jobs were in flight and, per the detached-process model
+ * above, those jobs kept running as orphans. Matches on the harness entry
+ * path, the same substring the wiki's manual-cleanup gotcha already uses
+ * (`pkill -f 'model-harness/src/index.ts'`). `ps` output shape is not worth
+ * hardening against — a parse miss just means no notice, never a crash.
+ */
+export function logOrphanedHarnessProcesses(): void {
+  try {
+    const out = execFileSync('ps', ['-eo', 'pid=,command='], { encoding: 'utf8' });
+    const matches = out.split('\n').filter((line) => line.includes('model-harness/src/index.ts'));
+    if (matches.length > 0) {
+      console.log(
+        `[console] ${matches.length} harness process(es) from a previous console are still running — their results will appear in runs/out`,
+      );
+    }
+  } catch {
+    // best-effort only — never block console boot on this
+  }
 }
 
 /** Write the campaign spec YAML and launch `coga-harness run`. */

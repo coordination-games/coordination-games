@@ -37,18 +37,37 @@ import path from 'node:path';
 // startup against the session's tool-list snapshot; solo boots reliably attach.
 // All seats of a run live in this process (orchestrate's Promise.all), so a
 // module-level FIFO lock serializing spawn → init makes attach deterministic
-// while keeping gameplay fully concurrent.
+// while keeping gameplay fully concurrent — that's the fast path below.
+//
+// But a harness machine routinely runs MORE THAN ONE process at once (a demo
+// click alongside a running study), and the FIFO only orders seats within a
+// single process — two processes booting seats at the same moment reproduce
+// the exact same race one level up (observed: concurrency:2 campaigns with a
+// second process on the machine saw ~65% seat mortality from blind boots,
+// 2026-07-16). acquireBootLock therefore also takes a machine-wide mutex
+// (boot-lock.ts) after winning the in-process FIFO, before spawn — so ANY two
+// `claude` boots on the machine, same process or not, are serialized.
 // ---------------------------------------------------------------------------
 let bootQueueTail: Promise<void> = Promise.resolve();
 
-function acquireBootLock(): Promise<() => void> {
-  let release!: () => void;
+async function acquireBootLock(): Promise<() => void> {
+  let resolveHeld!: () => void;
   const held = new Promise<void>((res) => {
-    release = res;
+    resolveHeld = res;
   });
-  const acquired = bootQueueTail.then(() => release);
+  const fifoAcquired: Promise<() => void> = bootQueueTail.then(() => resolveHeld);
   bootQueueTail = bootQueueTail.then(() => held);
-  return acquired;
+  const releaseFifo = await fifoAcquired;
+
+  const releaseCrossProcess = await acquireCrossProcessBootLock();
+
+  // Release order mirrors acquire order in reverse: free the machine-wide
+  // mutex first, then the in-process FIFO — so the next in-process waiter
+  // only starts contending for the cross-process lock once it's actually
+  // free, rather than immediately losing to itself.
+  return () => {
+    void releaseCrossProcess().finally(releaseFifo);
+  };
 }
 
 import { cogaServeCommand } from '../coga-client.js';
@@ -60,6 +79,7 @@ import {
 } from '../prompts.js';
 import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
 import { claudeCliModel } from '../types.js';
+import { acquireCrossProcessBootLock } from './boot-lock.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — parse stream-json lines into TranscriptEvents
@@ -363,10 +383,11 @@ export class ClaudeAgentRunner implements AgentRunner {
      * stdout (needed for the looksFinished fallback). Emits TranscriptEvents
      * as lines arrive.
      *
-     * Boot is SERIALIZED across seats (module-level lock, released on the
-     * init line): every solo session boot observed attaches its MCP server;
-     * only concurrent boots race the tool-list snapshot. Play remains fully
-     * concurrent — the lock covers spawn → init only (~seconds per seat).
+     * Boot is SERIALIZED across seats AND across processes (in-process FIFO
+     * + boot-lock.ts's machine-wide mutex, released on the init line): every
+     * solo session boot observed attaches its MCP server; only concurrent
+     * boots race the tool-list snapshot. Play remains fully concurrent — the
+     * lock covers spawn → init only (~seconds per seat).
      */
     const runOnce = async (
       prompt: string,

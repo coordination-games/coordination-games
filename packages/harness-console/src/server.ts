@@ -28,6 +28,7 @@ import {
   activeCampaignIds,
   attachJobEvents,
   listJobs,
+  logOrphanedHarnessProcesses,
   startAnalyze,
   startCampaign,
   stopJob,
@@ -377,5 +378,6 @@ async function logBootPreflight(): Promise<void> {
 server.listen(PORT, HOST, () => {
   console.log(`[console] Campaign Console on http://${HOST}:${PORT}`);
   console.log(`[console] scanning ${OUTPUT_DIR}`);
+  logOrphanedHarnessProcesses();
   void bootGameServerCheck().then(() => void logBootPreflight());
 });
