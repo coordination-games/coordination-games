@@ -1429,6 +1429,50 @@ const V2_EXTRACTION_UNITS: Record<ExtractionLevel, number> = {
   high: 3,
 };
 
+// ────────────────────────────────────────────────────────────────
+// Pressure dial (Instrument v2, docs/plans/instrument-v2-calibration.md).
+//
+// A single 0..3 scalar, spec-controllable via a lobby-create/harness-spec
+// `pressure` param, that scales the V2 economy toward scarcity. pressure=0
+// (absent or explicit 0) reproduces every constant below byte-for-byte —
+// the entire pre-existing dataset's comparability depends on that. Each
+// step up widens the gap between what extracting pays the individual and
+// what it costs the commons, without touching v0 (TragedyOfTheCommonsPlugin,
+// EXTRACTION_PROFILES, getBaseEcosystems) or per-round extraction CAPACITY
+// (V2_EXTRACTION_CAPACITY) — capacity stays fixed so higher pressure never
+// makes a camp/village/city structurally unable to extract.
+//
+//                         | pressure 0 | pressure 1 | pressure 2 | pressure 3
+// ────────────────────────┼────────────┼────────────┼────────────┼────────────
+// starting tile health    |   × 1.00   |   × 0.80   |   × 0.60   |   × 0.40    (rounded per tile; maxHealth/thresholds unchanged)
+// extraction yield bonus  |     +0     |     +1     |     +2     |     +3      (added to base units: low/med/high/oil = 1/2/3/2)
+// extraction decay bonus  |     +0     |     +2     |     +4     |     +6      (added to base decay: low/med/high/oil = 1/3/6/6)
+// oil splash decay bonus  |     +0     |     +1     |     +2     |     +3      (added to the fixed +2 adjacent-tile oil splash)
+//
+// Concretely at pressure 3: a "high" extraction nets 6 resource (was 3)
+// while costing the tile 12 decay (was 6) — private payoff and commons
+// cost both roughly double, but starting tile health is already cut to
+// 40%, so the margin for error before collapse is much thinner.
+const V2_PRESSURE_HEALTH_MULTIPLIER: readonly number[] = [1, 0.8, 0.6, 0.4];
+
+function v2PressureLevel(config: TragedyV2Config): number {
+  const raw = config.pressure;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 0;
+  return Math.min(3, Math.max(0, Math.round(raw)));
+}
+
+function v2ExtractionYieldBonus(pressureLevel: number): number {
+  return pressureLevel;
+}
+
+function v2ExtractionDecayBonus(pressureLevel: number): number {
+  return pressureLevel * 2;
+}
+
+function v2OilSplashDecayBonus(pressureLevel: number): number {
+  return pressureLevel;
+}
+
 const V2_TILE_SPECS: Array<{
   q: number;
   r: number;
@@ -1496,8 +1540,9 @@ function v2TileStatus(input: {
   return 'stable';
 }
 
-function createV2Tiles(ecosystems: TragedyEcosystem[]): TragedyV2Tile[] {
+function createV2Tiles(ecosystems: TragedyEcosystem[], pressureLevel: number): TragedyV2Tile[] {
   const ecosystemById = new Map(ecosystems.map((ecosystem) => [ecosystem.id, ecosystem]));
+  const healthMultiplier = V2_PRESSURE_HEALTH_MULTIPLIER[pressureLevel] ?? 1;
   return V2_TILE_SPECS.map((spec) => {
     const primaryResource = v2TerrainResource(spec.terrain);
     const ecosystem =
@@ -1505,7 +1550,8 @@ function createV2Tiles(ecosystems: TragedyEcosystem[]): TragedyV2Tile[] {
         .map((id) => ecosystemById.get(id))
         .find((item): item is TragedyEcosystem => item?.resource === primaryResource) ??
       spec.ecosystemIds.map((id) => ecosystemById.get(id)).find(Boolean);
-    const health = ecosystem?.health ?? 14;
+    const baseHealth = ecosystem?.health ?? 14;
+    const health = Math.max(1, Math.round(baseHealth * healthMultiplier));
     const maxHealth = ecosystem?.maxHealth ?? 20;
     const collapseThreshold = ecosystem?.collapseThreshold ?? 4;
     const flourishThreshold = ecosystem?.flourishThreshold ?? 16;
@@ -1843,7 +1889,7 @@ export function createV2InitialState(config: TragedyV2Config): TragedyV2State {
     round: 0,
     phase: 'waiting',
     players,
-    tiles: createV2Tiles(ecosystems),
+    tiles: createV2Tiles(ecosystems, v2PressureLevel(config)),
     intersections,
     roads: [],
     structures,
@@ -2019,6 +2065,7 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
   );
   const activeTrades = resolveV2Trades(players, submittedByPlayer);
   const pressureByTile = new Map<string, number>();
+  const pressureLevel = v2PressureLevel(state.config);
 
   for (const submittedAction of submittedByPlayer) {
     const player = playersById.get(submittedAction.playerId);
@@ -2089,20 +2136,28 @@ export function resolveV2Round(state: TragedyV2State): TragedyV2State {
       const extractionState = { ...state, players, tiles, intersections, roads, structures };
       const structure = v2FindExtractionStructure(extractionState, player, tile, units);
       if (!structure) continue;
+      // Capacity consumed always uses the base `units` — the pressure dial
+      // never changes how many extractions a camp/village/city can do per
+      // round, only what each extraction pays out and costs (see the
+      // "Pressure dial" comment table above `V2_TILE_SPECS`).
       structure.extractionsThisRound += units;
-      const amount = tile.terrain === 'oil-field' ? V2_OIL_ENERGY_YIELD : units;
+      const yieldBonus = v2ExtractionYieldBonus(pressureLevel);
+      const amount =
+        tile.terrain === 'oil-field' ? V2_OIL_ENERGY_YIELD + yieldBonus : units + yieldBonus;
       const resource = tile.terrain === 'oil-field' ? 'energy' : action.resource;
       const accepted = addResource(player.resources, resource, amount);
       if (accepted > 0) {
-        const pressure =
-          tile.terrain === 'oil-field'
+        const decayBonus = v2ExtractionDecayBonus(pressureLevel);
+        const decay =
+          (tile.terrain === 'oil-field'
             ? EXTRACTION_PROFILES.high.pressure
-            : EXTRACTION_PROFILES[action.level].pressure;
-        pressureByTile.set(tile.id, (pressureByTile.get(tile.id) ?? 0) + pressure);
+            : EXTRACTION_PROFILES[action.level].pressure) + decayBonus;
+        pressureByTile.set(tile.id, (pressureByTile.get(tile.id) ?? 0) + decay);
         if (tile.terrain === 'oil-field') {
+          const splashDecay = 2 + v2OilSplashDecayBonus(pressureLevel);
           for (const adjacent of tiles) {
             if (adjacent.id !== tile.id && v2TileDistance(tile, adjacent) === 1) {
-              pressureByTile.set(adjacent.id, (pressureByTile.get(adjacent.id) ?? 0) + 2);
+              pressureByTile.set(adjacent.id, (pressureByTile.get(adjacent.id) ?? 0) + splashDecay);
             }
           }
         }

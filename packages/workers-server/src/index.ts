@@ -608,6 +608,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
     noTimeout?: boolean;
     teamSize?: number;
     maxRounds?: number;
+    pressure?: number;
     disabledPlugins?: string[];
   }>(request);
   if (body instanceof Response) return body;
@@ -631,6 +632,14 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
   const maxRounds =
     typeof body?.maxRounds === 'number' && body.maxRounds >= 1
       ? Math.floor(body.maxRounds)
+      : undefined;
+  // Optional 0-3 difficulty dial (Instrument v2, research) forwarded to the
+  // plugin's createConfig as pressure (via LobbyDO metadata). Omitted →
+  // the plugin keeps its default (0 = today's behavior, byte-identical).
+  // Games that ignore the key are unaffected.
+  const pressure =
+    typeof body?.pressure === 'number' && Number.isFinite(body.pressure)
+      ? Math.min(3, Math.max(0, Math.round(body.pressure)))
       : undefined;
   // Optional per-game plugin ablation set (research). Forwarded to LobbyDO
   // metadata → GameRoomDO so server-side projections (trust) can be gated.
@@ -680,6 +689,7 @@ async function handleCreateLobby(request: Request, env: Env): Promise<Response> 
         teamSize,
         noTimeout,
         ...(maxRounds ? { maxRounds } : {}),
+        ...(pressure !== undefined ? { pressure } : {}),
         ...(disabledPlugins && disabledPlugins.length > 0 ? { disabledPlugins } : {}),
       }),
     }),

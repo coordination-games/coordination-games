@@ -684,12 +684,18 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
   ): GameSetup<TragedyV2Config> {
     const maxRoundsOpt = options?.maxRounds;
     const maxRoundsOverride = typeof maxRoundsOpt === 'number' ? { maxRounds: maxRoundsOpt } : {};
+    // Instrument-v2 difficulty dial, the same lobby-metadata path as
+    // maxRounds. Absent → the plugin default (undefined → pressure 0,
+    // today's behavior, byte-identical). See game.ts "Pressure dial".
+    const pressureOpt = options?.pressure;
+    const pressureOverride = typeof pressureOpt === 'number' ? { pressure: pressureOpt } : {};
     return {
       config: {
         ...DEFAULT_V2_CONFIG(),
         playerIds: players.map((player) => player.id),
         seed,
         ...maxRoundsOverride,
+        ...pressureOverride,
       },
       players: players.map((player) => ({ id: player.id, team: player.id })),
     };
