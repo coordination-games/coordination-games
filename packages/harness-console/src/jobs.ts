@@ -294,7 +294,17 @@ export function stopJob(id: string): JobPublic {
   const job = getJob(id);
   if (job.pub.status === 'running') {
     job.pub.status = 'stopped';
-    job.child.kill('SIGTERM');
+    // Jobs are detached into their own process group so console restarts
+    // don't kill them — which means an explicit stop must signal the whole
+    // GROUP (negative pid), or grandchildren (claude subprocesses, coga
+    // serves) outlive the tsx wrapper. Fall back to the single pid if the
+    // group signal fails.
+    try {
+      if (job.child.pid) process.kill(-job.child.pid, 'SIGTERM');
+      else job.child.kill('SIGTERM');
+    } catch {
+      job.child.kill('SIGTERM');
+    }
     appendLog(job, '[console] SIGTERM sent');
     broadcast(job, 'status', job.pub);
   }
