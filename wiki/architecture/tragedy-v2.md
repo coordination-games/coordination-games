@@ -39,3 +39,7 @@ TOTC live registration now uses the V2 plugin path.
 - V2 cards summarize structures, roads, solar investment, extraction pressure, and commons health.
 - **Projected server-side only.** `GameRoomDO.applyTrustProjector` is the single source of `trustCards` for both player and spectator payloads — agents consume it, they don't recompute it. (It briefly ran client-side in the CLI pipeline too; that duplicate was removed — see [Plugin Pipeline](plugin-pipeline.md).)
 - **Ablatable.** A run can disable trust via the harness's `disablePlugins: [trust-projector-tragedy]`, gated at this projector through `GameMeta.disabledPlugins` — bots then play with no trust summaries (see [Model Harness → Plugin ablation](../development/model-harness.md#plugin-ablation-disableplugins)).
+
+## The pressure dial (instrument v2)
+
+`params.pressure` (0–3, default 0 = byte-identical to pre-dial behavior) scales V2's economics into genuine-dilemma territory: starting tile health ×1.0→×0.4, extraction yield +0→+3, extraction/splash decay +0→+6/+3. Extraction *capacity* deliberately fixed so structures never become unable to act. Mapping table + rationale: `game.ts` above `V2_TILE_SPECS`; tests: `__tests__/pressure.test.ts` (monotonicity + default-off deep-equals); plumbing mirrors `maxRounds` through both server allowlists (index.ts, LobbyDO.ts). Calibration protocol: `docs/plans/instrument-v2-calibration.md` — added because every pre-dial condition ceilinged at 90–97% commons health, making capability/infrastructure effects unmeasurable.
