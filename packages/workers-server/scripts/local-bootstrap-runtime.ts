@@ -199,9 +199,24 @@ export async function hasAuthNoncesTable(
   repositoryRoot: string,
   configPath: string,
 ): Promise<boolean> {
+  const output = await executeLocalD1(
+    options,
+    repositoryRoot,
+    configPath,
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_nonces'",
+  );
+  return output.includes('auth_nonces');
+}
+
+export async function executeLocalD1(
+  options: LocalBootstrapOptions,
+  repositoryRoot: string,
+  configPath: string,
+  sql: string,
+): Promise<string> {
   const context = await runtime(options, repositoryRoot, configPath);
   try {
-    const output = await command(
+    return await command(
       context.wrangler,
       [
         'd1',
@@ -213,12 +228,11 @@ export async function hasAuthNoncesTable(
         '--config',
         context.runtimeConfigPath,
         '--command',
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_nonces'",
+        sql,
         '--json',
       ],
       context.runtimeDirectory,
     );
-    return output.includes('auth_nonces');
   } finally {
     await rm(context.runtimeDirectory, { recursive: true, force: true });
   }

@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  executeLocalD1,
   hasAuthNoncesTable,
   startLocalBootstrap,
   startUnmigratedLocalWorker,
@@ -96,6 +97,28 @@ describe('local bootstrap integration', () => {
         configPath,
       ),
     ).toBe(true);
+    await executeLocalD1(
+      { persistTo: persistenceDirectory, port },
+      repositoryRoot,
+      configPath,
+      "INSERT INTO player_sessions (player_id, lobby_id, joined_at) VALUES ('terminal-proof', 'terminal-lobby', '2026-01-01T00:00:00Z')",
+    );
+    await expect(
+      executeLocalD1(
+        { persistTo: persistenceDirectory, port },
+        repositoryRoot,
+        configPath,
+        "UPDATE player_sessions SET terminal_state = 'completed' WHERE player_id = 'terminal-proof'",
+      ),
+    ).resolves.toContain('success');
+    await expect(
+      executeLocalD1(
+        { persistTo: persistenceDirectory, port },
+        repositoryRoot,
+        configPath,
+        "UPDATE player_sessions SET terminal_state = 'invalid' WHERE player_id = 'terminal-proof'",
+      ),
+    ).rejects.toThrow(/CHECK constraint failed/i);
 
     const challenge = await fetch(`http://127.0.0.1:${port}/api/player/auth/challenge`, {
       method: 'POST',

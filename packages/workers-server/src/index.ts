@@ -18,6 +18,7 @@ import { GameRoomDO } from './do/GameRoomDO.js';
 import { LobbyDO } from './do/LobbyDO.js';
 import { TournamentDO } from './do/TournamentDO.js';
 import type { Env } from './env.js';
+import { getPlayerLocation } from './player-location.js';
 import {
   handleAdminLadderReplay,
   handlePluginCall,
@@ -529,6 +530,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
     const forwarded = new Request(request.url, request);
     forwarded.headers.set('X-Player-Id', playerId);
+    if (location.kind === 'eliminated' || location.kind === 'completed') {
+      return Response.json(
+        {
+          status: location.kind,
+          tournamentId: `lobby:${location.lobbyId}`,
+          gameType: location.gameType,
+        },
+        { status: 409 },
+      );
+    }
     return location.kind === 'game'
       ? forwardToGameDO(env, location.gameId, '/', forwarded)
       : forwardToLobbyDO(env, location.lobbyId, '/', forwarded);
@@ -947,13 +958,24 @@ async function handleCreateGame(request: Request, env: Env): Promise<Response> {
 // Player-scoped handlers (auth required)
 // ---------------------------------------------------------------------------
 
-async function handlePlayerState(playerId: string, env: Env, request?: Request): Promise<Response> {
+export async function handlePlayerState(
+  playerId: string,
+  env: Env,
+  request?: Request,
+): Promise<Response> {
   const location = await getPlayerLocation(playerId, env);
   if (!location) {
     return Response.json(
       { error: 'No active lobby or game. Join a lobby first.' },
       { status: 404 },
     );
+  }
+  if (location.kind === 'eliminated' || location.kind === 'completed') {
+    return Response.json({
+      status: location.kind,
+      tournamentId: `lobby:${location.lobbyId}`,
+      gameType: location.gameType,
+    });
   }
 
   const stub =
@@ -1001,7 +1023,7 @@ export async function handlePlayerLobbyJoin(
   // itself idempotent on the agent roster).
   const existing = await env.DB.prepare(
     `SELECT ps.lobby_id AS lobbyId, l.phase AS lobbyPhase, l.game_id AS gameId,
-            g.finished AS gameFinished
+            g.finished AS gameFinished, ps.terminal_state AS terminalState
      FROM player_sessions ps
      JOIN lobbies l ON l.id = ps.lobby_id
      LEFT JOIN games g ON g.game_id = l.game_id
@@ -1013,9 +1035,26 @@ export async function handlePlayerLobbyJoin(
       lobbyPhase: string;
       gameId: string | null;
       gameFinished: number | null;
+      terminalState: 'eliminated' | 'completed' | null;
     }>();
 
   if (existing) {
+    if (
+      (existing.terminalState === 'eliminated' || existing.terminalState === 'completed') &&
+      existing.lobbyId === lobbyId
+    ) {
+      return Response.json(
+        {
+          error:
+            existing.terminalState === 'eliminated'
+              ? 'Tournament player is eliminated'
+              : 'Tournament is completed',
+          playerId,
+          existing: { lobbyId: existing.lobbyId, status: existing.terminalState },
+        },
+        { status: 409 },
+      );
+    }
     const lobbyTerminated = existing.lobbyPhase === 'finished';
     const gameTerminated = existing.gameId !== null && existing.gameFinished === 1;
     const unfinished = !lobbyTerminated && !gameTerminated;
@@ -1309,39 +1348,6 @@ function forwardToTournamentDO(
   const url = new URL(request.url);
   url.pathname = subPath;
   return stub.fetch(new Request(url.toString(), request));
-}
-
-/**
- * Resolve where a player's actions should route.
- *
- * A player has at most one `player_sessions` row, which references a lobby.
- * The lobby's `game_id` column (set by LobbyDO at handoff) determines whether
- * routing targets the LobbyDO or the spawned GameRoomDO.
- *
- * Returns `null` if the player has no session row (not in any lobby or game).
- */
-async function getPlayerLocation(
-  playerId: string,
-  env: Env,
-): Promise<
-  | { kind: 'lobby'; lobbyId: string; gameType: string }
-  | { kind: 'game'; lobbyId: string; gameId: string; gameType: string }
-  | null
-> {
-  const row = await env.DB.prepare(
-    `SELECT l.id AS lobby_id, l.game_id, l.game_type
-     FROM player_sessions ps
-     JOIN lobbies l ON l.id = ps.lobby_id
-     WHERE ps.player_id = ?`,
-  )
-    .bind(playerId)
-    .first<{ lobby_id: string; game_id: string | null; game_type: string }>();
-
-  if (!row) return null;
-  if (row.game_id) {
-    return { kind: 'game', lobbyId: row.lobby_id, gameId: row.game_id, gameType: row.game_type };
-  }
-  return { kind: 'lobby', lobbyId: row.lobby_id, gameType: row.game_type };
 }
 
 function forwardToGameDO(

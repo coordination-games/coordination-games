@@ -28,6 +28,7 @@
 import type { CoordinationGame, ToolDefinition } from '@coordination-games/engine';
 import { getGame } from '@coordination-games/engine';
 import type { Env } from './env.js';
+import { type ActivePlayerLocation, getPlayerLocation } from './player-location.js';
 
 // ---------------------------------------------------------------------------
 // Error taxonomy
@@ -40,7 +41,9 @@ export type DispatcherErrorCode =
   | 'INVALID_ARGS'
   | 'VALIDATION_FAILED'
   | 'DISPATCH_FAILED'
-  | 'COLLISION';
+  | 'COLLISION'
+  | 'TOURNAMENT_ELIMINATED'
+  | 'TOURNAMENT_COMPLETED';
 
 const STATUS_BY_CODE: Record<DispatcherErrorCode, number> = {
   NO_SESSION: 401,
@@ -50,6 +53,8 @@ const STATUS_BY_CODE: Record<DispatcherErrorCode, number> = {
   VALIDATION_FAILED: 400,
   DISPATCH_FAILED: 500,
   COLLISION: 500,
+  TOURNAMENT_ELIMINATED: 409,
+  TOURNAMENT_COMPLETED: 409,
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -202,10 +207,6 @@ function validateArgs(schema: Record<string, unknown>, args: unknown): FieldErro
 // Session location + tool registry
 // ---------------------------------------------------------------------------
 
-export type PlayerLocation =
-  | { kind: 'lobby'; lobbyId: string; gameType: string }
-  | { kind: 'game'; lobbyId: string; gameId: string; gameType: string };
-
 export interface ToolRegistryEntry {
   tool: ToolDefinition;
   declarer: 'game' | 'lobby';
@@ -315,26 +316,6 @@ function forwardCursorsQuery(request: Request): string {
 // Player location lookup (kept local to avoid a circular import from index.ts)
 // ---------------------------------------------------------------------------
 
-export async function getPlayerLocationFromDb(
-  playerId: string,
-  env: Env,
-): Promise<PlayerLocation | null> {
-  const row = await env.DB.prepare(
-    `SELECT l.id AS lobby_id, l.game_id, l.game_type
-     FROM player_sessions ps
-     JOIN lobbies l ON l.id = ps.lobby_id
-     WHERE ps.player_id = ?`,
-  )
-    .bind(playerId)
-    .first<{ lobby_id: string; game_id: string | null; game_type: string }>();
-
-  if (!row) return null;
-  if (row.game_id) {
-    return { kind: 'game', lobbyId: row.lobby_id, gameId: row.game_id, gameType: row.game_type };
-  }
-  return { kind: 'lobby', lobbyId: row.lobby_id, gameType: row.game_type };
-}
-
 // ---------------------------------------------------------------------------
 // Session registry builder
 // ---------------------------------------------------------------------------
@@ -344,7 +325,7 @@ export async function getPlayerLocationFromDb(
  * Throws Response if the registry cannot be built (e.g. missing plugin).
  */
 async function buildSessionRegistry(
-  location: PlayerLocation,
+  location: ActivePlayerLocation,
   env: Env,
   playerId: string,
 ): Promise<SessionRegistry | Response> {
@@ -501,7 +482,7 @@ export async function dispatchToolCall(
   }
 
   // ── 1. Session lookup ───────────────────────────────────────────────────
-  const location = await getPlayerLocationFromDb(playerId, env);
+  const location = await getPlayerLocation(playerId, env);
   if (!location) {
     const res = errorResponse('NO_SESSION', 'No active lobby or game for this player', {});
     logToolCall({
@@ -517,8 +498,20 @@ export async function dispatchToolCall(
     });
     return res;
   }
+  if (location.kind === 'eliminated' || location.kind === 'completed') {
+    return errorResponse(
+      location.kind === 'eliminated' ? 'TOURNAMENT_ELIMINATED' : 'TOURNAMENT_COMPLETED',
+      location.kind === 'eliminated'
+        ? 'Tournament player is eliminated'
+        : 'Tournament is completed',
+      {
+        tournamentId: `lobby:${location.lobbyId}`,
+      },
+    );
+  }
+  const activeLocation: ActivePlayerLocation = location;
 
-  const sessionId = location.kind === 'game' ? location.gameId : location.lobbyId;
+  const sessionId = activeLocation.kind === 'game' ? activeLocation.gameId : activeLocation.lobbyId;
 
   // ── Plugin relay shortcut (legacy ToolPlugin.handleCall relay post) ─────
   if (isPluginRelayCall(toolName, args)) {
@@ -545,9 +538,9 @@ export async function dispatchToolCall(
       return res;
     }
     const stub =
-      location.kind === 'game'
-        ? getGameDO(env, location.gameId)
-        : getLobbyDO(env, location.lobbyId);
+      activeLocation.kind === 'game'
+        ? getGameDO(env, activeLocation.gameId)
+        : getLobbyDO(env, activeLocation.lobbyId);
     try {
       const resp = await stub.fetch(doRequest('POST', '/tool', { relay }, playerId, cursorsQuery));
       logToolCall({
@@ -555,7 +548,7 @@ export async function dispatchToolCall(
         playerId,
         toolName,
         declarer: 'plugin',
-        phaseAtDispatch: location.kind === 'game' ? 'game' : 'lobby',
+        phaseAtDispatch: activeLocation.kind === 'game' ? 'game' : 'lobby',
         validationResult: resp.ok ? 'ok' : 'dispatch_failed',
         latencyMs: Date.now() - started,
       });
@@ -580,7 +573,7 @@ export async function dispatchToolCall(
   }
 
   // ── 2. Build registry ───────────────────────────────────────────────────
-  const registryOrResp = await buildSessionRegistry(location, env, playerId);
+  const registryOrResp = await buildSessionRegistry(activeLocation, env, playerId);
   if (registryOrResp instanceof Response) return registryOrResp;
   const registry = registryOrResp;
 

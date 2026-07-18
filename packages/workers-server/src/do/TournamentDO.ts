@@ -18,6 +18,7 @@ import {
 import { z } from 'zod';
 import { createRelay } from '../chain/index.js';
 import type { Env } from '../env.js';
+import { publishTournamentRouting } from '../tournament-routing.js';
 
 const STATE_KEY = 'tournament:runtime:v1';
 const TICK_DELAY_MS = 5_000;
@@ -320,7 +321,20 @@ export class TournamentDO extends DurableObject<Env> {
       settled.series.currentGameIndex >= settled.series.policy.seriesLength ||
       settled.series.activePlayerIds.length < 2
     ) {
-      await this.save({ ...updated, status: 'completed' });
+      try {
+        await publishTournamentRouting(this.env.DB, {
+          tournamentId: updated.series.tournamentId,
+          gameId,
+          playerIds: updated.series.playerIds,
+          activePlayerIds: settled.series.activePlayerIds,
+          completed: true,
+        });
+        await this.save({ ...updated, status: 'completed' });
+      } catch (error) {
+        await this.fail(
+          error instanceof Error ? error.message : 'Tournament routing publish failed',
+        );
+      }
       return;
     }
     await this.spawn();
@@ -427,6 +441,13 @@ export class TournamentDO extends DurableObject<Env> {
         }),
       );
       if (!start.ok && start.status !== 409) return this.fail(`Game start failed: ${start.status}`);
+      await publishTournamentRouting(this.env.DB, {
+        tournamentId: runtime.series.tournamentId,
+        gameId,
+        playerIds: runtime.series.playerIds,
+        activePlayerIds: players.map((player) => player.id),
+        completed: false,
+      });
       await this.save({ ...next, phase: 'awaiting_settlement' });
       await this.reschedule();
     } catch (error) {

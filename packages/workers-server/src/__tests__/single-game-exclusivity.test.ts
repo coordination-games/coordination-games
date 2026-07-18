@@ -100,6 +100,7 @@ function makeDB(tables: Tables): D1Database {
             lobbyPhase: lobby.phase,
             gameId,
             gameFinished: game ? (game.finished as number) : null,
+            terminalState: session.terminal_state ?? null,
           } as T;
         }
         if (norm.startsWith('SELECT handle, elo FROM players')) {
@@ -318,5 +319,35 @@ describe('handlePlayerLobbyJoin — single-game exclusivity guard', () => {
     const resp = await handlePlayerLobbyJoin('alice', joinRequest('lobby-A'), env);
     expect(resp.status).toBe(200);
     expect(forwarded).toEqual([{ lobbyId: 'lobby-A', playerId: 'alice' }]);
+  });
+
+  it.each([
+    ['eliminated', 'Tournament player is eliminated'],
+    ['completed', 'Tournament is completed'],
+  ] as const)('terminal %s session in the SAME lobby → 409', async (terminalState, error) => {
+    const tables = emptyTables();
+    tables.players.set('alice', { handle: 'alice', elo: 1000 });
+    tables.lobbies.set('lobby-A', { id: 'lobby-A', phase: 'in_progress', game_id: 'game-1' });
+    tables.player_sessions.set('alice', {
+      player_id: 'alice',
+      lobby_id: 'lobby-A',
+      joined_at: '2026-01-01T00:00:00Z',
+      terminal_state: terminalState,
+    });
+    const forwarded: Array<{ lobbyId: string; playerId: string | null }> = [];
+
+    const response = await handlePlayerLobbyJoin(
+      'alice',
+      joinRequest('lobby-A'),
+      makeEnv(tables, forwarded),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await readJson(response)).toEqual({
+      error,
+      playerId: 'alice',
+      existing: { lobbyId: 'lobby-A', status: terminalState },
+    });
+    expect(forwarded).toEqual([]);
   });
 });
