@@ -73,6 +73,7 @@ button.item[aria-pressed="true"] { border-color: var(--accent); background: colo
 .badge.completed { color: var(--green); border-color: var(--green); }
 .badge.failed { color: var(--red); border-color: var(--red); }
 .badge.stopped { color: var(--muted); }
+.badge.tournament { color: var(--accent); border-color: var(--accent); }
 pre.log {
   margin: var(--s3) 0 0; padding: var(--s3); background: #0d0c0a; border: 1px solid var(--line);
   border-radius: var(--r1); font-size: var(--fs1); max-height: 340px; overflow: auto; white-space: pre-wrap;
@@ -84,7 +85,7 @@ dl.audit { display: grid; grid-template-columns: max-content 1fr; gap: var(--s1)
 dl.audit dt { color: var(--muted); }
 dl.audit dd { margin: 0; overflow-wrap: anywhere; }
 table.seats { width: 100%; border-collapse: collapse; font-size: var(--fs1); margin-top: var(--s2); }
-table.seats th, table.seats td { text-align: left; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--line); }
+table.seats th, table.seats td { text-align: left; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.seats th { color: var(--muted); font-weight: 400; font-size: var(--fs0); text-transform: uppercase; letter-spacing: .1em; }
 .chips { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
 .subhead { color: var(--muted); font-size: var(--fs0); text-transform: uppercase; letter-spacing: .14em; margin: var(--s3) 0 var(--s1); }
@@ -94,15 +95,21 @@ table.seats th { color: var(--muted); font-weight: 400; font-size: var(--fs0); t
   header h1 { font-size: var(--fs3); }
   dl.audit { grid-template-columns: 1fr; }
   dl.audit dt { margin-top: var(--s2); }
+  table.seats, table.seats tbody, table.seats tr, table.seats td { display: block; }
+  table.seats thead { display: none; }
+  table.seats tr { border: 1px solid var(--line); border-radius: var(--r1); padding: var(--s2) var(--s3); margin-top: var(--s2); }
+  table.seats td { display: grid; grid-template-columns: minmax(72px, max-content) 1fr; gap: var(--s3); border-bottom: 0; padding: var(--s1) 0; white-space: normal; overflow-wrap: anywhere; }
+  table.seats td::before { content: attr(data-label); color: var(--muted); font-size: var(--fs0); text-transform: uppercase; letter-spacing: .1em; }
 }
 `;
 
-export function renderPage(nonce: string): string {
+export function renderPage(nonce: string, csrf: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="harness-csrf" content="${csrf}" />
 <title>Harness Console — Coordination Games</title>
 <link rel="icon" href="data:," />
 <style nonce="${nonce}">${CSS}</style>
@@ -125,6 +132,7 @@ export function renderPage(nonce: string): string {
           <button id="btn-preview-spec" disabled>View spec</button>
         </div>
         <pre class="log" id="spec-preview" hidden></pre>
+        <div id="spec-summary" hidden></div>
       </section>
       <section class="panel" aria-labelledby="runs-h">
         <h2 id="runs-h">Console runs</h2>
@@ -154,6 +162,7 @@ export function renderPage(nonce: string): string {
         <h2 id="audit-h">Audit</h2>
         <p class="status-line" id="audit-status" role="status">Pick an artifact to inspect its provenance.</p>
         <div id="audit-body" hidden></div>
+        <div id="series-progress" hidden></div>
         <pre class="log" id="file-preview" hidden></pre>
       </section>
     </div>

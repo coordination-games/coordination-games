@@ -1,49 +1,87 @@
 /**
  * Browser client for the harness console, shipped as an inline nonce'd script.
- * Plain DOM + fetch + EventSource — no framework, no external assets. The
- * string deliberately avoids backticks/interpolation so it can live safely
+ * Plain DOM + fetch + EventSource — no framework, no external assets, and NO
+ * HTML-string sinks: every untrusted value (spec names, labels, models, paths,
+ * error text) is rendered via createElement/textContent. The fragments below
+ * share ONE IIFE scope (function declarations hoist across fragment
+ * boundaries) and avoid backticks/interpolation so the result can live safely
  * inside the page template literal.
  */
 
-export const CLIENT_JS = String.raw`
-(function () {
+import { CLIENT_AUDIT_JS } from './client-audit.js';
+import { CLIENT_SUMMARY_JS } from './client-summary.js';
+
+const CORE_JS = String.raw`
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var state = { specId: null, specName: null, runId: null, es: null, artifactId: null };
+  var csrfMeta = document.querySelector('meta[name="harness-csrf"]');
+  var CSRF = csrfMeta ? csrfMeta.getAttribute('content') : '';
 
-  function esc(v) {
-    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  function dtdd(dl, label, value) {
+    dl.appendChild(el('dt', null, label));
+    dl.appendChild(el('dd', null, value == null ? '—' : String(value)));
+  }
+  function buildTable(headers, rows) {
+    var table = el('table', 'seats', null);
+    var thead = el('thead', null, null);
+    var hrow = el('tr', null, null);
+    headers.forEach(function (h) { hrow.appendChild(el('th', null, h)); });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+    var tbody = el('tbody', null, null);
+    rows.forEach(function (cells) {
+      var row = el('tr', null, null);
+      cells.forEach(function (v, i) {
+        var td = el('td', null, v == null ? '—' : String(v));
+        td.dataset.label = headers[i];
+        row.appendChild(td);
+      });
+      tbody.appendChild(row);
     });
+    table.appendChild(tbody);
+    return table;
+  }
+  function itemButton(label, meta, pressed, onClick) {
+    var btn = el('button', 'item', null);
+    btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    btn.appendChild(el('span', null, label));
+    btn.appendChild(el('span', 'meta', meta));
+    btn.addEventListener('click', onClick);
+    return btn;
   }
   function setStatus(id, text, isError) {
-    var el = $(id);
-    el.textContent = text;
-    el.classList.toggle('error', Boolean(isError));
+    var line = $(id);
+    line.textContent = text;
+    line.classList.toggle('error', Boolean(isError));
   }
-  function getJson(url) {
-    return fetch(url).then(function (res) {
-      return res.json().then(function (body) {
-        if (!res.ok) throw new Error(body && body.error ? body.error : 'HTTP ' + res.status);
-        return body;
-      });
+  function describeBody(status, text) {
+    if (!text) return 'HTTP ' + status + ' — empty response';
+    var kind = /^\s*</.test(text) ? 'non-JSON (HTML) response' : 'non-JSON response';
+    return 'HTTP ' + status + ' — ' + kind + ', ' + text.length + ' bytes';
+  }
+  function parseResponse(res) {
+    return res.text().then(function (text) {
+      var body = null;
+      try { body = JSON.parse(text); } catch (ignored) { body = null; }
+      if (!res.ok) throw new Error(body && body.error ? body.error : describeBody(res.status, text));
+      if (body == null || typeof body !== 'object') throw new Error(describeBody(res.status, text));
+      return body;
     });
   }
+  function getJson(url) { return fetch(url).then(parseResponse); }
   function postJson(url, payload) {
     return fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-harness-csrf': CSRF },
       body: JSON.stringify(payload || {}),
-    }).then(function (res) {
-      return res.json().then(function (body) {
-        if (!res.ok) throw new Error(body && body.error ? body.error : 'HTTP ' + res.status);
-        return body;
-      });
-    });
-  }
-  function itemButton(label, meta, pressed) {
-    return '<button class="item" aria-pressed="' + (pressed ? 'true' : 'false') + '">' +
-      '<span>' + esc(label) + '</span><span class="meta">' + esc(meta) + '</span></button>';
+    }).then(parseResponse);
   }
 
   // ── Specs ────────────────────────────────────────────────────────────────
@@ -51,16 +89,17 @@ export const CLIENT_JS = String.raw`
     setStatus('specs-status', 'Loading…');
     getJson('/api/specs').then(function (specs) {
       var list = $('specs-list');
-      list.innerHTML = '';
+      list.replaceChildren();
       if (specs.length === 0) {
         setStatus('specs-status', 'No YAML specs found under runs/ or examples/.');
         return;
       }
       setStatus('specs-status', specs.length + ' spec(s) discovered.');
       specs.forEach(function (spec) {
-        var li = document.createElement('li');
-        li.innerHTML = itemButton(spec.name, spec.root, spec.id === state.specId);
-        li.firstChild.addEventListener('click', function () { selectSpec(spec, list); });
+        var li = el('li', null, null);
+        li.appendChild(itemButton(spec.name, spec.root, spec.id === state.specId, function () {
+          selectSpec(spec, list);
+        }));
         list.appendChild(li);
       });
     }).catch(function (err) { setStatus('specs-status', String(err.message || err), true); });
@@ -68,14 +107,13 @@ export const CLIENT_JS = String.raw`
   function selectSpec(spec, list) {
     state.specId = spec.id;
     state.specName = spec.name;
-    list.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
-    var buttons = list.querySelectorAll('button');
-    for (var i = 0; i < buttons.length; i++) {
-      if (buttons[i].firstChild.textContent === spec.name) buttons[i].setAttribute('aria-pressed', 'true');
-    }
+    list.querySelectorAll('button').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.firstChild.textContent === spec.name ? 'true' : 'false');
+    });
     ['btn-dry-run', 'btn-launch', 'btn-preview-spec'].forEach(function (id) { $(id).disabled = false; });
     setStatus('specs-status', 'Selected ' + spec.name + '.');
     $('spec-preview').hidden = true;
+    loadSummary(spec.id);
   }
   function previewSpec() {
     if (!state.specId) return;
@@ -100,14 +138,15 @@ export const CLIENT_JS = String.raw`
   function refreshRuns() {
     getJson('/api/runs').then(function (runs) {
       var list = $('runs-list');
-      list.innerHTML = '';
+      list.replaceChildren();
       setStatus('runs-status', runs.length === 0
         ? 'No runs launched this session.'
         : runs.length + ' run(s) this session (kept in memory only).');
       runs.forEach(function (run) {
-        var li = document.createElement('li');
-        li.innerHTML = itemButton(run.kind + ' · ' + run.specName, run.status, run.id === state.runId);
-        li.firstChild.addEventListener('click', function () { attachRun(run.id); });
+        var li = el('li', null, null);
+        li.appendChild(itemButton(run.kind + ' · ' + run.specName, run.status, run.id === state.runId, function () {
+          attachRun(run.id);
+        }));
         list.appendChild(li);
       });
     }).catch(function (err) { setStatus('runs-status', String(err.message || err), true); });
@@ -130,9 +169,7 @@ export const CLIENT_JS = String.raw`
     });
     es.addEventListener('log', function (ev) {
       var entry = JSON.parse(ev.data);
-      var span = document.createElement('span');
-      span.className = entry.stream;
-      span.textContent = entry.text;
+      var span = el('span', entry.stream, entry.text);
       log.appendChild(span);
       log.scrollTop = log.scrollHeight;
     });
@@ -144,88 +181,9 @@ export const CLIENT_JS = String.raw`
       setStatus('live-status', 'Stop requested (SIGTERM, then SIGKILL after grace).');
     }).catch(function (err) { setStatus('live-status', String(err.message || err), true); });
   }
+`;
 
-  // ── Artifacts + audit ────────────────────────────────────────────────────
-  function loadArtifacts() {
-    setStatus('artifacts-status', 'Scanning artifact roots…');
-    getJson('/api/artifacts').then(function (index) {
-      renderArtifactList('campaign-list', index.campaigns, function (c) {
-        return { label: c.name, meta: c.root + ' · ' + c.runDirs + ' run dir(s)' };
-      });
-      renderArtifactList('artifact-list', index.runs, function (r) {
-        return { label: (r.campaign ? r.campaign + '/' : '') + r.name, meta: r.root + (r.hasAnalysis ? ' · analyzed' : '') };
-      });
-      setStatus('artifacts-status', index.campaigns.length + ' campaign(s), ' + index.runs.length + ' run dir(s).');
-      if (index.campaigns.length + index.runs.length === 0) {
-        setStatus('artifacts-status', 'No artifacts yet — launch a run or check runs/out/.');
-      }
-    }).catch(function (err) { setStatus('artifacts-status', String(err.message || err), true); });
-  }
-  function renderArtifactList(elId, entries, shape) {
-    var list = $(elId);
-    list.innerHTML = '';
-    entries.forEach(function (entry) {
-      var s = shape(entry);
-      var li = document.createElement('li');
-      li.innerHTML = itemButton(s.label, s.meta, entry.id === state.artifactId);
-      li.firstChild.addEventListener('click', function () { inspect(entry.id); });
-      list.appendChild(li);
-    });
-  }
-  function auditRow(dt, dd) { return '<dt>' + esc(dt) + '</dt><dd>' + esc(dd == null ? '—' : dd) + '</dd>'; }
-  function inspect(id) {
-    state.artifactId = id;
-    setStatus('audit-status', 'Inspecting…');
-    $('file-preview').hidden = true;
-    getJson('/api/artifacts/inspect?id=' + encodeURIComponent(id)).then(function (a) {
-      var html = '<dl class="audit">' +
-        auditRow('path', a.path) + auditRow('modified', a.modifiedAt) +
-        auditRow('run id', a.identifiers.runId) + auditRow('lobby id', a.identifiers.lobbyId) +
-        auditRow('game id', a.identifiers.gameId) + auditRow('game', a.identifiers.game) +
-        auditRow('outcome', a.outcome ? (a.outcome.phase || '?') + (a.outcome.winnerLabel ? ' · winner ' + a.outcome.winnerLabel : '') : null) +
-        auditRow('relay events', a.relay ? a.relay.lines + (a.relay.truncated ? '+ (capped)' : '') : null) +
-        auditRow('analysis', a.analysis ? Object.keys(a.analysis.sections).map(function (k) { return k + ':' + a.analysis.sections[k]; }).join(' ') || 'present' : 'absent') +
-        '</dl>';
-      if (a.seats.length > 0) {
-        html += '<table class="seats"><thead><tr><th>bot</th><th>persona</th><th>model</th><th>backend</th></tr></thead><tbody>';
-        a.seats.forEach(function (s) {
-          html += '<tr><td>' + esc(s.bot) + '</td><td>' + esc(s.persona) + '</td><td>' + esc(s.model) + '</td><td>' + esc(s.backend) + '</td></tr>';
-        });
-        html += '</tbody></table>';
-      }
-      a.bots.forEach(function (b) {
-        html += '<div class="subhead">' + esc(b.file) + ' — ' + b.lines + ' event(s)' + (b.truncated ? ' (capped)' : '') + '</div>';
-      });
-      if (a.errors.length > 0) {
-        html += '<div class="subhead">parse/read issues</div>';
-        a.errors.forEach(function (e) { html += '<p class="status-line error">' + esc(e.file) + ': ' + esc(e.message) + '</p>'; });
-      }
-      html += '<div class="chips">';
-      ['campaign.json', 'manifest.json', 'analysis.json', 'relay.jsonl'].forEach(function (f) {
-        html += '<button data-file="' + esc(f) + '">' + esc(f) + '</button>';
-      });
-      a.bots.forEach(function (b) { html += '<button data-file="' + esc(b.file) + '">' + esc(b.file) + '</button>'; });
-      html += '</div>';
-      var body = $('audit-body');
-      body.innerHTML = html;
-      body.hidden = false;
-      body.querySelectorAll('button[data-file]').forEach(function (btn) {
-        btn.addEventListener('click', function () { previewFile(id, btn.getAttribute('data-file')); });
-      });
-      setStatus('audit-status', 'Audit of ' + a.name + ' (all previews redacted).');
-      loadArtifacts();
-    }).catch(function (err) { setStatus('audit-status', String(err.message || err), true); });
-  }
-  function previewFile(id, file) {
-    setStatus('audit-status', 'Loading ' + file + '…');
-    getJson('/api/artifacts/preview?id=' + encodeURIComponent(id) + '&file=' + encodeURIComponent(file)).then(function (p) {
-      var pre = $('file-preview');
-      pre.textContent = p.text + (p.truncated ? '\n… [truncated]' : '');
-      pre.hidden = false;
-      setStatus('audit-status', file + ' (redacted' + (p.truncated ? ', truncated' : '') + ').');
-    }).catch(function (err) { setStatus('audit-status', String(err.message || err), true); });
-  }
-
+const TAIL_JS = `
   $('btn-dry-run').addEventListener('click', function () { startRun('dry-run'); });
   $('btn-launch').addEventListener('click', function () { startRun('run'); });
   $('btn-preview-spec').addEventListener('click', previewSpec);
@@ -235,5 +193,6 @@ export const CLIENT_JS = String.raw`
   loadSpecs();
   refreshRuns();
   loadArtifacts();
-})();
 `;
+
+export const CLIENT_JS = `\n(function () {${CORE_JS}${CLIENT_AUDIT_JS}${CLIENT_SUMMARY_JS}${TAIL_JS}})();\n`;

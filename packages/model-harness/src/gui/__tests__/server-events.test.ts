@@ -11,11 +11,14 @@ import { type GuiServer, startGuiServer } from '../server.js';
 
 let gui: GuiServer;
 let base: string;
+let csrf: string;
 
 beforeAll(async () => {
   gui = await startGuiServer({ host: '127.0.0.1', port: 0 });
   const { port } = gui.server.address() as AddressInfo;
   base = `http://127.0.0.1:${port}`;
+  const html = await (await fetch(`${base}/`)).text();
+  csrf = html.match(/name="harness-csrf" content="([^"]+)"/)?.[1] ?? '';
 });
 
 afterAll(async () => {
@@ -69,7 +72,7 @@ describe('GET /api/runs/:id/events — initial replay ordering', () => {
     // Given a dry-run driven through the real CLI to completion
     const started = await fetch(`${base}/api/runs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-harness-csrf': csrf },
       body: JSON.stringify({ specId: 'runs:claude-totc.yaml', kind: 'dry-run' }),
     });
     expect(started.status).toBe(201);

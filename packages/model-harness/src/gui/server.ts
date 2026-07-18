@@ -8,6 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { listArtifacts } from './artifacts.js';
+import { assertLocalPost, createCsrfToken, GuardError } from './guard.js';
 import {
   isLoopbackHost,
   readJsonBody,
@@ -21,7 +22,9 @@ import { inspectArtifact, previewArtifactFile } from './inspect.js';
 import { renderPage } from './page.js';
 import { PathViolationError } from './paths.js';
 import { RunManager } from './runs.js';
+import { inspectSeries } from './series.js';
 import { listSpecs, readSpecPreview, resolveSpec } from './specs.js';
+import { summarizeSpec } from './summary.js';
 
 const MAX_SSE_CLIENTS = 8;
 
@@ -38,8 +41,10 @@ export interface GuiServer {
 
 function errorStatus(err: unknown): number {
   if (err instanceof PathViolationError) return 400;
+  if (err instanceof GuardError) return err.status;
   const message = err instanceof Error ? err.message : '';
   if (message === 'no such run') return 404;
+  if (message === 'request body too large') return 413;
   if (message.includes('already in progress') || message.includes('may run at once')) return 409;
   return 400;
 }
@@ -51,6 +56,7 @@ export function startGuiServer(options: GuiServerOptions): Promise<GuiServer> {
     );
   }
   const manager = new RunManager();
+  const csrfToken = createCsrfToken();
   const sseClients = new Set<ServerResponse>();
 
   const server = createServer((req, res) => {
@@ -70,7 +76,7 @@ export function startGuiServer(options: GuiServerOptions): Promise<GuiServer> {
     try {
       if (method === 'GET' && url.pathname === '/') {
         const nonce = randomBytes(16).toString('base64');
-        sendHtml(res, renderPage(nonce), nonce);
+        sendHtml(res, renderPage(nonce, csrfToken), nonce);
         return;
       }
       if (method === 'GET' && url.pathname === '/api/health') {
@@ -85,11 +91,16 @@ export function startGuiServer(options: GuiServerOptions): Promise<GuiServer> {
         sendJson(res, 200, await readSpecPreview(requiredParam(url, 'id')));
         return;
       }
+      if (method === 'GET' && url.pathname === '/api/specs/summary') {
+        sendJson(res, 200, await summarizeSpec(requiredParam(url, 'id')));
+        return;
+      }
       if (method === 'GET' && url.pathname === '/api/runs') {
         sendJson(res, 200, manager.list());
         return;
       }
       if (method === 'POST' && url.pathname === '/api/runs') {
+        assertLocalPost(req, csrfToken);
         const body = await readJsonBody(req);
         const specId = requiredString(body, 'specId');
         const kind = body.kind === 'dry-run' ? 'dry-run' : 'run';
@@ -105,6 +116,8 @@ export function startGuiServer(options: GuiServerOptions): Promise<GuiServer> {
           return;
         }
         if (method === 'POST' && runMatch[2] === '/stop') {
+          assertLocalPost(req, csrfToken);
+          await readJsonBody(req);
           sendJson(res, 200, manager.stop(runId));
           return;
         }
@@ -119,6 +132,10 @@ export function startGuiServer(options: GuiServerOptions): Promise<GuiServer> {
       }
       if (method === 'GET' && url.pathname === '/api/artifacts/inspect') {
         sendJson(res, 200, await inspectArtifact(requiredParam(url, 'id')));
+        return;
+      }
+      if (method === 'GET' && url.pathname === '/api/artifacts/series') {
+        sendJson(res, 200, await inspectSeries(requiredParam(url, 'id')));
         return;
       }
       if (method === 'GET' && url.pathname === '/api/artifacts/preview') {

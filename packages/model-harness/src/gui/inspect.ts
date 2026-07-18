@@ -15,7 +15,7 @@ const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_JSONL_LINES = 200_000;
 const MAX_PREVIEW_BYTES = 128 * 1024;
 const ALLOWED_PREVIEW_RE =
-  /^(campaign\.json|manifest\.json|analysis\.json|relay\.jsonl|bots\/[A-Za-z0-9._-]+\.jsonl)$/;
+  /^(campaign\.json|manifest\.json|analysis\.json|relay\.jsonl|series-manifest\.json|resolved-config\.json|analysis-input\.json|errors\.jsonl|games\/\d+\/(?:manifest\.json|relay\.jsonl)|bots\/[A-Za-z0-9._-]+\.jsonl)$/;
 
 export interface ParseIssue {
   file: string;

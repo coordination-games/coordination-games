@@ -19,6 +19,7 @@ export interface RunDirEntry {
   hasManifest: boolean;
   hasAnalysis: boolean;
   hasRelay: boolean;
+  hasSeries: boolean;
   botFiles: number;
 }
 
@@ -62,14 +63,15 @@ async function classifyRunDir(
   abs: string,
   campaign: string | null,
 ): Promise<RunDirEntry | null> {
-  const [hasManifest, hasAnalysis, hasRelay, botFiles, stat] = await Promise.all([
+  const [hasManifest, hasAnalysis, hasRelay, hasSeries, botFiles, stat] = await Promise.all([
     exists(path.join(abs, 'manifest.json')),
     exists(path.join(abs, 'analysis.json')),
     exists(path.join(abs, 'relay.jsonl')),
+    exists(path.join(abs, 'series-manifest.json')),
     countBotFiles(abs),
     fsp.stat(abs),
   ]);
-  if (!hasManifest && !hasRelay && botFiles === 0) return null;
+  if (!hasManifest && !hasRelay && botFiles === 0 && !hasSeries) return null;
   return {
     id: encodePathId(root.key, rel),
     name: path.basename(rel),
@@ -79,6 +81,7 @@ async function classifyRunDir(
     hasManifest,
     hasAnalysis,
     hasRelay,
+    hasSeries,
     botFiles,
   };
 }
