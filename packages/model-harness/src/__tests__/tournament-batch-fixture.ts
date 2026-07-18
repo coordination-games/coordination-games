@@ -4,6 +4,7 @@ import path from 'node:path';
 import { type RunBatchResult, runBatch } from '../orchestrate.js';
 import type { ResolvedIdentity } from '../run-setup.js';
 import { makeTranscriptWriter } from '../run-transcript.js';
+import type { SeriesGameSnapshot } from '../series-inspect.js';
 import type { TournamentState } from '../tournament-orchestration.js';
 import type { TournamentBatchDependencies } from '../tournament-run.js';
 import type { TournamentRunSpec } from '../tournament-types.js';
@@ -32,6 +33,7 @@ type FixtureOptions = {
   readonly failFlushCall?: number;
   readonly afterSnapshot?: (gameId: string) => void;
   readonly maxAggregateCostMicrousd?: number;
+  readonly snapshots?: Readonly<Record<string, SeriesGameSnapshot>>;
 };
 
 export type TournamentBatchFixture = {
@@ -46,6 +48,11 @@ export type TournamentBatchFixture = {
     readonly lobbyIdentityInputs: (readonly ResolvedIdentity[])[];
     readonly sessions: SessionCall[];
     readonly snapshots: string[];
+    readonly prompts: {
+      readonly gameId: string;
+      readonly botName: string;
+      readonly systemPrompt: string;
+    }[];
   };
   readonly dependencies: Partial<TournamentBatchDependencies>;
   readonly run: () => Promise<RunBatchResult>;
@@ -67,6 +74,7 @@ export async function createTournamentBatchFixture(
     lobbyIdentityInputs: [],
     sessions: [],
     snapshots: [],
+    prompts: [],
   };
   let stateIndex = 0;
   let currentGameId: string | null = null;
@@ -78,6 +86,11 @@ export async function createTournamentBatchFixture(
         botName: sessionOptions.botName,
         signal: sessionOptions.signal,
         limits: sessionOptions.limits,
+      });
+      calls.prompts.push({
+        gameId: currentGameId,
+        botName: sessionOptions.botName,
+        systemPrompt: sessionOptions.systemPrompt,
       });
       if (options.usageEmission?.gameId === currentGameId) {
         sessionOptions.onEvent({
@@ -137,7 +150,13 @@ export async function createTournamentBatchFixture(
         throw new Error(`snapshot failed for ${gameId}`);
       }
       options.afterSnapshot?.(gameId);
-      return { gameId, phase: 'finished' };
+      return (
+        options.snapshots?.[gameId] ?? {
+          outcome: { phase: 'finished', winnerLabel: gameId },
+          standings: [],
+          relay: [],
+        }
+      );
     },
     sleep: async () => {
       if (options.sleepFailure) throw new Error(options.sleepFailure);

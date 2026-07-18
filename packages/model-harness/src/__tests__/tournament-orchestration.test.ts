@@ -1,5 +1,8 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { type RunBatchResult, runBatch } from '../orchestrate.js';
+import { loadAnalysisInputs } from '../series-analysis.js';
 import type { RunSpec } from '../types.js';
 import {
   completedGameArtifacts,
@@ -58,6 +61,124 @@ describe('tournament runBatch orchestration', () => {
         gameIds: ['game-1', 'game-2', 'game-3'],
         standings: [{ playerId: 'player-a', rank: 1 }],
       });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('Given resolved tournament seats, when a real runBatch result is loaded for analysis, then persona, model, and backend metadata remain available', async () => {
+    // Given
+    const fixture = await createTournamentBatchFixture({
+      states: [runningState('game-1', ['player-a']), completedState(['game-1'])],
+    });
+
+    try {
+      // When
+      const result = await fixture.run();
+      const inputs = await loadAnalysisInputs(result.runDir);
+
+      // Then
+      expect(inputs.manifest).toMatchObject({
+        seats: [
+          {
+            bot: 'bot-a',
+            persona: '/personas/bot-a',
+            model: 'fixture-model',
+            backend: 'openrouter',
+          },
+          {
+            bot: 'bot-b',
+            persona: '/personas/bot-b',
+            model: 'fixture-model',
+            backend: 'openrouter',
+          },
+          {
+            bot: 'bot-c',
+            persona: '/personas/bot-c',
+            model: 'fixture-model',
+            backend: 'openrouter',
+          },
+        ],
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('Given a completed game with public chat, direct messages, and seeded unsafe inspector fields, when a second game starts, then every next-game prompt and artifact keeps only permitted history', async () => {
+    // Given
+    const fixture = await createTournamentBatchFixture({
+      states: [
+        runningState('game-1', ['player-a', 'player-b', 'player-c']),
+        runningState('game-2', ['player-a', 'player-b', 'player-c'], ['game-1', 'game-2']),
+        completedState(['game-1', 'game-2']),
+      ],
+      snapshots: {
+        'game-1': {
+          outcome: {
+            phase: 'finished',
+            hiddenReasoning: 'hidden-reasoning',
+            horizonSecret: 'horizon-secret',
+          },
+          standings: [{ playerId: 'player-a', rank: 1 }],
+          relay: [
+            relay({ sender: 'player-a', scope: { kind: 'all' }, body: 'public-message', index: 0 }),
+            relay({
+              sender: 'player-a',
+              scope: { kind: 'dm', recipientHandle: 'player-b' },
+              body: 'a-to-b-private',
+              index: 1,
+            }),
+            relay({
+              sender: 'player-b',
+              scope: { kind: 'dm', recipientHandle: 'player-c' },
+              body: 'b-to-c-private',
+              index: 2,
+            }),
+            relay({
+              sender: 'player-c',
+              scope: { kind: 'all' },
+              body: 'api-key private-key token raw-tool-internals',
+              index: 3,
+            }),
+          ],
+        },
+        'game-2': { outcome: { phase: 'finished' }, standings: [], relay: [] },
+      },
+    });
+
+    try {
+      // When
+      const result = await fixture.run();
+
+      // Then
+      const prompts = Object.fromEntries(
+        fixture.calls.prompts
+          .filter((entry) => entry.gameId === 'game-2')
+          .map((entry) => [entry.botName, entry.systemPrompt]),
+      );
+      expect(prompts['bot-a']).toContain('public-message');
+      expect(prompts['bot-b']).toContain('public-message');
+      expect(prompts['bot-c']).toContain('public-message');
+      expect(prompts['bot-a']).toContain('a-to-b-private');
+      expect(prompts['bot-b']).toContain('a-to-b-private');
+      expect(prompts['bot-c']).not.toContain('a-to-b-private');
+      expect(prompts['bot-a']).not.toContain('b-to-c-private');
+      expect(prompts['bot-b']).toContain('b-to-c-private');
+      expect(prompts['bot-c']).toContain('b-to-c-private');
+      const artifacts = await readFile(path.join(result.runDir, 'games/0/relay.jsonl'), 'utf8');
+      for (const secret of [
+        'hidden-reasoning',
+        'horizon-secret',
+        'api-key',
+        'private-key',
+        'token',
+        'raw-tool-internals',
+      ]) {
+        expect(
+          `${prompts['bot-a']}${prompts['bot-b']}${prompts['bot-c']}${artifacts}`,
+        ).not.toContain(secret);
+      }
     } finally {
       await fixture.cleanup();
     }
@@ -180,6 +301,28 @@ describe('tournament runBatch orchestration', () => {
       });
       expect(await completedGameArtifacts(result)).toEqual([]);
       expect(fixture.calls.snapshots).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('Given a real provider-failed series output with an observed incomplete game, when loading analysis inputs, then it remains inspectable without inventing a child artifact', async () => {
+    // Given
+    const fixture = await createTournamentBatchFixture({
+      states: [runningState('game-1', ['player-a'])],
+      providerFailureGameId: 'game-1',
+    });
+
+    try {
+      // When
+      const result = await fixture.run();
+      const inputs = await loadAnalysisInputs(result.runDir);
+
+      // Then
+      expect(inputs.relayLines).toEqual([]);
+      expect(inputs.availableGames).toEqual([
+        { gameId: 'game-1', gameIndex: 0, status: 'incomplete' },
+      ]);
     } finally {
       await fixture.cleanup();
     }
@@ -353,5 +496,24 @@ function legacySpec(): RunSpec {
     analysis: { enabled: true, model: 'haiku' },
     disablePlugins: ['trust'],
     label: 'legacy-label',
+  };
+}
+
+function relay(input: {
+  readonly sender: string;
+  readonly scope:
+    | { readonly kind: 'all' }
+    | { readonly kind: 'dm'; readonly recipientHandle: string };
+  readonly body: string;
+  readonly index: number;
+}) {
+  return {
+    index: input.index,
+    type: 'messaging',
+    pluginId: 'basic-chat',
+    sender: input.sender,
+    scope: input.scope,
+    turn: 1,
+    data: { body: input.body },
   };
 }
