@@ -1,16 +1,9 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { api } from './coga-client.js';
-
 export { assemblePrompt, loadPersona, resolvePersonaDir } from './persona.js';
 
-import { assemblePrompt } from './persona.js';
-import { snapshotArtifacts, writeManifest } from './run-artifacts.js';
-import { createAndJoinLobby, pollForGameId, resolveIdentities, resolveSeats } from './run-setup.js';
-import { makeTranscriptWriter } from './run-transcript.js';
-import { resolveRunnerCache, runnerForResolvedSeat } from './runner-resolution.js';
-import { RunBudget } from './runners/run-budget.js';
-import type { RunSpec, SessionResult } from './types.js';
+import { runSingleGameBatch } from './single-game-orchestration.js';
+import type { TournamentBatchDependencies } from './tournament-run.js';
+import { runTournamentBatch } from './tournament-run.js';
+import { type CampaignSpec, isTournamentRun } from './tournament-types.js';
 
 export { writeManifest } from './run-artifacts.js';
 export { makeTranscriptWriter } from './run-transcript.js';
@@ -22,89 +15,28 @@ export interface RunBatchResult {
   readonly manifest: unknown;
 }
 
-export async function runBatch(spec: RunSpec): Promise<RunBatchResult> {
-  const runId = `run-${Date.now()}${spec.label ? `-${slugify(spec.label)}` : ''}`;
-  const runDir = path.resolve(spec.output, runId);
-  await fs.mkdir(runDir, { recursive: true });
-  const identities = await resolveIdentities(spec);
-  const seats = await resolveSeats(spec, identities);
-  const lobbyId = await createAndJoinLobby(spec, identities);
-  const writer = makeTranscriptWriter(runDir);
-  const budget = new RunBudget(spec.limits.maxAggregateCostMicrousd);
-  const results = new Map<string, SessionResult>();
-  let sessionsDone = false;
-  const gameIdPromise = pollForGameId({
-    server: spec.server,
-    lobbyId,
-    deadline: Date.now() + spec.limits.wallClockMsPerRun,
-    isDone: () => sessionsDone,
-  });
-  const runners = resolveRunnerCache(seats);
-  await Promise.all(
-    seats.map(async (seat) => {
-      const result = await runnerForResolvedSeat(runners, seat).runSession({
-        botName: seat.botName,
-        privateKey: seat.privateKey,
-        server: spec.server,
-        systemPrompt: assemblePrompt(seat.botName, seat.persona),
-        model: seat.model,
-        ...(seat.modelConfig ? { modelConfig: seat.modelConfig } : {}),
-        limits: {
-          maxModelCalls: spec.limits.maxModelCallsPerBot,
-          wallClockMs: spec.limits.wallClockMsPerRun,
-        },
-        ...(spec.disablePlugins ? { disablePlugins: spec.disablePlugins } : {}),
-        budget,
-        onEvent(event) {
-          writer.onEvent(event);
-          if (event.kind === 'model_response' && event.usage !== undefined) {
-            budget.record(event.usage, seat.modelConfig?.pricing);
-          }
-        },
-      });
-      results.set(seat.botName, result);
-    }),
-  );
-  sessionsDone = true;
-  await writer.flush();
-  const gameId = (await gameIdPromise) ?? '';
-  const outcome = gameId
-    ? await snapshotArtifacts({
-        runDir,
-        server: spec.server,
-        gameId,
-        inspectToken: process.env.INSPECTOR_TOKEN ?? 'local-inspector-token',
-        inspect: (endpoint) =>
-          api(spec.server, endpoint, {
-            headers: { 'X-Admin-Token': process.env.INSPECTOR_TOKEN ?? 'local-inspector-token' },
-          }),
-      })
-    : null;
-  await writeManifest({
-    runDir,
-    runId,
-    spec,
-    lobbyId,
-    gameId,
-    seats,
-    sessionResults: results,
-    writer,
-    outcome,
-    usage: budget.totals(),
-    budgetError: budget.error(),
-  });
-  const manifest = JSON.parse(
-    await fs.readFile(path.join(runDir, 'manifest.json'), 'utf8'),
-  ) as unknown;
-  return { runDir, lobbyId, gameId, manifest };
+export interface RunBatchOptions {
+  readonly signal?: AbortSignal;
+  readonly tournamentDependencies?: Partial<TournamentBatchDependencies>;
 }
 
-function slugify(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'run'
-  );
+export type RunBatchDependencies = {
+  readonly runSingleGameBatch: typeof runSingleGameBatch;
+  readonly runTournamentBatch: typeof runTournamentBatch;
+};
+
+const DEFAULT_DEPENDENCIES: RunBatchDependencies = {
+  runSingleGameBatch,
+  runTournamentBatch,
+};
+
+export async function runBatch(
+  spec: CampaignSpec,
+  options: RunBatchOptions = {},
+  overrides: Partial<RunBatchDependencies> = {},
+): Promise<RunBatchResult> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
+  return isTournamentRun(spec)
+    ? dependencies.runTournamentBatch(spec, options, { ...options.tournamentDependencies })
+    : dependencies.runSingleGameBatch(spec);
 }

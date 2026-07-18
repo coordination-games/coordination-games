@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { api, authenticate, faucetBot, loadPool, registerBotOnChain } from './coga-client.js';
 import { loadPersona } from './persona.js';
+import { type CampaignSpec, isTournamentRun } from './tournament-types.js';
 import { backendForModel, type ResolvedSeat, type RunSpec } from './types.js';
 
 export type ResolvedIdentity = {
@@ -42,7 +43,7 @@ export async function resolveSeats(
 }
 
 export async function createAndJoinLobby(
-  spec: RunSpec,
+  spec: CampaignSpec,
   identities: readonly ResolvedIdentity[],
 ): Promise<string> {
   const first = identities[0];
@@ -54,6 +55,7 @@ export async function createAndJoinLobby(
       gameType: spec.game,
       ...spec.params,
       maxRounds: spec.rounds,
+      ...(isTournamentRun(spec) ? { tournament: spec.tournament } : {}),
       ...(spec.disablePlugins?.length ? { disabledPlugins: spec.disablePlugins } : {}),
     },
   });

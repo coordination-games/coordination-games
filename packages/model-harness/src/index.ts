@@ -15,19 +15,17 @@
  * References: docs/plans/unified-model-harness.md §§4.5, 6, 7, 10.
  */
 
-import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { analyzeRun } from './analyze.js';
+import { runCampaign } from './campaign-run.js';
 import { renderDryRunPlan } from './dry-run-plan.js';
 import {
   ImportBotConfigArgumentError,
   parseImportBotConfigArgs,
 } from './import-bot-config-cli-args.js';
 import { importBotConfig } from './legacy-bot-config-importer.js';
-import { runBatch } from './orchestrate.js';
 import { loadCampaign } from './spec.js';
-import { isTournamentRun } from './tournament-types.js';
-import type { CampaignRun, RunSpec } from './types.js';
+import type { CampaignRun } from './types.js';
 
 // ---------------------------------------------------------------------------
 // argv parsing — deliberately minimal (§: no arg-parsing dependency).
@@ -111,113 +109,6 @@ async function cmdImportBotConfig(argv: readonly string[]): Promise<number> {
     );
   }
   return 0;
-}
-
-// ---------------------------------------------------------------------------
-// Run execution — sequential, failure-isolated, grouped under one campaign dir.
-// ---------------------------------------------------------------------------
-
-interface CampaignRunSummary {
-  label: string;
-  game: string;
-  status: 'ok' | 'error';
-  runDir?: string;
-  lobbyId?: string;
-  gameId?: string;
-  analysis?: boolean;
-  outcome?: unknown;
-  error?: string;
-}
-
-/**
- * Run a campaign: every run is its own batch (fresh lobby/game/run dir), executed
- * SEQUENTIALLY under one campaign dir. One run failing does NOT abort the sweep —
- * its error is recorded and the next run proceeds (load-bearing for overnight
- * sweeps). A campaign.json index + a console summary are written at the end.
- */
-async function runCampaign(runs: CampaignRun[]): Promise<number> {
-  if (runs.some((run) => isTournamentRun(run.spec))) {
-    throw new Error(
-      'Tournament execution is not implemented; use --dry-run to inspect the series plan',
-    );
-  }
-  const first = runs[0];
-  if (!first) throw new Error('campaign resolved to zero runs');
-
-  // Group the whole sweep under one campaign dir so its runs are easy to compare.
-  const campaignId = `campaign-${Date.now()}`;
-  const campaignDir = path.resolve(first.spec.output, campaignId);
-  await fsp.mkdir(campaignDir, { recursive: true });
-  console.log(`\n[campaign] ${campaignId} — ${runs.length} runs → ${campaignDir}\n`);
-
-  const summaries: CampaignRunSummary[] = [];
-
-  for (let i = 0; i < runs.length; i++) {
-    const cr = runs[i];
-    if (!cr) continue;
-    const label = cr.spec.label ?? cr.baseLabel;
-    const tag = `[${i + 1}/${runs.length}] ${label}`;
-    console.log(`\n========== ${tag} ==========`);
-    // Each run writes into the campaign dir.
-    const spec: RunSpec = { ...cr.spec, output: campaignDir };
-    try {
-      const { runDir, lobbyId, gameId, manifest } = await runBatch(spec);
-      let analysis = false;
-      try {
-        if (spec.analysis?.enabled) {
-          await analyzeRun(runDir, { model: spec.analysis.model });
-          analysis = true;
-        }
-      } catch (err) {
-        console.error(`  [campaign] analysis failed for ${label}: ${errMsg(err)}`);
-      }
-      const outcome = (manifest as { outcome?: unknown } | null)?.outcome ?? null;
-      summaries.push({
-        label,
-        game: spec.game,
-        status: 'ok',
-        runDir: path.relative(campaignDir, runDir),
-        lobbyId,
-        gameId,
-        analysis,
-        outcome,
-      });
-      console.log(`  [campaign] ${tag} ✓`);
-    } catch (err) {
-      console.error(`  [campaign] ${tag} ✗ FAILED: ${errMsg(err)}`);
-      summaries.push({ label, game: spec.game, status: 'error', error: errMsg(err) });
-    }
-  }
-
-  const indexPath = path.join(campaignDir, 'campaign.json');
-  await fsp.writeFile(
-    indexPath,
-    JSON.stringify({ campaignId, total: runs.length, runs: summaries }, null, 2),
-  );
-
-  printCampaignSummary(summaries, indexPath);
-  return summaries.some((s) => s.status === 'error') ? 1 : 0;
-}
-
-function printCampaignSummary(summaries: CampaignRunSummary[], indexPath: string): void {
-  console.log(`\n=== Campaign complete ===`);
-  for (const s of summaries) {
-    if (s.status === 'ok') {
-      const o = s.outcome as { winnerLabel?: string } | null;
-      const winner = o?.winnerLabel ?? '(tie/none)';
-      console.log(`  ✓ ${s.label.padEnd(28)} ${s.game.padEnd(26)} winner=${winner}`);
-    } else {
-      console.log(
-        `  ✗ ${s.label.padEnd(28)} ${s.game.padEnd(26)} ERROR: ${(s.error ?? '').slice(0, 80)}`,
-      );
-    }
-  }
-  const ok = summaries.filter((s) => s.status === 'ok').length;
-  console.log(`\n  ${ok}/${summaries.length} ok → ${indexPath}\n`);
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** Print the resolved run plan for a dry run (the expanded grid + total count). */

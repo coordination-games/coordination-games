@@ -1,51 +1,106 @@
-import { spawnSync } from 'node:child_process';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { runCampaign } from '../campaign-run.js';
+import { runBatch } from '../orchestrate.js';
+import type { CampaignRun } from '../types.js';
+import {
+  completedState,
+  createTournamentBatchFixture,
+  runningState,
+  tournamentSpec,
+} from './tournament-batch-fixture.js';
 
-const CLI_PATH = path.resolve(import.meta.dirname, '..', 'index.ts');
+describe('tournament campaign execution', () => {
+  it('Given a tournament CampaignRun, when the campaign injects canonical runBatch, then it executes without live services and writes a successful campaign index', async () => {
+    // Given
+    const fixture = await createTournamentBatchFixture({
+      states: [runningState('game-1', ['player-a']), completedState(['game-1'])],
+    });
+    const campaignRun = tournamentCampaignRun(fixture.directory, 'campaign-success');
 
-describe('tournament CLI preflight', () => {
-  it('Given a tournament execution request, when invoking the CLI without dry-run, then it fails before creating campaign output', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'model-harness-tournament-cli-'));
     try {
-      const specPath = path.join(directory, 'tournament.yaml');
-      await writeFile(specPath, tournamentYaml());
-
-      const result = spawnSync('npx', ['tsx', CLI_PATH, 'run', specPath], {
-        cwd: directory,
-        encoding: 'utf8',
-        shell: false,
+      // When
+      const exitCode = await runCampaign([campaignRun], {
+        now: () => 41,
+        log: () => undefined,
+        error: () => undefined,
+        runBatch: (spec) => runBatch(spec, { tournamentDependencies: fixture.dependencies }),
       });
 
-      expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        'Tournament execution is not implemented',
+      // Then
+      const campaign = JSON.parse(
+        await readFile(path.join(fixture.directory, 'campaign-41', 'campaign.json'), 'utf8'),
       );
-      await expect(readdir(path.join(directory, 'output'))).rejects.toThrow();
+      expect(exitCode).toBe(0);
+      expect(campaign).toEqual({
+        campaignId: 'campaign-41',
+        total: 1,
+        runs: [
+          {
+            label: 'campaign-success',
+            game: 'tragedy-of-the-commons',
+            status: 'ok',
+            runDir: expect.stringMatching(/^run-\d+-campaign-success$/),
+            lobbyId: 'lobby-fixture',
+            gameId: 'game-1',
+            analysis: false,
+            outcome: null,
+          },
+        ],
+      });
+      expect(fixture.calls.sessions.map(({ gameId, botName }) => ({ gameId, botName }))).toEqual([
+        { gameId: 'game-1', botName: 'bot-a' },
+      ]);
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await fixture.cleanup();
+    }
+  });
+
+  it('Given a tournament CampaignRun whose batch fails, when the campaign completes, then it returns failure and records the exact error summary', async () => {
+    // Given
+    const fixture = await createTournamentBatchFixture({ states: [completedState([])] });
+    const campaignRun = tournamentCampaignRun(fixture.directory, 'campaign-failure');
+
+    try {
+      // When
+      const exitCode = await runCampaign([campaignRun], {
+        now: () => 42,
+        log: () => undefined,
+        error: () => undefined,
+        runBatch: async () => {
+          throw new Error('deterministic batch failure');
+        },
+      });
+
+      // Then
+      const campaign = JSON.parse(
+        await readFile(path.join(fixture.directory, 'campaign-42', 'campaign.json'), 'utf8'),
+      );
+      expect(exitCode).toBe(1);
+      expect(campaign).toEqual({
+        campaignId: 'campaign-42',
+        total: 1,
+        runs: [
+          {
+            label: 'campaign-failure',
+            game: 'tragedy-of-the-commons',
+            status: 'error',
+            error: 'deterministic batch failure',
+          },
+        ],
+      });
+    } finally {
+      await fixture.cleanup();
     }
   });
 });
 
-function tournamentYaml(): string {
-  return `globals:
-  output: ./output
-games:
-  - game: tragedy-of-the-commons
-    tournament:
-      mode: tragedy-series
-      policy:
-        seriesLength: 1
-        baseEntryCost: "1"
-        carryBps: 0
-        slashBps: 0
-        minRounds: 1
-        maxRounds: 1
-        hazardNumerator: 0
-        hazardDenominator: 1
-    seats: [{ persona: p, model: haiku }]
-`;
+function tournamentCampaignRun(output: string, label: string): CampaignRun {
+  return {
+    spec: { ...tournamentSpec(output), label },
+    baseLabel: label,
+    repeatIndex: 1,
+    repeatTotal: 1,
+  };
 }
