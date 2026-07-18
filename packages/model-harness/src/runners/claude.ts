@@ -30,235 +30,10 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { cogaServeCommand } from '../coga-client.js';
 import { BASE_PROTOCOL_PROMPT, RESUME_PROMPT } from '../prompts.js';
-import type { AgentRunner, RunSessionOptions, SessionResult, TranscriptEvent } from '../types.js';
+import type { AgentRunner, RunSessionOptions, SessionResult } from '../types.js';
 import { claudeCliModel } from '../types.js';
-
-// ---------------------------------------------------------------------------
-// Helpers — parse stream-json lines into TranscriptEvents
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the text of tool_result blocks from a user-turn content array.
- * Returns a concatenated string (empty string when nothing extractable).
- */
-function extractToolResultBody(content: unknown): string {
-  if (Array.isArray(content)) {
-    return (content as Array<Record<string, unknown>>)
-      .map((p) => (p.type === 'text' ? String(p.text ?? '') : JSON.stringify(p)))
-      .join(' ');
-  }
-  return JSON.stringify(content ?? '');
-}
-
-/**
- * Try to parse a JSON string; return undefined on failure.
- */
-function tryParse(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Check whether a parsed tool result value contains `"phase":"finished"`.
- * Walks the top-level object (and one nested `result` key) since coga wraps
- * the actual game state inside a result envelope.
- */
-function isFinishedResult(parsed: unknown): boolean {
-  if (!parsed || typeof parsed !== 'object') return false;
-  const obj = parsed as Record<string, unknown>;
-
-  // Direct: { phase: "finished", ... }
-  if (obj.phase === 'finished') return true;
-
-  // Nested inside a `result` key: { result: { phase: "finished" } }
-  if (obj.result && typeof obj.result === 'object') {
-    const inner = obj.result as Record<string, unknown>;
-    if (inner.phase === 'finished') return true;
-  }
-
-  // Also check `state` key for resilience
-  if (obj.state && typeof obj.state === 'object') {
-    const inner = obj.state as Record<string, unknown>;
-    if (inner.phase === 'finished') return true;
-  }
-
-  return false;
-}
-
-/**
- * Extract stateVersion and relayCursor from a tool result for the
- * consequential-action signal (§9, blueprint).
- */
-function extractCursors(parsed: unknown): { stateVersion?: number; relayCursor?: number } {
-  if (!parsed || typeof parsed !== 'object') return {};
-  const obj = parsed as Record<string, unknown>;
-
-  // Look in the top level and in common envelope keys
-  const candidates = [obj, obj.result, obj.state, obj.meta].filter(
-    (x): x is Record<string, unknown> => !!x && typeof x === 'object',
-  );
-
-  let stateVersion: number | undefined;
-  let relayCursor: number | undefined;
-
-  for (const c of candidates) {
-    if (stateVersion === undefined && typeof c.knownStateVersion === 'number') {
-      stateVersion = c.knownStateVersion;
-    }
-    if (stateVersion === undefined && typeof c.stateVersion === 'number') {
-      stateVersion = c.stateVersion;
-    }
-    if (relayCursor === undefined && typeof c.sinceIdx === 'number') {
-      relayCursor = c.sinceIdx;
-    }
-    if (relayCursor === undefined && c.meta && typeof c.meta === 'object') {
-      const meta = c.meta as Record<string, unknown>;
-      if (typeof meta.sinceIdx === 'number') relayCursor = meta.sinceIdx;
-    }
-  }
-
-  // Use conditional spreads to avoid exactOptionalPropertyTypes conflicts.
-  return {
-    ...(stateVersion !== undefined ? { stateVersion } : {}),
-    ...(relayCursor !== undefined ? { relayCursor } : {}),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Stream-json line → TranscriptEvents
-//
-// The claude --print --output-format stream-json subprocess emits one JSON
-// object per line with the following shapes we care about:
-//
-//   { type:"system",    subtype:"init", model:"..." }
-//   { type:"assistant", message:{ content:[...] } }
-//   { type:"user",      message:{ content:[{ type:"tool_result", ... }] } }
-//   { type:"result",    subtype:"success"|"error_max_turns"|..., ... }
-//
-// We emit TranscriptEvents from the assistant and user turns. The result line
-// is used only for its error signal (detected externally via the finished flag).
-// ---------------------------------------------------------------------------
-
-interface ParsedLine {
-  /** Zero or more events to emit from this stream-json line. */
-  events: TranscriptEvent[];
-  /**
-   * True if this line contains a tool_result payload that signals phase:finished.
-   * The runner tracks this across lines to decide whether to resume.
-   */
-  seenFinished: boolean;
-}
-
-function parseStreamLine(line: string, bot: string, _model: string): ParsedLine {
-  const ev = tryParse(line);
-  if (!ev || typeof ev !== 'object') return { events: [], seenFinished: false };
-
-  const e = ev as Record<string, unknown>;
-  const type = e.type as string | undefined;
-  const events: TranscriptEvent[] = [];
-  let seenFinished = false;
-  const t = Date.now();
-
-  // -------------------------------------------------------------------------
-  // assistant turn — emit model_response (text + tool_calls)
-  // -------------------------------------------------------------------------
-  if (type === 'assistant') {
-    const msg = e.message as { content?: unknown[]; usage?: unknown } | undefined;
-    const content = msg?.content ?? [];
-
-    let text: string | undefined;
-    const toolCalls: { name: string; args: unknown }[] = [];
-
-    for (const c of content) {
-      const block = c as Record<string, unknown>;
-      if (block.type === 'text') {
-        const t2 = String(block.text ?? '').trim();
-        if (t2) text = (text ?? '') + t2;
-      } else if (block.type === 'tool_use') {
-        const name = String(block.name ?? '');
-        const args = block.input ?? {};
-        toolCalls.push({ name, args });
-        // Also emit a tool_call event for each call (cleaner for the transcript)
-        events.push({ t, bot, kind: 'tool_call', name, args });
-      }
-      // thinking blocks: no event emitted (content is model-internal)
-    }
-
-    const responseEvent: TranscriptEvent = {
-      t,
-      bot,
-      kind: 'model_response',
-      ...(text !== undefined ? { text } : {}),
-      ...(toolCalls.length > 0 ? { toolCalls } : {}),
-      ...(msg?.usage !== undefined ? { usage: msg.usage } : {}),
-    };
-    events.push(responseEvent);
-    return { events, seenFinished };
-  }
-
-  // -------------------------------------------------------------------------
-  // user turn — emit tool_result events
-  // -------------------------------------------------------------------------
-  if (type === 'user') {
-    const msg = e.message as { content?: unknown[] } | undefined;
-    for (const c of msg?.content ?? []) {
-      const block = c as Record<string, unknown>;
-      if (block.type !== 'tool_result') continue;
-
-      const isError = block.is_error === true;
-      const rawBody = extractToolResultBody(block.content);
-
-      // Parse the result body to get structured data for finished detection
-      // and cursor extraction. The coga MCP server stringifies the JSON into
-      // a text block, so rawBody is typically a JSON string.
-      const parsed = tryParse(rawBody);
-
-      if (isFinishedResult(parsed)) seenFinished = true;
-
-      const { stateVersion, relayCursor } = extractCursors(parsed);
-
-      // Determine which tool this result is for. The claude --print stream
-      // doesn't always include the tool name on the result block, but when it
-      // does it's in block.tool_use_id or (rarely) block.name. We'll use the
-      // tool_use_id as a fallback name to keep the event non-null.
-      const name =
-        typeof block.name === 'string' && block.name
-          ? block.name
-          : typeof block.tool_use_id === 'string'
-            ? `[${block.tool_use_id}]`
-            : 'unknown';
-
-      const resultEvent: TranscriptEvent = {
-        t,
-        bot,
-        kind: 'tool_result',
-        name,
-        result: parsed ?? rawBody,
-        ...(isError ? { isError: true } : {}),
-        ...(stateVersion !== undefined ? { stateVersion } : {}),
-        ...(relayCursor !== undefined ? { relayCursor } : {}),
-      };
-      events.push(resultEvent);
-    }
-    return { events, seenFinished };
-  }
-
-  // system:init — emit a model_request-ish note so the transcript shows the model
-  if (type === 'system') {
-    const sub = e.subtype as string | undefined;
-    if (sub === 'init' && typeof e.model === 'string') {
-      // Not a formal model_request (we don't have the messages array here), but
-      // we emit a session:start on the first init if we haven't already — that
-      // is handled outside this function. Nothing else needed here.
-    }
-    return { events: [], seenFinished: false };
-  }
-
-  return { events, seenFinished };
-}
+import { budgetFailure } from './budget-guard.js';
+import { parseStreamLine, tryParse } from './claude-stream.js';
 
 // ---------------------------------------------------------------------------
 // ClaudeAgentRunner
@@ -405,7 +180,7 @@ export class ClaudeAgentRunner implements AgentRunner {
               });
             }
 
-            const { events, seenFinished } = parseStreamLine(line, botName, cliModel);
+            const { events, seenFinished } = parseStreamLine(line, botName);
             for (const ev of events) onEvent(ev);
             if (seenFinished) sessionSeenFinished = true;
           }
@@ -455,6 +230,8 @@ export class ClaudeAgentRunner implements AgentRunner {
     const initialPrompt = `${systemPrompt}\n\n${BASE_PROTOCOL_PROMPT(botName)}`;
 
     try {
+      const beforeInitialRequest = budgetFailure(opts, totalModelCalls);
+      if (beforeInitialRequest) return beforeInitialRequest;
       let { seenFinished, timedOut } = await runOnce(initialPrompt, false);
       totalModelCalls++;
 
@@ -462,6 +239,8 @@ export class ClaudeAgentRunner implements AgentRunner {
 
       for (let i = 1; i < maxSessions && !finished && !timedOut && Date.now() < deadline; i++) {
         if (totalModelCalls >= limits.maxModelCalls) break;
+        const beforeResumeRequest = budgetFailure(opts, totalModelCalls);
+        if (beforeResumeRequest) return beforeResumeRequest;
 
         onEvent({
           t: Date.now(),

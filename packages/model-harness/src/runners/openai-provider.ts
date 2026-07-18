@@ -1,3 +1,4 @@
+import type { ResolvedModelProfile } from '../model-profiles.js';
 import { RuntimeTimeoutError } from './runtime-reliability.js';
 
 export type OpenAiTool = {
@@ -26,6 +27,29 @@ export type CompletionResponse = {
   readonly content: string | null;
   readonly toolCalls: readonly OpenAiToolCall[];
   readonly usage?: unknown;
+};
+
+export type CompletionRequestInput = {
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly model: string;
+  readonly messages: readonly ChatMessage[];
+  readonly tools: readonly OpenAiTool[];
+  readonly signal: AbortSignal;
+  readonly profile?: ResolvedModelProfile;
+  readonly onRequest?: (body: CompletionRequestBody) => void;
+};
+
+export type CompletionRequestBody = {
+  readonly model: string;
+  readonly messages: readonly ChatMessage[];
+  readonly tools?: readonly OpenAiTool[];
+  readonly tool_choice?: 'auto';
+  readonly temperature?: number;
+  readonly top_p?: number;
+  readonly max_tokens?: number;
+  readonly reasoning_split?: boolean;
+  readonly reasoning_effort?: string;
 };
 
 export class ProviderConfigurationError extends Error {
@@ -81,14 +105,43 @@ export function isRetryableProviderError(error: unknown): boolean {
   return error instanceof TypeError;
 }
 
-export async function requestCompletion(input: {
+export function resolveProfileProviderConfig(profile: ResolvedModelProfile): {
   readonly baseUrl: string;
-  readonly apiKey: string;
+  readonly apiKey: string | undefined;
+} {
+  if (!profile.baseUrl) throw new ProviderConfigurationError('profile has no base URL');
+  return {
+    baseUrl: profile.baseUrl,
+    apiKey: profile.apiKeyEnv ? process.env[profile.apiKeyEnv] : undefined,
+  };
+}
+
+export function buildCompletionRequestBody(input: {
   readonly model: string;
   readonly messages: readonly ChatMessage[];
   readonly tools: readonly OpenAiTool[];
-  readonly signal: AbortSignal;
-}): Promise<CompletionResponse> {
+  readonly profile?: ResolvedModelProfile;
+}): CompletionRequestBody {
+  const tuning = input.profile;
+  return {
+    model: input.model,
+    messages: input.messages,
+    ...(input.tools.length > 0 ? { tools: input.tools, tool_choice: 'auto' as const } : {}),
+    ...(tuning?.temperature !== undefined ? { temperature: tuning.temperature } : {}),
+    ...(tuning?.topP !== undefined ? { top_p: tuning.topP } : {}),
+    ...(tuning?.maxCompletionTokens !== undefined
+      ? { max_tokens: tuning.maxCompletionTokens }
+      : {}),
+    ...(tuning?.reasoningSplit !== undefined ? { reasoning_split: tuning.reasoningSplit } : {}),
+    ...(tuning?.reasoningEffort !== undefined ? { reasoning_effort: tuning.reasoningEffort } : {}),
+  };
+}
+
+export async function requestCompletion(
+  input: CompletionRequestInput,
+): Promise<CompletionResponse> {
+  const body = buildCompletionRequestBody(input);
+  input.onRequest?.(body);
   const response = await fetch(`${input.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -97,25 +150,21 @@ export async function requestCompletion(input: {
       'HTTP-Referer': 'https://games.coop',
       'X-Title': 'Coordination Games Harness',
     },
-    body: JSON.stringify({
-      model: input.model,
-      messages: input.messages,
-      ...(input.tools.length > 0 ? { tools: input.tools, tool_choice: 'auto' } : {}),
-    }),
+    body: JSON.stringify(body),
     signal: input.signal,
   });
   if (!response.ok) throw new ProviderHttpError(response.status);
   const text = await response.text();
-  const body = parseJson(text);
-  if (!isRecord(body)) throw new ProviderResponseError('response was not a JSON object');
-  const choice = Array.isArray(body.choices) ? body.choices[0] : undefined;
+  const responseBody = parseJson(text);
+  if (!isRecord(responseBody)) throw new ProviderResponseError('response was not a JSON object');
+  const choice = Array.isArray(responseBody.choices) ? responseBody.choices[0] : undefined;
   const message = isRecord(choice) && isRecord(choice.message) ? choice.message : undefined;
   if (!message) throw new ProviderResponseError('response has no assistant message');
   const rawCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
   return {
     content: typeof message.content === 'string' ? message.content : null,
     toolCalls: rawCalls.map(normalizeToolCall),
-    ...(body.usage !== undefined ? { usage: body.usage } : {}),
+    ...(responseBody.usage !== undefined ? { usage: responseBody.usage } : {}),
   };
 }
 

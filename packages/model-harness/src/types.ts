@@ -113,6 +113,8 @@ export interface RunLimits {
   maxModelCallsPerBot: number;
   /** Wall-clock budget for the whole run, in milliseconds. */
   wallClockMsPerRun: number;
+  /** Optional strict aggregate cap across all seats, in integer micro-USD. */
+  maxAggregateCostMicrousd?: number;
 }
 
 export interface AnalysisSpec {
@@ -190,6 +192,8 @@ export interface ResolvedSeat {
   model: string;
   /** Resolved backend for `model` (backendForModel). */
   backend: Backend;
+  /** Present only for profile-backed seats; excludes credential values. */
+  modelConfig?: ResolvedModelProfile;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +208,8 @@ export interface ModelRequestEvent {
   model: string;
   /** The messages array sent to the model this call (backend-shaped). */
   messages: unknown;
+  /** Redacted provider body constructed at the transport boundary. */
+  request?: unknown;
 }
 
 export interface ModelResponseEvent {
@@ -289,6 +295,8 @@ export interface RunSessionOptions {
   systemPrompt: string;
   /** Backend-specific model id. */
   model: string;
+  /** Resolved non-secret provider configuration for profile-backed seats only. */
+  modelConfig?: ResolvedModelProfile;
   limits: {
     /** Cap on model calls (resolved from RunLimits.maxModelCallsPerBot). */
     maxModelCalls: number;
@@ -303,6 +311,12 @@ export interface RunSessionOptions {
   disablePlugins?: string[];
   /** Cancels an in-flight provider call and propagates to its transport request. */
   signal?: AbortSignal;
+  /** Shared aggregate usage guard for all sessions in a run. */
+  budget?: {
+    allowRequest: () => boolean;
+    record: (usage: unknown, pricing: ResolvedModelProfile['pricing']) => unknown;
+    error: () => Error | undefined;
+  };
   /** Append-only transcript sink (§8). */
   onEvent: (e: TranscriptEvent) => void;
 }

@@ -2,16 +2,46 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { cogaServeCommand } from '../coga-client.js';
 import type { AgentRunner, RunSessionOptions, SessionResult } from '../types.js';
+import {
+  buildCompletionRequestBody,
+  type CompletionRequestInput,
+  resolveProfileProviderConfig,
+  validateProviderConfig,
+} from './openai-provider.js';
 import { runOpenAiSession } from './openai-session.js';
 import type { ToolClient } from './openai-tools.js';
 
 export class OpenRouterAgentRunner implements AgentRunner {
   async runSession(options: RunSessionOptions): Promise<SessionResult> {
-    const apiKey = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_API_KEY;
-    const baseUrl = (process.env.OPENAI_BASE_URL ?? 'https://openrouter.ai/api/v1').replace(
-      /\/+$/,
-      '',
-    );
+    const scripted = options.modelConfig?.provider === 'scripted';
+    const provider =
+      options.modelConfig && !scripted
+        ? resolveProfileProviderConfig(options.modelConfig)
+        : {
+            apiKey: process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_API_KEY,
+            baseUrl: (process.env.OPENAI_BASE_URL ?? 'https://openrouter.ai/api/v1').replace(
+              /\/+$/,
+              '',
+            ),
+          };
+    if (!scripted) {
+      try {
+        validateProviderConfig({
+          apiKey: provider.apiKey,
+          baseUrl: provider.baseUrl,
+          model: options.model,
+        });
+      } catch (error) {
+        options.onEvent({
+          t: Date.now(),
+          bot: options.botName,
+          kind: 'session',
+          event: 'error',
+          detail: error instanceof Error ? error.name : 'configuration failure',
+        });
+        return { finished: false, modelCalls: 0, reason: 'error' };
+      }
+    }
     const command = cogaServeCommand(options.privateKey, options.botName, options.server);
     const transport = new StdioClientTransport({
       command: command.command,
@@ -25,7 +55,13 @@ export class OpenRouterAgentRunner implements AgentRunner {
     );
     try {
       await client.connect(transport);
-      return await runOpenAiSession({ client: adaptClient(client), options, apiKey, baseUrl });
+      return await runOpenAiSession({
+        client: adaptClient(client),
+        options,
+        apiKey: provider.apiKey,
+        baseUrl: provider?.baseUrl ?? 'http://localhost',
+        ...(scripted ? { completion: scriptedCompletion } : {}),
+      });
     } catch (error) {
       options.onEvent({
         t: Date.now(),
@@ -42,6 +78,15 @@ export class OpenRouterAgentRunner implements AgentRunner {
       if (pid != null) await closeQuietly(() => Promise.resolve(process.kill(pid, 'SIGKILL')));
     }
   }
+}
+
+async function scriptedCompletion(input: CompletionRequestInput) {
+  input.onRequest?.(buildCompletionRequestBody(input));
+  return {
+    content: null,
+    toolCalls: [{ id: 'scripted-state', function: { name: 'state', arguments: '{}' } }],
+    usage: { prompt_tokens: 0, completion_tokens: 0 },
+  };
 }
 
 function adaptClient(client: Client): ToolClient {

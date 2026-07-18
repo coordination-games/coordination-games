@@ -17,25 +17,16 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { type NamedModelProfiles, parseModelProfiles } from './model-profiles.js';
+import { parseAnalysis } from './spec-analysis.js';
+import { parseRunLimits } from './spec-limits.js';
 import { parseSeats } from './spec-seats.js';
 import { parseTournamentRunSpec } from './tournament-spec.js';
 import type { CampaignSpec } from './tournament-types.js';
-import {
-  type Backend,
-  backendForModel,
-  type CampaignRun,
-  type RunLimits,
-  type RunSpec,
-} from './types.js';
+import { type Backend, backendForModel, type CampaignRun, type RunSpec } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Defaults (§6 / §12 locked decisions)
 // ---------------------------------------------------------------------------
-
-const DEFAULT_LIMITS: RunLimits = {
-  maxModelCallsPerBot: 80,
-  wallClockMsPerRun: 600_000, // 10 minutes
-};
 
 const DEFAULT_SERVER = process.env.GAME_SERVER ?? 'http://localhost:8787';
 
@@ -160,7 +151,7 @@ function parseRunSpecObject(
     typeof obj.params === 'object' && obj.params !== null && !Array.isArray(obj.params)
       ? (obj.params as Record<string, unknown>)
       : {};
-  const limits: RunLimits = parseRunLimits(obj.limits);
+  const limits = parseRunLimits(obj.limits);
   const analysis = parseAnalysis(obj.analysis);
   const disablePlugins =
     Array.isArray(obj.disablePlugins) && obj.disablePlugins.every((p) => typeof p === 'string')
@@ -308,33 +299,4 @@ function requirePositiveInt(obj: Record<string, unknown>, key: string, filePath:
     );
   }
   return val;
-}
-
-function parseRunLimits(raw: unknown): RunLimits {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return { ...DEFAULT_LIMITS };
-  }
-  const obj = raw as Record<string, unknown>;
-  const maxModelCallsPerBot =
-    typeof obj.maxModelCallsPerBot === 'number' && obj.maxModelCallsPerBot > 0
-      ? (obj.maxModelCallsPerBot as number)
-      : DEFAULT_LIMITS.maxModelCallsPerBot;
-  const wallClockMsPerRun =
-    typeof obj.wallClockMsPerRun === 'number' && obj.wallClockMsPerRun > 0
-      ? (obj.wallClockMsPerRun as number)
-      : DEFAULT_LIMITS.wallClockMsPerRun;
-  return { maxModelCallsPerBot, wallClockMsPerRun };
-}
-
-function parseAnalysis(raw: unknown): RunSpec['analysis'] {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return undefined;
-  }
-  const obj = raw as Record<string, unknown>;
-  const enabled = obj.enabled !== false; // default true if object present
-  const model =
-    typeof obj.model === 'string' && obj.model.trim()
-      ? obj.model.trim()
-      : 'anthropic/claude-sonnet';
-  return { enabled, model };
 }

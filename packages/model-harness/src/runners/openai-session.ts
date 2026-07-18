@@ -1,7 +1,9 @@
 import { redactValue } from '../gui/redact.js';
 import type { RunSessionOptions, SessionResult, ToolResultEvent } from '../types.js';
+import { budgetFailure } from './budget-guard.js';
 import {
   type ChatMessage,
+  type CompletionRequestInput,
   type CompletionResponse,
   isRetryableProviderError,
   requestCompletion,
@@ -22,15 +24,14 @@ import {
   ToolCorrectionExhaustedError,
 } from './runtime-reliability.js';
 
-const MAX_CORRECTIONS = 2;
-
 export async function runOpenAiSession(input: {
   readonly client: ToolClient;
   readonly options: RunSessionOptions;
   readonly apiKey: string | undefined;
   readonly baseUrl: string;
+  readonly completion?: (input: CompletionRequestInput) => Promise<CompletionResponse>;
 }): Promise<SessionResult> {
-  const { client, options, apiKey, baseUrl } = input;
+  const { client, options, apiKey, baseUrl, completion } = input;
   const wireModel = options.model.replace(/^openrouter\//, '');
   const startedAt = Date.now();
   const deadline = startedAt + options.limits.wallClockMs;
@@ -45,7 +46,7 @@ export async function runOpenAiSession(input: {
     detail: wireModel,
   });
   try {
-    validateProviderConfig({ apiKey, baseUrl, model: wireModel });
+    if (!completion) validateProviderConfig({ apiKey, baseUrl, model: wireModel });
     const listed = await client.listTools();
     const tools = mapTools(listed);
     const allowedTools = new Set(tools.map((tool) => tool.function.name));
@@ -58,6 +59,8 @@ export async function runOpenAiSession(input: {
     ];
 
     while (Date.now() < deadline && modelCalls < options.limits.maxModelCalls) {
+      const beforeRequest = budgetFailure(options, modelCalls);
+      if (beforeRequest) return beforeRequest;
       const timeoutMs = Math.max(1, Math.min(30_000, deadline - Date.now()));
       options.onEvent({
         t: Date.now(),
@@ -66,23 +69,26 @@ export async function runOpenAiSession(input: {
         event: 'heartbeat',
         detail: 'provider request started',
       });
-      options.onEvent({
-        t: Date.now(),
-        bot: options.botName,
-        kind: 'model_request',
-        model: wireModel,
-        messages: redactValue(messages),
-      });
       modelCalls++;
       const assistant = await retryProviderCall<CompletionResponse>({
         operation: (signal) =>
-          requestCompletion({
+          (completion ?? requestCompletion)({
             baseUrl,
             apiKey: apiKey ?? '',
             model: wireModel,
             messages,
             tools,
             signal,
+            ...(options.modelConfig ? { profile: options.modelConfig } : {}),
+            onRequest: (body) =>
+              options.onEvent({
+                t: Date.now(),
+                bot: options.botName,
+                kind: 'model_request',
+                model: wireModel,
+                messages: redactValue(messages),
+                request: redactValue(body),
+              }),
           }),
         retryable: isRetryableProviderError,
         timeoutMs,
@@ -129,6 +135,8 @@ export async function runOpenAiSession(input: {
           : {}),
         ...(assistant.usage !== undefined ? { usage: assistant.usage } : {}),
       });
+      const afterResponse = budgetFailure(options, modelCalls);
+      if (afterResponse) return afterResponse;
       messages.push({
         role: 'assistant',
         content: assistant.content,
@@ -152,8 +160,7 @@ export async function runOpenAiSession(input: {
           event: 'correction',
           detail: `count=${corrections} reason=${invalid}`,
         });
-        if (corrections > MAX_CORRECTIONS)
-          throw new ToolCorrectionExhaustedError(corrections, invalid);
+        if (corrections > 2) throw new ToolCorrectionExhaustedError(corrections, invalid);
         for (const call of toolCalls) {
           messages.push({
             role: 'tool',
