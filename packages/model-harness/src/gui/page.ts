@@ -51,7 +51,7 @@ section.panel {
   margin: 0 0 var(--s3); font-size: var(--fs0); text-transform: uppercase;
   letter-spacing: .18em; color: var(--accent);
 }
-.status-line { color: var(--muted); font-size: var(--fs1); margin: var(--s2) 0; min-height: 1.2em; }
+.status-line { color: var(--muted); font-size: var(--fs1); margin: var(--s2) 0; min-height: 1.2em; overflow-wrap: anywhere; }
 .status-line.error { color: var(--red); }
 ul.listing { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
 button {

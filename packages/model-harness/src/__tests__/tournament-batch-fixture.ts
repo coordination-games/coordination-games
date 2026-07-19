@@ -28,12 +28,14 @@ type FixtureOptions = {
   readonly now?: () => number;
   readonly usageEmission?: UsageEmission;
   readonly providerFailureGameId?: string;
+  readonly cappedGameId?: string;
   readonly snapshotFailureGameId?: string;
   readonly sleepFailure?: string;
   readonly failFlushCall?: number;
   readonly afterSnapshot?: (gameId: string) => void;
   readonly maxAggregateCostMicrousd?: number;
   readonly snapshots?: Readonly<Record<string, SeriesGameSnapshot>>;
+  readonly onSeriesProgress?: (directory: string) => Promise<void>;
 };
 
 export type TournamentBatchFixture = {
@@ -103,6 +105,9 @@ export async function createTournamentBatchFixture(
       if (options.providerFailureGameId === currentGameId) {
         throw new Error(`provider failed for ${currentGameId}`);
       }
+      if (options.cappedGameId === currentGameId) {
+        return { finished: false, modelCalls: 30, reason: 'cap' };
+      }
       return { finished: true, modelCalls: 1, reason: 'finished' };
     },
   };
@@ -162,6 +167,7 @@ export async function createTournamentBatchFixture(
       if (options.sleepFailure) throw new Error(options.sleepFailure);
     },
     now: options.now ?? (() => 0),
+    ...(options.onSeriesProgress ? { onSeriesProgress: options.onSeriesProgress } : {}),
   };
   return {
     directory,

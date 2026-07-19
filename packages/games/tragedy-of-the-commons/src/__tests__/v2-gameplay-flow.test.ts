@@ -227,11 +227,24 @@ describe('Tragedy V2 gameplay flow', () => {
 
     expect(state.phase).toBe('playing');
     expect(state.round).toBe(1);
-    const playingTools = TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(state, 'alpha').map(
-      (tool) => tool.name,
-    );
+    const currentPlayer = state.players[state.currentPlayerIndex];
+    if (!currentPlayer) throw new Error('missing current playing player');
+    const playingTools = TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(
+      state,
+      currentPlayer.id,
+    ).map((tool) => tool.name);
     expect(playingTools).toContain('pass');
     expect(playingTools).not.toContain('place_starting_camp');
+    const nonCurrentPlayer = state.players.find((player) => player.id !== currentPlayer.id);
+    if (!nonCurrentPlayer) throw new Error('missing non-current playing player');
+    expect(
+      TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(state, nonCurrentPlayer.id).map(
+        (tool) => tool.name,
+      ),
+    ).toEqual([]);
+    expect(
+      TragedyOfTheCommonsV2Plugin.getCurrentGameTools?.(state, null).map((tool) => tool.name),
+    ).toEqual([]);
     expect(state.structures).toHaveLength(FOUR_PLAYERS.length);
     expect(new Set(state.structures.map((structure) => structure.ownerId))).toEqual(
       new Set(FOUR_PLAYERS),

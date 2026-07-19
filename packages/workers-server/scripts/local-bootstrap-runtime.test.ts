@@ -26,6 +26,33 @@ describe('stopProcessGroup', () => {
     expect(kill).toHaveBeenCalledWith(-1234, 0);
   });
 
+  it('Given a reparented group probe after the owned child exits, when cleanup sees EPERM, then resolves', async () => {
+    const permissionError = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    const kill = vi.fn((_: number, signal?: NodeJS.Signals | 0) => {
+      if (signal === 0) throw permissionError;
+      return true;
+    });
+
+    await expect(stopProcessGroup(1234, kill, () => true)).resolves.toBeUndefined();
+  });
+
+  it('Given a reparented group probe before the owned child exits, when cleanup sees EPERM, then waits for the child', async () => {
+    vi.useFakeTimers();
+    let exited = false;
+    const permissionError = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    const kill = vi.fn((_: number, signal?: NodeJS.Signals | 0) => {
+      if (signal === 0) throw permissionError;
+      return true;
+    });
+    const stopped = stopProcessGroup(1234, kill, () => exited);
+
+    await vi.advanceTimersByTimeAsync(50);
+    exited = true;
+    await vi.advanceTimersByTimeAsync(50);
+
+    await expect(stopped).resolves.toBeUndefined();
+  });
+
   it('Given a group that survives SIGKILL, when the forced verification deadline expires, then rejects instead of polling forever', async () => {
     vi.useFakeTimers();
     const kill = vi.fn(() => true);

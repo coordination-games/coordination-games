@@ -470,7 +470,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   const tournamentMatch = pathname.match(/^\/api\/tournaments\/([^/]+)(\/.*)?$/);
   if (tournamentMatch && env.TOURNAMENT) {
-    const tournamentId = tournamentMatch[1];
+    const encodedTournamentId = tournamentMatch[1];
+    const tournamentId = encodedTournamentId ? decodeURIComponent(encodedTournamentId) : undefined;
     if (!tournamentId) return Response.json({ error: 'Tournament id missing' }, { status: 400 });
     const sub = tournamentMatch[2] ?? '/';
     if (

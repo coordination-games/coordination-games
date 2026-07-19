@@ -2,14 +2,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { cogaServeCommand } from '../coga-client.js';
 import type { AgentRunner, RunSessionOptions, SessionResult } from '../types.js';
-import {
-  buildCompletionRequestBody,
-  type CompletionRequestInput,
-  resolveProfileProviderConfig,
-  validateProviderConfig,
-} from './openai-provider.js';
+import { resolveProfileProviderConfig, validateProviderConfig } from './openai-provider.js';
 import { runOpenAiSession } from './openai-session.js';
 import type { ToolClient } from './openai-tools.js';
+import { scriptedTragedyCompletion } from './scripted-tragedy-provider.js';
 
 export class OpenRouterAgentRunner implements AgentRunner {
   async runSession(options: RunSessionOptions): Promise<SessionResult> {
@@ -60,7 +56,7 @@ export class OpenRouterAgentRunner implements AgentRunner {
         options,
         apiKey: provider.apiKey,
         baseUrl: provider?.baseUrl ?? 'http://localhost',
-        ...(scripted ? { completion: scriptedCompletion } : {}),
+        ...(scripted ? { completion: scriptedTragedyCompletion } : {}),
       });
     } catch (error) {
       options.onEvent({
@@ -78,15 +74,6 @@ export class OpenRouterAgentRunner implements AgentRunner {
       if (pid != null) await closeQuietly(() => Promise.resolve(process.kill(pid, 'SIGKILL')));
     }
   }
-}
-
-async function scriptedCompletion(input: CompletionRequestInput) {
-  input.onRequest?.(buildCompletionRequestBody(input));
-  return {
-    content: null,
-    toolCalls: [{ id: 'scripted-state', function: { name: 'state', arguments: '{}' } }],
-    usage: { prompt_tokens: 0, completion_tokens: 0 },
-  };
 }
 
 function adaptClient(client: Client): ToolClient {

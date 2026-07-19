@@ -12,6 +12,7 @@
       "!**/dist",
       "!**/node_modules",
       "!**/.wrangler",
+      "!.omo",
       "!packages/contracts/artifacts",
       "!packages/contracts/cache"
     ]

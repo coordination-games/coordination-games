@@ -1,9 +1,12 @@
 import { writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
+export const LOCAL_TREASURY_HANDLE = 'local-tournament-treasury';
+
 export async function writeRuntimeConfig(
   runtimeDirectory: string,
   configPath: string,
+  strictLocalSettlement = true,
 ): Promise<string> {
   const workerDirectory = dirname(configPath);
   const runtimeConfigPath = resolve(runtimeDirectory, 'wrangler.toml');
@@ -11,7 +14,47 @@ export async function writeRuntimeConfig(
   const migrationsDirectory = resolve(workerDirectory, 'migrations');
   await writeFile(
     runtimeConfigPath,
-    `name = "ctl-server-local"\nmain = "${mainPath}"\ncompatibility_date = "2025-01-01"\ncompatibility_flags = ["nodejs_compat"]\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "ctl-db"\ndatabase_id = "a16be595-731c-4b55-8c4a-d937c142c2da"\nmigrations_dir = "${migrationsDirectory}"\n\n[[durable_objects.bindings]]\nname = "GAME_ROOM"\nclass_name = "GameRoomDO"\n\n[[durable_objects.bindings]]\nname = "LOBBY"\nclass_name = "LobbyDO"\n\n[[durable_objects.bindings]]\nname = "TOURNAMENT"\nclass_name = "TournamentDO"\n\n[[migrations]]\ntag = "v1"\nnew_classes = ["GameRoomDO", "LobbyDO"]\n\n[[migrations]]\ntag = "v2"\nnew_classes = ["TournamentDO"]\n\n[vars]\nENVIRONMENT = "production"\n`,
+    `name = "ctl-server-local"
+main = "${mainPath}"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ctl-db"
+database_id = "a16be595-731c-4b55-8c4a-d937c142c2da"
+migrations_dir = "${migrationsDirectory}"
+
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoomDO"
+
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "LobbyDO"
+
+[[durable_objects.bindings]]
+name = "TOURNAMENT"
+class_name = "TournamentDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GameRoomDO", "LobbyDO"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["TournamentDO"]
+
+[vars]
+ENVIRONMENT = "production"
+ADMIN_TOKEN = "local-inspector-token"
+${
+  strictLocalSettlement
+    ? `STRICT_LOCAL_SETTLEMENT = "true"
+TREASURY_AGENT_HANDLE = "${LOCAL_TREASURY_HANDLE}"
+`
+    : ''
+}`,
   );
   return runtimeConfigPath;
 }

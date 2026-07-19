@@ -1,5 +1,6 @@
 import { keccak256, toBytes, verifyMessage } from 'viem';
 import { createRelay } from './chain/index.js';
+import { deriveMockChainAgentId } from './chain/mock-relay.js';
 import { PlayerHandleTakenError, resolvePlayer } from './db/player.js';
 import type { Env } from './env.js';
 import { createFallbackPublicClient, parseRpcUrls } from './rpc-fallback.js';
@@ -167,7 +168,12 @@ export async function handleAuthVerify(request: Request, env: Env): Promise<Resp
   let playerId: string;
   let reconnected: boolean;
   try {
-    const { player, created } = await resolvePlayer(address, relay, env.DB, { handle: trimmed });
+    const chainAgentId =
+      env.STRICT_LOCAL_SETTLEMENT === 'true' ? deriveMockChainAgentId(address) : undefined;
+    const { player, created } = await resolvePlayer(address, relay, env.DB, {
+      handle: trimmed,
+      ...(chainAgentId === undefined ? {} : { chainAgentId }),
+    });
     playerId = player.id;
     reconnected = !created;
   } catch (err) {

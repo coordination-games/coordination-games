@@ -76,6 +76,24 @@ function makeLobbyNamespace(effects: WorkerEffects): DurableObjectNamespace {
   return namespace as unknown as DurableObjectNamespace;
 }
 
+function makeTournamentNamespace(effects: WorkerEffects): DurableObjectNamespace {
+  const namespace = {
+    idFromName(name: string) {
+      effects.doNames.push(name);
+      return { name };
+    },
+    get(_id: { readonly name: string }) {
+      return {
+        async fetch(request: Request): Promise<Response> {
+          effects.doRequests.push(request);
+          return Response.json({ ok: true });
+        },
+      };
+    },
+  };
+  return namespace as unknown as DurableObjectNamespace;
+}
+
 function makeWorkerFixture(): { readonly env: Env; readonly effects: WorkerEffects } {
   const effects: WorkerEffects = { inserts: [], doNames: [], doRequests: [] };
   const env: Env = {
@@ -118,7 +136,7 @@ describe('registered game first-phase size policies', () => {
     {
       name: 'Tragedy',
       phase: TragedyOfTheCommonsV2Plugin.lobby?.phases[0],
-      policy: { min: 4, max: 6, default: 4, unit: 'player-count' },
+      policy: { min: 3, max: 6, default: 4, unit: 'player-count' },
     },
     {
       name: 'Genius',
@@ -233,5 +251,22 @@ describe('Worker create-lobby size boundary', () => {
     // Then
     expect(response.status).toBe(201);
     expect((await readJson(response)).teamSize).toBe(CTL_DEFAULT_TEAM_SIZE);
+  });
+});
+
+describe('Worker tournament routes', () => {
+  it('decodes an encoded lobby tournament identifier before Durable Object lookup', async () => {
+    const fixture = makeWorkerFixture();
+    fixture.env.TOURNAMENT = makeTournamentNamespace(fixture.effects);
+
+    const response = await worker.fetch(
+      new Request('https://worker/api/tournaments/lobby%3Aabc-123/state'),
+      fixture.env,
+      executionContext,
+    );
+
+    expect(response.status).toBe(200);
+    expect(fixture.effects.doNames).toEqual(['lobby:abc-123']);
+    expect(new URL(fixture.effects.doRequests[0]?.url ?? '').pathname).toBe('/state');
   });
 });

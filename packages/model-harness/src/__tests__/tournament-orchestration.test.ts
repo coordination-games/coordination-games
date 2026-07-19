@@ -16,6 +16,41 @@ import {
 const SESSION_LIMITS = { maxModelCalls: 2, wallClockMs: 100 };
 
 describe('tournament runBatch orchestration', () => {
+  it('Given a completed game before terminal state, when progress is written, then live identifiers remain available', async () => {
+    let progressManifest: unknown;
+    const fixture = await createTournamentBatchFixture({
+      states: [
+        runningState('game-1', ['player-a', 'player-b', 'player-c']),
+        completedState(['game-1']),
+      ],
+      onSeriesProgress: async (directory) => {
+        progressManifest = JSON.parse(
+          await readFile(path.join(directory, 'series-manifest.json'), 'utf8'),
+        );
+      },
+    });
+
+    try {
+      await fixture.run();
+
+      expect(progressManifest).toMatchObject({
+        status: 'running',
+        lobbyId: 'lobby-fixture',
+        tournamentId: 'lobby:lobby-fixture',
+        seats: expect.arrayContaining([
+          expect.objectContaining({
+            bot: 'bot-a',
+            persona: '/personas/bot-a',
+            model: 'fixture-model',
+            backend: 'openrouter',
+          }),
+        ]),
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   it('Given a three-game series with a stale id and eliminated seat, when runBatch completes, then identities stay stable and every active seat receives one bounded session', async () => {
     // Given
     const fixture = await createTournamentBatchFixture({
@@ -296,6 +331,32 @@ describe('tournament runBatch orchestration', () => {
           {
             gameId: 'game-1',
             sessions: [{ bot: 'bot-a', finished: false, modelCalls: 0, reason: 'error' }],
+          },
+        ],
+      });
+      expect(await completedGameArtifacts(result)).toEqual([]);
+      expect(fixture.calls.snapshots).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('Given capped sessions before GameRoom completion, when runBatch finalizes, then it writes no completed game artifact', async () => {
+    const fixture = await createTournamentBatchFixture({
+      states: [runningState('game-1', ['player-a'])],
+      cappedGameId: 'game-1',
+    });
+
+    try {
+      const result = await fixture.run();
+
+      expect(await readSeriesManifest(result)).toMatchObject({
+        status: 'failed',
+        error: 'A player session did not finish',
+        games: [
+          {
+            gameId: 'game-1',
+            sessions: [{ bot: 'bot-a', finished: false, modelCalls: 30, reason: 'cap' }],
           },
         ],
       });

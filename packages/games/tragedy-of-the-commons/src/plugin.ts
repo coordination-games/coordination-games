@@ -69,7 +69,7 @@ This is an intentionally reduced v0 upstream port. Richer trust, commitments, an
 
 export const TRAGEDY_GAME_ID = 'tragedy-of-the-commons' as const;
 const TRAGEDY_LOBBY_SIZE_POLICY = defineLobbySizePolicy({
-  min: 4,
+  min: 3,
   max: 6,
   default: 4,
   unit: 'player-count',
@@ -503,7 +503,7 @@ export const TragedyOfTheCommonsV2Plugin: CoordinationGame<
         : [];
     }
     if (state.phase !== 'playing') return [];
-    return ROUND_TOOLS_V2;
+    return state.players[state.currentPlayerIndex]?.id === playerId ? ROUND_TOOLS_V2 : [];
   },
 
   requiredPlugins: ['basic-chat'],

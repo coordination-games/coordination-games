@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { writeRuntimeConfig } from './local-bootstrap-config.js';
+import { LOCAL_TREASURY_HANDLE, writeRuntimeConfig } from './local-bootstrap-config.js';
 import {
   BootstrapInputError,
   buildWranglerCommands,
@@ -20,6 +20,10 @@ const strippedEnvironmentKeys = [
   'GAME_ANCHOR_ADDRESS',
   'USDC_ADDRESS',
 ] as const;
+
+const LOCAL_TREASURY_ID = 'local-tournament-treasury';
+const LOCAL_TREASURY_CHAIN_AGENT_ID = 2_147_483_647;
+const LOCAL_TREASURY_WALLET = '0x0000000000000000000000000000000000000001';
 
 export type LocalBootstrap = {
   readonly port: number;
@@ -70,6 +74,7 @@ export function isErrnoExceptionWithCode(error: unknown, code: string): boolean 
 export function stopProcessGroup(
   processId: number,
   kill: ProcessKiller = process.kill,
+  childExited: () => boolean = () => false,
 ): Promise<void> {
   const groupId = -processId;
   try {
@@ -98,6 +103,10 @@ export function stopProcessGroup(
       } catch (error) {
         if (isErrnoExceptionWithCode(error, 'ESRCH')) {
           finish();
+          return;
+        }
+        if (isErrnoExceptionWithCode(error, 'EPERM')) {
+          if (childExited()) finish();
           return;
         }
         finish(error);
@@ -130,11 +139,17 @@ async function runtime(options: LocalBootstrapOptions, repositoryRoot: string, c
   if (persistenceIsInside(await realpath(repositoryRoot), persistenceDirectory))
     throw new BootstrapInputError('--persist-to resolves inside the repository');
   const runtimeDirectory = await mkdtemp(resolve(tmpdir(), 'coga-wrangler-local-'));
-  const runtimeConfigPath = await writeRuntimeConfig(runtimeDirectory, configPath);
+  const strictLocalSettlement = options.strictLocalSettlement ?? true;
+  const runtimeConfigPath = await writeRuntimeConfig(
+    runtimeDirectory,
+    configPath,
+    strictLocalSettlement,
+  );
   return {
     persistenceDirectory,
     runtimeDirectory,
     runtimeConfigPath,
+    strictLocalSettlement,
     wrangler: resolve(repositoryRoot, 'node_modules', '.bin', 'wrangler'),
   };
 }
@@ -154,6 +169,25 @@ async function start(
     const migrationOutput = migrate
       ? await command(context.wrangler, commands.migrate, context.runtimeDirectory)
       : '';
+    if (migrate && context.strictLocalSettlement) {
+      await command(
+        context.wrangler,
+        [
+          'd1',
+          'execute',
+          'DB',
+          '--local',
+          '--persist-to',
+          context.persistenceDirectory,
+          '--config',
+          context.runtimeConfigPath,
+          '--command',
+          `INSERT OR IGNORE INTO players (id, wallet_address, handle, chain_agent_id, elo, games_played, wins, created_at) VALUES ('${LOCAL_TREASURY_ID}', '${LOCAL_TREASURY_WALLET}', '${LOCAL_TREASURY_HANDLE}', ${LOCAL_TREASURY_CHAIN_AGENT_ID}, 1200, 0, 0, '2026-01-01T00:00:00Z')`,
+          '--json',
+        ],
+        context.runtimeDirectory,
+      );
+    }
     const child = spawn(context.wrangler, commands.dev, {
       cwd: context.runtimeDirectory,
       detached: true,
@@ -162,13 +196,17 @@ async function start(
     });
     const processId = child.pid;
     if (!processId) throw new Error('Wrangler did not provide a process id');
+    let childExited = false;
+    child.once('exit', () => {
+      childExited = true;
+    });
     return {
       port: options.port,
       processId,
       migrationOutput,
       stop: async () => {
         try {
-          await stopProcessGroup(processId);
+          await stopProcessGroup(processId, process.kill, () => childExited);
         } finally {
           await rm(context.runtimeDirectory, { recursive: true, force: true });
         }

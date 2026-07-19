@@ -124,12 +124,9 @@ export async function runTournamentSeries<Seat extends { readonly botName: strin
       if (input.signal?.aborted) return result('cancelled', progress);
       const afterGameStop = input.stopReason?.();
       if (afterGameStop) return result('failed', progress, { error: afterGameStop });
-      if (
-        sessionFailure ||
-        [...gameResults.values()].some((session) => session.reason === 'error')
-      ) {
+      if (sessionFailure || [...gameResults.values()].some((session) => !session.finished)) {
         return result('failed', progress, {
-          error: sessionFailure ?? 'A player session failed',
+          error: sessionFailure ?? 'A player session did not finish',
         });
       }
       try {

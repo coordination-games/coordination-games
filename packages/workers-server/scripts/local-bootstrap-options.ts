@@ -9,6 +9,7 @@ export class BootstrapInputError extends Error {
 export type LocalBootstrapOptions = {
   readonly persistTo: string;
   readonly port: number;
+  readonly strictLocalSettlement?: boolean;
 };
 
 export type WranglerCommands = {

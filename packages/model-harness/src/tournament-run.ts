@@ -44,6 +44,7 @@ export type TournamentBatchDependencies = {
   }) => Promise<SeriesGameSnapshot>;
   readonly sleep: () => Promise<void>;
   readonly now: () => number;
+  readonly onSeriesProgress?: (runDir: string) => Promise<void>;
 };
 
 export function createTournamentBatchDependencies(
@@ -58,7 +59,9 @@ export function createTournamentBatchDependencies(
     runnerForResolvedSeat,
     pollState: async (server, tournamentId) =>
       parseTournamentState(
-        await api(server, `/api/tournaments/${encodeURIComponent(tournamentId)}/state`),
+        await api(server, `/api/tournaments/${encodeURIComponent(tournamentId)}/tick`, {
+          method: 'POST',
+        }),
       ),
     snapshotGame: async ({ server, gameId }) =>
       extractSeriesGameSnapshot(
@@ -84,14 +87,23 @@ export async function runTournamentBatch(
   const identities = await dependencies.resolveIdentities(spec);
   const seats = await dependencies.resolveSeats(spec, identities);
   const lobbyId = await dependencies.createAndJoinLobby(spec, identities);
+  const tournamentId = `lobby:${lobbyId}`;
   const writer = dependencies.makeTranscriptWriter(runDir);
   const artifacts = createSeriesArtifactWriter({ runDir, runId });
-  await artifacts.writeResolvedConfig(resolvedTournamentConfig(spec, seats));
-  await artifacts.writeSeries({ status: 'running', gameIds: [], standings: [], usage: {} });
+  const resolvedConfig = resolvedTournamentConfig(spec, seats);
+  await artifacts.writeResolvedConfig(resolvedConfig);
+  await artifacts.writeSeries({
+    status: 'running',
+    gameIds: [],
+    standings: [],
+    usage: {},
+    lobbyId,
+    tournamentId,
+    seats: resolvedConfig.seats,
+  });
   const budget = new RunBudget(spec.limits.maxAggregateCostMicrousd);
   const runners = dependencies.resolveRunnerCache(seats);
   const deadline = dependencies.now() + spec.limits.wallClockMsPerRun;
-  const tournamentId = `lobby:${lobbyId}`;
   const playerIdByBot = new Map(
     identities.map((identity) => [identity.botName, identity.playerId]),
   );
@@ -174,7 +186,11 @@ export async function runTournamentBatch(
         })),
         standings: snapshot.standings,
         usage: budget.totals(),
+        lobbyId,
+        tournamentId,
+        seats: resolvedConfig.seats,
       });
+      await dependencies.onSeriesProgress?.(runDir);
     },
   });
   try {

@@ -1,0 +1,30 @@
+globals:
+  server: http://127.0.0.1:8994
+  identities: ephemeral
+  output: ./runs/out
+  limits: { maxModelCallsPerBot: 80, wallClockMsPerRun: 600000 }
+
+models:
+  scripted-local:
+    provider: scripted
+    model: scripted-local
+
+games:
+  - label: scripted-tragedy-series
+    game: tragedy-of-the-commons
+    params: { teamSize: 3 }
+    tournament:
+      mode: tragedy-series
+      policy:
+        seriesLength: 3
+        baseEntryCost: "100"
+        carryBps: 1500
+        slashBps: 500
+        minRounds: 2
+        maxRounds: 8
+        hazardNumerator: 1
+        hazardDenominator: 4
+    seats:
+      - { persona: peaceful-mediator, profile: scripted-local, count: 1 }
+      - { persona: win-focused-opportunist, profile: scripted-local, count: 1 }
+      - { persona: peaceful-mediator, profile: scripted-local, count: 1 }
