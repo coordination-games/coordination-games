@@ -94,6 +94,43 @@ describe('tournament campaign execution', () => {
       await fixture.cleanup();
     }
   });
+
+  it('Given a tournament batch returns a failed manifest, when the campaign completes, then it reports the terminal failure instead of success', async () => {
+    const fixture = await createTournamentBatchFixture({ states: [completedState([])] });
+    const campaignRun = tournamentCampaignRun(fixture.directory, 'manifest-failure');
+
+    try {
+      const exitCode = await runCampaign([campaignRun], {
+        now: () => 43,
+        log: () => undefined,
+        error: () => undefined,
+        runBatch: async () => ({
+          runDir: path.join(fixture.directory, 'campaign-43', 'run-failed'),
+          lobbyId: 'lobby-failed',
+          gameId: 'game-failed',
+          manifest: { status: 'failed', error: 'A player session did not finish' },
+        }),
+      });
+      const campaign = JSON.parse(
+        await readFile(path.join(fixture.directory, 'campaign-43', 'campaign.json'), 'utf8'),
+      );
+
+      expect(exitCode).toBe(1);
+      expect(campaign.runs).toEqual([
+        {
+          label: 'manifest-failure',
+          game: 'tragedy-of-the-commons',
+          status: 'error',
+          runDir: 'run-failed',
+          lobbyId: 'lobby-failed',
+          gameId: 'game-failed',
+          error: 'A player session did not finish',
+        },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 });
 
 function tournamentCampaignRun(output: string, label: string): CampaignRun {

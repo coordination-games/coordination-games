@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Unified Model Harness \u2014 game-agnostic agent runner driving Coordination Games via coga serve --stdio, across Claude (local creds) and OpenRouter backends, with analyzable transcripts.",
+  "description": "Unified Model Harness \u2014 game-agnostic agent runner driving Coordination Games via coga serve --stdio across locally authenticated CLI and API-backed models, with analyzable transcripts.",
   "bin": {
     "coga-harness": "./src/index.ts"
   },

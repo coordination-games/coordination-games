@@ -2,29 +2,31 @@ globals:
   server: http://localhost:8787
   identities: ephemeral
   output: ./runs/out
-  limits: { maxModelCallsPerBot: 120, wallClockMsPerRun: 900000 }
+  limits: { maxModelCallsPerBot: 30, wallClockMsPerRun: 900000 }
 
 models:
   minimax-m3:
-    provider: minimax
-    model: MiniMax-M3
+    provider: opencode-cli
+    model: minimax-coding-plan/MiniMax-M3
+    maxCompletionTokens: 512
+    reasoningEffort: none
 
 games:
   - label: minimax-m3-tragedy-series
     game: tragedy-of-the-commons
-    repeats: 2
-    params: { teamSize: 4 }
+    repeats: 1
+    params: { teamSize: 3 }
     tournament:
       mode: tragedy-series
       policy:
-        seriesLength: 3
+        seriesLength: 2
         baseEntryCost: "100"
         carryBps: 1500
         slashBps: 500
         minRounds: 2
-        maxRounds: 8
+        maxRounds: 3
         hazardNumerator: 1
-        hazardDenominator: 4
+        hazardDenominator: 2
     seats:
       - { persona: ./personas/peaceful-mediator, profile: minimax-m3, count: 2 }
-      - { persona: ./personas/win-focused-opportunist, profile: minimax-m3, count: 2 }
+      - { persona: ./personas/win-focused-opportunist, profile: minimax-m3, count: 1 }

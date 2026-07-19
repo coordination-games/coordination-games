@@ -10,8 +10,9 @@ describe('tournament campaign specifications', () => {
     await withCampaign(
       `models:
   minimax-m3:
-    provider: minimax
-    model: MiniMax-M3
+    provider: opencode-cli
+    model: minimax-coding-plan/MiniMax-M3
+    maxCompletionTokens: 1024
 games:
   - label: minimax-series
     game: tragedy-of-the-commons
@@ -38,8 +39,10 @@ games:
         expect(runs).toHaveLength(2);
         const plan = renderDryRunPlan(runs);
         expect(plan).toContain('maximum model sessions: 24');
-        expect(plan).toContain('[4 minimax]');
-        expect(plan).toContain('profile=minimax-m3 provider=minimax model=MiniMax-M3');
+        expect(plan).toContain('[4 opencode-cli]');
+        expect(plan).toContain(
+          'profile=minimax-m3 provider=opencode-cli model=minimax-coding-plan/MiniMax-M3',
+        );
         expect(runs.map((run) => run.spec)).toEqual([
           {
             kind: 'tournament',
@@ -53,25 +56,23 @@ games:
               {
                 persona: 'mediator',
                 profile: 'minimax-m3',
-                model: 'MiniMax-M3',
+                model: 'minimax-coding-plan/MiniMax-M3',
                 count: 2,
                 modelConfig: {
-                  provider: 'minimax',
-                  model: 'MiniMax-M3',
-                  baseUrl: 'https://api.minimax.io/v1',
-                  apiKeyEnv: 'MINIMAX_API_KEY',
+                  provider: 'opencode-cli',
+                  model: 'minimax-coding-plan/MiniMax-M3',
+                  maxCompletionTokens: 1024,
                 },
               },
               {
                 persona: 'opportunist',
                 profile: 'minimax-m3',
-                model: 'MiniMax-M3',
+                model: 'minimax-coding-plan/MiniMax-M3',
                 count: 2,
                 modelConfig: {
-                  provider: 'minimax',
-                  model: 'MiniMax-M3',
-                  baseUrl: 'https://api.minimax.io/v1',
-                  apiKeyEnv: 'MINIMAX_API_KEY',
+                  provider: 'opencode-cli',
+                  model: 'minimax-coding-plan/MiniMax-M3',
+                  maxCompletionTokens: 1024,
                 },
               },
             ],

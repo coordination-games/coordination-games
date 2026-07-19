@@ -17,6 +17,7 @@ const minimaxResolved = {
 describe('model profile resolution matrix', () => {
   it.each([
     ['claude-cli', { provider: 'claude-cli', model: 'claude-haiku' }, { provider: 'claude-cli', model: 'claude-haiku' }],
+    ['opencode-cli', { provider: 'opencode-cli', model: 'minimax-coding-plan/MiniMax-M3' }, { provider: 'opencode-cli', model: 'minimax-coding-plan/MiniMax-M3' }],
     ['openrouter', { provider: 'openrouter', model: 'openai/gpt-5' }, { provider: 'openrouter', model: 'openai/gpt-5', baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY' }],
     ['minimax', minimax, minimaxResolved],
     ['future MiniMax', { provider: 'minimax', model: 'MiniMax-M4-preview' }, { ...minimaxResolved, model: 'MiniMax-M4-preview' }],
@@ -72,11 +73,56 @@ describe('model profile resolution matrix', () => {
     ['invalid custom key name', { provider: 'openai-compatible', baseUrl: 'https://models.example/v1', apiKeyEnv: 'CUSTOM_API_KEY' }, /models\.m3\.apiKeyEnv/],
     ['URL on Claude CLI', { provider: 'claude-cli', baseUrl: 'https://models.example/v1' }, /models\.m3/],
     ['key on Claude CLI', { provider: 'claude-cli', apiKeyEnv: 'HARNESS_CLAUDE_API_KEY' }, /models\.m3/],
+    ['URL on OpenCode CLI', { provider: 'opencode-cli', model: 'minimax-coding-plan/MiniMax-M3', baseUrl: 'https://models.example/v1' }, /models\.m3/],
+    ['key on OpenCode CLI', { provider: 'opencode-cli', model: 'minimax-coding-plan/MiniMax-M3', apiKeyEnv: 'HARNESS_OPENCODE_API_KEY' }, /models\.m3/],
+    ['pricing on OpenCode CLI', { provider: 'opencode-cli', model: 'minimax-coding-plan/MiniMax-M3', pricing: {} }, /models\.m3/],
     ['URL on scripted', { provider: 'scripted', baseUrl: 'https://models.example/v1' }, /models\.m3/],
     ['key on scripted', { provider: 'scripted', apiKeyEnv: 'HARNESS_SCRIPTED_API_KEY' }, /models\.m3/],
     ['missing custom URL', { provider: 'openai-compatible' }, /models\.m3\.baseUrl/],
   ] as const)('Given %s, when parsing URL and key policy, then it reports the full failing path', (_name, patch, error) => {
     expect(() => parseModelProfiles({ models: { m3: { ...minimax, ...patch } } })).toThrow(error);
+  });
+
+  it('Given a routed OpenCode catalog identifier, when parsing, then it preserves provider/model punctuation', () => {
+    const model = 'openrouter/qwen/qwen3-coder:free';
+
+    expect(parseModelProfiles({ models: { routed: { provider: 'opencode-cli', model } } })).toEqual({
+      routed: { provider: 'opencode-cli', model },
+    });
+  });
+
+  it('Given the OpenCode none variant, when parsing, then it preserves the explicit no-reasoning selection', () => {
+    expect(
+      parseModelProfiles({
+        models: {
+          m3: {
+            provider: 'opencode-cli',
+            model: 'minimax-coding-plan/MiniMax-M3',
+            reasoningEffort: 'none',
+          },
+        },
+      }),
+    ).toEqual({
+      m3: {
+        provider: 'opencode-cli',
+        model: 'minimax-coding-plan/MiniMax-M3',
+        reasoningEffort: 'none',
+      },
+    });
+  });
+
+  it.each([
+    'MiniMax-M3',
+    '/MiniMax-M3',
+    'minimax-coding-plan/',
+    'minimax-coding-plan//MiniMax-M3',
+    'minimax coding plan/MiniMax-M3',
+    'minimax-coding-plan/../MiniMax-M3',
+    '--provider/MiniMax-M3',
+  ])('Given unsafe OpenCode model identifier %s, when parsing, then it rejects the located model', (model) => {
+    expect(() =>
+      parseModelProfiles({ models: { m3: { provider: 'opencode-cli', model } } }),
+    ).toThrow(/models\.m3\.model/);
   });
 
   it.each([

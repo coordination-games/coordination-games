@@ -55,6 +55,20 @@ export async function runCampaign(
     const spec = { ...campaignRun.spec, output: campaignDir };
     try {
       const { runDir, lobbyId, gameId, manifest } = await dependencies.runBatch(spec);
+      const terminalFailure = manifestFailure(manifest);
+      if (terminalFailure) {
+        dependencies.error(`  [campaign] ${tag} ✗ FAILED: ${terminalFailure}`);
+        summaries.push({
+          label,
+          game: spec.game,
+          status: 'error',
+          runDir: path.relative(campaignDir, runDir),
+          lobbyId,
+          gameId,
+          error: terminalFailure,
+        });
+        continue;
+      }
       let analysis = false;
       try {
         if (spec.analysis?.enabled) {
@@ -62,7 +76,8 @@ export async function runCampaign(
           analysis = true;
         }
       } catch (error) {
-        dependencies.error(`  [campaign] analysis failed for ${label}: ${errorMessage(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        dependencies.error(`  [campaign] analysis failed for ${label}: ${message}`);
       }
       const outcome = isRecord(manifest) ? (manifest.outcome ?? null) : null;
       summaries.push({
@@ -77,7 +92,7 @@ export async function runCampaign(
       });
       dependencies.log(`  [campaign] ${tag} ✓`);
     } catch (error) {
-      const message = errorMessage(error);
+      const message = error instanceof Error ? error.message : String(error);
       dependencies.error(`  [campaign] ${tag} ✗ FAILED: ${message}`);
       summaries.push({ label, game: spec.game, status: 'error', error: message });
     }
@@ -113,8 +128,12 @@ function printCampaignSummary(
   log(`\n  ${succeeded}/${summaries.length} ok → ${indexPath}\n`);
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function manifestFailure(manifest: unknown): string | undefined {
+  const value = isRecord(manifest) ? manifest : undefined;
+  if (typeof value?.status !== 'string' || value.status === 'completed') return undefined;
+  return typeof value.error === 'string' && value.error.trim()
+    ? value.error
+    : `Run ended with status ${value.status}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

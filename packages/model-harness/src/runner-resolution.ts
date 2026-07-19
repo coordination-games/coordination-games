@@ -1,9 +1,11 @@
 import { ClaudeAgentRunner } from './runners/claude.js';
+import { OpenCodeCliAgentRunner } from './runners/opencode.js';
 import { OpenRouterAgentRunner } from './runners/openrouter.js';
 import type { AgentRunner, ResolvedSeat } from './types.js';
 
 function runnerForSeat(seat: ResolvedSeat): AgentRunner {
   if (seat.modelConfig?.provider === 'claude-cli') return new ClaudeAgentRunner();
+  if (seat.modelConfig?.provider === 'opencode-cli') return new OpenCodeCliAgentRunner();
   switch (seat.backend) {
     case 'claude':
       return new ClaudeAgentRunner();

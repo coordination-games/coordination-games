@@ -40,6 +40,7 @@ describe('model profiles', () => {
 
   it.each([
     ['claude-cli', 'claude-haiku', ''],
+    ['opencode-cli', 'minimax-coding-plan/MiniMax-M3', ''],
     ['openrouter', 'openai/gpt-5', ''],
     ['minimax', 'MiniMax-M3', ''],
     [

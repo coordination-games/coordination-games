@@ -20,7 +20,7 @@
  *  5. systemPrompt is prepended to the initial user prompt (--print has no
  *     separate system-prompt flag; prepending is idiomatic for the CLI).
  *
- *  6. MCP config is built with cogaServeCommand() so both backends share exactly
+ *  6. MCP config is built with cogaServeCommand() so all runners share exactly
  *     the same coga serve invocation.
  *
  * MUST NOT set ANTHROPIC_API_KEY — local ~/.claude creds only.

@@ -1,7 +1,7 @@
 /**
  * Shared CONTRACT for the Unified Model Harness.
  *
- * Every other module in this package — spec parser, persona loader, the two
+ * Every other module in this package — spec parser, persona loader, the three
  * AgentRunner backends, the orchestrator, the transcript writer, and the
  * analysis pass — codes against the types declared here. Keep this file the
  * single source of truth for the wire/in-memory shapes; downstream agents own
@@ -271,9 +271,9 @@ export type TranscriptEvent =
   | SessionEvent;
 
 // ---------------------------------------------------------------------------
-// AgentRunner (§4.1) — the backend abstraction. Two implementations
-// (ClaudeAgentRunner, OpenRouterAgentRunner). Both connect to the same
-// `coga serve --stdio --bot-mode --key --name --server-url` MCP server; neither
+// AgentRunner (§4.1) — the backend abstraction. Three implementations
+// (ClaudeAgentRunner, OpenCodeCliAgentRunner, OpenRouterAgentRunner). All connect to the same
+// `coga serve --stdio --bot-mode --key --name --server-url` MCP server; none
 // touches REST directly.
 // ---------------------------------------------------------------------------
 

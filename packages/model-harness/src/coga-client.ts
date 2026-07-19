@@ -6,7 +6,7 @@
  * identical to the proven scripts — these are the auth / pool / faucet /
  * on-chain-register paths the existing fill-bots and run-game flows use.
  *
- * Also adds `cogaServeCommand`: the { command, args } both backends spawn for
+ * Also adds `cogaServeCommand`: the { command, args } every runner uses for
  * `coga serve` so the MCP integration point is identical across them (and can be
  * pointed at a local build via COGA_SERVE_CMD).
  */
@@ -259,10 +259,9 @@ function sleep(ms: number) {
 // ---------------------------------------------------------------------------
 // coga serve --stdio invocation
 //
-// Both backends connect to the SAME coga MCP server — the single integration
+// All runners connect to the SAME coga MCP server — the single integration
 // point (§3). This returns the { command, args } to spawn it, which the runners
-// feed to the MCP stdio transport (OpenRouter) or the claude --mcp-config
-// (Claude).
+// feed to a direct MCP stdio transport or their local CLI MCP configuration.
 //
 // Default: `npx -y coordination-games@latest serve ...` — forces npx to fetch
 // the current npm release each run instead of falling through to a stale global

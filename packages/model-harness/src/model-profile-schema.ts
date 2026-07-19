@@ -92,12 +92,17 @@ function parseProfile(raw: unknown, where: string): ResolvedModelProfile {
   if (!isRecord(raw)) throw new Error(`model profiles: ${where} must be an object`);
   assertKeys(raw, PROFILE_KEYS, where);
   const provider = parseProvider(raw.provider, `${where}.provider`);
-  const model = string(raw.model, `${where}.model`);
+  const model =
+    provider === 'opencode-cli'
+      ? openCodeModel(raw.model, `${where}.model`)
+      : string(raw.model, `${where}.model`);
   if (
-    (provider === 'claude-cli' || provider === 'scripted') &&
+    (provider === 'claude-cli' || provider === 'opencode-cli' || provider === 'scripted') &&
     (raw.baseUrl !== undefined || raw.apiKeyEnv !== undefined)
   )
     throw new Error(`model profiles: ${where} does not allow baseUrl or apiKeyEnv`);
+  if (provider === 'opencode-cli' && raw.pricing !== undefined)
+    throw new Error(`model profiles: ${where} does not allow pricing`);
   if (provider === 'openai-compatible' && raw.baseUrl === undefined)
     throw new Error(`model profiles: ${where}.baseUrl is required for openai-compatible`);
   const defaults = PROVIDER_DEFAULTS[provider];
@@ -170,6 +175,20 @@ function string(raw: unknown, where: string): string {
   if (typeof raw !== 'string' || !raw.trim())
     throw new Error(`model profiles: ${where} must be a non-empty string`);
   return raw.trim();
+}
+function openCodeModel(raw: unknown, where: string): string {
+  const value = string(raw, where);
+  const segments = value.split('/');
+  if (
+    segments.length < 2 ||
+    segments.some(
+      (segment) =>
+        !/^[A-Za-z0-9@][A-Za-z0-9._:@+-]*$/.test(segment) || segment === '.' || segment === '..',
+    )
+  ) {
+    throw new Error(`model profiles: ${where} must use a safe provider/model identifier`);
+  }
+  return value;
 }
 function parseProvider(raw: unknown, where: string): ModelProvider {
   if (typeof raw !== 'string' || !(MODEL_PROVIDERS as readonly string[]).includes(raw))

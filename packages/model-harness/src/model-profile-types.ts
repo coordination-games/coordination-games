@@ -1,5 +1,6 @@
 export const MODEL_PROVIDERS = [
   'claude-cli',
+  'opencode-cli',
   'openrouter',
   'minimax',
   'openai-compatible',
@@ -34,6 +35,7 @@ export const PROVIDER_DEFAULTS: Readonly<
   Record<ModelProvider, Omit<ResolvedModelProfile, 'model' | 'provider'>>
 > = {
   'claude-cli': {},
+  'opencode-cli': {},
   openrouter: { baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY' },
   minimax: { baseUrl: 'https://api.minimax.io/v1', apiKeyEnv: 'MINIMAX_API_KEY' },
   'openai-compatible': {},
